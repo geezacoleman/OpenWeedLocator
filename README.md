@@ -236,7 +236,7 @@ For this method you'll need access to:
 * Internet with large data capacity and high speed (WARNING: the image file is large and downloading will take time and use up a substantial quantity of your data allowance if you have are on a limited plan)
 
 ### Step 1 - download the disk image file
-Download the entire disk image file (v0.1.0-owl.img) here: [OWL disk image](https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0)
+Download the entire disk image file (v1.0.0-owl.img) here: [OWL disk image](https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0)
 
 The latest, stable version will be linked above, however, all other older versions or versions with features being tested are available [here](#version-history).
 
@@ -520,7 +520,7 @@ If you have multiple units running, the most efficient method is to update one a
 All versions of OWL can be found here. Only major changes will be recorded as separate disk images for use.
 Version |  File
 :-------------------------:|:-------------------------:
-v0.1.0-owl.img | https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0
+v1.0.0-owl.img | https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0
 
 # Troubleshooting
 Here's a table of some of the common symptoms and possible explanations for errors we've come across. This is by no means exhaustive, but hopefully helps in diagnosing any issues you might have.
@@ -534,6 +534,7 @@ Beep heard, but no relays activating when tested with green | Relays are not rec
 # Citing OWL
 If you have used OWL in your research please consider citing this repository as below:
 
+Guy Coleman, William Salter, Michael Walsh, 2021. geezacoleman/OpenWeedLocator: OpenWeedLocator First Release. https://doi.org/10.5281/zenodo.5236856
 
 # Acknowledgements
 This project has been developed by Guy Coleman and William Salter at the University of Sydney, Precision Weed Control Lab. It was supported and funded by the Grains Research and Development Corporation (GRDC) and Landcare Australia as part of the University of Sydney's Digifarm project in Narrabri, NSW, Australia.
