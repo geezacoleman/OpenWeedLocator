@@ -22,6 +22,7 @@ Internal electronics       |  Fitted module - vehicle | Fitted module - robot
 * [Updating OWL](#updating-owl)
   - [Version History](#version-history)
 * [Troubleshooting](#troubleshooting)
+* [Citing OWL](#Citing OWL)
 * [Acknowledgements](#acknowledgements)
 * [References](#references)
 
@@ -529,6 +530,10 @@ Symptom | Explanation | Possible solution
 Raspberry Pi won't start (no green/red lights) | No power getting to the computer | Check the power source, and all downstream components. Such as Bulgin panel/plug connections fuse connections and fuse, connections to Wago 2-way block, voltage regulator connections, cable into the Raspberry Pi.
 Raspberry Pi starts (green light flashing) but no beep | OWL software has not started | This is likely a configuration/camera connection error with many possible causes. To get more information, boot the Raspberry Pi with a screen connected, open up a Terminal window (Ctrl + T) and type `~/owl/./greenonbrown.py`. This will run the program. Check any errors that emerge.
 Beep heard, but no relays activating when tested with green | Relays are not receiving (1) 12V power, (2) a signal from the Pi, (3) the Pi is not sending a signal | Check all your connections with a multimeter if necessary for the presence of 12V. Make sure everything is connected as per the wiring diagram. If you're confident there are no connection issues, open up a Terminal window (Ctrl + T) and type `~/owl/./greenonbrown.py`. This will run the program. Check any errors that emerge.
+
+# Citing OWL
+If you have used OWL in your research please consider citing this repository as below:
+
 
 # Acknowledgements
 This project has been developed by Guy Coleman and William Salter at the University of Sydney, Precision Weed Control Lab. It was supported and funded by the Grains Research and Development Corporation (GRDC) and Landcare Australia as part of the University of Sydney's Digifarm project in Narrabri, NSW, Australia.
