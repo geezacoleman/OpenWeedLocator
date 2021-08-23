@@ -1,0 +1,8 @@
+## OWL requirements file ##
+#
+numpy
+imutils
+gpiozero
+pandas
+glob2
+RPi.GPIO
