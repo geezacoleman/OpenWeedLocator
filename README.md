@@ -10,7 +10,7 @@ Repository DOI: [![DOI](https://zenodo.org/badge/399194159.svg)](https://zenodo.
 
 Internal electronics       |  Fitted module - vehicle | Fitted module - robot 
 :-------------------------:|:-------------------------: |:-------------------------:
-![Internal view](https://media.github.sydney.edu.au/user/3859/files/caf58200-cb0e-11eb-8b36-e5567c2a28e1)  |  ![Fitted module - spot spraying vehicle](https://user-images.githubusercontent.com/51358498/130522759-79882449-2644-4c7a-8840-d399f0ac9d39.png) | ![Fitted module - robot](https://media.github.sydney.edu.au/user/3859/files/02fdc480-cb11-11eb-9778-f3e156ac7e25)
+![Internal view](https://media.github.sydney.edu.au/user/3859/files/caf58200-cb0e-11eb-8b36-e5567c2a28e1)  |  ![Fitted module - spot spraying vehicle](https://user-images.githubusercontent.com/51358498/130522810-bb19e6ca-5019-4de4-83cc-858eca358ef8.jpg) | ![Fitted module - robot](https://media.github.sydney.edu.au/user/3859/files/02fdc480-cb11-11eb-9778-f3e156ac7e25)
 
 # Overview
 * [OWL Use Cases](#owl-use-cases)
