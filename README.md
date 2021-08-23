@@ -6,9 +6,11 @@ Welcome to the OpenWeedLocator (OWL) project, an opensource hardware and softwar
 
 On the weed detection front, a range of algorithms have been provided, each with advantages and disadvantages for your use case. They include ExG (excess green 2g - r - b, developed by Woebbecke et al. 1995), a hue, saturation and value (HSV) threshold and a combined ExG + HSV algorithm. These algorithms have all been tested in a wide range of conditions, a preprint of the article is available here: [LINK TO ARTICLE](https://doi.org/10.31220/agriRxiv.2021.00074).
 
+Repository DOI: [![DOI](https://zenodo.org/badge/399194159.svg)](https://zenodo.org/badge/latestdoi/399194159)
+
 Internal electronics       |  Fitted module - vehicle | Fitted module - robot 
 :-------------------------:|:-------------------------: |:-------------------------:
-![Internal view](https://media.github.sydney.edu.au/user/3859/files/caf58200-cb0e-11eb-8b36-e5567c2a28e1)  |  ![Fitted module - spot spraying vehicle](https://media.github.sydney.edu.au/user/3859/files/6e469700-cb0f-11eb-84e4-4a17c5e03502) | ![Fitted module - robot](https://media.github.sydney.edu.au/user/3859/files/02fdc480-cb11-11eb-9778-f3e156ac7e25)
+![Internal view](https://media.github.sydney.edu.au/user/3859/files/caf58200-cb0e-11eb-8b36-e5567c2a28e1)  |  ![Fitted module - spot spraying vehicle](https://user-images.githubusercontent.com/51358498/130495813-f6e8ade5-0c0f-4444-ae2a-49abf2be9e7c.jpg) | ![Fitted module - robot](https://media.github.sydney.edu.au/user/3859/files/02fdc480-cb11-11eb-9778-f3e156ac7e25)
 
 # Overview
 * [OWL Use Cases](#owl-use-cases)
@@ -22,7 +24,7 @@ Internal electronics       |  Fitted module - vehicle | Fitted module - robot
 * [Updating OWL](#updating-owl)
   - [Version History](#version-history)
 * [Troubleshooting](#troubleshooting)
-* [Citing OWL](#Citing OWL)
+* [Citing OWL](#citing-owl)
 * [Acknowledgements](#acknowledgements)
 * [References](#references)
 
@@ -535,6 +537,8 @@ Beep heard, but no relays activating when tested with green | Relays are not rec
 If you have used OWL in your research please consider citing this repository as below:
 
 Guy Coleman, William Salter, Michael Walsh, 2021. geezacoleman/OpenWeedLocator: OpenWeedLocator First Release. https://doi.org/10.5281/zenodo.5236856
+
+[![DOI](https://zenodo.org/badge/399194159.svg)](https://zenodo.org/badge/latestdoi/399194159)
 
 # Acknowledgements
 This project has been developed by Guy Coleman and William Salter at the University of Sydney, Precision Weed Control Lab. It was supported and funded by the Grains Research and Development Corporation (GRDC) and Landcare Australia as part of the University of Sydney's Digifarm project in Narrabri, NSW, Australia.
