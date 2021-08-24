@@ -413,7 +413,7 @@ The optional real time clock module can be set up by following the [detailed ins
 If you're interested in changing settings on the detector, such as selecting the weed detection algorithm, modifying sensitivity settings, viewing results and a whole raft of other options, connect a screen, keyboard and mouse and boot up the OWL. Navigate to the owl directory and open up `greenonbrown.py` in an editor. You'll need to right click, select open with and then choose an  integrated development environment (IDE). Once it's open, scroll down to the very bottom and you should come across:
 ```
 if __name__ == "__main__":
-    sprayer = Sprayer(video=False,
+    owl = Owl(video=False,
                       videoFile=r'xyz',
                       headless=True,
                       recording=True,
@@ -426,7 +426,7 @@ if __name__ == "__main__":
                       brightnessMin=15,
                       brightnessMax=250,
                       resolution=(416, 320))
-    sprayer.start(sprayDur=0.15,
+    owl.hoot(sprayDur=0.15,
                   sample=False,
                   sampleDim=1000,
                   saveDir='/home/pi',
