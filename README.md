@@ -36,6 +36,15 @@ The first, and most clear use case for the OWL is for the site-specific applicat
 <img src="https://media.github.sydney.edu.au/user/3859/files/71bb9e00-e480-11eb-9392-81826a88c680" width="600">
 </p>
 
+Parameter | Details | Notes 
+:-------------------------:|:-------------------------: |:-------------------------:
+OWL unit mounting distance | Directly onto same bar as nozzles, just 32cm higher. |
+Forward Speed | 6 - 8 km/h | Image blur/activation time limiting forward speed. Moving the OWL unit forward would be a quick improvement for travel speed and large green weeds.
+Solenoids | Goyen solenoids with Teejet body |
+Spray tips | Teejet TP4003E-SS | 40 degree, flat fan nozzles
+Strainer | TeeJet 50 mesh strainer | Protect spray tip from clogging/damage
+Pump/tank | Northstar 12V 60L ATV Sprayer | 8.3 LPM 12V pump, 60L capacity, tray mounted
+
 ## Robot-mounted spot spraying
 A second system, identical to the first, was developed for the University of Sydney's Digifarm robot, the Agerris Digital Farm Hand. The system is in frequent use for the site-specific control of weeds in trial areas. It is powered by the 24V system on the robot, using a 24 - 12V DC/DC converter.
 
