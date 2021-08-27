@@ -1,5 +1,5 @@
 #!/home/pi/.virtualenvs/owl/bin/python3
-from algorithms import exg, exg_standardised, exg_standardised_hue, hsv, exgr, gndvi
+from algorithms import exg, exg_standardised, exg_standardised_hue, hsv, exgr, gndvi, maxg
 from button_inputs import Selector, Recorder
 from image_sampler import image_sample
 from imutils.video import VideoStream, FileVideoStream, FPS
@@ -7,12 +7,12 @@ from relay_control import Controller
 from queue import Queue
 from time import strftime
 import subprocess
-import imutils # reference PyImageSearch
+import imutils
 import shutil
-import numpy as np # reference
+import numpy as np
 import time
 import sys
-import cv2 # reference
+import cv2
 import os
 
 def nothing(x):
@@ -35,7 +35,7 @@ def green_on_brown(image, exgMin=30, exgMax=250, hueMin=30, hueMax=90, brightnes
     :param minArea: minimum area for the detection - used to filter out small detections
     :param headless: True: no windows display; False: watch what the algorithm does
     :param algorithm: the algorithm to use. Defaults to ExG if not correct
-    :return:
+    :return: returns the contours, bounding boxes, centroids and the image on which the boxes have been drawn
     '''
 
     # different algorithm options, add in your algorithm here if you make a new one!
@@ -45,6 +45,9 @@ def green_on_brown(image, exgMin=30, exgMax=250, hueMin=30, hueMax=90, brightnes
 
     elif algorithm == 'exgr':
         output = exgr(image)
+
+    elif algorithm == 'maxg':
+        output = maxg(image)
 
     elif algorithm == 'nexg':
         output = exg_standardised(image)
@@ -199,7 +202,8 @@ class Owl:
         # to be updated too. Fairly straightforward, so an opportunity for more precise application
         self.nozzleNum = nozzleNum
 
-    def hoot(self, sprayDur, sample=False, sampleDim=400, saveDir='output', camera_name='cam1', algorithm='exg', selectorEnabled=False, minArea=10):
+    def hoot(self, sprayDur, delay, sample=False, sampleDim=400, saveDir='output', camera_name='cam1', algorithm='exg',
+             selectorEnabled=False, minArea=10):
         # track FPS and framecount
         fps = FPS().start()
         if selectorEnabled:
@@ -207,6 +211,7 @@ class Owl:
 
         try:
             while True:
+                delay = self.update_delay(delay)
                 frame = self.cam.read()
                 if selectorEnabled:
                     algorithm, newAlgorithm = self.selector.algorithm_selector(algorithm)
@@ -281,8 +286,9 @@ class Owl:
                         for i in range(self.nozzleNum):
                             # determine which lane needs to be activated
                             if int(self.laneCoords[i]) <= centre[0] < int(self.laneCoords[i] + laneWidth):
-                                # log a spray job with the controller using the nozzle, timestamp and spray duration
-                                self.controller.receive(nozzle=i, timeStamp=sprayTime, duration=sprayDur)
+                                # log a spray job with the controller using the nozzle, delay, timestamp and spray duration
+                                # if GPS is used/speed control, delay can be updated automatically based on forward speed
+                                self.controller.receive(nozzle=i, delay=delay, timeStamp=sprayTime, duration=sprayDur)
 
                 # update the framerate counter
                 fps.update()
@@ -356,6 +362,10 @@ class Owl:
         self.exgMin = exgMin
         self.exgMax = exgMax
 
+    def update_delay(self, delay=0):
+        # if GPS added, could use it here to return a delay variable based on speed.
+        return delay
+
 
 def check_for_usb():
     try:
@@ -397,6 +407,7 @@ if __name__ == "__main__":
 
     # start the targeting!
     owl.hoot(sprayDur=0.15,
+             delay=0,
              sample=False,
              sampleDim=1000,
              saveDir='/home/pi',

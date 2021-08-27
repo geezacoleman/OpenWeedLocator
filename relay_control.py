@@ -148,23 +148,26 @@ class Controller:
             while nozzleQueue:
                 sprayJob = nozzleQueue.popleft()
                 inputCondition.release()
+                # check to make sure time is positive
                 onDur = 0 if (sprayJob[3] - (time.time() - sprayJob[1])) <= 0 else (sprayJob[3] - (time.time() - sprayJob[1]))
 
                 if not nozzleOn:
+                    time.sleep(sprayJob[2]) # add in the delay variable
                     self.solenoid.relay_on(nozzle, verbose=True)
                     nozzleOn = True
                 try:
                     time.sleep(onDur)
-                    self.logger.log_line('[INFO] onDur {} for nozzle {} received.'.format(onDur, nozzle))
+                    self.logger.log_line(
+                        '[INFO] onDur {} for nozzle {} received.'.format(onDur, nozzle))
 
                 except ValueError:
                     time.sleep(0)
                     self.logger.log_line(
                         '[ERROR] negative onDur {} for nozzle {} received. Turning on for 0 seconds.'.format(onDur,
                                                                                                              nozzle))
-
                 inputCondition.acquire()
             if len(nozzleQueue) == 0:
                 self.solenoid.relay_off(nozzle, verbose=True)
                 nozzleOn = False
+
             inputCondition.wait()
