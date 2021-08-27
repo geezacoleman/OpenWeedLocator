@@ -4,7 +4,7 @@
 
 Welcome to the OpenWeedLocator (OWL) project, an opensource hardware and software green-on-brown weed detector that uses entirely off-the-shelf componentry, very simple green-detection algorithms and entirely 3D printable parts. OWL integrates weed detection on a Raspberry Pi with a relay control board in a custom designed case so you can attach any 12V solenoid, relay, lightbulb or device for low-cost, simple and opensource site-specific weed control. Projects to date have seen OWL mounted on robots and vehicles for spot spraying! 
 
-On the weed detection front, a range of algorithms have been provided, each with advantages and disadvantages for your use case. They include ExG (excess green 2g - r - b, developed by Woebbecke et al. 1995), a hue, saturation and value (HSV) threshold and a combined ExG + HSV algorithm. These algorithms have all been tested in a wide range of conditions, a preprint of the article is available here: [LINK TO ARTICLE](https://doi.org/10.31220/agriRxiv.2021.00074).
+On the weed detection front, a range of algorithms have been provided, each with advantages and disadvantages for your use case. They include ExG (excess green 2g - r - b, developed by Woebbecke et al. 1995), a hue, saturation and value (HSV) threshold and a combined ExG + HSV algorithm. These algorithms have all been tested in a wide range of conditions, a preprint of the article (not yet peer reviewed) is available here: [OpenWeedLocator (OWL): An open-source, low-cost device for fallow weed detection](https://doi.org/10.31220/agriRxiv.2021.00074). The published version will be added once available.
 
 Repository DOI: [![DOI](https://zenodo.org/badge/399194159.svg)](https://zenodo.org/badge/latestdoi/399194159)
 
@@ -14,6 +14,7 @@ Internal electronics       |  Fitted module - vehicle | Fitted module - robot
 
 # Overview
 * [OWL Use Cases](#owl-use-cases)
+* [Community Development](#community-development-and-contribution)
 * [Hardware Requirements](#hardware-requirements)
   - [Hardware Assembly](#hardware-assembly)
 * [Software Installation](#software)
@@ -38,10 +39,10 @@ The first, and most clear use case for the OWL is for the site-specific applicat
 
 Parameter | Details | Notes 
 :-------------------------:|:-------------------------: |:-------------------------:
-OWL unit mounting distance | Directly onto same bar as nozzles, just 32cm higher. |
+Mounting gap | 0 cm | Mounted directly to same bar as nozzles, just 32cm higher.
 Forward Speed | 6 - 8 km/h | Image blur/activation time limiting forward speed. Moving the OWL unit forward would be a quick improvement for travel speed and large green weeds.
-Solenoids | Goyen solenoids with Teejet body |
-Spray tips | Teejet TP4003E-SS | 40 degree, flat fan nozzles
+Solenoids | Goyen solenoid 3QH/3662 with Teejet body | Many alternatives exist as outlined in [#2](https://github.com/geezacoleman/OpenWeedLocator/issues/2)
+Spray tips | Teejet TP4003E-SS | 40 degree, flat fan nozzles, stainless steel
 Strainer | TeeJet 50 mesh strainer | Protect spray tip from clogging/damage
 Pump/tank | Northstar 12V 60L ATV Sprayer | 8.3 LPM 12V pump, 60L capacity, tray mounted
 
@@ -52,8 +53,10 @@ A second system, identical to the first, was developed for the University of Syd
 <img src="https://media.github.sydney.edu.au/user/3859/files/3cfd1600-e483-11eb-8adc-243534daac81" width="600">
 </p>
 
-## Community development
+## Community development and contribution
 As more OWLs are built and fallow weed control systems developed, we would love to share the end results here. Please get in contact and we can upload images of the finished systems on this page.
+
+Please review the [contribution page](CONTRIBUTING.md) for all the details on how to contribute and follow community guidelines.
 
 # Hardware Requirements
 A complete list of components is provided below. Further details on 3D models and hardware assembly are provided in subsequent sections. The quantities of each item below are for one OWL detection unit. 
