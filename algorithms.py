@@ -12,10 +12,10 @@ as it has already been thresholded.
 def exg(image):
     """
     Takes an image and processes it using ExG. Returns a single channel exG output.
+    Developed by Woebbecke et al. 1995.
     :return: grayscale image
     """
     # using array slicing to split into channels
-    # image = clahe_sat_val(image)
     blue = image[:, :, 0].astype(np.float32)
     green = image[:, :, 1].astype(np.float32)
     red = image[:, :, 2].astype(np.float32)
@@ -28,6 +28,24 @@ def exg(image):
     imgOut = imgOut.astype('uint8')
 
     # cv2.imshow('ExG', imgOut)
+    return imgOut
+
+def maxg(image):
+    '''
+    Takes an input image in int8 format and calculates the 'maxg' algorithm based on the following publication:
+    'Weed Identification Using Deep Learning and Image Processing in Vegetable Plantation', Jin et al. 2021
+    :param image: 8 bit input image in BGR format (opencv)
+    :return: grayscale image
+    '''
+    # using array slicing to split into channels with float32 for calculation
+    blue = image[:, :, 0].astype(np.float32)
+    green = image[:, :, 1].astype(np.float32)
+    red = image[:, :, 2].astype(np.float32)
+
+    imgOut = 24 * green - 19 * red - 2 * blue
+    imgOut = (imgOut / np.amax(imgOut)) * 255 # scale image between 0 - 255
+    imgOut = imgOut.astype('uint8')
+
     return imgOut
 
 def exg_standardised(image):
