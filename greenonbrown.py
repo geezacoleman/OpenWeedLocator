@@ -1,12 +1,17 @@
 #!/home/pi/.virtualenvs/owl/bin/python3
 from algorithms import exg, exg_standardised, exg_standardised_hue, hsv, exgr, gndvi, maxg
 from button_inputs import Selector, Recorder
+from gps_tools import read_gps_speed
 from image_sampler import image_sample
+
 from imutils.video import VideoStream, FileVideoStream, FPS
 from relay_control import Controller
 from queue import Queue
 from time import strftime
+from threading import Thread
+
 import subprocess
+import serial
 import imutils
 import shutil
 import numpy as np
@@ -118,15 +123,20 @@ def green_on_brown(image, exgMin=30, exgMax=250, hueMin=30, hueMax=90, brightnes
 
 # the
 class Owl:
-    def __init__(self, video=False, videoFile=None, recording=False, nozzleNum=4, headless=True,
+    def __init__(self, video=False, videoFile=None, recording=False, GPSenabled=False, nozzleNum=4, headless=True,
                  exgMin=30, exgMax=180, hueMin=30,hueMax=92, brightnessMin=5, brightnessMax=200,
-                 saturationMin=30, saturationMax=255, resolution=(832, 624), framerate=32):
+                 saturationMin=30, saturationMax=255, resolution=(832, 624), framerate=32, cameraboomOffset=0.2, delaySensitivity=0.5):
 
         # different detection parameters
         self.headless = headless
         self.recording = recording
         self.resolution = resolution
         self.framerate = framerate
+
+        # GPS enabled for dyanmic delay control
+        self.GPSenabled = GPSenabled
+        self.cameraboomOffset = cameraboomOffset
+        self.delaySensitivity = delaySensitivity
 
         # threshold parameters for different algorithms
         self.exgMin = exgMin
@@ -201,6 +211,14 @@ class Owl:
         # add the total number of nozzles. This can be changed easily, but the nozzleDict and physical relays would need
         # to be updated too. Fairly straightforward, so an opportunity for more precise application
         self.nozzleNum = nozzleNum
+
+        # uses USB - DB9 serial connector to keep things simple.
+        if self.GPSenabled:
+            self.serPort = serial.Serial(port='/dev/ttyACM0', baudrate=9600, timeout=3.0)
+
+            # start monitoring the NMEA strings coming from GPS receiver
+            self.gpsThread = Thread(target=self.check_gps)
+            self.gpsThread.start()
 
     def hoot(self, sprayDur, delay, sample=False, sampleDim=400, saveDir='output', camera_name='cam1', algorithm='exg',
              selectorEnabled=False, minArea=10):
@@ -279,6 +297,7 @@ class Owl:
                     self.laneCoords[i] = laneX
 
                 # loop over the ID/weed centres from contours
+                delay = self.update_delay(self.nmeaString, cameraboomOffset=self.cameraboomOffset, delaySensitivity=self.delaySensitivity)
                 for ID, centre in enumerate(weedCentres):
                     # if they are in activation region the spray them
                     if centre[1] > self.yAct:
@@ -349,6 +368,9 @@ class Owl:
         self.controller.solenoid.beep(duration=0.1)
         self.controller.solenoid.beep(duration=0.1)
         self.cam.stop()
+        self.GPSenabled = False
+        self.serPort.close()
+
         if self.record:
             self.writer.release()
             self.recorderButton.running = False
@@ -362,10 +384,32 @@ class Owl:
         self.exgMin = exgMin
         self.exgMax = exgMax
 
-    def update_delay(self, delay=0):
-        # if GPS added, could use it here to return a delay variable based on speed.
-        return delay
+    def update_delay(self, nmeaString, cameraboomOffset=0.2, delaySensitivity=0.5):
+        '''
+        Updates delay based on GPS speed and distance between the camera/boom in metres
+        :param delay: default delay
+        :param cameraboomOffset: distance between centre of camera and nozzle
+        :param float, delaySensitivity 0 - 1: how much delay is needed: low=short delay, high=long delay
+        :return: delay value
+        '''
+        if self.GPSenabled:
+            speed = read_gps_speed(nmeaString)
+            delay = float(np.round(cameraboomOffset / speed, 2)) * delaySensitivity
 
+            return delay
+
+        return 0
+
+    def check_gps(self):
+        try:
+            while True:
+                self.nmeaString = self.serPort.readline()
+
+                if not self.GPSenabled:
+                    break
+
+        except serial.SerialException as e:
+            self.logger.log_line("[SERIAL ERROR]: {}".format(e))
 
 def check_for_usb():
     try:
@@ -394,6 +438,7 @@ if __name__ == "__main__":
               videoFile=r'',
               headless=True,
               recording=False,
+              GPSenabled=False,
               exgMin=25,
               exgMax=200,
               hueMin=39,
@@ -403,7 +448,9 @@ if __name__ == "__main__":
               brightnessMin=60,
               brightnessMax=190,
               framerate=32,
-              resolution=(416, 320))
+              resolution=(416, 320),
+              cameraboomOffset=0.2,
+              delaySensitivity=0.5)
 
     # start the targeting!
     owl.hoot(sprayDur=0.15,

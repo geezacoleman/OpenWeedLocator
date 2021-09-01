@@ -120,7 +120,7 @@ class Controller:
         :param delay: on delay to be added in the future
         :param duration: duration of spray
         """
-        inputQMessage = [nozzle, timeStamp, delay, duration]
+        inputQMessage = [nozzle, timeStamp, delay, duration, location]
         inputQ = self.nozzleQueueDict[nozzle]
         inputCondition = self.nozzleconditionDict[nozzle]
         # notifies the consumer thread when something has been added to the queue
@@ -128,7 +128,7 @@ class Controller:
             inputQ.append(inputQMessage)
             inputCondition.notify()
 
-        line = "nozzle: {} | time: {} | location {} | delay: {} | duration: {}".format(nozzle, timeStamp, location, delay, duration)
+        line = "nozzle: {} | time: {} | location {} | delay: {} | duration: {}".format(nozzle, timeStamp, delay, duration, location)
         self.logger.log_line(line)
 
     def consumer(self, nozzle):
@@ -146,13 +146,22 @@ class Controller:
         nozzleQueue = self.nozzleQueueDict[nozzle]
         while self.running:
             while nozzleQueue:
+                # nozzle, timeStamp, delay, duration, location
                 sprayJob = nozzleQueue.popleft()
                 inputCondition.release()
+                # difference between detection and current time
+                timeDiff = time.time() - sprayJob[1]
                 # check to make sure time is positive
-                onDur = 0 if (sprayJob[3] - (time.time() - sprayJob[1])) <= 0 else (sprayJob[3] - (time.time() - sprayJob[1]))
+                onDur = 0 if (sprayJob[3] - timeDiff <= 0) else (sprayJob[3] - timeDiff)
 
                 if not nozzleOn:
-                    time.sleep(sprayJob[2]) # add in the delay variable
+                    # zero delay if time has already expired
+                    delay = 0 if onDur == 0 else (sprayJob[2] - timeDiff)
+                    try:
+                        time.sleep(delay) # add in the delay variable
+                    except ValueError:
+                        time.sleep(0)
+
                     self.solenoid.relay_on(nozzle, verbose=True)
                     nozzleOn = True
                 try:
