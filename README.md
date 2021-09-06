@@ -118,8 +118,12 @@ The first few steps don't require the enclosure so you can make a start right aw
 There are only a few components that need soldering, including the fuse and voltage regulator:
 * Soldering of voltage regulator pins
 * Soldering of 12V input wires to voltage regulator pins
-* Soldering of 5V output wires to voltage regulator pins
+* Soldering of 5V output wires to voltage regulator pins (micro USB cable)
 * Soldering of red wire to both fuse terminals
+
+Carefully check which pins on the voltage regulator correspond to 12V in, GND in, 5V out and GND out prior to soldering.
+
+To solder the Micro USB cable to the voltage regulator output, you'll need to cut off the USB A end so you are left with approximately 10cm of cable. Using the wire strippers or a sharp box cutter/knife, remove the rubber sheath around the wires. If you have a data + charging cable you should see red, green, white and black wires. The charging only cables will likely only have the red and black wires. Isolate the red (+5V) and black (GND) wires and strip approximately 5mm off the end. Solder the red wire to the positive output on the voltage regulator and black wire to the GND pin. Once you have finished, it should look like the first panel in the figure below.
 
 **NOTE**: Soldering can burn you and generates potentially hazardous smoke! Use appropriate care, fume extractors and PPE to avoid any injury. If you're new to soldering, read through [this guide](https://www.makerspaces.com/how-to-solder/), which explains in more detail how to perfect your skills and solder safely.
 
