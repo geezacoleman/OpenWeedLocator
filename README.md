@@ -214,7 +214,9 @@ HQ camera mount | Raspberry Pi camera port | Camera mounted in case
 The lens will need to be focused, details below, once the software is correctly set up.
 
 ### Step 9 - adding buzzer and LEDs
-Mount the buzzer inside the OWL base using double sided mounting tape and connect the 5 V and ground wires to Raspberry Pi GPIO pins 7 and 9, respectively. Install the 5 V LED inside the OWL base and connect the 5V and ground wire to GPIO pins 8 and 20, respectively. Install the 12 V LED inside the OWL base and connect the 12 V and ground wires to their respective WAGO terminal blocks.
+Mount the buzzer inside the OWL base using double sided mounting tape and connect the 5 V and ground wires to Raspberry Pi GPIO pins 7 and 9, respectively. 
+
+For simplicity we have used two 12V LEDs (which are just normal LEDs with a current limiting resistor included) for both the 5V TX/GND connection for Raspberry Pi status indication and also the 12V power connection. While 12 V will work fine on both, the 5 V connection will be dimmer. If you want to use a non-prepackaged, 3 mm LED for the 5V connection, you should solder a current limiting resistor to the LED to prevent damage to either the LED or the Rasperry Pi as described [here](https://howchoo.com/g/ytzjyzy4m2e/build-a-simple-raspberry-pi-led-power-status-indicator). Install the 5 V LED inside the OWL base and connect the 5V and ground wire to GPIO pins 8 (TX pin) and 20 (GND pin), respectively. Install the 12 V LED inside the OWL base and connect the 12 V and GND wires to their respective WAGO terminal blocks.
 
 Buzzer location | LEDs in OWL base | GPIO pins
 :-------------: | :-------------: | :-------------:
@@ -284,6 +286,22 @@ Now reboot the Raspberry Pi. Once the Raspberry Pi has rebooted, you'll need to 
 ```
 
 This will bring up a video feed you can use to visualise the OWL detector and also use it to focus the camera. Once you're happy with the focus, press Esc to exit. Navigate back to the greenonbrown.py file. You'll now need to change `headless` back to `True`. Double click on greenonbrown.py, choose to 'open' the file (rather than 'execute' or 'execute in terminal') when a window pops up. Scroll down to the bottom of the code and on line 385, under `owl = Owl(....)` change `headless=False` back to `headless=True`. Save and exit the file. Shutdown the Raspberry Pi. Unplug the screen, keyboard and mouse and reboot.
+
+### Step 5 - enabling UART for status LED
+This is just the cherry on top and non-essential to correct operation of the OWL but to make sure the status LED you connected earlier blinks correctly the GPIO UART needs to be enabled. 
+
+Open up a terminal console by pressing `Ctrl + T`. Type:
+
+```
+(owl) pi@owl :-$ sudo nano /boot/config.txt
+```
+
+This will open up the config.txt file. Scroll down to the bottom by holding the down arrow key and add the following line to the very last line of the file:
+```
+enable_uart=1
+```
+
+Press `ctrl + x` to exit, then type `y` to save and then `enter`.
 
 You're now ready to run!
 
