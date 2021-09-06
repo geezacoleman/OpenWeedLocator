@@ -88,8 +88,8 @@ A complete list of components is provided below. Further details on 3D models an
 | WAGO 2-way Terminal Block  | 2  | [Link](https://au.rs-online.com/web/p/splice-connectors/8837544/) |
 | Bulgin Connector - Panel Mount | 1  | [Link](https://au.rs-online.com/web/p/industrial-circular-connectors/8068625/) |
 | Bulgin Connector - Plug  | 1  | [Link](https://au.rs-online.com/web/p/industrial-circular-connectors/8068565/) |
-| Micro USB to USB-C adaptor | 1  | [Link]() |
-| Micro USB Cable | 1  | [Link]() |
+| Micro USB to USB-C adaptor | 1  | [Link](https://core-electronics.com.au/usb-micro-b-to-usb-c-adapter-black.html) |
+| Micro USB Cable | 1  | [Link](https://core-electronics.com.au/micro-usb-cable.html) |
 | **Miscellaneous**  |  |  |
 | 12V Chrome LED | 2  | [Link](https://www.jaycar.com.au/12v-mini-chrome-bezel-red/p/SL2644) |
 | 3 - 16V Piezo Buzzer  | 1  | [Link](https://www.jaycar.com.au/mini-piezo-buzzer-3-16v/p/AB3462?pos=8&queryId=404751ef55b1d6b8adef8b031d16576f&sort=relevance) |
