@@ -66,14 +66,15 @@ A complete list of components is provided below. Further details on 3D models an
 | **Component**  | **Quantity** | **Link** |
 | ------------- | ------------- | ------------- |
 | **Enclosure**  |  |  |
-| Main Case  | 1 | [STL File]() |
-| Main Cover  | 1 | [STL File]() |
-| Raspberry Pi Mount  | 1 | [STL File]() |
-| Relay Control Board Mount  | 1 | [STL File]() |
-| Voltage Regulator Mount  | 1 | [STL File]() |
-| HQ Camera Mount  | 1 | [STL File]() |
-| *V2 Camera Mount*  | 1 | [STL File]() |
-| Rear Plug  | 1 | [STL File]() |
+| Main Case (single Bulgin connector)  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Tall%20enclosure%20base%20-%20single%20connector.stl) |
+| *Main Case (cable glands)*  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Tall%20enclosure%20base%20-%20cable%20glands.stl) |
+| Main Cover  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Tall%20enclosure%20cover.stl) |
+| Raspberry Pi Mount  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Raspberry%20Pi%20mount.stl) |
+| Relay Control Board Mount  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Relay%20control%20board%20mount.stl) |
+| Voltage Regulator Mount  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Voltage%20regulator%20mount.stl) |
+| HQ Camera Mount  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/HQ%20camera%20mount.stl) |
+| *V2 Camera Mount*  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/PiCamera%20v2%20mount.stl) |
+| Enclosure Plug  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Tall%20enclosure%20plug.stl) |
 | **Computing**  |  |  |
 | Raspberry Pi 4 8GB  | 1  | [Link](https://core-electronics.com.au/raspberry-pi-4-model-b-8gb.html) |
 | 64GB SD Card  | 1  | [Link](https://core-electronics.com.au/extreme-sd-microsd-memory-card-64gb-class-10-adapter-included.html) |
@@ -528,7 +529,7 @@ Description |  Image (click for link)
 :-------------------------:|:-------------------------:
 OWL base, onto which all components are mounted. The unit can be fitted using the M6 bolt holes on the rear panel. |  [![OWL Base - single outlet](https://media.github.sydney.edu.au/user/3859/files/bd7bde80-cb86-11eb-94a6-81a54480be8f)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Tall%20enclosure%20base%20-%20single%20connector.stl)
 OPTIONAL: OWL base with cable glands instead of single Bulgin connector. |  [![OWL Base - cable glands](https://media.github.sydney.edu.au/user/3859/files/049c9480-d4e2-11eb-955d-f3961a7bb8a9)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Tall%20enclosure%20base%20-%20cable%20glands.stl)
-OWL cover, slides over the base and is fitted with 4 x M3 bolts/nuts. Provides basic splash protection. |  [![OWL Cover](https://media.github.sydney.edu.au/user/3859/files/d6848f80-cb86-11eb-956c-a7c0b5bb4c13)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Tall%20enclosure%20cover.stl)
+OWL cover, slides over the base and is fitted with 4 x M3 bolts/nuts. Provides basic splash protection. |  [![OWL Cover](https://user-images.githubusercontent.com/51358498/132754464-8bfe62aa-4487-42ea-a507-71e0b4a4d1a2.png)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Tall%20enclosure%20cover.stl)
 OWL base port cover, covers the cable port on the rear panel. |  [![OWL base port cover](https://media.github.sydney.edu.au/user/3859/files/12b7f000-cb87-11eb-980b-564e7b4324f6)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Tall%20enclosure%20plug.stl)
 Raspberry Pi mount, fixes to the Raspberry Pi for easy attachment to OWL base. |  [![Raspberry Pi mount](https://media.github.sydney.edu.au/user/3859/files/5d396c80-cb87-11eb-948c-d60efe433ac8)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Raspberry%20Pi%20mount.stl)
 Raspberry Pi HQ Camera mount, fixes to the HQ Camera for simple attachment to the base with 2 x M3 bolts/nuts. |  [![HQ camera mount](https://user-images.githubusercontent.com/40649348/131425736-23c18a82-d4c2-4497-bbf3-eec09dbaf362.jpg)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/HQ%20camera%20mount.stl)
