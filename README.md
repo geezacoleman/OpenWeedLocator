@@ -97,9 +97,11 @@ A complete list of components is provided below. Further details on 3D models an
 | Brass Standoffs - M2/3/4  | Kit  | [Link](https://www.amazon.com/Hilitchi-360pcs-Female-Standoff-Assortment/dp/B013ZWM1F6/ref=sr_1_5?dchild=1&keywords=standoff+kit&qid=1623697572&sr=8-5) |
 | M3 Bolts/Nuts  | 4 each or Kit | [Link](https://www.amazon.com/DYWISHKEY-Pieces-Stainless-Socket-Assortment/dp/B07VNDFYNQ/ref=sr_1_4?crid=2X7QROKBF9F4D&dchild=1&keywords=m3+hex+bolt&qid=1623697718&sprefix=M3+hex%2Caps%2C193&sr=8-4) |
 | Wire - 20AWG (red/black/green/blue/yellow/white) | 1 roll each  | [Link](https://www.amazon.com/Electronics-different-Insulated-Temperature-Resistance/dp/B07G2GLKMP/ref=sr_1_1_sspa?dchild=1&keywords=20+awg+wire&qid=1623697639&sr=8-1-spons&psc=1&spLa=ZW5jcnlwdGVkUXVhbGlmaWVyPUEyMUNVM1BBQUNKSFNBJmVuY3J5cHRlZElkPUEwNjQ4MTQ5M0dRTE9ZR0MzUFE5VyZlbmNyeXB0ZWRBZElkPUExMDMwNTIwODM5OVVBOTFNRjdSJndpZGdldE5hbWU9c3BfYXRmJmFjdGlvbj1jbGlja1JlZGlyZWN0JmRvTm90TG9nQ2xpY2s9dHJ1ZQ==) |
+| *Optional*  |  |  |
+| Real-time clock module | 1  | [Link](https://core-electronics.com.au/adafruit-pirtc-pcf8523-real-time-clock-for-raspberry-pi.html) |
 
 ## Hardware Assembly
-All components listed above are relatively "plug and play" with minimal soldering or complex electronics required. Follow these instructions carefully and triple check your connections before powering anything on to avoid losing the magic smoke and potentially a few hundred dollars. Never make changes to the wiring on the detection unit while it is connected to 12V and always remain within the safe operating voltages of any component.
+All components listed above are relatively "plug and play" with minimal soldering or complex electronics required. Follow these instructions carefully and triple check your connections before powering anything on to avoid losing the [magic smoke](https://en.wikipedia.org/wiki/Magic_smoke) and potentially a few hundred dollars. Never make changes to the wiring on the detection unit while it is connected to 12V and always remain within the safe operating voltages of any component.
 
 Before starting, have a look at the complete wiring diagram below to see how everything fits together. The LEDs, fuse and Bulgin connector are all mounted on the rear of the OWL unit, rather than where they are located in the diagram. If you prefer not to use or can't access a Bulgin connector, there is a separate 3D model design that uses cable glands instead.
 
