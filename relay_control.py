@@ -2,6 +2,7 @@ from logger import Logger
 from threading import Thread, Condition
 import collections
 import time
+import os
 
 # check if platform being used is laptop without GPIO functionality
 from sys import platform
@@ -91,8 +92,9 @@ class Controller:
         self.nozzleQueueDict = {}
         self.nozzleconditionDict = {}
 
-        # start the logger and log file
-        self.logger = Logger(name="weed_log.txt", saveDir="logs")
+        # start the logger and log file using absolute path of python file
+        self.saveDir = os.path.join(os.path.dirname(__file__), 'logs')
+        self.logger = Logger(name="weed_log.txt", saveDir=self.saveDir)
 
         # create a job queue and Condition() for each nozzle
         print("[INFO] Setting up nozzles...")

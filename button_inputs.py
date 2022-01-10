@@ -2,7 +2,7 @@ from sys import platform
 if platform == "win32":
     testing = True
 else:
-    print(platform)
+    # print(platform)
     from gpiozero import Button, LED
     testing = False
 

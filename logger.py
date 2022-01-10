@@ -7,14 +7,18 @@ import os
 class Logger:
     def __init__(self, name, saveDir):
         self.name = strftime("%Y%m%d-%H%M%S_") + name
-        self.saveDir = os.path.join(saveDir, self.name)
+        self.saveDir = saveDir
+        if not os.path.exists(self.saveDir):
+            os.makedirs(self.saveDir)
+
+        self.savePath = os.path.join(self.saveDir, self.name)
         self.logList = []
 
     def log_line(self, line, verbose=False):
         self.line = str(datetime.now(timezone.utc)) + " " + line + "\n"
         if verbose:
             print(line)
-        with open(self.saveDir, 'a+') as file:
+        with open(self.savePath, 'a+') as file:
             file.write(self.line)
             self.logList.append(self.line)
 
