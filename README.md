@@ -59,7 +59,11 @@ As more OWLs are built and fallow weed control systems developed, we would love 
 Please review the [contribution page](CONTRIBUTING.md) for all the details on how to contribute and follow community guidelines.
 
 # Hardware Requirements
-A complete list of components is provided below. Further details on 3D models and hardware assembly are provided in subsequent sections. The quantities of each item below are for one OWL detection unit. 
+A complete list of components is provided below. Further details on 3D models and hardware assembly are provided in subsequent sections. The quantities of each item below are for one OWL detection unit.
+
+<details>
+<summary>List of hardware requirements</summary>
+<br>
 
 *Please note links are provided to an example online retailer of each component for convenience only. There are certainly many other retailers that may be better suited and priced to your purposes and we encourage you to find local suppliers. Other types of connector, layout and design are also possible, which may change the parts required.*
 
@@ -99,10 +103,14 @@ A complete list of components is provided below. Further details on 3D models an
 | Wire - 20AWG (red/black/green/blue/yellow/white) | 1 roll each  | [Link](https://www.amazon.com/Electronics-different-Insulated-Temperature-Resistance/dp/B07G2GLKMP/ref=sr_1_1_sspa?dchild=1&keywords=20+awg+wire&qid=1623697639&sr=8-1-spons&psc=1&spLa=ZW5jcnlwdGVkUXVhbGlmaWVyPUEyMUNVM1BBQUNKSFNBJmVuY3J5cHRlZElkPUEwNjQ4MTQ5M0dRTE9ZR0MzUFE5VyZlbmNyeXB0ZWRBZElkPUExMDMwNTIwODM5OVVBOTFNRjdSJndpZGdldE5hbWU9c3BfYXRmJmFjdGlvbj1jbGlja1JlZGlyZWN0JmRvTm90TG9nQ2xpY2s9dHJ1ZQ==) |
 | *Optional*  |  |  |
 | Real-time clock module | 1  | [Link](https://core-electronics.com.au/adafruit-pirtc-pcf8523-real-time-clock-for-raspberry-pi.html) |
+</details>
 
 ## Hardware Assembly
 All components listed above are relatively "plug and play" with minimal soldering or complex electronics required. Follow these instructions carefully and triple check your connections before powering anything on to avoid losing the [magic smoke](https://en.wikipedia.org/wiki/Magic_smoke) and potentially a few hundred dollars. Never make changes to the wiring on the detection unit while it is connected to 12V and always remain within the safe operating voltages of any component.
 
+<details>
+<summary>Complete guide to hardware assembly</summary>
+<br>
 Before starting, have a look at the complete wiring diagram below to see how everything fits together. The LEDs, fuse and Bulgin connector are all mounted on the rear of the OWL unit, rather than where they are located in the diagram. If you prefer not to use or can't access a Bulgin connector, there is a separate 3D model design that uses cable glands instead.
 
 ### Required tools
@@ -195,6 +203,11 @@ Raspberry Pi mount | Raspberry Pi in OWL base
 ### Step 7 - connecting GPIO pins
 Connect the Raspberry Pi GPIO to the relay control board header pins, using the table below and the wiring diagram above as a guide:
 
+The GPIO pins on the Raspberry Pi are not clearly labelled, so use this guide to help. Be careful when connecting these pins as incorrect wiring can shortcircuit/damage your Pi.
+![image](https://user-images.githubusercontent.com/51358498/152514046-37d5bcf5-348b-4e39-8810-c877acfed852.png)
+
+
+
 RPi GPIO pin | Relay header pin
 :-------------: | :-------------: 
 13 | IN1
@@ -252,7 +265,8 @@ Once you have completed the setup, you now have the opportunity to wire up your 
 Bulgin plug | Ground wiring harness
 :-------------: | :-------------:
 ![Bulginplug](https://media.github.sydney.edu.au/user/5402/files/7f753380-d03a-11eb-8d9b-658db73d3408) | ![Groundharness](https://media.github.sydney.edu.au/user/5402/files/7e440680-d03a-11eb-9af1-67132f4cc36f)
-
+</details>
+  
 # Software
 The project will eventually support the use of the two major embedded computing devices, the Raspberry Pi (models 3B+ and 4) and the Jetson Nano/Jetson Xavier NX for possible green-on-green detection with deep learning algorithms. At present, just the details on setting up the Raspberry Pi 3B+/4 are provided below. There are two options for installation. For the first, all you'll need to do is download the disk image file (vX.X.X-owl.img) and flash it to an SD card. The second method is more in depth, but takes you through the entire process from beginning to end. If you're looking to learn about how everything works, take some time to work through this process.
 
@@ -261,6 +275,10 @@ For this method you'll need access to:
 * Desktop/laptop computer
 * Micro SD card reader
 * Internet with large data capacity and high speed (WARNING: the image file is large and downloading will take time and use up a substantial quantity of your data allowance if you have are on a limited plan)
+
+<details>
+<summary><b>Quick method for software installation</b></summary>
+<br>
 
 ### Step 1 - download the disk image file
 Download the entire disk image file (v1.0.0-owl.img) here: [OWL disk image](https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0)
@@ -311,15 +329,20 @@ enable_uart=1
 Press `ctrl + x` to exit, then type `y` to save and then `enter`.
 
 You're now ready to run!
-
+</details>  
+  
 ## Detailed Method
-This setup approach may take a little longer (about 1 hour total) than the quick method, but you'll be much better trained in the ways of OWL and more prepared for any problem solving, upgrades or changes in the future. In the process you'll learn about Python environments, install Python packages and set it all up to run on startup. To get this working you'll need access to:
+This setup approach may take a little longer (about 1 hour total) than the quick method, but you'll be much better trained in the ways of OWL and more prepared for any problem solving, upgrades or changes in the future. You'll also download and use the latest software that hasn't been saved in the .img file yet. In the process you'll learn about Python environments, install Python packages and set it all up to run on startup. To get this working you'll need access to:
 * Raspberry Pi
 * Empty SD Card (SanDisk 32GB SDXC ideally)
 * Your own computer with SD card reader
 * Power supply (if not using the OWL unit)
 * Screen and keyboard
 * WiFi/Ethernet cable
+
+<details>
+<summary><b>Detailed OWL installation procedure</b></summary>
+<br>
 
 ### Step 1 - Raspberry Pi setup
 Before powering up the Raspberry Pi, you'll need to install the Raspian operating system (just like Windows/MacOSX for laptops) on the new SD card. This is done using the same process as the quick method used to flash the premade owl.img file, except you'll be doing it with a completely new and untouched version of Raspbian. To get the Raspberry Pi to the stage at which we can start installing OWL software, follow [these instructions](https://www.pyimagesearch.com/2019/09/16/install-opencv-4-on-raspberry-pi-4-and-raspbian-buster/) from Adrian Rosebrock at PyImageSearch. They are very well written, detailed and if you're interested in computer vision, the rest of the PyImageSearch blog posts are very useful. 
@@ -446,12 +469,20 @@ The moment of truth. Shut the Raspberry Pi down and unplug the power. This is wh
 If you hear a beep, grab something green and move it under the camera. If the relays start clicking and lights come on, congratulations, you've successfully set the OWL up! If not, check the troubleshooting chart below and see if you can get it fixed.
 
 **NOTE** The unit does not perform well under office/artificial lighting. The thresholds have been set for outdoor conditions.
+</details>
 
-### OPTIONAL STEP - installing RTC and setting the time
+<details>
+<summary><b>Optional Step - installing RTC and setting the time</b></summary>
+<br>
 The optional real time clock module can be set up by following the [detailed instructions](https://learn.adafruit.com/adding-a-real-time-clock-to-raspberry-pi/set-up-and-test-i2c) provided by Adafruit. This is a quick process that should take less than 10 minutes. Note that an internet connection is required to set the time initially, however after this the time will be held on the clock module.
-
+</details>
+  
 ## Changing detection settings
+<details>
+<summary>Instructions to change detection settings</summary>
+<br>
 If you're interested in changing settings on the detector, such as selecting the weed detection algorithm, modifying sensitivity settings, viewing results and a whole raft of other options, connect a screen, keyboard and mouse and boot up the OWL. Navigate to the owl directory and open up `greenonbrown.py` in an editor. You'll need to right click, select open with and then choose an  integrated development environment (IDE). Once it's open, scroll down to the very bottom and you should come across:
+
 ```
 if __name__ == "__main__":
     owl = Owl(video=False,
@@ -476,6 +507,7 @@ if __name__ == "__main__":
                   camera_name='hsv',
                   minArea=10)
 ```
+
 Here's a summary table of what each parameter does. If you change `headless` to `False`, you'll be able to see a real time feed of what the algorithm is doing and where the detections are occurring. Just make sure to switch it back to `headless=True` if you decide to run it without the screen connected. Note that the owl program will not run on startup if `headless=False`.
 
 **Parameter**  | **Options** | **Description** 
@@ -503,8 +535,12 @@ Here's a summary table of what each parameter does. If you change `headless` to 
 `selectorEnabled`|`True` or `False`| Enables algorithm selection based on a rotary switch. Only enable is switch is connected.|
 `cameraName` | Any string | Changes the save name if recording videos of the camera. Ignore - only used if recording data.|
 `minArea`| Any integer  | Changes the minimum size of the detection. Leave low for more sensitivity of small weeds and increase to reduce false positives.|
-
+ </details>
+  
 # Image Processing
+<details>
+<summary>Image processing details and in-field results</summary>
+<br>
 So how does OWL actually detect the weeds and trigger the relay control board? It all starts by taking in the colour image from the camera using OpenCV and splitting it into its component channels: Red (R), Green (G) and Blue (B) (RGB) or loading and converting into the hue, saturation and value (HSV) colourspace. Following that, computer vision algorithms such as Excess Green `ExG = 2 * G - R - B` or thresholding type approaches on the HSV colourspace can be used to differentiate green locations from the background. 
 
 ![image](https://media.github.sydney.edu.au/user/3859/files/ced62b00-cea5-11eb-93af-477cbf582176)
@@ -521,8 +557,12 @@ The performance of each algorithm on 7 different day/night fields is outlined be
 The image below gives a better indication of the types of weeds that were detected/missed by the ExHSV algorithm. Large, green weeds were consistently found, but small discoloured or grasses with thin leaves that blurred into the background were missed. Faster shutter speed would help improve this performance.
 
 ![OWL - detections](https://media.github.sydney.edu.au/user/3859/files/f0a46300-d4e0-11eb-93ae-9f894587f0a6)
-
+</details>
+  
 # 3D Printing
+<details>
+<summary>3D printing instructions and files</summary>
+<br>
 There are seven total items that need printing for the complete OWL unit. All items with links to the STL files are listed below. There are two options for OWL base:
 1. Single connector (Bulgin) panel mount
    - Pros: of this method are easy/quick attach/detach from whatever you have connected.
@@ -546,8 +586,13 @@ Voltage regulator mount, fixes to the voltage regulator and onto the relay board
 All .stl files for the 3D printed components of this build are available in the 3D Models directory. Ideally supports should be used for the base, and were tested at 0.2mm layer heights with 15% infill on a Prusa MK3S.
 
 We also provide a link to the [3D models on Tinkercad](https://www.tinkercad.com/things/3An6a3MtL9C), an online and free 3D modelling software package, allowing for further customisation to cater for individual user needs. 
-
+</details>
+  
 # Updating OWL
+<details>
+<summary>Updating OWL software</summary>
+<br>
+
 We and others will be continually contributing to and improving OWL as we become aware of issues or opportunities to increase detection performance. Once you have a functioning setup the process to update is simple. First, you'll need to connect a screen, keyboard and mouse to the OWL unit and boot it up. Navigate to the existing owl directory in `/home/owl/` and either delete or rename that folder. Remember if you've made any of your own changes to the parameters/code, write them down. Then open up a Terminal window (Ctrl + T) and follow these steps:
 
 ```
@@ -565,27 +610,60 @@ All versions of OWL can be found here. Only major changes will be recorded as se
 Version | File
 :-------------------------:|:-------------------------:
 v1.0.0-owl.img | https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0
-
+</details>
+  
 # Troubleshooting
-Here's a table of some of the common symptoms and possible explanations for errors we've come across. This is by no means exhaustive, but hopefully helps in diagnosing any issues you might have.
+<details>
+<summary>Troubleshooting OWL issues</summary>
+<br>
+
+
+Here's a table of some of the common symptoms and possible explanations for errors we've come across. This is by no means exhaustive, but hopefully helps in diagnosing any issues you might have. If you come across any others please contact us so we can improve the software, hardware and guide.
 
 Symptom | Explanation | Possible solution
 :-------------------------:|:-------------------------:|:-------------------------:
 Raspberry Pi won't start (no green/red lights) | No power getting to the computer | Check the power source, and all downstream components. Such as Bulgin panel/plug connections fuse connections and fuse, connections to Wago 2-way block, voltage regulator connections, cable into the Raspberry Pi.
 Raspberry Pi starts (green light flashing) but no beep | OWL software has not started | This is likely a configuration/camera connection error with many possible causes. To get more information, boot the Raspberry Pi with a screen connected, open up a Terminal window (Ctrl + T) and type `~/owl/./greenonbrown.py`. This will run the program. Check any errors that emerge.
 Beep heard, but no relays activating when tested with green | Relays are not receiving (1) 12V power, (2) a signal from the Pi, (3) the Pi is not sending a signal | Check all your connections with a multimeter if necessary for the presence of 12V. Make sure everything is connected as per the wiring diagram. If you're confident there are no connection issues, open up a Terminal window (Ctrl + T) and type `~/owl/./greenonbrown.py`. This will run the program. Check any errors that emerge.
+</details>
 
 # Citing OWL
-If you have used OWL in your research please consider citing this repository as below:
+<details>
+<summary>Citing OWL</summary>
+<br>
 
-Guy Coleman, William Salter, Michael Walsh, 2021. geezacoleman/OpenWeedLocator: OpenWeedLocator First Release. https://doi.org/10.5281/zenodo.5236856
+OpenWeedLocator has been published in [Scientific Reports](https://www.nature.com/articles/s41598-021-03858-9). Please consider citing the published article using the details below.
+```
+@article{Coleman2022,
+author = {Coleman, Guy and Salter, William and Walsh, Michael},
+doi = {10.1038/s41598-021-03858-9},
+issn = {2045-2322},
+journal = {Scientific Reports},
+number = {1},
+pages = {170},
+title = {{OpenWeedLocator (OWL): an open-source, low-cost device for fallow weed detection}},
+url = {https://doi.org/10.1038/s41598-021-03858-9},
+volume = {12},
+year = {2022}
+}
 
-[![DOI](https://zenodo.org/badge/399194159.svg)](https://zenodo.org/badge/latestdoi/399194159)
+```
+</details>
 
 # Acknowledgements
-This project has been developed by Guy Coleman and William Salter at the University of Sydney, Precision Weed Control Lab. It was supported and funded by the Grains Research and Development Corporation (GRDC) and Landcare Australia as part of the University of Sydney's Digifarm project in Narrabri, NSW, Australia.
+<details>
+<summary>Acknowledgements</summary>
+<br>
+
+This project has been developed by Guy Coleman and William Salter at the University of Sydney, Precision Weed Control Lab. It was supported and funded by the Grains Research and Development Corporation (GRDC) and Landcare Australia as part of the University of Sydney's Digifarm project in Narrabri, NSW, Australia. We would like to thank all the farmers that assisted in data collection, validation and feedback on the initial design.
+
+</details>
 
 # Disclaimer and License
+<details>
+<summary>Disclaimer and License</summary>
+<br>
+
 While every effort has been made in the development of this guide to cover critical details, it is not an exhaustive nor perfectly complete set of instructions. It is important that people using this guide take all due care in assembly to avoid damage, loss of components and personal injury, and are supervised by someone experienced if necessary. Assembly and use of OWL is entirely at your own risk and the license expressly states there is no warranty.
 
 ```
@@ -611,12 +689,17 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
-
+</details>
+  
 # References
-## Journal Papers
+<details>
+<summary>References</summary>
+<br>
+  
+**Journal Papers**
 Woebbecke, D. M., Meyer, G. E., Von Bargen, K., Mortensen, D. A., Bargen, K. Von, and Mortensen, D. A. (1995). Color Indices for Weed Identification Under Various Soil, Residue, and Lighting Conditions. Trans. ASAE 38, 259–269. doi:https://doi.org/10.13031/2013.27838.
 
-## Blog Posts
+**Blog Posts**
 [How to run a Raspberry Pi script at startup](https://www.makeuseof.com/how-to-run-a-raspberry-pi-program-script-at-startup/)
 
 [How to Run a Script at Boot on Raspberry Pi (with cron)](https://www.tomshardware.com/how-to/run-script-at-boot-raspberry-pi)
@@ -624,3 +707,5 @@ Woebbecke, D. M., Meyer, G. E., Von Bargen, K., Mortensen, D. A., Bargen, K. Von
 [Install OpenCV 4 on Raspberry Pi 4 and Raspbian Buster](https://www.pyimagesearch.com/2019/09/16/install-opencv-4-on-raspberry-pi-4-and-raspbian-buster/)
 
 [How to solder](https://www.makerspaces.com/how-to-solder/)
+  
+</details>
