@@ -50,11 +50,13 @@ Pump/tank | Northstar 12V 60L ATV Sprayer | 8.3 LPM 12V pump, 60L capacity, tray
 A second system, identical to the first, was developed for the University of Sydney's Digifarm robot, the Agerris Digital Farm Hand. The system is in frequent use for the site-specific control of weeds in trial areas. It is powered by the 24V system on the robot, using a 24 - 12V DC/DC converter.
 
 <p align="center">
-<img src="https://media.github.sydney.edu.au/user/3859/files/3cfd1600-e483-11eb-8adc-243534daac81" width="600">
+<img src="https://media.github.sydney.edu.au/user/3859/files/3cfd1600-e483-11eb-8adc-243534daac81" width="500">
 </p>
 
 ## Community development and contribution
 As more OWLs are built and fallow weed control systems developed, we would love to share the end results here. Please get in contact and we can upload images of the finished systems on this page.
+
+OWL now has a [Discussion](https://github.com/geezacoleman/OpenWeedLocator/discussions) page too. Use this for any ideas, suggestions, comments, completed units or other points you'd like to raise. If there's a bug or improvement, please raise an issue.
 
 Please review the [contribution page](CONTRIBUTING.md) for all the details on how to contribute and follow community guidelines.
 
