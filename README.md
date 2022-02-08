@@ -1,5 +1,5 @@
 <p align="center">
-<img src="https://media.github.sydney.edu.au/user/3859/files/ec0ebd80-cc49-11eb-9d5a-77b93a48e97a" width="400">
+<img src="https://user-images.githubusercontent.com/51358498/152991504-005a1daa-2900-4f48-8bec-d163d6336ed2.png" width="400">
 </p>
 
 Welcome to the OpenWeedLocator (OWL) project, an opensource hardware and software green-on-brown weed detector that uses entirely off-the-shelf componentry, very simple green-detection algorithms and entirely 3D printable parts. OWL integrates weed detection on a Raspberry Pi with a relay control board in a custom designed case so you can attach any 12V solenoid, relay, lightbulb or device for low-cost, simple and opensource site-specific weed control. Projects to date have seen OWL mounted on robots and vehicles for spot spraying! 
@@ -10,7 +10,7 @@ Repository DOI: [![DOI](https://zenodo.org/badge/399194159.svg)](https://zenodo.
 
 Internal electronics       |  Fitted module - vehicle | Fitted module - robot 
 :-------------------------:|:-------------------------: |:-------------------------:
-![Internal view](https://media.github.sydney.edu.au/user/3859/files/caf58200-cb0e-11eb-8b36-e5567c2a28e1)  |  ![Fitted module - spot spraying vehicle](https://user-images.githubusercontent.com/51358498/130522810-bb19e6ca-5019-4de4-83cc-858eca358ef8.jpg) | ![Fitted module - robot](https://media.github.sydney.edu.au/user/3859/files/02fdc480-cb11-11eb-9778-f3e156ac7e25)
+![Internal view](https://user-images.githubusercontent.com/51358498/152991433-e3cfa53a-bb8d-4754-81b2-17b9cb9cb1e5.png)  |  ![Fitted module - spot spraying vehicle](https://user-images.githubusercontent.com/51358498/130522810-bb19e6ca-5019-4de4-83cc-858eca358ef8.jpg) | ![Fitted module - robot](https://user-images.githubusercontent.com/51358498/152991300-32003505-6ed2-49ba-9d00-8e3db4cb5db4.png)
 
 # Overview
 * [OWL Use Cases](#owl-use-cases)
@@ -34,7 +34,7 @@ Internal electronics       |  Fitted module - vehicle | Fitted module - robot
 The first, and most clear use case for the OWL is for the site-specific application of herbicide in fallow. As part of the development and testing of the unit, the OWL team designed and assembled a 2 m spot spraying boom, using two OWLs to control four 12 V solenoids each. The boom was mounted on the back of a ute/utility vehicle with the spray tank located in the tray and powered by a 12V car battery. Indicator lights for each nozzle were used to highlight more clearly when each solenoid had been activated for demonstration and testing purposes.
 
 <p align="center">
-<img src="https://media.github.sydney.edu.au/user/3859/files/71bb9e00-e480-11eb-9392-81826a88c680" width="600">
+<img src="https://user-images.githubusercontent.com/51358498/152991630-fe343f37-5a45-43b0-900c-bb3cad4f1b80.JPG" width="600">
 </p>
 
 Parameter | Details | Notes 
@@ -50,7 +50,7 @@ Pump/tank | Northstar 12V 60L ATV Sprayer | 8.3 LPM 12V pump, 60L capacity, tray
 A second system, identical to the first, was developed for the University of Sydney's Digifarm robot, the Agerris Digital Farm Hand. The system is in frequent use for the site-specific control of weeds in trial areas. It is powered by the 24V system on the robot, using a 24 - 12V DC/DC converter.
 
 <p align="center">
-<img src="https://media.github.sydney.edu.au/user/3859/files/3cfd1600-e483-11eb-8adc-243534daac81" width="500">
+<img src="https://user-images.githubusercontent.com/51358498/152990627-0f89bf92-87bc-4808-a748-33f0742068e4.jpg" width="500">
 </p>
 
 ## Community development and contribution
@@ -545,20 +545,21 @@ Here's a summary table of what each parameter does. If you change `headless` to 
 <br>
 So how does OWL actually detect the weeds and trigger the relay control board? It all starts by taking in the colour image from the camera using OpenCV and splitting it into its component channels: Red (R), Green (G) and Blue (B) (RGB) or loading and converting into the hue, saturation and value (HSV) colourspace. Following that, computer vision algorithms such as Excess Green `ExG = 2 * G - R - B` or thresholding type approaches on the HSV colourspace can be used to differentiate green locations from the background. 
 
-![image](https://media.github.sydney.edu.au/user/3859/files/ced62b00-cea5-11eb-93af-477cbf582176)
+![image](https://user-images.githubusercontent.com/51358498/152990324-d315672c-fb4b-42d2-b4df-363f702c473d.png)
 
 Once the green locations are identified and a binary (purely black/white) mask generated, a contouring process is run to outline each detection. If the detection pixel area is greater than the minimum area set in `minArea=10`, the central pixel coordinates of that area are related to an activation zone. That zone is connected to a specific GPIO pin on the Raspberry Pi, itself connected to a specific channel on the relay (one of IN1-4). When the GPIO pin is driven high (activated) the relay switches and connects the solenoid for example to 12V and activates the solenoid. It's all summarised below.
 
-![OWL - workflow](https://media.github.sydney.edu.au/user/3859/files/8aa06480-cf51-11eb-9f79-c802248b0ff8)
+![OWL - workflow](https://user-images.githubusercontent.com/51358498/152990264-ddce7eb4-0e2e-4f98-ac77-bc2e535c5c54.png)
 
 ## Results
 The performance of each algorithm on 7 different day/night fields is outlined below. The boxplot shows the range, interquartile range and median performance for each algorithm. Whilst there were no significant differences (P > 0.05) for the recall (how many weeds were detected of all weeds present) and precision (how many detections were actually weeds), trends indicated the ExHSV algorithm was less sensitive (fewer false detections) and more precise, but did miss more smaller/discoloured weeds compared to ExG.
 
-![results boxplot](https://media.github.sydney.edu.au/user/3859/files/2bf26200-d4e0-11eb-970e-8478fae12c00)
+![results boxplot](https://user-images.githubusercontent.com/51358498/152990178-a53256c0-cfda-46d3-83c8-3ae018b4a40e.png)
 
 The image below gives a better indication of the types of weeds that were detected/missed by the ExHSV algorithm. Large, green weeds were consistently found, but small discoloured or grasses with thin leaves that blurred into the background were missed. Faster shutter speed would help improve this performance.
 
-![OWL - detections](https://media.github.sydney.edu.au/user/3859/files/f0a46300-d4e0-11eb-93ae-9f894587f0a6)
+![detection results resized](https://user-images.githubusercontent.com/51358498/152989906-bcc47ad5-360a-414c-8e25-d9b99875f361.png)
+
 </details>
   
 # 3D Printing
