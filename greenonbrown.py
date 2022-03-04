@@ -6,7 +6,6 @@ from imutils.video import VideoStream, FileVideoStream, FPS
 from relay_control import Controller
 from queue import Queue
 from time import strftime
-import picamera
 import subprocess
 import imutils
 import shutil
