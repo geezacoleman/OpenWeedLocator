@@ -72,15 +72,14 @@ A complete list of components is provided below. Further details on 3D models an
 | **Component**  | **Quantity** | **Link** |
 | ------------- | ------------- | ------------- |
 | **Enclosure**  |  |  |
-| Main Case (single Bulgin connector)  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Tall%20enclosure%20base%20-%20single%20connector.stl) |
-| *Main Case (cable glands)*  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Tall%20enclosure%20base%20-%20cable%20glands.stl) |
-| Main Cover  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Tall%20enclosure%20cover.stl) |
+| Main Case (single Bulgin connector)  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Enclosure%20-%20single%20connector.stl) |
+| *Main Case (cable glands)*  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Enclosure%20-%20cable%20gland.stl) |
+| Main Cover  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Enclosure%20-%20cover.stl) |
 | Raspberry Pi Mount  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Raspberry%20Pi%20mount.stl) |
 | Relay Control Board Mount  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Relay%20control%20board%20mount.stl) |
 | Voltage Regulator Mount  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Voltage%20regulator%20mount.stl) |
-| HQ Camera Mount  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/HQ%20camera%20mount.stl) |
-| *V2 Camera Mount*  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/PiCamera%20v2%20mount.stl) |
-| Enclosure Plug  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Tall%20enclosure%20plug.stl) |
+| Camera Mount  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Camera%20mount.stl) |
+| Enclosure Plug  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Enclosure%20plug.stl) |
 | **Computing**  |  |  |
 | Raspberry Pi 4 8GB  | 1  | [Link](https://core-electronics.com.au/raspberry-pi-4-model-b-8gb.html) |
 | 64GB SD Card  | 1  | [Link](https://core-electronics.com.au/extreme-sd-microsd-memory-card-64gb-class-10-adapter-included.html) |
@@ -120,7 +119,7 @@ Before starting, have a look at the complete wiring diagram below to see how eve
 * Wire cutters
 * Soldering iron/solder
 
-![OWL - wiring diagram](https://media.github.sydney.edu.au/user/3859/files/e004fc00-cb74-11eb-8938-cd571b3ab787)
+![wiring diagram-01](https://user-images.githubusercontent.com/40649348/156698009-a58ed01b-258f-462a-9524-ba3f8d7ec246.png)
 
 ### Step 1 - enclosure and mounts
 Assembling the components for an OWL unit requires the enclosure and mounts as a minimum. These can be 3D printed on your own printer or printed and delivered from one of the many online stores that offer a 3D printing service. Alternatively, you could create your own enclosure using a plastic electrical box and cutting holes in it, if that's easier. We'll be assuming you have printed out the enclosure and associated parts for the rest of the guide, but please share your finished designs however they turn out!
@@ -200,7 +199,7 @@ Attach the Raspberry Pi to the 3D printed mount using 2.5 mm standoffs. Install 
 
 Raspberry Pi mount | Raspberry Pi in OWL base
 :-------------: | :-------------: 
-![RPimount](https://media.github.sydney.edu.au/user/5402/files/263dcf00-cf6a-11eb-9781-1c2d79c9b96d) | ![RPiin base](https://media.github.sydney.edu.au/user/5402/files/c2b99e80-cf75-11eb-9420-b14853929b90)
+![RPimount](https://media.github.sydney.edu.au/user/5402/files/263dcf00-cf6a-11eb-9781-1c2d79c9b96d) | ![1T7A9540](https://user-images.githubusercontent.com/40649348/156697656-df60257b-773a-425c-9c56-33f6e48013b5.jpeg)
 
 ### Step 7 - connecting GPIO pins
 Connect the Raspberry Pi GPIO to the relay control board header pins, using the table below and the wiring diagram above as a guide:
@@ -222,18 +221,22 @@ Raspberry Pi GPIO pins | Relay control board header pins
 :-------------: | :-------------: 
 ![GPIOtorelay](https://media.github.sydney.edu.au/user/5402/files/6adb7000-d027-11eb-81b9-5fecfe0c2c4e) | ![relayheaderpins](https://media.github.sydney.edu.au/user/5402/files/2bf8ea80-d026-11eb-8c5c-685563db7691)
 
-![GPIOconnected](https://media.github.sydney.edu.au/user/5402/files/25ab3580-cf76-11eb-9edf-f19f833a7a00)
+![1T7A9541](https://user-images.githubusercontent.com/40649348/156697725-9a99ba10-b79c-4963-ab15-b07bb95c7d3a.jpeg)
 
-### Step 8 - mounting and connecting HQ camera
-Connect one end of the CSI ribbon cable to the camera. Attach the HQ camera to the 3D printed mount using 2.5 mm standoffs. Ensuring that the CSI cable port on the camera is directed towards the Raspberry Pi, mount the camera inside the OWL case using M3 bolts and nuts. Connect the other end of the CSI cable to the Raspberry Pi CSI camera port.
+### Step 8 - mounting and connecting camera
+Connect one end of the CSI ribbon cable to the camera. We provide a mounting plate that can be used with both the HQ or V2 cameras, however, we recommend the use of the HQ camera for improved image clarity. Attach the HQ camera to the 3D printed mount using 2.5 mm standoffs (or 2 mm standoffs if using the V2 camera). Ensuring that the CSI cable port on the camera is directed towards the Raspberry Pi, mount the camera inside the OWL case using four M3 standoffs (50 mm long for HQ camera; 20 mm long for V2 camera). Connect the other end of the CSI cable to the Raspberry Pi CSI camera port.
 
-**NOTE** the lens comes with a C-CS mount adapter which needs to be removed before fitting to the camera sensor base. The image won't focus unless the adapter is removed. 
+**NOTE** the HQ lens comes with a C-CS mount adapter which needs to be removed before fitting to the camera sensor base. The image won't focus unless the adapter is removed. 
 
-HQ camera mount | Raspberry Pi camera port | Camera mounted in case
+HQ camera and mount | HQ camera mounted in case
+:-------------: | :-------------:
+![1T7A9544](https://user-images.githubusercontent.com/40649348/156695569-ded4679b-f94f-433a-a81f-08a5c409e61c.jpeg) | ![1T7A9545](https://user-images.githubusercontent.com/40649348/156695635-9fd58bb7-303c-4aa8-b5c7-c16b818a51f0.jpeg)
+
+V2 camera and mount | V2 camera mounted in case | Raspberry Pi camera port
 :-------------: | :-------------: | :-------------:
-![Cameramount](https://media.github.sydney.edu.au/user/5402/files/5db87580-cf82-11eb-8ba3-6df5352908dd) | ![Cameracable](https://media.github.sydney.edu.au/user/5402/files/7ed2a200-d026-11eb-93cb-26a91d727094) | ![Camerainbase](https://media.github.sydney.edu.au/user/5402/files/65781a00-cf82-11eb-860b-1173f6e98037)
+![1T7A9558](https://user-images.githubusercontent.com/40649348/156695701-49598e62-fdba-4416-88d1-fbf158fe99ef.jpeg) | ![1T7A9559](https://user-images.githubusercontent.com/40649348/156695786-c34f84e3-26db-4198-80e3-96a5da4b52d3.jpeg) | ![Cameracable](https://media.github.sydney.edu.au/user/5402/files/7ed2a200-d026-11eb-93cb-26a91d727094)
 
-The lens will need to be focused, details below, once the software is correctly set up.
+The HQ lens will need to be focused, details below, once the software is correctly set up.
 
 ### Step 9 - adding buzzer and LEDs
 Mount the buzzer inside the OWL base using double sided mounting tape and connect the 5 V and ground wires to Raspberry Pi GPIO pins 7 and 9, respectively. 
@@ -242,27 +245,26 @@ For simplicity we have used two 12V LEDs (which are just normal LEDs with a curr
 
 Buzzer location | LEDs in OWL base | GPIO pins
 :-------------: | :-------------: | :-------------:
-![Buzzer](https://media.github.sydney.edu.au/user/5402/files/72950900-cf82-11eb-8afc-2a84a742d97c) | ![LEDs](https://media.github.sydney.edu.au/user/5402/files/79bc1700-cf82-11eb-80b2-646f2c74fcc9) | ![GPIOpins](https://media.github.sydney.edu.au/user/5402/files/e0474080-d027-11eb-93fd-8c7b7c783eea)
+![1T7A9546](https://user-images.githubusercontent.com/40649348/156696065-177d675e-a0c1-45f8-8e17-acf90ef13314.jpeg) | ![LEDs](https://media.github.sydney.edu.au/user/5402/files/79bc1700-cf82-11eb-80b2-646f2c74fcc9) | ![GPIOpins](https://media.github.sydney.edu.au/user/5402/files/e0474080-d027-11eb-93fd-8c7b7c783eea)
 
 ### OPTIONAL STEP - adding real time clock module
 Although optional, we recommend that you use a real time clock (RTC) module with the OWL system. This will enable the Raspberry Pi to hold the correct time when disconnected from power and the internet, and will be useful for debugging errors if they arise. The RTC uses a CR1220 button cell battery and sits on top of the Raspberry Pi using GPIO pins 1-6.
 
 PiRTC module | RTC installed on Raspberry Pi
 :-------------: | :-------------: 
-![RTC](https://media.github.sydney.edu.au/user/5402/files/a59bd300-d03c-11eb-847a-d0813f44fcb2) | ![RTConPi](https://media.github.sydney.edu.au/user/5402/files/a6cd0000-d03c-11eb-9742-595b12c3693e)
+![RTC](https://media.github.sydney.edu.au/user/5402/files/a59bd300-d03c-11eb-847a-d0813f44fcb2) | ![1T7A9550](https://user-images.githubusercontent.com/40649348/156696142-8dd8aaa7-756a-4ff2-a638-7ebfb68165e6.jpeg)
 
 ### Step 10 - connecting mounting hardware and OWL cover
 There are four 6.5 mm holes on the OWL base for mounting to a boom. Prior to installing the OWL cover, decide on a mounting solution suitable to your needs. In the photo below, we used 4 x M6 bolts. The cover of the OWL unit is secured with 4 x M3 nuts and bolts. Place M3 nuts into the slots in the OWL base. This can be fiddly and we suggest using tweezers, as shown below. Place the cover onto the base and secure using M3 bolts.
 
 Mounting hardware | Cover nuts | Completed OWL unit
 :-------------: | :-------------: | :-------------:
-![Mountinghardware](https://media.github.sydney.edu.au/user/5402/files/a8d28880-cf82-11eb-8bbe-da740b2f7aa4) | ![covernut](https://media.github.sydney.edu.au/user/5402/files/b12ac380-cf82-11eb-9b5e-ad9b8c1c334e) | ![Cover](https://media.github.sydney.edu.au/user/5402/files/bd168580-cf82-11eb-83a8-41df69e970a4)
+![1T7A9551](https://user-images.githubusercontent.com/40649348/156698150-f23571cd-867e-42c7-96ea-125304551d8a.jpeg) | ![1T7A9553](https://user-images.githubusercontent.com/40649348/156698184-464bbded-8e53-4ebc-b6aa-242d8c96ae6e.jpeg) | ![1T7A9554](https://user-images.githubusercontent.com/40649348/156698342-4b3ebba5-337e-469c-bd0e-c34985d57b83.jpeg)
 
 ### Step 11 - connecting 12V solenoids
 Once you have completed the setup, you now have the opportunity to wire up your own solenoids for spot spraying, targeted tillage, spot flaming or any other targeted weed control you can dream up. To do this, wire the GND wire of your device (it can be any wire if it's a solenoid) to the ground pin on the Bulgin plug (the same wire used for the GND from the 12V power source) and wire the other to one of the blue, green, orange or white wires on pins 1 - 4. A wiring diagram is provided below. The easiest way to wire them together to the same GND wire is to create a six-way harness, where one end is connected to the plug, one of the five other wires to the source power GND and the remaining four to the solenoids or whatever devices you are driving.
-
-![Solenoid wiring diagram](https://media.github.sydney.edu.au/user/3859/files/f55d5180-cc6c-11eb-805a-80616648355d)
-
+  
+![solenoid wiring-01](https://user-images.githubusercontent.com/40649348/156698481-3d4fec4e-567a-4a18-b72e-b26d35c8d1c7.png)
 
 Bulgin plug | Ground wiring harness
 :-------------: | :-------------:
@@ -358,7 +360,7 @@ $ mkvirtualenv owl -p python3
 **NOTE 2**:
 At **PyImageSearch Step 4** you do not need to compile OpenCV from scratch, the pip install method (**Step 4a**) will be a LOT faster and perfectly functional for this project. Make sure you're in the owl virtual environment for this step by looking for (owl) at the start of the line, if it's not there type: `workon owl`
 ```
-(owl) pi@owl :-$ pip install opencv-contrib-python==4.1.0.25
+(owl) pi@owl :-$ pip install opencv-contrib-python==4.5.5.62
 ```
 
 ### Step 2 - enable camera
