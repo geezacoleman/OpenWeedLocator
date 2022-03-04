@@ -6,3 +6,4 @@ gpiozero
 pandas
 glob2
 RPi.GPIO
+picamera
