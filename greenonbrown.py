@@ -6,6 +6,7 @@ from imutils.video import VideoStream, FileVideoStream, FPS
 from relay_control import Controller
 from queue import Queue
 from time import strftime
+import picamera
 import subprocess
 import imutils
 import shutil
@@ -120,13 +121,15 @@ def green_on_brown(image, exgMin=30, exgMax=250, hueMin=30, hueMax=90, brightnes
 class Owl:
     def __init__(self, video=False, videoFile=None, recording=False, nozzleNum=4, headless=True,
                  exgMin=30, exgMax=180, hueMin=30,hueMax=92, brightnessMin=5, brightnessMax=200,
-                 saturationMin=30, saturationMax=255, resolution=(832, 624), framerate=32):
+                 saturationMin=30, saturationMax=255, resolution=(832, 624), framerate=32,
+                 exposure_mode='sports'):
 
         # different detection parameters
         self.headless = headless
         self.recording = recording
         self.resolution = resolution
         self.framerate = framerate
+        self.exposure_mode = exposure_mode
 
         # threshold parameters for different algorithms
         self.exgMin = exgMin
@@ -160,7 +163,8 @@ class Owl:
         # if no video, start the camera with the provided parameters
         else:
             try:
-                self.cam = VideoStream(usePiCamera=True, resolution=self.resolution, framerate=self.framerate).start()
+                self.cam = VideoStream(usePiCamera=True, resolution=self.resolution, framerate=self.framerate, 
+                exposure_mode=self.exposure_mode).start()
             except ModuleNotFoundError:
                 self.cam = VideoStream(src=0).start()
             time.sleep(1.0)
@@ -403,7 +407,8 @@ if __name__ == "__main__":
               brightnessMin=60,
               brightnessMax=190,
               framerate=32,
-              resolution=(416, 320))
+              resolution=(416, 320),
+              exposure_mode='sports')
 
     # start the targeting!
     owl.hoot(sprayDur=0.15,
