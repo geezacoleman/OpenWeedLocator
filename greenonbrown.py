@@ -7,6 +7,7 @@ from relay_control import Controller
 from queue import Queue
 from time import strftime
 import subprocess
+import argparse
 import imutils
 import shutil
 import numpy as np
@@ -19,7 +20,7 @@ def nothing(x):
     pass
 
 def green_on_brown(image, exgMin=30, exgMax=250, hueMin=30, hueMax=90, brightnessMin=5, brightnessMax=200, saturationMin=30,
-                   saturationMax=255, minArea=1, headless=True, algorithm='exg'):
+                   saturationMax=255, minArea=1, show_display=False, algorithm='exg'):
     '''
     Uses a provided algorithm and contour detection to determine green objects in the image. Min and Max
     thresholds are provided.
@@ -33,7 +34,7 @@ def green_on_brown(image, exgMin=30, exgMax=250, hueMin=30, hueMax=90, brightnes
     :param saturationMin:
     :param saturationMax:
     :param minArea: minimum area for the detection - used to filter out small detections
-    :param headless: True: no windows display; False: watch what the algorithm does
+    :param show_display: True: show windows; False: operates in headless mode
     :param algorithm: the algorithm to use. Defaults to ExG if not correct
     :return: returns the contours, bounding boxes, centroids and the image on which the boxes have been drawn
     '''
@@ -69,7 +70,7 @@ def green_on_brown(image, exgMin=30, exgMax=250, hueMin=30, hueMax=90, brightnes
         output = exg(image)
         print('[WARNING] DEFAULTED TO EXG')
 
-    if not headless:
+    if show_display:
         cv2.imshow("Threshold", output)
 
     # run the thresholds provided
@@ -79,7 +80,7 @@ def green_on_brown(image, exgMin=30, exgMax=250, hueMin=30, hueMax=90, brightnes
         output = np.where(output > exgMin, output, 0)
         output = np.where(output > exgMax, 0, output)
         output = np.uint8(np.abs(output))
-        if not headless:
+        if show_display:
             cv2.imshow("post", output)
 
         thresholdOut = cv2.adaptiveThreshold(output, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 31, 2)
@@ -89,7 +90,7 @@ def green_on_brown(image, exgMin=30, exgMax=250, hueMin=30, hueMax=90, brightnes
     if threshedAlready:
         thresholdOut = cv2.morphologyEx(output, cv2.MORPH_CLOSE, kernel, iterations=5)
 
-    if not headless:
+    if show_display:
         cv2.imshow("Threshold", thresholdOut)
 
     # find all the contours on the binary images
@@ -118,13 +119,13 @@ def green_on_brown(image, exgMin=30, exgMax=250, hueMin=30, hueMax=90, brightnes
 
 # the
 class Owl:
-    def __init__(self, video=False, videoFile=None, recording=False, nozzleNum=4, headless=True,
+    def __init__(self, videoFile=None, show_display=False, recording=False, nozzleNum=4,
                  exgMin=30, exgMax=180, hueMin=30,hueMax=92, brightnessMin=5, brightnessMax=200,
                  saturationMin=30, saturationMax=255, resolution=(832, 624), framerate=32,
                  exposure_mode='sports'):
 
         # different detection parameters
-        self.headless = headless
+        self.show_display = show_display
         self.recording = recording
         self.resolution = resolution
         self.framerate = framerate
@@ -140,8 +141,8 @@ class Owl:
         self.brightnessMin = brightnessMin
         self.brightnessMax = brightnessMax
 
-        # setup the track bars if headless is False
-        if not self.headless:
+        # setup the track bars if show_display is True
+        if self.show_display:
             # create trackbars for the threshold calculation
             cv2.namedWindow("Params")
             cv2.createTrackbar("thresholdMin", "Params", self.exgMin, 255, nothing)
@@ -157,7 +158,7 @@ class Owl:
             self.saveRecording = False
 
         # check if test video or videostream from camera
-        if video:
+        if videoFile:
             self.cam = FileVideoStream(videoFile).start()
         # if no video, start the camera with the provided parameters
         else:
@@ -242,7 +243,7 @@ class Owl:
                     self.writer = cv2.VideoWriter(videoName, self.fourcc, 30, (frame.shape[1], frame.shape[0]), True)
 
                 # retrieve the trackbar positions for thresholds
-                if not self.headless:
+                if self.show_display:
                     self.exgMin = cv2.getTrackbarPos("thresholdMin", "Params")
                     self.exgMax = cv2.getTrackbarPos("thresholdMax", "Params")
 
@@ -259,7 +260,7 @@ class Owl:
                                                                     saturationMax=self.saturationMax,
                                                                     brightnessMin=self.brightnessMin,
                                                                     brightnessMax=self.brightnessMax,
-                                                                    headless=self.headless,
+                                                                    show_display=self.show_display,
                                                                     algorithm=algorithm, minArea=minArea)
 
                 ##### IMAGE SAMPLER #####
@@ -296,7 +297,7 @@ class Owl:
                 # update the framerate counter
                 fps.update()
 
-                if not self.headless:
+                if self.show_display:
                     cv2.imshow("Output", imutils.resize(imageOut, width=600))
 
                 if self.record and not self.saveRecording:
@@ -356,7 +357,7 @@ class Owl:
             self.writer.release()
             self.recorderButton.running = False
 
-        if not self.headless:
+        if self.show_display:
             cv2.destroyAllWindows()
 
         sys.exit()
@@ -393,10 +394,18 @@ def check_for_usb():
 
 # business end of things
 if __name__ == "__main__":
-    owl = Owl(video=False,
-              videoFile=r'',
-              headless=True,
-              recording=False,
+    # add in the possible command line arguments to improve useability
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--video-file', type=str, default=None, help='use video file instead')
+    ap.add_argument('--show-display', action='store_true', default=False, help='show display windows')
+    ap.add_argument('--recording', action='store_true', default=False, help='record video')
+    ap.add_argument('--algorithm', type=str, default='exhsv', choices=['exg', 'nexg', 'exgr', 'maxg', 'exhsv', 'hsv'])
+    ap.add_argument('--exposure-mode', type=str, default='sports', help='set exposure mode of camera')
+    args = ap.parse_args()
+
+    owl = Owl(videoFile=args.video_file,
+              show_display=args.show_display,
+              recording=args.recording,
               exgMin=25,
               exgMax=200,
               hueMin=39,
@@ -407,7 +416,7 @@ if __name__ == "__main__":
               brightnessMax=190,
               framerate=32,
               resolution=(416, 320),
-              exposure_mode='sports')
+              exposure_mode=args.exposure_mode)
 
     # start the targeting!
     owl.hoot(sprayDur=0.15,
@@ -415,7 +424,7 @@ if __name__ == "__main__":
              sample=False,
              sampleDim=1000,
              saveDir='/home/pi',
-             algorithm='exhsv',
+             algorithm=args.algorithm,
              selectorEnabled=False,
              camera_name='hsv',
              minArea=10)
