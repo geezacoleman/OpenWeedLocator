@@ -12,7 +12,7 @@ else:
     if '64' in platform.machine():
         testing = True
     else:
-        from gpiozero import Button, LED
+        from gpiozero import Buzzer, OutputDevice
         testing = False
 
 # two test classes to run the analysis on a desktop computer if a "win32" platform is detected
