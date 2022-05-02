@@ -569,13 +569,17 @@ The image below gives a better indication of the types of weeds that were detect
 <summary>3D printing instructions and files</summary>
 <br>
 There are seven total items that need printing for the complete OWL unit. All items with links to the STL files are listed below. There are two options for OWL base:
+
 1. Single connector (Bulgin) panel mount
-   - Pros: of this method are easy/quick attach/detach from whatever you have connected.
+   - Pros: of this method are easy/quick attach/detach from whatever you have connected, more water resistant.
    - Cons: more connections to make, more expensive
 2. Cable gland
-   - Pros: fewer connections to make, cheaper, faster to build
-   - Cons: more difficult to remove
+   - Pros: fewer connections to make, cheaper, faster to build.
+   - Cons: more difficult to remove, more water resistant.
 
+  
+We also provide a link to the [3D models on Tinkercad](https://www.tinkercad.com/things/fhfUCsPEn5q), an online and free 3D modelling software package, allowing for further customisation to cater for individual user needs. 
+  
 Description |  Image (click for link)
 :-------------------------:|:-------------------------:
 OWL base, onto which all components are mounted. The unit can be fitted using the M6 bolt holes on the rear panel. |  [![Screenshot 2022-03-04 175449](https://user-images.githubusercontent.com/40649348/156714626-132a7509-dfd0-4ec9-8166-81652105276d.png)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Enclosure%20-%20single%20connector.stl)
@@ -588,8 +592,13 @@ Relay board mount, fixes to the relay board for simple attachment to the base. |
 Voltage regulator mount, fixes to the voltage regulator and onto the relay board for simple attachment to the base. |  [![Voltage regulator mount](https://media.github.sydney.edu.au/user/5402/files/8147f280-d04c-11eb-89ec-4af125a8f232)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Voltage%20regulator%20mount.stl)
 
 All .stl files for the 3D printed components of this build are available in the 3D Models directory. Ideally supports should be used for the base, and were tested at 0.2mm layer heights with 15% infill on a Prusa MK3S.
+  
+**Update 02/05/2022**
+* improved camera mounts
+* space for 40mm lens cover
+* more compact design
+* version tracking
 
-We also provide a link to the [3D models on Tinkercad](https://www.tinkercad.com/things/3An6a3MtL9C), an online and free 3D modelling software package, allowing for further customisation to cater for individual user needs. 
 </details>
   
 # Updating OWL
