@@ -4,14 +4,16 @@ import collections
 import time
 import os
 
-# check if platform being used is laptop without GPIO functionality
-from sys import platform
-if platform == "win32":
+import platform
+# check if the system is being tested on a Windows or Linux x86 64 bit machine
+if platform.system() == "Windows":
     testing = True
 else:
-    #print(platform)
-    from gpiozero import Buzzer, OutputDevice
-    testing = False
+    if '64' in platform.machine():
+        testing = True
+    else:
+        from gpiozero import Button, LED
+        testing = False
 
 # two test classes to run the analysis on a desktop computer if a "win32" platform is detected
 class TestRelay:
