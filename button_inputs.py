@@ -1,12 +1,16 @@
-from sys import platform
-if platform == "win32":
+import time
+
+import platform
+# check if the system is being tested on a Windows or Linux x86 64 bit machine
+if platform.system() == "Windows":
     testing = True
 else:
-    # print(platform)
-    from gpiozero import Button, LED
-    testing = False
+    if '64' in platform.machine():
+        testing = True
+    else:
+        from gpiozero import Button, LED
+        testing = False
 
-import time
 
 class SensitivitySelector:
     def __init__(self, switchDict: dict):
