@@ -304,19 +304,40 @@ If this completes successfully, you're ready to move to the next step. If it fai
 ### Step 3 - power up
 Once the SD card is inserted into the slot of the Raspberry Pi, power everything up and wait for the beep. If you hear the beep, you're ready to go and start focusing the camera.
 
-### Step 4 - focusing the camera
-For this final step, you'll need to connect a computer screen, keyboard and mouse to the Raspberry Pi.
-
-The final step in the process is to make sure the camera and lens are correctly focused for the mounting height. To view the live camera feed, navigate to the Home > owl directory and open the greenonbrown.py file. Choose to 'open' the file (rather than 'execute' or 'execute in terminal') when a window pops up. Scroll down to the bottom of the code and on line 385, under `owl = Owl(....)` change `headless=True` to `headless=False`. Save and exit the file.
-
-Now reboot the Raspberry Pi. Once the Raspberry Pi has rebooted, you'll need to launch greenonbrown.py manually. To do this open up a Terminal window (Ctrl + Alt + T) and type the following command:
+### Step 4 - updating the disk image
+The disk image that you downloaded is likely to be a few versions behind the most recent. We only provide images of the most major updates. So to update the OWL software, just run the follow these steps.
+  
+1. Have the OWL powered on with screen, keyboard and mouse connected. You should see a desktop with the OWL logo.
+2. Press CTRL + ALT + T to open a Terminal window or click the black icon with blue line and >_ symbol.
+3. Once the Terminal window is open, enter these commands on each new line:
+ 
 ```
-(owl) pi@owl :-$ ~/owl/./greenonbrown.py
+(owl) pi@raspberrypi:~ $ cd ~
+(owl) pi@raspberrypi:~ $ mv owl owl-old      # this renames the old 'owl' folder to 'owl-old'
+(owl) pi@raspberrypi:~ $ git clone https://github.com/geezacoleman/OpenWeedLocator        # download the new software
+(owl) pi@raspberrypi:~ $ mv OpenWeedLocator owl      # rename the download to 'owl'
+(owl) pi@raspberrypi:~ $ cd ~/owl
+(owl) pi@raspberrypi:~/owl $ pip install -r requirements.txt
+(owl) pi@raspberrypi:~/owl $ chmod a+x greenonbrown.py
+(owl) pi@raspberrypi:~/owl $ chmod a+x owl_boot.sh
 ```
 
-This will bring up a video feed you can use to visualise the OWL detector and also use it to focus the camera. Once you're happy with the focus, press Esc to exit. Navigate back to the greenonbrown.py file. You'll now need to change `headless` back to `True`. Double click on greenonbrown.py, choose to 'open' the file (rather than 'execute' or 'execute in terminal') when a window pops up. Scroll down to the bottom of the code and on line 385, under `owl = Owl(....)` change `headless=False` back to `headless=True`. Save and exit the file. Shutdown the Raspberry Pi. Unplug the screen, keyboard and mouse and reboot.
+Once this is complete your software will be up to date and you can move on to focusing the camera.  
 
-### Step 5 - enabling UART for status LED
+### Step 5 - focusing the camera
+The final step in the process is to make sure the camera and lens are correctly focused for the mounting height. To view the live camera feed, we need to stop the process that is running in the background that would have started when you first turned on the OWL. To do this:
+```
+(owl) pi@raspberrypi:~ $ sudo kill 522
+```
+
+Now you'll need to launch `greenonbrown.py` manually with the video feed visible. To do this use the Terminal window and type the following commands:
+```
+(owl) pi@raspberrypi:~ $ ~/owl/./greenonbrown.py --show-display
+```
+
+This will bring up a video feed you can use to visualise the OWL detector and also use it to focus the camera. Once you're happy with the focus, press Esc to exit. 
+
+### OPTIONAL Step 6 - enabling UART for status LED
 This is just the cherry on top and non-essential to correct operation of the OWL but to make sure the status LED you connected earlier blinks correctly the GPIO UART needs to be enabled. 
 
 Open up a terminal console by pressing `Ctrl + T`. Type:
@@ -360,13 +381,13 @@ $ mkvirtualenv owl -p python3
 **NOTE 2**:
 At **PyImageSearch Step 4** you do not need to compile OpenCV from scratch, the pip install method (**Step 4a**) will be a LOT faster and perfectly functional for this project. Make sure you're in the owl virtual environment for this step by looking for (owl) at the start of the line, if it's not there type: `workon owl`
 ```
-(owl) pi@owl :-$ pip install opencv-contrib-python==4.5.5.62
+(owl) pi@raspberrypi:~ $ pip install opencv-contrib-python==4.5.5.62
 ```
 
 ### Step 2 - enable camera
 We now need to enable the connection to the Raspberry Pi camera. This can be enabled in raspi-config:
 ```
-(owl) pi@owl :-$ sudo raspi-config
+(owl) pi@raspberrypi:~ $ sudo raspi-config
 ```
 Select **3 Interface Options**, then select **P1 Camera**. Select **Yes** to enable the camera. You can now exit raspi-config and reboot.
 
@@ -378,11 +399,11 @@ Now you should have:
 
 The next step is to download the entire OpenWeedLocator repository into your *home* directory on the Raspberry Pi.
 ```
-(owl) pi@owl :-$ cd ~
-(owl) pi@owl :-$ git clone https://github.com/geezacoleman/OpenWeedLocator
-(owl) pi@owl :-$ mv /home/pi/OpenWeedLocator /home/pi/owl
+(owl) pi@raspberrypi:~ $ cd ~
+(owl) pi@raspberrypi:~ $ git clone https://github.com/geezacoleman/OpenWeedLocator
+(owl) pi@raspberrypi:~ $ mv OpenWeedLocator owl
 ```
-Double check it is there by typing `(owl) pi@owl :-$ ls` and reading through the results, alternatively open up the Home folder using a mousee. If that was sucessful, you can now move on to Step 4.
+Double check it is there by typing `(owl) (owl) pi@raspberrypi:~ $ ls` and reading through the results, alternatively open up the Home folder using a mousee. If that was sucessful, you can now move on to Step 4.
 
 ### Step 4 - installing the OWL Python dependencies
 Dependencies are Python packages on which the code relies to function correctly. With a range of versions and possible comptibility issues, this is the step where issues might come up. There aren't too many packages, but please make sure each and every module in the requirements.txt file has been installed correctly. These include:
@@ -396,8 +417,8 @@ Dependencies are Python packages on which the code relies to function correctly.
 
 To install all the requirements.txt, simply run:
 ```
-(owl) pi@owl :-$ cd ~/owl
-(owl) pi@owl :-$ pip install -r requirements.txt
+(owl) pi@raspberrypi:~ $ cd ~/owl
+(owl) pi@raspberrypi:~/owl $ pip install -r requirements.txt
 ```
 It's very important that you're in the owl virtual environment for this, so double check that **(owl)** appears on the far left of the command line when you type the command in. Check these have been installed correctly by importing them in Python in the command prompt and check the package version. To do this:
 ```
@@ -424,7 +445,7 @@ If any errors appear, you'll need to go back and check that the modules above ha
 ### Step 5 - starting OWL on boot
 Now that these dependencies have been installed into the owl virtual environment, it's time to make sure it runs on startup! The first step is to make the Python file `greenonbrown.py` executable using the Terminal window.
 ```
-(owl) pi@owl :-$ chmod a+x ~/owl/greenonbrown.py
+(owl) (owl) pi@raspberrypi:~ $ chmod a+x ~/owl/greenonbrown.py
 ```
 After it's been made executable, the file needs to be launched on startup so each time the Raspberry Pi is powered on, the detection systems starts. The easiest way to do this
 by using cron, a scheduler for starting code. So you'll need to add the `owl_boot.sh` file to the schedule so that it launches on boot. The `owl_boot.sh` file is fairly straightforward. It's what's known as a [bash script](https://ryanstutorials.net/bash-scripting-tutorial/bash-script.php) which is just a text file that contains commands we would normally enter on the command line in Terminal. 
@@ -441,7 +462,7 @@ In the file, the first two commands launch our `owl` virtual environment, then `
 
 To add this to the list of cron jobs, you'll need to edit it as a root user:
 ```
-pi@owl :-$ sudo crontab -e
+(owl) pi@raspberrypi:~ $ sudo crontab -e
 ```
 Select `1. /bin/nano editor`, which should bring up the crontab file. At the base of the file add:
 ```
@@ -451,23 +472,43 @@ Once you've added that line, you'll just need to save the file and exit. In the 
 
 Finally you just need to make `owl_boot.sh` executable so it can be run on startup:
 ```
-(owl) pi@owl :-$ chmod a+x ~/owl/owl_boot.sh
+(owl) pi@raspberrypi:~ $ chmod a+x ~/owl/owl_boot.sh
 ```
 
 If you get stuck, [this guide](https://www.makeuseof.com/how-to-run-a-raspberry-pi-program-script-at-startup/) or [this guide](https://www.tomshardware.com/how-to/run-script-at-boot-raspberry-pi) both have a bit more detail on cron and some other methods too. 
 
 ### Step 6 - focusing the camera
-The final step in the process is to make sure the camera and lens are correctly focused for the mounting height. The camera will need to be connected for this step. To view the live camera feed, navigate to the Home > owl directory and open the greenonbrown.py file. Choose to 'open' the file (rather than 'execute' or 'execute in terminal') when a window pops up. Scroll down to the bottom of the code and on line 385, under `owl = Owl(....)` change `headless=True` to `headless=False`. Save and exit the file.
-
-Using a Terminal window, type the following command:
+The final step in the process is to make sure the camera and lens are correctly focused for the mounting height. To view the live camera feed, we need to stop the process that is running in the background that would have started when you first turned on the OWL. To do this:
 ```
-(owl) pi@owl :-$ ~/owl/./greenonbrown.py
+(owl) pi@raspberrypi:~ $ sudo kill 522
 ```
-This will bring up a video feed you can use to visualise the OWL detector and also use it to focus the camera. Once you're happy with the focus, press Esc to exit. Navigate back to the greenonbrown.py file. You'll now need to change `headless` back to `True`. Double click on greenonbrown.py, choose to 'open' the file (rather than 'execute' or 'execute in terminal') when a window pops up. Scroll down to the bottom of the code and on line 385, under `owl = Owl(....)` change `headless=False` back to `headless=True`. Save and exit the file.
 
-You're now almost ready to run!
+Now you'll need to launch `greenonbrown.py` manually with the video feed visible. To do this use the Terminal window and type the following commands:
+```
+(owl) pi@raspberrypi:~ $ ~/owl/./greenonbrown.py --show-display
+```
 
-### Step 7 - reboot
+This will bring up a video feed you can use to visualise the OWL detector and also use it to focus the camera. Once you're happy with the focus, press Esc to exit. 
+
+### OPTIONAL Step 6 - enabling UART for status LED
+This is just the cherry on top and non-essential to correct operation of the OWL but to make sure the status LED you connected earlier blinks correctly the GPIO UART needs to be enabled. 
+
+Open up a terminal console by pressing `Ctrl + T`. Type:
+
+```
+(owl) pi@owl :-$ sudo nano /boot/config.txt
+```
+
+This will open up the config.txt file. Scroll down to the bottom by holding the down arrow key and add the following line to the very last line of the file:
+```
+enable_uart=1
+```
+
+Press `ctrl + x` to exit, then type `y` to save and then `enter`.
+
+You're now ready to run!
+
+### Step 8 - reboot
 The moment of truth. Shut the Raspberry Pi down and unplug the power. This is where you'll need to reconnect the camera and all the GPIO pins/power in the OWL unit if they have been disconnected. Once everything is connected again (double check the camera cable is inserted or this won't work), reconnect the power and wait for a beep!
 
 If you hear a beep, grab something green and move it under the camera. If the relays start clicking and lights come on, congratulations, you've successfully set the OWL up! If not, check the troubleshooting chart below and see if you can get it fixed.
@@ -489,8 +530,7 @@ If you're interested in changing settings on the detector, such as selecting the
 
 ```
 if __name__ == "__main__":
-    owl = Owl(video=False,
-                      videoFile=r'xyz',
+    owl = Owl(videoFile=r'',
                       headless=True,
                       recording=True,
                       exgMin=13,
@@ -609,10 +649,16 @@ All .stl files for the 3D printed components of this build are available in the 
 We and others will be continually contributing to and improving OWL as we become aware of issues or opportunities to increase detection performance. Once you have a functioning setup the process to update is simple. First, you'll need to connect a screen, keyboard and mouse to the OWL unit and boot it up. Navigate to the existing owl directory in `/home/owl/` and either delete or rename that folder. Remember if you've made any of your own changes to the parameters/code, write them down. Then open up a Terminal window (Ctrl + T) and follow these steps:
 
 ```
-(owl) user@pi :-$ cd ~
-(owl) user@pi :-$ git clone https://github.com/geezacoleman/OpenWeedLocator
-(owl) user@pi :-$ chmod +x ~/owl/greenonbrown.py
+(owl) pi@raspberrypi:~ $ cd ~
+(owl) pi@raspberrypi:~ $ mv owl owl-old      # this renames the old 'owl' folder to 'owl-old'
+(owl) pi@raspberrypi:~ $ git clone https://github.com/geezacoleman/OpenWeedLocator        # download the new software
+(owl) pi@raspberrypi:~ $ mv OpenWeedLocator owl      # rename the download to 'owl'
+(owl) pi@raspberrypi:~ $ cd ~/owl
+(owl) pi@raspberrypi:~/owl $ pip install -r requirements.txt
+(owl) pi@raspberrypi:~/owl $ chmod a+x greenonbrown.py
+(owl) pi@raspberrypi:~/owl $ chmod a+x owl_boot.sh
 ```
+
 And that's it! You're good to go with the latest software.
 
 If you have multiple units running, the most efficient method is to update one and then copy the SD card disk image to every other unit. Follow these instructions here. ADD INSTRUCTIONS
