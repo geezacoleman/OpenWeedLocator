@@ -325,16 +325,28 @@ The disk image that you downloaded is likely to be a few versions behind the mos
 Once this is complete your software will be up to date and you can move on to focusing the camera.  
 
 ### Step 5 - focusing the camera
-The final step in the process is to make sure the camera and lens are correctly focused for the mounting height. To view the live camera feed, we need to stop the process that is running in the background that would have started when you first turned on the OWL. To do this:
+The final step in the process is to make sure the camera and lens are correctly focused for the mounting height. To view the live camera feed, we need to stop the process that is running in the background that would have started when you first turned on the OWL. Enter the following into the terminal:
 ```
-(owl) pi@raspberrypi:~ $ sudo kill 522
+(owl) pi@raspberrypi:~ $ ps -C greenonbrown.py
 ```
-
+After pressing ENTER, you should receive the following output:
+```
+(owl) pi@raspberrypi:~ $ ps -C greenonbrown.py
+PID TTY              TIME CMD
+515 ?            00:00:00 greenonbrown.py
+```
+The PID is the important part, it's the ID number for the `greenonbrown.py` program. In this case it is 515, but it is likely to be different on your OWL.
+ 
+To stop the program, you need to enter the following command:
+```
+(owl) pi@raspberrypi:~ $ sudo kill enter_your_PID_number_here
+```
+The program should now be stopped
+  
 Now you'll need to launch `greenonbrown.py` manually with the video feed visible. To do this use the Terminal window and type the following commands:
 ```
 (owl) pi@raspberrypi:~ $ ~/owl/./greenonbrown.py --show-display
 ```
-
 This will bring up a video feed you can use to visualise the OWL detector and also use it to focus the camera. Once you're happy with the focus, press Esc to exit. 
 
 ### OPTIONAL Step 6 - enabling UART for status LED
@@ -478,16 +490,28 @@ Finally you just need to make `owl_boot.sh` executable so it can be run on start
 If you get stuck, [this guide](https://www.makeuseof.com/how-to-run-a-raspberry-pi-program-script-at-startup/) or [this guide](https://www.tomshardware.com/how-to/run-script-at-boot-raspberry-pi) both have a bit more detail on cron and some other methods too. 
 
 ### Step 6 - focusing the camera
-The final step in the process is to make sure the camera and lens are correctly focused for the mounting height. To view the live camera feed, we need to stop the process that is running in the background that would have started when you first turned on the OWL. To do this:
+The final step in the process is to make sure the camera and lens are correctly focused for the mounting height. To view the live camera feed, we need to stop the process that is running in the background that would have started when you first turned on the OWL. Enter the following into the terminal:
 ```
-(owl) pi@raspberrypi:~ $ sudo kill 522
+(owl) pi@raspberrypi:~ $ ps -C greenonbrown.py
 ```
-
+After pressing ENTER, you should receive the following output:
+```
+(owl) pi@raspberrypi:~ $ ps -C greenonbrown.py
+PID TTY              TIME CMD
+515 ?            00:00:00 greenonbrown.py
+```
+The PID is the important part, it's the ID number for the `greenonbrown.py` program. In this case it is 515, but it is likely to be different on your OWL.
+ 
+To stop the program, you need to enter the following command:
+```
+(owl) pi@raspberrypi:~ $ sudo kill enter_your_PID_number_here
+```
+The program should now be stopped
+  
 Now you'll need to launch `greenonbrown.py` manually with the video feed visible. To do this use the Terminal window and type the following commands:
 ```
 (owl) pi@raspberrypi:~ $ ~/owl/./greenonbrown.py --show-display
 ```
-
 This will bring up a video feed you can use to visualise the OWL detector and also use it to focus the camera. Once you're happy with the focus, press Esc to exit. 
 
 ### OPTIONAL Step 6 - enabling UART for status LED
@@ -526,41 +550,76 @@ The optional real time clock module can be set up by following the [detailed ins
 <details>
 <summary>Instructions to change detection settings</summary>
 <br>
-If you're interested in changing settings on the detector, such as selecting the weed detection algorithm, modifying sensitivity settings, viewing results and a whole raft of other options, connect a screen, keyboard and mouse and boot up the OWL. Navigate to the owl directory and open up `greenonbrown.py` in an editor. You'll need to right click, select open with and then choose an  integrated development environment (IDE). Once it's open, scroll down to the very bottom and you should come across:
+If you're interested in changing settings there are now two ways to do this:
+1. Using command line flags
+2. Opening the greenonbrown.py file and changing threshold values
+  
+### Command line flags
+Command line flags are let you specify options on the command line within the Terminal window. It means you don't have to open up the code and make changes directly. OWL now supports the use of flags for some parameters. To read a description of all flags available type:
+
+```
+(owl) pi@raspberrypi:~ $./greenonbrown.py --help
+usage: greenonbrown.py [-h] [--video-file VIDEO_FILE] [--show-display] [--recording] [--algorithm {exg,nexg,exgr,maxg,exhsv,hsv}] [--exposure-mode EXPOSURE_MODE]
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --video-file          VIDEO_FILE
+                        use video file instead
+  --show-display        show display windows
+  --recording           record video
+  --algorithm           {exg,nexg,exgr,maxg,exhsv,hsv}
+  --exposure-mode       EXPOSURE_MODE
+                        set exposure mode of camera
+
+```
+  
+Flag | Usage | Description
+:-------------: | :-------------: | :-------------:
+--video-file | Specify the path to the video file. | This is used when a video file is run instead of the live feed from a camera. It is mostly used in testing new algorithms. If this is not included, a connected camera will be used instead.
+--show-display | If flag is present, this will return True | When this flag is included, video feeds and threshold adjustments will appear. Without the flag, the OWL will run `headless` with no display. This flag replaces the `Headless=True` variable in the `greenonbrown.py` file.
+--algorithm | exg, nexg, exgr, maxg, exhsv, hsv | Select from the list of algorithms to use. Defaults to `exhsv`
+--recording | If flag is present, this will return True | Record video to a file
+--exposure-mode | off, auto, nightpreview, backlight, spotlight, sports, snow, beach, verylong, fixedfps, antishake, fireworks | Select from the list of exposure modes available on the [Picamera](https://picamera.readthedocs.io/en/release-1.13/api_camera.html#picamera.PiCamera.exposure_mode). Defaults to 'sports' for faster shutter speed.
+--awb-mode | off, auto, sunlight, cloudy, shade, tungsten, fluorescent, incandescent, flash, horizon | set the automatic white balance mode from [Picamera options](https://picamera.readthedocs.io/en/release-1.13/api_camera.html#picamera.PiCamera.awb_mode). 
+  
+### Changing threshold values in `greenonbrown.py`
+  
+Other parameters such as selecting modifying sensitivity settings can be adjusted in the greenonbrown.py file itself. To edit this file, connect a screen, keyboard and mouse and boot up the OWL. Navigate to the owl directory and open up `greenonbrown.py` in an editor. You'll need to right click, select open with and then choose an  integrated development environment (IDE). Once it's open, scroll down to the very bottom and you should come across:
 
 ```
 if __name__ == "__main__":
-    owl = Owl(videoFile=r'',
-                      headless=True,
-                      recording=True,
-                      exgMin=13,
-                      exgMax=200,
-                      hueMin=30,
-                      hueMax=92,
-                      saturationMin=10,
-                      saturationMax=250,
-                      brightnessMin=15,
-                      brightnessMax=250,
-                      resolution=(416, 320))
+    owl = Owl(videoFile=args.video_file,
+              show_display=args.show_display,
+              recording=args.recording,
+              exgMin=25,
+              exgMax=200,
+              hueMin=39,
+              hueMax=83,
+              saturationMin=50,
+              saturationMax=220,
+              brightnessMin=60,
+              brightnessMax=190,
+              framerate=32,
+              resolution=(416, 320),
+              exposure_mode=args.exposure_mode)
+
+    # start the targeting!
     owl.hoot(sprayDur=0.15,
-                  sample=False,
-                  sampleDim=1000,
-                  saveDir='/home/pi',
-                  algorithm='hsv',
-                  selectorEnabled=True,
-                  camera_name='hsv',
-                  minArea=10)
+             delay=0,
+             sample=False,
+             sampleDim=1000,
+             saveDir='/home/pi',
+             algorithm=args.algorithm,
+             selectorEnabled=False,
+             camera_name='hsv',
+             minArea=10)
 ```
 
 Here's a summary table of what each parameter does. If you change `headless` to `False`, you'll be able to see a real time feed of what the algorithm is doing and where the detections are occurring. Just make sure to switch it back to `headless=True` if you decide to run it without the screen connected. Note that the owl program will not run on startup if `headless=False`.
 
 **Parameter**  | **Options** | **Description** 
 :-------------: | :-------------: | :-------------: 
-**Sprayer()** | | All options when the sprayer class is instantiated
-`video`|`True` or `False`| Toggles whether or not to use an existing video. Useful if you have a recording and you want to see how it performs on a laptop at home.
-`videoFile`|Any path string| If 'video' is True, the program will try to read from this path here. Replace xyz with the path to your video.
-`headless`|`True` or `False`| Toggles whether or not to display a video output. IMPORTANT: OWL will not run on boot if set to `True` and no screen connected. Set to `True` to see how the algorithm is doing.
-`recording`|`True` or `False`| Toggles whether or not to record a video. If a switch is connected, it will only record when switch pressed/connected.
+**Owl()** | | All options when the sprayer class is instantiated
 `exgMin`|Any integer between 0 and 255| Provides the minimum threshold value for the exg algorithm. Usually leave between 10 (very sensitive) and 25 (not sensitive)
 `exgMax`|Any integer between 0 and 255| Provides a maximum threshold for the exg algorithm. Leave above 180. 
 `hueMin`|Any integer between 0 and 128| Provides a minimum threshold for the hue channel when using hsv or exhsv algorithms. Typically between 28 and 45. Increase to reduce sensitivity.
@@ -570,7 +629,7 @@ Here's a summary table of what each parameter does. If you change `headless` to 
 `brightnessMin`|Any integer between 0 and 255| Provides a minimum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 10 and 60. Increase to reduce sensitivity particularly if false positives in shadows.
 `brightnessMax`|Any integer between 0 and 255| Provides a maximum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 190 and 250. Decrease to reduce sensitivity particularly if false positives in bright sun.
 `resolution`|Tuple of (w, h) resolution| Changes output resolution from camera. Increasing rapidly decreased framerate but improves detection of small weeds.
-**start()** | | All options when the sprayer.start() function is called
+**hoot()** | | All options when the sprayer.start() function is called
 `sprayDur`|Any float (decimal)|Changes the length of time for which the relay is activated.|
 `sample`|`True` or `False`| If sampling code is uncommented, images of weeds detected will be saved to OWL folder. Do not leave on for long periods or SD card will fill up and stop working.|
 `sampleDim` | Any float (decimal) | Changes the length of time for which the relay is activated.|
