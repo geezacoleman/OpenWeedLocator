@@ -122,7 +122,7 @@ class Owl:
     def __init__(self, videoFile=None, show_display=False, recording=False, nozzleNum=4,
                  exgMin=30, exgMax=180, hueMin=30,hueMax=92, brightnessMin=5, brightnessMax=200,
                  saturationMin=30, saturationMax=255, resolution=(832, 624), framerate=32,
-                 exposure_mode='sports'):
+                 exposure_mode='sports', awb_mode='auto'):
 
         # different detection parameters
         self.show_display = show_display
@@ -130,6 +130,7 @@ class Owl:
         self.resolution = resolution
         self.framerate = framerate
         self.exposure_mode = exposure_mode
+        self.awb_mode = awb_mode
 
         # threshold parameters for different algorithms
         self.exgMin = exgMin
@@ -163,8 +164,11 @@ class Owl:
         # if no video, start the camera with the provided parameters
         else:
             try:
-                self.cam = VideoStream(usePiCamera=True, resolution=self.resolution, framerate=self.framerate, 
-                exposure_mode=self.exposure_mode).start()
+                self.cam = VideoStream(usePiCamera=True,
+                                       resolution=self.resolution,
+                                       framerate=self.framerate,
+                                       exposure_mode=self.exposure_mode,
+                                       awb_mode=self.awb_mode).start()
             except ModuleNotFoundError:
                 self.cam = VideoStream(src=0).start()
             time.sleep(1.0)
@@ -400,7 +404,14 @@ if __name__ == "__main__":
     ap.add_argument('--show-display', action='store_true', default=False, help='show display windows')
     ap.add_argument('--recording', action='store_true', default=False, help='record video')
     ap.add_argument('--algorithm', type=str, default='exhsv', choices=['exg', 'nexg', 'exgr', 'maxg', 'exhsv', 'hsv'])
-    ap.add_argument('--exposure-mode', type=str, default='sports', help='set exposure mode of camera')
+    ap.add_argument('--exposure-mode', type=str, default='sports', choices=['off', 'auto', 'nightpreview', 'backlight',
+                                                                            'spotlight', 'sports', 'snow', 'beach',
+                                                                            'verylong', 'fixedfps', 'antishake', 'fireworks'],
+                    help='set exposure mode of camera')
+    ap.add_argument('--awb-mode', type=str, default='auto', choices=['off', 'auto', 'sunlight', 'cloudy', 'shade',
+                                                                     'tungsten', 'fluorescent', 'incandescent',
+                                                                     'flash', 'horizon'],
+                    help='set the auto white balance mode of the camera')
     args = ap.parse_args()
 
     owl = Owl(videoFile=args.video_file,
@@ -416,7 +427,8 @@ if __name__ == "__main__":
               brightnessMax=190,
               framerate=32,
               resolution=(416, 320),
-              exposure_mode=args.exposure_mode)
+              exposure_mode=args.exposure_mode,
+              awb_mode=args.awb_mode)
 
     # start the targeting!
     owl.hoot(sprayDur=0.15,
