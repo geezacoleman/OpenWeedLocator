@@ -559,17 +559,25 @@ Command line flags are let you specify options on the command line within the Te
 
 ```
 (owl) pi@raspberrypi:~ $./greenonbrown.py --help
-usage: greenonbrown.py [-h] [--video-file VIDEO_FILE] [--show-display] [--recording] [--algorithm {exg,nexg,exgr,maxg,exhsv,hsv}] [--exposure-mode EXPOSURE_MODE]
+usage: greenonbrown.py [-h] [--video-file VIDEO_FILE] [--show-display] [--recording] [--algorithm {exg,nexg,exgr,maxg,exhsv,hsv}] [--framerate [10-120]]
+                       [--exposure-mode {off,auto,nightpreview,backlight,spotlight,sports,snow,beach,verylong,fixedfps,antishake,fireworks}]
+                       [--awb-mode {off,auto,sunlight,cloudy,shade,tungsten,fluorescent,incandescent,flash,horizon}] [--sensor-mode [0-3]]
 
 optional arguments:
   -h, --help            show this help message and exit
-  --video-file          VIDEO_FILE
+  --video-file VIDEO_FILE
                         use video file instead
   --show-display        show display windows
   --recording           record video
-  --algorithm           {exg,nexg,exgr,maxg,exhsv,hsv}
-  --exposure-mode       EXPOSURE_MODE
+  --algorithm {exg,nexg,exgr,maxg,exhsv,hsv}
+  --framerate [10-120]  set camera framerate between 10 and 120 FPS. Framerate will depend on sensor mode, though setting framerate takes precedence over sensor_mode, For example sensor_mode=0 and framerate=120 will reset the
+                        sensor_mode to 3.
+  --exposure-mode {off,auto,nightpreview,backlight,spotlight,sports,snow,beach,verylong,fixedfps,antishake,fireworks}
                         set exposure mode of camera
+  --awb-mode {off,auto,sunlight,cloudy,shade,tungsten,fluorescent,incandescent,flash,horizon}
+                        set the auto white balance mode of the camera
+  --sensor-mode [0-3]   set the sensor mode for the camera between 0 and 3. Check Raspberry Pi camera documentation for specifics of each mode
+
 
 ```
   
@@ -579,8 +587,10 @@ Flag | Usage | Description
 --show-display | If flag is present, this will return True | When this flag is included, video feeds and threshold adjustments will appear. Without the flag, the OWL will run `headless` with no display. This flag replaces the `Headless=True` variable in the `greenonbrown.py` file.
 --algorithm | exg, nexg, exgr, maxg, exhsv, hsv | Select from the list of algorithms to use. Defaults to `exhsv`
 --recording | If flag is present, this will return True | Record video to a file
+--framerate | between 10 and 120 FPS, default=40 | sets the framerate for the camera.
 --exposure-mode | off, auto, nightpreview, backlight, spotlight, sports, snow, beach, verylong, fixedfps, antishake, fireworks | Select from the list of exposure modes available on the [Picamera](https://picamera.readthedocs.io/en/release-1.13/api_camera.html#picamera.PiCamera.exposure_mode). Defaults to 'sports' for faster shutter speed.
---awb-mode | off, auto, sunlight, cloudy, shade, tungsten, fluorescent, incandescent, flash, horizon | set the automatic white balance mode from [Picamera options](https://picamera.readthedocs.io/en/release-1.13/api_camera.html#picamera.PiCamera.awb_mode). 
+--awb-mode | off, auto, sunlight, cloudy, shade, tungsten, fluorescent, incandescent, flash, horizon | set the automatic white balance mode from [Picamera options](https://picamera.readthedocs.io/en/release-1.13/api_camera.html#picamera.PiCamera.awb_mode).
+--sensor-mode | 0: default - automatic; modes 1, 2 and 3 are defined in the picamera documentation. | the sensor mode is specific to the camera. The Raspberry Pi v2 camera has 7 modes, whereas the HQ camera has only 4. Framerate is prioritised over sensor mode. WARNING: high framerates and larger resolutions may 'brick' the SD card. Always backup your SD card before testing new settings, or update from this repository if settings are lost.
   
 ### Changing threshold values in `greenonbrown.py`
   
@@ -599,9 +609,11 @@ if __name__ == "__main__":
               saturationMax=220,
               brightnessMin=60,
               brightnessMax=190,
-              framerate=32,
+              framerate=args.framerate,
               resolution=(416, 320),
-              exposure_mode=args.exposure_mode)
+              exposure_mode=args.exposure_mode,
+              awb_mode=args.awb_mode,
+              sensor_mode=args.sensor_mode)
 
     # start the targeting!
     owl.hoot(sprayDur=0.15,
