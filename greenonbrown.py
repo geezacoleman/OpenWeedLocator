@@ -25,14 +25,14 @@ def green_on_brown(image, exgMin=30, exgMax=250, hueMin=30, hueMax=90, brightnes
     Uses a provided algorithm and contour detection to determine green objects in the image. Min and Max
     thresholds are provided.
     :param image: input image to be analysed
-    :param exgMin:
-    :param exgMax:
-    :param hueMin:
-    :param hueMax:
-    :param brightnessMin:
-    :param brightnessMax:
-    :param saturationMin:
-    :param saturationMax:
+    :param exgMin: minimum exG threshold value
+    :param exgMax: maximum exG threshold value
+    :param hueMin: minimum hue threshold value
+    :param hueMax: maximum hue threshold value
+    :param brightnessMin: minimum brightness threshold value
+    :param brightnessMax: maximum brightness threshold value
+    :param saturationMin: minimum saturation threshold value
+    :param saturationMax: maximum saturation threshold value
     :param minArea: minimum area for the detection - used to filter out small detections
     :param show_display: True: show windows; False: operates in headless mode
     :param algorithm: the algorithm to use. Defaults to ExG if not correct
@@ -122,7 +122,7 @@ class Owl:
     def __init__(self, videoFile=None, show_display=False, recording=False, nozzleNum=4,
                  exgMin=30, exgMax=180, hueMin=30,hueMax=92, brightnessMin=5, brightnessMax=200,
                  saturationMin=30, saturationMax=255, resolution=(832, 624), framerate=32,
-                 exposure_mode='sports', awb_mode='auto'):
+                 exposure_mode='sports', awb_mode='auto', sensor_mode=0):
 
         # different detection parameters
         self.show_display = show_display
@@ -131,6 +131,7 @@ class Owl:
         self.framerate = framerate
         self.exposure_mode = exposure_mode
         self.awb_mode = awb_mode
+        self.sensor_mode = sensor_mode
 
         # threshold parameters for different algorithms
         self.exgMin = exgMin
@@ -168,7 +169,8 @@ class Owl:
                                        resolution=self.resolution,
                                        framerate=self.framerate,
                                        exposure_mode=self.exposure_mode,
-                                       awb_mode=self.awb_mode).start()
+                                       awb_mode=self.awb_mode,
+                                       sensor_mode=self.sensor_mode).start()
             except ModuleNotFoundError:
                 self.cam = VideoStream(src=0).start()
             time.sleep(1.0)
@@ -404,6 +406,10 @@ if __name__ == "__main__":
     ap.add_argument('--show-display', action='store_true', default=False, help='show display windows')
     ap.add_argument('--recording', action='store_true', default=False, help='record video')
     ap.add_argument('--algorithm', type=str, default='exhsv', choices=['exg', 'nexg', 'exgr', 'maxg', 'exhsv', 'hsv'])
+    ap.add_argument('--framerate', type=int, default=40, choices=range(10, 121), metavar="[10-120]",
+                    help='set camera framerate between 10 and 120 FPS. Framerate will depend on sensor mode, though'
+                         ' setting framerate takes precedence over sensor_mode, For example sensor_mode=0 and framerate=120'
+                         ' will reset the sensor_mode to 3.')
     ap.add_argument('--exposure-mode', type=str, default='sports', choices=['off', 'auto', 'nightpreview', 'backlight',
                                                                             'spotlight', 'sports', 'snow', 'beach',
                                                                             'verylong', 'fixedfps', 'antishake', 'fireworks'],
@@ -412,6 +418,9 @@ if __name__ == "__main__":
                                                                      'tungsten', 'fluorescent', 'incandescent',
                                                                      'flash', 'horizon'],
                     help='set the auto white balance mode of the camera')
+    ap.add_argument('--sensor-mode', type=int, default=0, choices=[0, 1, 2, 3], metavar="[0-3]",
+                    help='set the sensor mode for the camera between 0 and 3. '
+                         'Check Raspberry Pi camera documentation for specifics of each mode')
     args = ap.parse_args()
 
     owl = Owl(videoFile=args.video_file,
@@ -425,10 +434,11 @@ if __name__ == "__main__":
               saturationMax=220,
               brightnessMin=60,
               brightnessMax=190,
-              framerate=32,
               resolution=(416, 320),
+              framerate=args.framerate,
               exposure_mode=args.exposure_mode,
-              awb_mode=args.awb_mode)
+              awb_mode=args.awb_mode,
+              sensor_mode=args.sensor_mode)
 
     # start the targeting!
     owl.hoot(sprayDur=0.15,
