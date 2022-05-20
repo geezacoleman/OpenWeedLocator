@@ -16,11 +16,23 @@ import sys
 import cv2
 import os
 
+
 def nothing(x):
     pass
 
-def green_on_brown(image, exgMin=30, exgMax=250, hueMin=30, hueMax=90, brightnessMin=5, brightnessMax=200, saturationMin=30,
-                   saturationMax=255, minArea=1, show_display=False, algorithm='exg'):
+
+def green_on_brown(image,
+                   exgMin=30,
+                   exgMax=250,
+                   hueMin=30,
+                   hueMax=90,
+                   brightnessMin=5,
+                   brightnessMax=200,
+                   saturationMin=30,
+                   saturationMax=255,
+                   minArea=1,
+                   show_display=False,
+                   algorithm='exg'):
     '''
     Uses a provided algorithm and contour detection to determine green objects in the image. Min and Max
     thresholds are provided.
@@ -117,21 +129,38 @@ def green_on_brown(image, exgMin=30, exgMax=250, hueMin=30, hueMax=90, brightnes
     # returns the contours, bounding boxes, centroids and the image on which the boxes have been drawn
     return cnts, boxes, weedCenters, image
 
+
 # the
 class Owl:
-    def __init__(self, videoFile=None, show_display=False, recording=False, nozzleNum=4,
-                 exgMin=30, exgMax=180, hueMin=30,hueMax=92, brightnessMin=5, brightnessMax=200,
-                 saturationMin=30, saturationMax=255, resolution=(832, 624), framerate=32,
-                 exposure_mode='sports', awb_mode='auto', sensor_mode=0):
+    def __init__(self,
+                 videoFile=None,
+                 show_display=False,
+                 recording=False,
+                 nozzleNum=4,
+                 exgMin=30,
+                 exgMax=180,
+                 hueMin=30,
+                 hueMax=92,
+                 brightnessMin=5,
+                 brightnessMax=200,
+                 saturationMin=30,
+                 saturationMax=255,
+                 resolution=(832, 624),
+                 framerate=32,
+                 exp_mode='sports',
+                 awb_mode='auto',
+                 sensor_mode=0,
+                 exp_compensation=-6):
 
         # different detection parameters
         self.show_display = show_display
         self.recording = recording
         self.resolution = resolution
         self.framerate = framerate
-        self.exposure_mode = exposure_mode
+        self.exp_mode = exp_mode
         self.awb_mode = awb_mode
         self.sensor_mode = sensor_mode
+        self.exp_compensation = exp_compensation
 
         # threshold parameters for different algorithms
         self.exgMin = exgMin
@@ -168,9 +197,10 @@ class Owl:
                 self.cam = VideoStream(usePiCamera=True,
                                        resolution=self.resolution,
                                        framerate=self.framerate,
-                                       exposure_mode=self.exposure_mode,
+                                       exposure_mode=self.exp_mode,
                                        awb_mode=self.awb_mode,
-                                       sensor_mode=self.sensor_mode).start()
+                                       sensor_mode=self.sensor_mode,
+                                       exposure_compensation=self.exp_compensation).start()
             except ModuleNotFoundError:
                 self.cam = VideoStream(src=0).start()
             time.sleep(1.0)
@@ -183,7 +213,7 @@ class Owl:
             1: 15,
             2: 16,
             3: 18
-            }
+        }
 
         ### Data collection only ###
         # algorithmDict maps pins to algorithms for data collection
@@ -243,7 +273,8 @@ class Owl:
                     if not os.path.exists(saveDir):
                         os.makedirs(saveDir)
 
-                    self.baseName = os.path.join(saveDir, strftime("%Y%m%d-%H%M%S-{}-{}".format(camera_name, algorithm)))
+                    self.baseName = os.path.join(saveDir,
+                                                 strftime("%Y%m%d-%H%M%S-{}-{}".format(camera_name, algorithm)))
                     videoName = self.baseName + '.avi'
                     self.logger.new_video_logfile(name=self.baseName + '.txt')
                     self.writer = cv2.VideoWriter(videoName, self.fourcc, 30, (frame.shape[1], frame.shape[0]), True)
@@ -255,7 +286,7 @@ class Owl:
 
                 else:
                     # this leaves it open to adding dials for sensitivity. Static at the moment, but could be dynamic
-                    self.update(exgMin=self.exgMin, exgMax=self.exgMax) # add in update values here
+                    self.update(exgMin=self.exgMin, exgMax=self.exgMax)  # add in update values here
 
                 # pass image, thresholds to green_on_brown function
                 cnts, boxes, weedCentres, imageOut = green_on_brown(frame.copy(), exgMin=self.exgMin,
@@ -315,13 +346,15 @@ class Owl:
                     self.recorderButton.saveRecording = False
                     fps.stop()
                     self.writer = None
-                    self.logger.log_line_video("[INFO] {}. Approximate FPS: {:.2f}".format(self.baseName, fps.fps()), verbose=True)
+                    self.logger.log_line_video("[INFO] {}. Approximate FPS: {:.2f}".format(self.baseName, fps.fps()),
+                                               verbose=True)
                     fps = FPS().start()
 
                 k = cv2.waitKey(1) & 0xFF
                 if k == 27:
                     fps.stop()
-                    self.logger.log_line_video("[INFO] Stopped. Approximate FPS: {:.2f}".format(fps.fps()), verbose=True)
+                    self.logger.log_line_video("[INFO] Stopped. Approximate FPS: {:.2f}".format(fps.fps()),
+                                               verbose=True)
                     self.stop()
                     break
 
@@ -398,6 +431,7 @@ def check_for_usb():
         saveDir = '/videos/'
         return saveDir, False
 
+
 # business end of things
 if __name__ == "__main__":
     # add in the possible command line arguments to improve useability
@@ -410,17 +444,21 @@ if __name__ == "__main__":
                     help='set camera framerate between 10 and 120 FPS. Framerate will depend on sensor mode, though'
                          ' setting framerate takes precedence over sensor_mode, For example sensor_mode=0 and framerate=120'
                          ' will reset the sensor_mode to 3.')
-    ap.add_argument('--exposure-mode', type=str, default='sports', choices=['off', 'auto', 'nightpreview', 'backlight',
+    ap.add_argument('--exp-mode', type=str, default='beach', choices=['off', 'auto', 'nightpreview', 'backlight',
                                                                             'spotlight', 'sports', 'snow', 'beach',
-                                                                            'verylong', 'fixedfps', 'antishake', 'fireworks'],
+                                                                            'verylong', 'fixedfps', 'antishake',
+                                                                            'fireworks'],
                     help='set exposure mode of camera')
     ap.add_argument('--awb-mode', type=str, default='auto', choices=['off', 'auto', 'sunlight', 'cloudy', 'shade',
                                                                      'tungsten', 'fluorescent', 'incandescent',
                                                                      'flash', 'horizon'],
                     help='set the auto white balance mode of the camera')
-    ap.add_argument('--sensor-mode', type=int, default=0, choices=[0, 1, 2, 3], metavar="[0-3]",
+    ap.add_argument('--sensor-mode', type=int, default=0, choices=[0, 1, 2, 3], metavar="[0 to 3]",
                     help='set the sensor mode for the camera between 0 and 3. '
                          'Check Raspberry Pi camera documentation for specifics of each mode')
+    ap.add_argument('--exp-compensation', type=int, default=-6, choices=range(-24, 24), metavar="[-24 to 24]",
+                    help='set the exposure compensation (EV) for the camera between -24 and 24. '
+                         'Raspberry Pi cameras seem to overexpose images preferentially.')
     args = ap.parse_args()
 
     owl = Owl(videoFile=args.video_file,
@@ -436,9 +474,11 @@ if __name__ == "__main__":
               brightnessMax=190,
               resolution=(416, 320),
               framerate=args.framerate,
-              exposure_mode=args.exposure_mode,
+              exp_mode=args.exp_mode,
+              exp_compensation=args.exp_compensation,
               awb_mode=args.awb_mode,
-              sensor_mode=args.sensor_mode)
+              sensor_mode=args.sensor_mode
+              )
 
     # start the targeting!
     owl.hoot(sprayDur=0.15,
@@ -449,6 +489,5 @@ if __name__ == "__main__":
              algorithm=args.algorithm,
              selectorEnabled=False,
              camera_name='hsv',
-             minArea=10)
-
-
+             minArea=10
+             )
