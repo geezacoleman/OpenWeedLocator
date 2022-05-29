@@ -435,6 +435,7 @@ if __name__ == "__main__":
               brightnessMin=60,
               brightnessMax=190,
               resolution=(416, 320),
+              nozzleNum=4,
               framerate=args.framerate,
               exposure_mode=args.exposure_mode,
               awb_mode=args.awb_mode,
