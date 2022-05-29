@@ -1,5 +1,6 @@
 from greenonbrown import green_on_brown
 from imutils.video import count_frames, FileVideoStream
+import pandas as pd
 import numpy as np
 import imutils
 import glob
@@ -7,7 +8,8 @@ import cv2
 import csv
 import os
 
-def frame_analysis(exgFile: str, exgsFile: str, hueFile: str, exhuFile: str, HDFile: str):
+
+def four_frame_analysis(exgFile: str, exgsFile: str, hueFile: str, exhuFile: str, HDFile: str):
     baseName = os.path.splitext(os.path.basename(exhuFile))[0]
 
     exgVideo = cv2.VideoCapture(exgFile)
@@ -168,6 +170,87 @@ def frame_analysis(exgFile: str, exgsFile: str, hueFile: str, exhuFile: str, HDF
         if k == 27:
             break
 
+
+def single_frame_analysis(videoFile: str, HDFile: str, algorithm):
+    baseName = os.path.splitext(os.path.basename(videoFile))[0]
+
+    video = cv2.VideoCapture(videoFile)
+    print("[INFO] Loaded {}".format(video))
+    lenVideo = count_frames(videoFile, override=True) - 1
+
+    videoHD = cv2.VideoCapture(HDFile)
+    print("[INFO] Loaded {}".format(HDFile))
+    lenHD = count_frames(HDFile, override=True) - 1
+
+    hdFrame = None
+    videoFrame = None
+
+    hdframecount = 0
+    videoframecount = 0
+
+    hdFramesAll = []
+    videoFramesAll = []
+
+    while True:
+        k = cv2.waitKey(1) & 0xFF
+        if k == ord('d') or hdFrame is None:
+            if hdframecount >= len(hdFramesAll):
+                hdFrame = next(frame_processor(videoHD, 'hd'))
+                hdFrame = imutils.resize(hdFrame, height=640)
+                # hdFrame = imutils.rotate(hdFrame, angle=180)
+                hdframecount += 1
+                hdFramesAll.append(hdFrame)
+            else:
+                hdFrame = hdFramesAll[hdframecount]
+                hdframecount += 1
+
+        if k == ord('s') or videoFrame is None:
+            if videoframecount >= len(videoFramesAll):
+                videoFrame = next(frame_processor(video, algorithm))
+                videoFrame = imutils.resize(videoFrame, height=640)
+                videoframecount += 1
+                videoFramesAll.append(videoFrame)
+            else:
+                videoFrame = videoFramesAll[videoframecount]
+                videoframecount += 1
+
+        if k == ord('e'):
+            if hdframecount > 0:
+                hdframecount -= 1
+                hdFrame = hdFramesAll[hdframecount]
+            else:
+                hdFrame = hdFramesAll[hdframecount]
+
+        if k == ord('w'):
+            if videoframecount > 0:
+                videoframecount -= 1
+                videoFrame = videoFramesAll[videoframecount]
+            else:
+                videoFrame = videoFramesAll[videoframecount]
+
+        # save current frames for the video comparison
+        if k == ord('y'):
+            cv2.imwrite('images/frameGrabs/{}_frame{}_{}.png'.format(baseName, videoframecount, algorithm), videoFrame)
+            print('[INFO] All frames written.')
+
+        # write text on each video frame
+        videoVis = videoFrame.copy()
+
+        cv2.putText(videoVis, '!CHECK! -> {}: {} / {}'.format(algorithm, videoframecount, lenVideo), (50, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1,  (0, 255, 0), 2)
+        cv2.putText(hdFrame, 'HD: {} / {}'.format(hdframecount, lenHD), (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                    (0, 255, 0), 2)
+
+        # stack the video frames
+        combined = np.hstack((videoVis, hdFrame))
+        cv2.putText(combined, 'Controls: "d/e" - HD fwd/back | "s/w" - vid fwd/back | ESC - quit | "y" - save frame'.format(algorithm, videoframecount, lenVideo), (450, 620),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        cv2.imshow('Output', combined)
+
+        if k == 27:
+            break
+
+
 def frame_processor(videoFeed, videoName):
     frameShape = None
     while True:
@@ -192,7 +275,7 @@ def frame_processor(videoFeed, videoName):
                                                                 saturationMax=250,
                                                                 brightnessMin=60,
                                                                 brightnessMax=250,
-                                                                headless=False,
+                                                                show_display=False,
                                                                 algorithm=videoName, minArea=10)
 
             yield imageOut
@@ -200,7 +283,6 @@ def frame_processor(videoFeed, videoName):
             videoFeed.stop()
             break
 
-import pandas as pd
 
 def blur_analysis(directory):
     blurDict = {}
@@ -223,7 +305,8 @@ def blur_analysis(directory):
                 for i in range(100):
                     randint = np.random.randint(0, len(allframeBlur))
                     sampledframeBlur.append(allframeBlur[randint])
-                df2 = pd.DataFrame(list(zip(fieldNameList, algorithmNameList, sampledframeBlur)), columns=['field', 'algorithm', 'blur'])
+                df2 = pd.DataFrame(list(zip(fieldNameList, algorithmNameList, sampledframeBlur)),
+                                   columns=['field', 'algorithm', 'blur'])
                 print(df2)
                 df = df.append(df2)
                 print(df)
@@ -242,61 +325,13 @@ def blur_analysis(directory):
 
 
 if __name__ == "__main__":
-    # RSilos 3 - DONE
-    # exgFile = r'videos/20210429-142930-HQ1-exg.avi'
-    # exgsFile = r'videos/20210429-143441-HQ1-exgs.avi'
-    # hueFile = r'videos/20210429-143559-HQ1-hue.avi'
-    # exhuFile = r'videos/20210429-143759-HQ1-exhu.avi'
-    # hdFile = r'videos/20210429_143950.mp4'
+    videoFile = r"videos/ard-1-30.avi"
+    hdFile = r"videos/ard-5-15.avi"
 
-    # # canola night 1
-    # exgFile = r'videos/20210429-174827-HQ2-exg.avi'
-    # exgsFile = r'videos/20210429-175001-HQ2-exgs.avi'
-    # hueFile = r'videos/20210429-175138-HQ2-hue.avi'
-    # exhuFile = r'videos/20210429-175307-HQ2-exhu.avi'
-    # hdFile = r'videos/20210429_175512.mp4'
+    single_frame_analysis(videoFile=videoFile,
+                          HDFile=hdFile,
+                          algorithm='exg')
 
-    # RWheat 1 - DONE
-    # exgFile = r'videos/20210429-145743-HQ1-exg.avi'
-    # exgsFile = r'videos/20210429-145942-HQ1-exgs.avi'
-    # hueFile = r'videos/20210429-150119-HQ1-hue.avi'
-    # exhuFile = r'videos/20210429-150254-HQ1-exhu.avi'
-    # hdFile = r'videos/20210429_150543.mp4'
-
-    # CSU Sheep 1 - DONE
-    # exgFile = r'videos/blur/CSUSheep1-HQ1-exg.mp4'
-    # exgsFile = r'videos/blur/CSUSheep1-HQ1-exgs.mp4'
-    # hueFile = r'videos/blur/CSUSheep1-HQ1-hue.mp4'
-    # exhuFile = r'videos/blur/CSUSheep1-HQ1-exhu.mp4'
-    # hdFile = r'videos/20210430_110451.mp4'
-
-    # DPI 3 - DONE
-    # exgFile = r'videos/blur/DPI3-HQ2-exg.mp4'
-    # exgsFile = r'videos/blur/DPI3-HQ1-exgs.mp4'
-    # hueFile = r'videos/blur/DPI3-HQ1-hue.mp4'
-    # exhuFile = r'videos/blur/DPI3-HQ1-exhu.mp4'
-    # hdFile = r'videos/20210430_094837.mp4'
-
-    # LD Day
-    # exgFile = r'videos/20210507-143847-HQ2-exg.avi'
-    # exgsFile = r'videos/20210507-144117-HQ2-exgs.avi'
-    # hueFile = r'videos/20210507-144241-HQ2-hue.avi'
-    # exhuFile = r'videos/20210507-144407-HQ2-exhu.avi'
-    # hdFile = r'videos/20210507_144808.mp4'
-
-    # LD Night
-    # exgFile = r'videos/20210506-184104-HQ2-exg.avi'
-    # exgsFile = r'videos/20210506-183237-HQ2-exgs.avi'
-    # hueFile = r'videos/20210506-183417-HQ2-hue.avi'
-    # exhuFile = r'videos/20210506-183601-HQ2-exhu.avi'
-    # hdFile = r'videos/20210506_183834.mp4'
-
-    # frame_analysis(exgFile=exgFile,
-    #                exgsFile=exgsFile,
-    #                hueFile=hueFile,
-    #                exhuFile=exhuFile,
-    #                HDFile=hdFile)
-
-    # blur analysis
-    directory = r"videos/blur"
-    blur_analysis(directory=directory)
+    # # blur analysis
+    # directory = r"videos/blur"
+    # blur_analysis(directory=directory)
