@@ -627,7 +627,9 @@ if __name__ == "__main__":
              minArea=10)
 ```
 
-Here's a summary table of what each parameter does. If you change `headless` to `False`, you'll be able to see a real time feed of what the algorithm is doing and where the detections are occurring. Just make sure to switch it back to `headless=True` if you decide to run it without the screen connected. Note that the owl program will not run on startup if `headless=False`.
+Here's a summary table of what each parameter does. Run `./greenonbrown.py --show-display` to view the output results. Without this `--show-display` flag the video will not appear on the screen.
+
+**NOTE** In older versions ONLY, ff you change the now defunct parameter of `headless` to `False`, you'll be able to see a real time feed of what the algorithm is doing and where the detections are occurring. This will need to be switched back to `headless=True` if you decide to run it without the screen connected. Note that the owl program will not run on startup if `headless=False`.
 
 **Parameter**  | **Options** | **Description** 
 :-------------: | :-------------: | :-------------: 
