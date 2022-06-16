@@ -3,6 +3,7 @@ from algorithms import exg, exg_standardised, exg_standardised_hue, hsv, exgr, g
 from button_inputs import Selector, Recorder
 from image_sampler import image_sample
 from imutils.video import VideoStream, FileVideoStream, FPS
+from imutils import grab_contours
 from relay_control import Controller
 from queue import Queue
 from time import strftime
@@ -82,18 +83,16 @@ def green_on_brown(image,
         output = exg(image)
         print('[WARNING] DEFAULTED TO EXG')
 
-    if show_display:
-        cv2.imshow("Threshold", output)
-
     # run the thresholds provided
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+
     # if not a binary image, run an adaptive threshold on the area that fits within the thresholded bounds.
     if not threshedAlready:
         output = np.where(output > exgMin, output, 0)
         output = np.where(output > exgMax, 0, output)
         output = np.uint8(np.abs(output))
         if show_display:
-            cv2.imshow("post", output)
+            cv2.imshow("HSV Threshold on ExG", output)
 
         thresholdOut = cv2.adaptiveThreshold(output, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 31, 2)
         thresholdOut = cv2.morphologyEx(thresholdOut, cv2.MORPH_CLOSE, kernel, iterations=1)
@@ -103,13 +102,14 @@ def green_on_brown(image,
         thresholdOut = cv2.morphologyEx(output, cv2.MORPH_CLOSE, kernel, iterations=5)
 
     if show_display:
-        cv2.imshow("Threshold", thresholdOut)
+        cv2.imshow("Binary Threshold", thresholdOut)
 
     # find all the contours on the binary images
     cnts = cv2.findContours(thresholdOut.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cnts = imutils.grab_contours(cnts)
+    cnts = grab_contours(cnts)
     weedCenters = []
     boxes = []
+
     # loop over all the detected contours and calculate the centres and bounding boxes
     for c in cnts:
         # filter based on total area of contour
@@ -175,9 +175,16 @@ class Owl:
         # setup the track bars if show_display is True
         if self.show_display:
             # create trackbars for the threshold calculation
-            cv2.namedWindow("Params")
-            cv2.createTrackbar("thresholdMin", "Params", self.exgMin, 255, nothing)
-            cv2.createTrackbar("thresholdMax", "Params", self.exgMax, 255, nothing)
+            self.window_name = "Adjust Detection Thresholds"
+            cv2.namedWindow("Adjust Detection Thresholds", cv2.WINDOW_AUTOSIZE)
+            cv2.createTrackbar("ExG-Min", self.window_name, self.exgMin, 255, nothing)
+            cv2.createTrackbar("ExG-Max", self.window_name, self.exgMax, 255, nothing)
+            cv2.createTrackbar("Hue-Min", self.window_name, self.hueMin, 179, nothing)
+            cv2.createTrackbar("Hue-Max", self.window_name, self.hueMax, 179, nothing)
+            cv2.createTrackbar("Sat-Min", self.window_name, self.saturationMin, 255, nothing)
+            cv2.createTrackbar("Sat-Max", self.window_name, self.saturationMax, 255, nothing)
+            cv2.createTrackbar("Bright-Min", self.window_name, self.brightnessMin, 255, nothing)
+            cv2.createTrackbar("Bright-Max", self.window_name, self.brightnessMax, 255, nothing)
 
         # instantiate the recorder if recording is True
         if self.recording:
@@ -204,6 +211,9 @@ class Owl:
             except ModuleNotFoundError:
                 self.cam = VideoStream(src=0).start()
             time.sleep(1.0)
+        frame_width = self.cam.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
+        frame_height = self.cam.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
+
         # set the sprayqueue size
         self.sprayQueue = Queue(maxsize=10)
 
@@ -242,10 +252,22 @@ class Owl:
         # to be updated too. Fairly straightforward, so an opportunity for more precise application
         self.nozzleNum = nozzleNum
 
+        # activation region limit - once weed crosses this line, nozzle is activated
+        self.yAct = int((0.2) * frame_height)
+        self.laneWidth = frame_width / self.nozzleNum
+
+        # calculate lane coords and draw on frame
+        for i in range(self.nozzleNum):
+            laneX = int(i * self.laneWidth)
+            self.laneCoords[i] = laneX
+
     def hoot(self, sprayDur, delay, sample=False, sampleDim=400, saveDir='output', camera_name='cam1', algorithm='exg',
-             selectorEnabled=False, minArea=10):
+             selectorEnabled=False, minArea=10, log_fps=False):
+
         # track FPS and framecount
-        fps = FPS().start()
+        if log_fps:
+            fps = FPS().start()
+
         if selectorEnabled:
             self.selector = Selector(switchDict=self.algorithmDict)
 
@@ -253,6 +275,7 @@ class Owl:
             while True:
                 delay = self.update_delay(delay)
                 frame = self.cam.read()
+
                 if selectorEnabled:
                     algorithm, newAlgorithm = self.selector.algorithm_selector(algorithm)
                     if newAlgorithm:
@@ -263,26 +286,36 @@ class Owl:
                     self.saveRecording = self.recorderButton.saveRecording
 
                 if frame is None:
-                    fps.stop()
-                    print("[INFO] Stopped. Approximate FPS: {:.2f}".format(fps.fps()))
-                    self.stop()
-                    break
+                    if log_fps:
+                        fps.stop()
+                        print("[INFO] Stopped. Approximate FPS: {:.2f}".format(fps.fps()))
+                        self.stop()
+                        break
+                    else:
+                        print("[INFO] Stopped.")
+                        self.stop()
+                        break
 
                 if self.record and self.writer is None:
                     saveDir = os.path.join(saveDir, strftime("%Y%m%d-{}-{}".format(camera_name, algorithm)))
                     if not os.path.exists(saveDir):
                         os.makedirs(saveDir)
 
-                    self.baseName = os.path.join(saveDir,
-                                                 strftime("%Y%m%d-%H%M%S-{}-{}".format(camera_name, algorithm)))
+                    self.baseName = os.path.join(saveDir, strftime("%Y%m%d-%H%M%S-{}-{}".format(camera_name, algorithm)))
                     videoName = self.baseName + '.avi'
                     self.logger.new_video_logfile(name=self.baseName + '.txt')
                     self.writer = cv2.VideoWriter(videoName, self.fourcc, 30, (frame.shape[1], frame.shape[0]), True)
 
                 # retrieve the trackbar positions for thresholds
                 if self.show_display:
-                    self.exgMin = cv2.getTrackbarPos("thresholdMin", "Params")
-                    self.exgMax = cv2.getTrackbarPos("thresholdMax", "Params")
+                    self.exgMin = cv2.getTrackbarPos("ExG-Min", self.window_name)
+                    self.exgMax = cv2.getTrackbarPos("ExG-Max", self.window_name)
+                    self.hueMin = cv2.getTrackbarPos("Hue-Min", self.window_name)
+                    self.hueMax = cv2.getTrackbarPos("Hue-Max", self.window_name)
+                    self.saturationMin = cv2.getTrackbarPos("Sat-Min", self.window_name)
+                    self.saturationMax = cv2.getTrackbarPos("Sat-Max", self.window_name)
+                    self.brightnessMin = cv2.getTrackbarPos("Bright-Min", self.window_name)
+                    self.brightnessMax = cv2.getTrackbarPos("Bright-Max", self.window_name)
 
                 else:
                     # this leaves it open to adding dials for sensitivity. Static at the moment, but could be dynamic
@@ -309,16 +342,6 @@ class Owl:
                 #     sampleThread.start()
                 #########################
 
-                # activation region limit - once weed crosses this line, nozzle is activated
-                self.yAct = int((0.2) * frame.shape[0])
-                laneWidth = imageOut.shape[1] / self.nozzleNum
-
-                # calculate lane coords and draw on frame
-                for i in range(self.nozzleNum):
-                    laneX = int(i * laneWidth)
-                    # cv2.line(displayFrame, (laneX, 0), (laneX, imageOut.shape[0]), (0, 255, 255), 2)
-                    self.laneCoords[i] = laneX
-
                 # loop over the ID/weed centres from contours
                 for ID, centre in enumerate(weedCentres):
                     # if they are in activation region the spray them
@@ -326,16 +349,17 @@ class Owl:
                         sprayTime = time.time()
                         for i in range(self.nozzleNum):
                             # determine which lane needs to be activated
-                            if int(self.laneCoords[i]) <= centre[0] < int(self.laneCoords[i] + laneWidth):
+                            if int(self.laneCoords[i]) <= centre[0] < int(self.laneCoords[i] + self.laneWidth):
                                 # log a spray job with the controller using the nozzle, delay, timestamp and spray duration
                                 # if GPS is used/speed control, delay can be updated automatically based on forward speed
                                 self.controller.receive(nozzle=i, delay=delay, timeStamp=sprayTime, duration=sprayDur)
 
                 # update the framerate counter
-                fps.update()
+                if log_fps:
+                    fps.update()
 
                 if self.show_display:
-                    cv2.imshow("Output", imutils.resize(imageOut, width=600))
+                    cv2.imshow("Detection Output", imutils.resize(imageOut, width=600))
 
                 if self.record and not self.saveRecording:
                     self.writer.write(frame)
@@ -344,23 +368,34 @@ class Owl:
                     self.writer.release()
                     self.controller.solenoid.beep(duration=0.1)
                     self.recorderButton.saveRecording = False
-                    fps.stop()
+                    if log_fps:
+                        fps.stop()
+                        self.logger.log_line_video(
+                            "[INFO] Approximate FPS: {:.2f}".format(fps.fps()), verbose=True)
+                        fps = FPS().start()
+
                     self.writer = None
-                    self.logger.log_line_video("[INFO] {}. Approximate FPS: {:.2f}".format(self.baseName, fps.fps()),
-                                               verbose=True)
-                    fps = FPS().start()
+                    self.logger.log_line_video("[INFO] {} stopped.".format(self.baseName), verbose=True)
+
 
                 k = cv2.waitKey(1) & 0xFF
                 if k == 27:
-                    fps.stop()
-                    self.logger.log_line_video("[INFO] Stopped. Approximate FPS: {:.2f}".format(fps.fps()),
-                                               verbose=True)
+                    if log_fps:
+                        fps.stop()
+                        self.logger.log_line_video(
+                            "[INFO] Approximate FPS: {:.2f}".format(fps.fps()),
+                            verbose=True)
+                    self.logger.log_line_video("[INFO] Stopped.", verbose=True)
                     self.stop()
                     break
 
         except KeyboardInterrupt:
-            fps.stop()
-            self.logger.log_line_video("[INFO] Stopped. Approximate FPS: {:.2f}".format(fps.fps()), verbose=True)
+            if log_fps:
+                fps.stop()
+                self.logger.log_line_video(
+                    "[INFO] Approximate FPS: {:.2f}".format(fps.fps()),
+                    verbose=True)
+            self.logger.log_line_video("[INFO] Stopped.", verbose=True)
             self.stop()
 
         except Exception as e:
