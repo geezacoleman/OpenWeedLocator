@@ -110,7 +110,7 @@ class Controller:
             nozzleThread.start()
 
         time.sleep(1)
-        print("[INFO] Setup complete. Starting spraying.")
+        print("[INFO] Nozzle setup complete. Initiating camera...")
         self.solenoid.beep(duration=0.5)
 
     def receive(self, nozzle, timeStamp, location=0, delay=0, duration=1):
