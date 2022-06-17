@@ -186,6 +186,29 @@ class Owl:
             cv2.createTrackbar("Bright-Min", self.window_name, self.brightnessMin, 255, nothing)
             cv2.createTrackbar("Bright-Max", self.window_name, self.brightnessMax, 255, nothing)
 
+        # nozzleDict maps the reference nozzle number to a boardpin on the embedded device
+        self.nozzleDict = {
+            0: 13,
+            1: 15,
+            2: 16,
+            3: 18
+        }
+
+        # instantiate the nozzle controller - successful start should beep the buzzer
+        self.controller = Controller(nozzleDict=self.nozzleDict)
+
+        # instantiate the logger
+        self.logger = self.controller.logger
+
+        # check that the resolution is not so high it will entirely brick/destroy the OWL.
+        total_pixels = resolution[0] * resolution[1]
+        if total_pixels > (832 * 640):
+            # change here if you want to test higher resolutions, but be warned, backup your current image!
+            self.resolution = (416, 320)
+            self.logger.log_line('[WARNING] Resolution {} selected is dangerously high. '
+                                 'Resolution has been reset to default to avoid damaging the OWL'.format(resolution),
+                                 verbose=True)
+
         # instantiate the recorder if recording is True
         if self.recording:
             self.fourcc = cv2.VideoWriter_fourcc(*'MJPG')
@@ -210,20 +233,26 @@ class Owl:
                                        exposure_compensation=self.exp_compensation).start()
             except ModuleNotFoundError:
                 self.cam = VideoStream(src=0).start()
-            time.sleep(1.0)
+            time.sleep(2.0)
         frame_width = self.cam.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
         frame_height = self.cam.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
+        # save camera settings to the log
+        self.logger.log_line('[INFO] Camera setup complete. Settings: '
+                             '\nResolution: {}'
+                             '\nFramerate: {}'
+                             '\nExposure Mode: {}'
+                             '\nAutoWhiteBalance: {}'
+                             '\nExposure Compensation: {}'
+                             '\nSensor Mode: {}'.format(self.resolution,
+                                                      self.framerate,
+                                                      self.exp_mode,
+                                                      self.awb_mode,
+                                                      self.exp_compensation,
+                                                      self.sensor_mode), verbose=True)
+
         # set the sprayqueue size
         self.sprayQueue = Queue(maxsize=10)
-
-        # nozzleDict maps the reference nozzle number to a boardpin on the embedded device
-        self.nozzleDict = {
-            0: 13,
-            1: 15,
-            2: 16,
-            3: 18
-        }
 
         ### Data collection only ###
         # algorithmDict maps pins to algorithms for data collection
@@ -233,16 +262,11 @@ class Owl:
             "hsv": 33,
             "exhsv": 35,
         }
+
         # this is where the recording button can be added. Currently set to pin 37
         if self.recording:
             self.recorderButton = Recorder(recordGPIO=37)
         ############################
-
-        # instantiate the nozzle controller - successful start should beep the buzzer
-        self.controller = Controller(nozzleDict=self.nozzleDict)
-
-        # instantiate the logger
-        self.logger = self.controller.logger
 
         # sensitivity and weed size to be added
         self.sensitivity = None
@@ -260,6 +284,7 @@ class Owl:
         for i in range(self.nozzleNum):
             laneX = int(i * self.laneWidth)
             self.laneCoords[i] = laneX
+
 
     def hoot(self, sprayDur, delay, sample=False, sampleDim=400, saveDir='output', camera_name='cam1', algorithm='exg',
              selectorEnabled=False, minArea=10, log_fps=False):
@@ -377,7 +402,6 @@ class Owl:
                     self.writer = None
                     self.logger.log_line_video("[INFO] {} stopped.".format(self.baseName), verbose=True)
 
-
                 k = cv2.waitKey(1) & 0xFF
                 if k == 27:
                     if log_fps:
@@ -469,7 +493,8 @@ def check_for_usb():
 
 # business end of things
 if __name__ == "__main__":
-    # add in the possible command line arguments to improve useability
+    # these command line arguments enable people to operate/change some settings from the command line instead of
+    # opening up a the OWL code each time.
     ap = argparse.ArgumentParser()
     ap.add_argument('--video-file', type=str, default=None, help='use video file instead')
     ap.add_argument('--show-display', action='store_true', default=False, help='show display windows')
@@ -507,7 +532,7 @@ if __name__ == "__main__":
               saturationMax=220,
               brightnessMin=60,
               brightnessMax=190,
-              resolution=(416, 320),
+              resolution=(1000, 800),
               nozzleNum=4,
               framerate=args.framerate,
               exp_mode=args.exp_mode,
