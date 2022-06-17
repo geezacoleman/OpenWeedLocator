@@ -150,7 +150,7 @@ class Owl:
                  exp_mode='sports',
                  awb_mode='auto',
                  sensor_mode=0,
-                 exp_compensation=-6):
+                 exp_compensation=-4):
 
         # different detection parameters
         self.show_display = show_display
