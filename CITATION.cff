@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the following paper."
+references:
+  - type: article
+    authors:
+      - family-names: Coleman
+        given-names: Guy
+        orcid: 0000-0002-8808-2965
+      - family-names: Salter
+        given-names: William
+        orcid: 0000-0003-1653-5192
+      - family-names: Walsh
+        given-names: Michale J.
+title: "OpenWeedLocator (OWL): An open-source, low-cost device for fallow weed detection"
+year: 2022
+journal: Scientific Reports
+volume: 12
+doi: https://doi.org/10.1038/s41598-021-03858-9
+url: https://www.nature.com/articles/s41598-021-03858-9
