@@ -19,10 +19,8 @@ identifiers:
   - type: url
     value: >-
       https://www.nature.com/articles/s41598-021-03858-9
-title: "OpenWeedLocator (OWL): An open-source, low-cost device for fallow weed detection"
 year: 2022
 journal: "Scientific Reports"
 volume: 12
-cff-version: 1.2.0
 doi: "https://doi.org/10.1038/s41598-021-03858-9"
 url: "https://www.nature.com/articles/s41598-021-03858-9"
