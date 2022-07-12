@@ -175,7 +175,7 @@ def four_frame_analysis(exgFile: str, exgsFile: str, hueFile: str, exhuFile: str
             break
 
 
-def single_frame_analysis(videoFile: str, HDFile: str, algorithm):
+def single_frame_analysis(videoFile: str, HDFile: str, algorithm='exhsv'):
     baseName = os.path.splitext(os.path.basename(videoFile))[0]
 
     video = cv2.VideoCapture(videoFile)
@@ -199,7 +199,7 @@ def single_frame_analysis(videoFile: str, HDFile: str, algorithm):
         k = cv2.waitKey(1) & 0xFF
         if k == ord('d') or hdFrame is None:
             if hdframecount >= len(hdFramesAll):
-                hdFrame = next(frame_processor(videoHD, 'hd'))
+                hdFrame = next(frame_processor(videoHD, videoName='hd'))
                 hdFrame = imutils.resize(hdFrame, height=640)
                 # hdFrame = imutils.rotate(hdFrame, angle=180)
                 hdframecount += 1
@@ -210,7 +210,7 @@ def single_frame_analysis(videoFile: str, HDFile: str, algorithm):
 
         if k == ord('s') or videoFrame is None:
             if videoframecount >= len(videoFramesAll):
-                videoFrame = next(frame_processor(video, algorithm))
+                videoFrame = next(frame_processor(video, algorithm=algorithm))
                 videoFrame = imutils.resize(videoFrame, height=640)
                 videoframecount += 1
                 videoFramesAll.append(videoFrame)
@@ -255,7 +255,7 @@ def single_frame_analysis(videoFile: str, HDFile: str, algorithm):
             break
 
 
-def frame_processor(videoFeed, videoName):
+def frame_processor(videoFeed, videoName='', algorithm='exhsv'):
     frameShape = None
     while True:
         k = cv2.waitKey(1) & 0xFF
@@ -280,7 +280,7 @@ def frame_processor(videoFeed, videoName):
                                                                 brightnessMin=60,
                                                                 brightnessMax=250,
                                                                 show_display=False,
-                                                                algorithm=videoName, minArea=10)
+                                                                algorithm=algorithm, minArea=10)
 
             yield imageOut
         if k == 27:
@@ -315,7 +315,7 @@ def size_analysis(directory, sample_number=10):
 
     df = pd.DataFrame(columns=df_columns)
 
-    for videoPath in tqdm(glob.iglob(directory + '\*.*')):
+    for videoPath in tqdm(glob.iglob(directory + '\*.mp4')):
         video_name = os.path.basename(videoPath).split('.')[0]
         camera_name = video_name.split('-')[0].lower()
         rep = video_name.split('-')[1]
@@ -341,23 +341,22 @@ def size_analysis(directory, sample_number=10):
                                                                 brightnessMin=60,
                                                                 brightnessMax=250,
                                                                 show_display=False,
-                                                                algorithm='exhsv', minArea=10)
+                                                                algorithm='exhsv', minArea=-10)
             # cv2.imshow('Output', imageOut)
             # cv2.waitKey(10)
             # calculate and append the individual contour areas
-            for c in cnts:
-                px_contour_area = []
-                cal_contour_area = []
+            px_contour_area = []
+            cal_contour_area = []
+            px_bbox_area = []
+            cal_bbox_area = []
 
+            for c in cnts:
                 c_px_area = cv2.contourArea(c)
                 c_cal_area = c_px_area * calibration_dictionary[camera_name]
                 px_contour_area.append(c_px_area)
                 cal_contour_area.append(c_cal_area)
 
             for box in boxes:
-                px_bbox_area = []
-                cal_bbox_area = []
-
                 boxW = box[2]
                 boxH = box[3]
 
@@ -367,6 +366,9 @@ def size_analysis(directory, sample_number=10):
                 px_bbox_area.append(bbox_px_area)
                 cal_bbox_area.append(bbox_cal_area)
 
+            print(px_bbox_area)
+            print("-----------------------")
+            print(cal_bbox_area)
             frame_id = [randint for x in boxes]
             video_name_id = [video_name for x in boxes]
             camera_id = [camera_name for x in boxes]
@@ -374,8 +376,10 @@ def size_analysis(directory, sample_number=10):
             speed_id = [speed for x in boxes]
 
             df2 = pd.DataFrame(list(zip(video_name_id, camera_id, rep_id, speed_id, frame_id,
-                                        px_contour_area, cal_contour_area, px_bbox_area, cal_bbox_area)),
+                                        px_contour_area, px_bbox_area, cal_contour_area, cal_bbox_area)),
                                columns=df_columns)
+
+            print(df2)
             df = df.append(df2)
 
     df.to_csv(r"logs\{}_size_analysis_rstate_{}.csv".format(datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S"),
@@ -423,13 +427,13 @@ def blur_analysis(directory):
 
 
 if __name__ == "__main__":
-    videoFile = r"videos/Ard-1-10.mp4"
-    hdFile = r"videos/ard-1-5.avi"
-
-    single_frame_analysis(videoFile=videoFile,
-                          HDFile=hdFile,
-                          algorithm='exg')
+    # videoFile = r"videos/HQ2-1-5.avi"
+    # hdFile = r"videos/ard-1-5.avi"
+    #
+    # single_frame_analysis(videoFile=videoFile,
+    #                       HDFile=hdFile,
+    #                       algorithm='exg')
     #
     # # blur analysis
-    # directory = r"videos"
-    # size_analysis(directory=directory)
+    directory = r"videos"
+    size_analysis(directory=directory)
