@@ -53,6 +53,16 @@ A second system, identical to the first, was developed for the University of Syd
 <img src="https://user-images.githubusercontent.com/51358498/152990627-0f89bf92-87bc-4808-a748-33f0742068e4.jpg" width="500">
 </p>
 
+## Image data collection
+An updated image sampling method was added on 14/07/2022, which allows whole-image, cropped-to-bounding-box and square images saved on a set frequency. This means the OWL can now be used for image data collection much more easily than before. Example images for each method are provided below.
+
+| **Method**  | **Code** | **Example** |
+| ------------- | ------------- | ------------- |
+| Whole image  | 'whole' | ![20220714-145951__frame_420](https://user-images.githubusercontent.com/51358498/178902742-45952737-ee3e-4a36-b9b3-216a19e78eb7.png) |
+| Crop to bounding box  | 'bbox'  | ![20220714-145757__frame_420_n_4](https://user-images.githubusercontent.com/51358498/178902795-96bb8068-cf58-4f5a-8819-8ca538add384.png) |
+| Crop to square around weed centre | 'square' | ![20220714-150328__frame_420_n_4](https://user-images.githubusercontent.com/51358498/178903171-af7f8f1b-9caf-435e-96d0-4f01e76c53fb.png) |
+| Deactivated (DEFAULT)  | None |  |
+
 ## Community development and contribution
 As more OWLs are built and fallow weed control systems developed, we would love to share the end results here. Please get in contact and we can upload images of the finished systems on this page.
 
