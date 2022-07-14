@@ -1,12 +1,13 @@
-import time
-
 from tqdm import tqdm
 from datetime import datetime, timezone
 from greenonbrown import green_on_brown
+from image_sampler import bounding_box_image_sample, whole_image_save
 from imutils.video import count_frames, FileVideoStream
+from threading import Thread
 import pandas as pd
 import numpy as np
 import imutils
+import time
 import glob
 import cv2
 import csv
@@ -288,7 +289,7 @@ def frame_processor(videoFeed, videoName='', algorithm='exhsv'):
             break
 
 
-def size_analysis(directory, sample_number=10):
+def size_analysis(directory, sample_number=10, save_directory=None):
     '''
     take a directory of videos, save all frames to a list, randomly sample X number of frames, run EXHSV algorithm that returns contour list
     iterate over each contour and save frame ID, contour ID, contour area, bbox area, calibrated area
@@ -332,7 +333,7 @@ def size_analysis(directory, sample_number=10):
             ret, frame = cap.read()
 
             # uses same parameters as the above image analysis settings
-            cnts, boxes, weedCentres, imageOut = green_on_brown(frame, exgMin=29,
+            cnts, boxes, weedCentres, imageOut = green_on_brown(frame.copy(), exgMin=29,
                                                                 exgMax=200,
                                                                 hueMin=30,
                                                                 hueMax=92,
@@ -349,6 +350,17 @@ def size_analysis(directory, sample_number=10):
             cal_contour_area = []
             px_bbox_area = []
             cal_bbox_area = []
+
+            if save_directory is not None:
+                save_frame = frame.copy()
+                sample_thread = Thread(target=bounding_box_image_sample,
+                                       args=[save_frame, boxes, save_directory, randint])
+                sample_thread.start()
+
+                whole_image_thread = Thread(target=whole_image_save,
+                                            args=[imageOut, save_directory, randint])
+                whole_image_thread.start()
+
 
             for c in cnts:
                 c_px_area = cv2.contourArea(c)
@@ -436,4 +448,5 @@ if __name__ == "__main__":
     #
     # # blur analysis
     directory = r"videos"
-    size_analysis(directory=directory)
+    save_directory = r'images/bbox'
+    size_analysis(directory=directory, save_directory=save_directory)

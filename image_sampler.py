@@ -1,41 +1,61 @@
-import numpy as np
 from time import strftime
+import numpy as np
 import cv2
 import os
 
-def image_sample(image, centresList, saveDir, sideLength=200):
+def whole_image_save(image, save_directory, frame_id):
+    fname = "{}_frame_{}.png".format(strftime("%Y%m%d-%H%M%S_"), frame_id)
+    cv2.imwrite(os.path.join(save_directory, fname), image)
+
+
+def bounding_box_image_sample(image, bounding_boxes, save_directory, frame_id):
+    '''
+    Generates and saves a cropped section of whole image based on bbox coordinates
+    :param image: input image array
+    :param bounding_boxes: bounding box coordinates in list of form [[startX, startY, boxW, boxH], [...]]
+    :param saveDir: save directory
+    '''
+    for contour_id, box in enumerate(bounding_boxes):
+        startX = box[0]
+        startY = box[1]
+        endX = startX + box[2]
+        endY = startY + box[3]
+
+        cropped_image = image[startY:endY, startX:endX]
+        fname = "{}_frame_{}_n_{}.png".format(strftime("%Y%m%d-%H%M%S_"), frame_id, str(contour_id))
+        cv2.imwrite(os.path.join(save_directory, fname), cropped_image)
+
+def square_image_sample(image, centres_list, save_directory, frame_id, side_length=200):
     """
-    Generates and saves random image crop around a target centre
+    Generates and saves random square image crop around a target centre
     :param image: input image to collect snapshot from
     :param centresList: list of target centres
     :param sideLength: dimensions of square
     """
-    if sideLength > image.shape[0]:
-        sideLength = image.shape[0]
-    displayImage = image.copy()
-    halfLength = int(sideLength / 2)
+    if side_length > image.shape[0]:
+        side_length = image.shape[0]
+    halfLength = int(side_length / 2)
 
     # compute startX and StartY of the cropped area
-    for ID, centre in enumerate(centresList):
+    for contour_id, centre in enumerate(centres_list):
         startX = centre[0] - np.random.randint(10, halfLength)
         if startX < 0:
             startX = 0
         startY = centre[1] - np.random.randint(10, halfLength)
         if startY < 0:
             startY = 0
-        endX = startX + sideLength
-        endY = startY + sideLength
+        endX = startX + side_length
+        endY = startY + side_length
 
         # check if box fits on image, if not compute from max edge
         if endX > image.shape[1]:
             endX = image.shape[1]
-            startX = image.shape[1] - sideLength
+            startX = image.shape[1] - side_length
         if endY > image.shape[0]:
             endY = image.shape[0]
-            startY = image.shape[0] - sideLength
+            startY = image.shape[0] - side_length
 
         # use numpy array slicing to crop image and save
-        weedPosTrain = image[startY:endY, startX:endX]
-        fname = strftime("%Y%m%d-%H%M%S_") + 'N' + str(ID) + ".png"
-        cv2.imwrite(os.path.join(saveDir, fname), weedPosTrain)
-        cv2.rectangle(displayImage, (int(startX), int(startY)), (endX, endY), (255, 100, 100), 3)
+        square_image = image[startY:endY, startX:endX]
+        fname = "{}_frame_{}_n_{}.png".format(strftime("%Y%m%d-%H%M%S_"), frame_id, str(contour_id))
+        cv2.imwrite(os.path.join(save_directory, fname), square_image)

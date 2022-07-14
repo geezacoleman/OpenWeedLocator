@@ -1,7 +1,7 @@
 #!/home/pi/.virtualenvs/owl/bin/python3
 from algorithms import exg, exg_standardised, exg_standardised_hue, hsv, exgr, gndvi, maxg
 from button_inputs import Selector, Recorder
-from image_sampler import image_sample
+from image_sampler import bounding_box_image_sample, square_image_sample
 from datetime import datetime, timezone
 from imutils.video import VideoStream, FileVideoStream, FPS
 from imutils import grab_contours
@@ -388,9 +388,10 @@ class Owl:
                 # uncomment if needed
                 # if frameCount % 60 == 0 and sample is True:
                 #     saveFrame = frame.copy()
-                #     sampleThread = Thread(target=image_sample, args=[saveFrame, weedCentres, saveDir, sampleDim])
+                #     sampleThread = Thread(target=bounding_box_image_sample,
+                #                           args=[saveFrame, weedCentres, saveDir, frameCount])
                 #     sampleThread.start()
-                #########################
+                # ########################
 
                 # loop over the ID/weed centres from contours
                 for ID, centre in enumerate(weedCentres):
