@@ -618,9 +618,9 @@ if __name__ == "__main__":
     # start the targeting!
     owl.hoot(sprayDur=0.15,
              delay=0,
-             sample=False,
-             sampleDim=1000,
-             saveDir='/home/pi',
+             sampleMethod=None,
+             sampleFreq=60,
+             saveDir='/home/pi/owl-images',
              algorithm=args.algorithm,
              selectorEnabled=False,
              camera_name='hsv',
@@ -645,11 +645,11 @@ Here's a summary table of what each parameter does. Run `./greenonbrown.py --sho
 `resolution`|Tuple of (w, h) resolution| Changes output resolution from camera. Increasing rapidly decreased framerate but improves detection of small weeds.
 **hoot()** | | All options when the sprayer.start() function is called
 `sprayDur`|Any float (decimal)|Changes the length of time for which the relay is activated.|
-`sample`|`True` or `False`| If sampling code is uncommented, images of weeds detected will be saved to OWL folder. Do not leave on for long periods or SD card will fill up and stop working.|
-`sampleDim` | Any float (decimal) | Changes the length of time for which the relay is activated.|
-`saveDir` | Any integer| Changes the width of the saved image.|
+`sampleMethod`|Choose from None, 'bbox', 'square', 'whole' | If sampleMethod=None, sampling is deactivated. Do not leave on for long periods or SD card will fill up and stop working.|
+`sampleFreq` | Any positive integer | Changes how often (after how many frames) image sampling will occur. If sampleFreq=60, images will be sampled every 60 frames. |
+`saveDir` | Path to save directory | Set where you want the images saved. If you insert a USB and would like to save images to it, put the path for that here. |
 `algorithm`|Any of: `exg`,`exgr`,`exgs`,`exhu`,`hsv`| Changes the selected algorithm. Most sensitive: 'exg', least sensitive/most precise (least false positives): 'exgr', 'exhu', 'hsv'|
-`selectorEnabled`|`True` or `False`| Enables algorithm selection based on a rotary switch. Only enable is switch is connected.|
+`selectorEnabled`|`True` or `False`| Enables algorithm selection based on a rotary switch. Only enable if switch is connected.|
 `cameraName` | Any string | Changes the save name if recording videos of the camera. Ignore - only used if recording data.|
 `minArea`| Any integer  | Changes the minimum size of the detection. Leave low for more sensitivity of small weeds and increase to reduce false positives.|
  </details>

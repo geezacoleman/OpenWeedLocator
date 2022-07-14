@@ -1,13 +1,14 @@
 #!/home/pi/.virtualenvs/owl/bin/python3
 from algorithms import exg, exg_standardised, exg_standardised_hue, hsv, exgr, gndvi, maxg
 from button_inputs import Selector, Recorder
-from image_sampler import bounding_box_image_sample, square_image_sample
+from image_sampler import bounding_box_image_sample, square_image_sample, whole_image_save
 from datetime import datetime, timezone
 from imutils.video import VideoStream, FileVideoStream, FPS
 from imutils import grab_contours
 from relay_control import Controller
 from queue import Queue
 from time import strftime
+from threading import Thread
 import subprocess
 import argparse
 import imutils
@@ -311,10 +312,15 @@ class Owl:
             self.laneCoords[i] = laneX
 
 
-    def hoot(self, sprayDur, delay, sample=False, sampleDim=400, saveDir='output', camera_name='cam1', algorithm='exg',
+    def hoot(self, sprayDur, delay, sampleMethod=None, sampleFreq=60, saveDir='output', camera_name='cam1', algorithm='exg',
              selectorEnabled=False, minArea=10, log_fps=False):
 
         # track FPS and framecount
+        frameCount = 0
+        if sampleMethod is not None:
+            if not os.path.exists(saveDir):
+                os.makedirs(saveDir)
+
         if log_fps:
             fps = FPS().start()
 
@@ -384,13 +390,35 @@ class Owl:
                                                                     algorithm=algorithm, minArea=minArea)
 
                 ##### IMAGE SAMPLER #####
-                # record sample images if required of weeds detected
-                # uncomment if needed
-                # if frameCount % 60 == 0 and sample is True:
-                #     saveFrame = frame.copy()
-                #     sampleThread = Thread(target=bounding_box_image_sample,
-                #                           args=[saveFrame, weedCentres, saveDir, frameCount])
-                #     sampleThread.start()
+                # record sample images if required of weeds detected. sampleFreq specifies how often
+                if sampleMethod is not None:
+                    # only record every sampleFreq number of frames. If sampleFreq = 60, this will activate every 60th frame
+                    if frameCount % sampleFreq == 0:
+                        saveFrame = frame.copy()
+
+                        if sampleMethod == 'whole':
+                            whole_image_thread = Thread(target=whole_image_save,
+                                                        args=[saveFrame, saveDir, frameCount])
+                            whole_image_thread.start()
+
+                        elif sampleMethod == 'bbox':
+                            sample_thread = Thread(target=bounding_box_image_sample,
+                                                   args=[saveFrame, boxes, saveDir, frameCount])
+                            sample_thread.start()
+
+                        elif sampleMethod == 'square':
+                            sample_thread = Thread(target=square_image_sample,
+                                                   args=[saveFrame, weedCentres, saveDir, frameCount, 200])
+                            sample_thread.start()
+
+                        else:
+                            # if nothing/incorrect specified - sample the whole image
+                            whole_image_thread = Thread(target=whole_image_save,
+                                                        args=[imageOut, saveDir, frameCount])
+                            whole_image_thread.start()
+
+
+                    frameCount += 1
                 # ########################
 
                 # loop over the ID/weed centres from contours
@@ -594,9 +622,9 @@ if __name__ == "__main__":
     # start the targeting!
     owl.hoot(sprayDur=0.15,
              delay=0,
-             sample=False,
-             sampleDim=1000,
-             saveDir='/home/pi',
+             sampleMethod=None, # choose from 'bbox' | 'square' | 'whole'. If sampleMethod=None, it won't sample anything
+             sampleFreq=30, # select how often to sample - number of frames to skip.
+             saveDir='images/bbox2',
              algorithm=args.algorithm,
              selectorEnabled=False,
              camera_name='hsv',
