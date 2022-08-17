@@ -260,8 +260,8 @@ class Owl:
             except ModuleNotFoundError:
                 self.cam = VideoStream(src=0).start()
             time.sleep(2.0)
-        frame_width = self.cam.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
-        frame_height = self.cam.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        frame_width = self.resolution[0] # self.cam.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
+        frame_height = self.resolution[1] # self.cam.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
         # save camera settings to the log
         self.logger.log_line('[INFO] Camera setup complete. Settings: '
