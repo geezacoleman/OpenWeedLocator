@@ -2,6 +2,10 @@
 <img src="https://user-images.githubusercontent.com/51358498/152991504-005a1daa-2900-4f48-8bec-d163d6336ed2.png" width="400">
 </p>
 
+### NOTICE: Picamera2 Branch
+Raspberry Pi has recently announced that they would be moving away from the current picamera software, towards the open-source and active [libcamera-based picamera2](https://www.raspberrypi.com/documentation/accessories/camera.html). The picamera2 library is now in [beta](https://github.com/raspberrypi/picamera2). We will be transitioning the OpenWeedLocator to picamera2, given it has much simpler integration of a wider array of cameras. Once we are confident picamera2 has been integrated successfully, we will merge this branch.
+
+# Welcome to OpenWeedLocator (OWL)
 Welcome to the OpenWeedLocator (OWL) project, an opensource hardware and software green-on-brown weed detector that uses entirely off-the-shelf componentry, very simple green-detection algorithms and entirely 3D printable parts. OWL integrates weed detection on a Raspberry Pi with a relay control board in a custom designed case so you can attach any 12V solenoid, relay, lightbulb or device for low-cost, simple and opensource site-specific weed control. Projects to date have seen OWL mounted on robots and vehicles for spot spraying! 
 
 On the weed detection front, a range of algorithms have been provided, each with advantages and disadvantages for your use case. They include ExG (excess green 2g - r - b, developed by Woebbecke et al. 1995), a hue, saturation and value (HSV) threshold and a combined ExG + HSV algorithm. These algorithms have all been tested in a wide range of conditions. The article has now been published in [Scientific Reports (open access)](https://www.nature.com/articles/s41598-021-03858-9).
