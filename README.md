@@ -8,7 +8,7 @@ On the weed detection front, a range of algorithms have been provided, each with
 
 Repository DOI: [![DOI](https://zenodo.org/badge/399194159.svg)](https://zenodo.org/badge/latestdoi/399194159)
 
-The project is in the process of transitioning to picamera2 on the [picamera2 branch](https://github.com/geezacoleman/OpenWeedLocator/tree/picamera2).
+**Note**: The project is in the process of transitioning to picamera2 on the [picamera2 branch](https://github.com/geezacoleman/OpenWeedLocator/tree/picamera2).
 
 Internal electronics       |  Fitted module - vehicle | Fitted module - robot 
 :-------------------------:|:-------------------------: |:-------------------------:
