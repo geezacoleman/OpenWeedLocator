@@ -398,44 +398,60 @@ def size_analysis(directory, sample_number=10, save_directory=None):
                                                                       RANDOM_STATE))
     time.sleep(2)
 
-def blur_analysis(directory):
-    blurDict = {}
-    df = pd.DataFrame(columns=['field', 'algorithm', 'blur'])
-    for videoPath in glob.iglob(directory + '\*.mp4'):
-        allframeBlur = []
-        sampledframeBlur = []
-        video = FileVideoStream(videoPath).start()
-        frameCount = 0
-        while True:
-            frame = video.read()
-            if video.stopped:
-                meanBlur = np.mean(allframeBlur)
-                stdBlur = np.std(allframeBlur)
-                vidName = os.path.basename(videoPath)
-                fieldNameList = [vidName.split("-")[0] for i in range(100)]
-                print(fieldNameList)
-                algorithmNameList = [os.path.splitext(vidName.split("-")[2])[0] for i in range(100)]
+def blur_analysis(directory, sample_number=10, save_directory=None, display=False):
+    ### IMPORTANT ###
+    # this sets the random state - random values won't change unless you change this number
+    RANDOM_STATE = 42
+    np.random.seed(RANDOM_STATE)
+    #################
 
-                for i in range(100):
-                    randint = np.random.randint(0, len(allframeBlur))
-                    sampledframeBlur.append(allframeBlur[randint])
-                df2 = pd.DataFrame(list(zip(fieldNameList, algorithmNameList, sampledframeBlur)),
-                                   columns=['field', 'algorithm', 'blur'])
-                print(df2)
-                df = df.append(df2)
-                print(df)
-                df.to_csv(r"videos\blur\blurriness.csv")
-                blurDict[vidName] = [meanBlur, stdBlur]
-                break
+    df_columns = ['video_name', 'camera', 'rep', 'speed', 'frame_id', 'blur']
+    df = pd.DataFrame(columns=df_columns)
 
-            greyscale = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    for videoPath in tqdm(glob.iglob(directory + '\*.mp4')):
+        blur_list = []
+        video_name = os.path.basename(videoPath).split('.')[0]
+        camera_name = video_name.split('-')[0].lower()
+        rep = video_name.split('-')[1]
+        speed = video_name.split('-')[2]
+
+        cap = cv2.VideoCapture(videoPath)
+        video_length = count_frames(videoPath, override=True) - 1
+
+        # randomly sample frames
+        for i in tqdm(range(sample_number)):
+            randint = np.random.randint(0, video_length)
+            cap.set(1, randint)
+            ret, frame = cap.read()
+
+            if save_directory is not None:
+                save_frame = frame.copy()
+
+                whole_image_thread = Thread(target=whole_image_save,
+                                            args=[save_frame, save_directory, randint])
+                whole_image_thread.start()
+
+            greyscale = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2GRAY)
             blurriness = cv2.Laplacian(greyscale, cv2.CV_64F).var()
-            allframeBlur.append(blurriness)
-            frameCount += 1
+            blur_list.append(blurriness)
 
-        print(vidName, ',', np.round(meanBlur, 2), ',', np.round(stdBlur, 2), ',', frameCount)
+            data = [video_name, camera_name, rep, speed, randint, blurriness]
+            df2 = pd.DataFrame([data], columns=df_columns)
+            if display:
+                display_frame = frame.copy()
+                cv2.putText(display_frame, 'SPEED: {} | BLUR: {}'.format(speed, blurriness), (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
+                            (80, 80, 255), 1)
+                cv2.imshow(video_name, display_frame)
+                cv2.waitKey(1000)
+                cv2.destroyAllWindows()
 
-    print(blurDict)
+            df = df.append(df2)
+        print("-----------------------")
+        print(df)
+
+    df.to_csv(r"logs\{}_BLUR_analysis_rstate_{}.csv".format(datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S"),
+                                                            RANDOM_STATE))
+    time.sleep(2)
 
 
 if __name__ == "__main__":
@@ -449,4 +465,10 @@ if __name__ == "__main__":
     # # blur analysis
     directory = r"videos"
     save_directory = r'images/bbox'
-    size_analysis(directory=directory, save_directory=save_directory)
+    # size_analysis(directory=directory, save_directory=save_directory)
+
+    blur_analysis(directory=directory,
+                  sample_number=20,
+                  save_directory=save_directory,
+                  display=False)
+
