@@ -321,7 +321,14 @@ The disk image that you downloaded is likely to be a few versions behind the mos
   
 1. Have the OWL powered on with screen, keyboard and mouse connected. You should see a desktop with the OWL logo.
 2. Press CTRL + ALT + T to open a Terminal window or click the black icon with blue line and >_ symbol.
-3. Once the Terminal window is open, enter these commands on each new line:
+3. Once the Terminal window is open, make sure you are working in the `owl` virtual environment by running:
+```
+pi@raspberrypi:~ $ workon owl
+(owl) pi@raspberrypi:~ $
+```
+Notice that (owl) now appears before the line in the Terminal window. This indicates you are in the `owl` virtual environment. This is **critical** to make sure you install everything in the `requirements.txt` file into the right spot.
+
+4. Once you are in the `owl` environment, enter these commands on each new line:
  
 ```
 (owl) pi@raspberrypi:~ $ cd ~
@@ -329,11 +336,10 @@ The disk image that you downloaded is likely to be a few versions behind the mos
 (owl) pi@raspberrypi:~ $ git clone https://github.com/geezacoleman/OpenWeedLocator        # download the new software
 (owl) pi@raspberrypi:~ $ mv OpenWeedLocator owl      # rename the download to 'owl'
 (owl) pi@raspberrypi:~ $ cd ~/owl
-(owl) pi@raspberrypi:~/owl $ pip install -r requirements.txt
-(owl) pi@raspberrypi:~/owl $ chmod a+x greenonbrown.py
-(owl) pi@raspberrypi:~/owl $ chmod a+x owl_boot.sh
+(owl) pi@raspberrypi:~/owl $ pip install -r requirements.txt                # installs the necessary software into the (owl) environment 
+(owl) pi@raspberrypi:~/owl $ chmod a+x greenonbrown.py                  # changes greenonbrown.py to be executable
+(owl) pi@raspberrypi:~/owl $ chmod a+x owl_boot.sh                     # changes owl_boot.sh to be executable
 ```
-
 Once this is complete your software will be up to date and you can move on to focusing the camera.  
 
 ### Step 5 - focusing the camera
@@ -347,9 +353,9 @@ After pressing ENTER, you should receive the following output:
 PID TTY              TIME CMD
 515 ?            00:00:00 greenonbrown.py
 ```
-The PID is the important part, it's the ID number for the `greenonbrown.py` program. In this case it is 515, but it is likely to be different on your OWL.
+The PID is the important part, it's the ID number for the `greenonbrown.py` program. In this case it is 515, but it is likely to be different on your OWL. If the headings `PID TTY              TIME CMD` appear but a PID/line for greenonbrown.py doesn't appear it could mean two things. Firstly make sure you've typed `greenonbrown.py` correctly. If it doesn't have the right program to look for, it won't find it. The other option is that `greenonbrown.py` isn't running, which may also be the case. If you're certain it's not running in the background, skip the stop program step below, and move straight to launching `greenonbrown.py`.
  
-To stop the program, you need to enter the following command:
+If a PID appears, you'll need to stop it operating. To stop the program, enter the following command:
 ```
 (owl) pi@raspberrypi:~ $ sudo kill enter_your_PID_number_here
 ```
@@ -438,6 +444,8 @@ Dependencies are Python packages on which the code relies to function correctly.
 * pandas (for data collection only)
 * glob (for data collection only)
 * threading, collections, queue, time, os (though these are included as standard Python modules).
+
+**NOTE**: Before continuing make sure you are in the `owl` virtual environment. Check that `(owl)` appears at the start of each command line, e.g. `(owl) pi@raspberrypi:~ $`. Run `workon owl` if you are unsure. If you are not in the `owl` environment, you will run into errors when starting `greenonbrown.py`.
 
 To install all the requirements.txt, simply run:
 ```
@@ -733,6 +741,8 @@ All .stl files for the 3D printed components of this build are available in the 
 
 We and others will be continually contributing to and improving OWL as we become aware of issues or opportunities to increase detection performance. Once you have a functioning setup the process to update is simple. First, you'll need to connect a screen, keyboard and mouse to the OWL unit and boot it up. Navigate to the existing owl directory in `/home/owl/` and either delete or rename that folder. Remember if you've made any of your own changes to the parameters/code, write them down. Then open up a Terminal window (Ctrl + T) and follow these steps:
 
+**IMPORTANT**: Before continuing make sure you are in the `owl` virtual environment. Check that `(owl)` appears at the start of each command line, e.g. `(owl) pi@raspberrypi:~ $`. Run `workon owl` if you are unsure. If you are not in the `owl` environment, you will run into errors when starting `greenonbrown.py`.
+
 ```
 (owl) pi@raspberrypi:~ $ cd ~
 (owl) pi@raspberrypi:~ $ mv owl owl-old      # this renames the old 'owl' folder to 'owl-old'
@@ -763,6 +773,8 @@ v1.0.0-owl.img | https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0
 
 
 Here's a table of some of the common symptoms and possible explanations for errors we've come across. This is by no means exhaustive, but hopefully helps in diagnosing any issues you might have. If you come across any others please contact us so we can improve the software, hardware and guide.
+
+**NOTE** If you are using the original disk image without updating, there are a number of issues that will appear. We recommend updating to the latest software by following the procedure detailed in the [Updating OWL](#updating-owl) section above.
 
 Symptom | Explanation | Possible solution
 :-------------------------:|:-------------------------:|:-------------------------:
