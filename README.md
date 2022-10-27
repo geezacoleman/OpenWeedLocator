@@ -23,6 +23,7 @@ Internal electronics       |  Fitted module - vehicle | Fitted module - robot
   - [Quick Method](#quick-method)
   - [Detailed Method](#detailed-method)
   - [Changing Detection Settings](#changing-detection-settings)
+  - [Installing on non-Raspberry Pi Computers](#non-raspberry-pi-installation)
 * [3D Printing](#3d-printing)
 * [Updating OWL](#updating-owl)
   - [Version History](#version-history)
@@ -673,7 +674,33 @@ Here's a summary table of what each parameter does. Run `./greenonbrown.py --sho
 `cameraName` | Any string | Changes the save name if recording videos of the camera. Ignore - only used if recording data.|
 `minArea`| Any integer  | Changes the minimum size of the detection. Leave low for more sensitivity of small weeds and increase to reduce false positives.|
  </details>
+
+## Non-Raspberry Pi Installation
+<details>
+<summary>Installing OWL software on a non-Raspberry Pi system</summary>
+<br>
+Using OWL software on your laptop/desktop or other non-Raspberry Pi system is a great way to test, develop and learn more about how it works. To start using the software, just follow the steps below. You will need access to virtual environments and your IDE/editor of choice. This method has been successfully tested on PyCharm with Anaconda environments.
+
+```
+> git clone https://github.com/geezacoleman/OpenWeedLocator
+> cd OpenWeedLocator
+```
+
+For the next part, make sure you are in the virtual environment you will be working from. If you're unsure about virtual environments, read through [this PyImageSearch blog](https://pyimagesearch.com/2017/09/25/configuring-ubuntu-for-deep-learning-with-python/) on configuring an Ubuntu environment for deep learning - just skip to the virtual environment step. [FreeCodeCamp](https://www.freecodecamp.org/news/how-to-setup-virtual-environments-in-python/) has a great blog describing them too.
   
+Assuming the virtual environment is working and is activated, run through these next couple of steps:
+```
+> pip install -r non_rpi_requirements.txt     # this will install all the necessary packages, without including the Raspberry Pi specific ones.
+```
+
+It may take a minute or two for those to complete installing. But once they are done you are free to run the `greenonbrown.py` software.
+```
+> python greenonbrown.py --show-display
+```
+
+From there you can change the command line flags (as described above) or play around with the settings to see how it works.
+</details>
+
 # Image Processing
 <details>
 <summary>Image processing details and in-field results</summary>
