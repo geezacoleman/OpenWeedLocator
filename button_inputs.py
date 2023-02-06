@@ -24,6 +24,8 @@ class SensitivitySelector:
     def sensitivity_selector(self):
         pass
 
+# used with a physical dial to select the algorithm during initial validation.
+# No longer used in the main greenonbrown.py file
 class Selector:
     def __init__(self, switchDict: dict):
         self.switchDict = switchDict
@@ -43,6 +45,7 @@ class Selector:
 
         return 'exg', False
 
+# video recording button
 class Recorder:
     def __init__(self, recordGPIO: int):
         self.recordButton = Button("BOARD{}".format(recordGPIO))

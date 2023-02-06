@@ -1,6 +1,6 @@
 #!/home/pi/.virtualenvs/owl/bin/python3
 from algorithms import exg, exg_standardised, exg_standardised_hue, hsv, exgr, gndvi, maxg
-from button_inputs import Selector, Recorder
+from button_inputs import Recorder
 from image_sampler import bounding_box_image_sample, square_image_sample, whole_image_save
 from datetime import datetime, timezone
 from imutils.video import VideoStream, FileVideoStream, FPS
@@ -281,15 +281,7 @@ class Owl:
         self.sprayQueue = Queue(maxsize=10)
 
         ### Data collection only ###
-        # algorithmDict maps pins to algorithms for data collection
-        self.algorithmDict = {
-            "exg": 29,
-            "nexg": 31,
-            "hsv": 33,
-            "exhsv": 35,
-        }
-
-        # this is where the recording button can be added. Currently set to pin 37
+        # this is where a recording button can be added. Currently set to pin 37
         if self.recording:
             self.recorderButton = Recorder(recordGPIO=37)
         ############################
@@ -312,9 +304,17 @@ class Owl:
             self.laneCoords[i] = laneX
 
 
-    def hoot(self, sprayDur, delay, sampleMethod=None, sampleFreq=60, saveDir='output', camera_name='cam1', algorithm='exg',
-             selectorEnabled=False, minArea=10, log_fps=False):
-
+    def hoot(self,
+             sprayDur,
+             delay,
+             sampleMethod=None,
+             sampleFreq=60,
+             saveDir='output',
+             camera_name='cam1',
+             algorithm='exg',
+             minArea=10,
+             log_fps=False):
+     
         # track FPS and framecount
         frameCount = 0
         if sampleMethod is not None:
@@ -324,18 +324,10 @@ class Owl:
         if log_fps:
             fps = FPS().start()
 
-        if selectorEnabled:
-            self.selector = Selector(switchDict=self.algorithmDict)
-
         try:
             while True:
                 delay = self.update_delay(delay)
                 frame = self.cam.read()
-
-                if selectorEnabled:
-                    algorithm, newAlgorithm = self.selector.algorithm_selector(algorithm)
-                    if newAlgorithm:
-                        self.logger.log_line('[NEW ALGO] {}'.format(algorithm))
 
                 if self.recording:
                     self.record = self.recorderButton.record
@@ -626,7 +618,6 @@ if __name__ == "__main__":
              sampleFreq=30, # select how often to sample - number of frames to skip.
              saveDir='images/bbox2',
              algorithm=args.algorithm,
-             selectorEnabled=False,
              camera_name='hsv',
              minArea=10
              )
