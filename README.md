@@ -8,6 +8,8 @@ On the weed detection front, a range of algorithms have been provided, each with
 
 Repository DOI: [![DOI](https://zenodo.org/badge/399194159.svg)](https://zenodo.org/badge/latestdoi/399194159)
 
+**Note**: The project is in the process of transitioning to picamera2 on the [picamera2 branch](https://github.com/geezacoleman/OpenWeedLocator/tree/picamera2).
+
 Internal electronics       |  Fitted module - vehicle | Fitted module - robot 
 :-------------------------:|:-------------------------: |:-------------------------:
 ![Internal view](https://user-images.githubusercontent.com/51358498/152991433-e3cfa53a-bb8d-4754-81b2-17b9cb9cb1e5.png)  |  ![Fitted module - spot spraying vehicle](https://user-images.githubusercontent.com/51358498/130522810-bb19e6ca-5019-4de4-83cc-858eca358ef8.jpg) | ![Fitted module - robot](https://user-images.githubusercontent.com/51358498/152991300-32003505-6ed2-49ba-9d00-8e3db4cb5db4.png)
@@ -21,6 +23,7 @@ Internal electronics       |  Fitted module - vehicle | Fitted module - robot
   - [Quick Method](#quick-method)
   - [Detailed Method](#detailed-method)
   - [Changing Detection Settings](#changing-detection-settings)
+  - [Installing on non-Raspberry Pi Computers](#non-raspberry-pi-installation)
 * [3D Printing](#3d-printing)
 * [Updating OWL](#updating-owl)
   - [Version History](#version-history)
@@ -52,6 +55,16 @@ A second system, identical to the first, was developed for the University of Syd
 <p align="center">
 <img src="https://user-images.githubusercontent.com/51358498/152990627-0f89bf92-87bc-4808-a748-33f0742068e4.jpg" width="500">
 </p>
+
+## Image data collection
+An updated image sampling method was added on 14/07/2022, which allows whole-image, cropped-to-bounding-box and square images saved on a set frequency. This means the OWL can now be used for image data collection much more easily than before. Example images for each method are provided below.
+
+| **Method**  | **Code** | **Example** |
+| ------------- | ------------- | ------------- |
+| Whole image  | 'whole' | ![20220714-145951__frame_420](https://user-images.githubusercontent.com/51358498/178902742-45952737-ee3e-4a36-b9b3-216a19e78eb7.png) |
+| Crop to bounding box  | 'bbox'  | ![20220714-145757__frame_420_n_4](https://user-images.githubusercontent.com/51358498/178902795-96bb8068-cf58-4f5a-8819-8ca538add384.png) |
+| Crop to square around weed centre | 'square' | ![20220714-150328__frame_420_n_4](https://user-images.githubusercontent.com/51358498/178903171-af7f8f1b-9caf-435e-96d0-4f01e76c53fb.png) |
+| Deactivated (DEFAULT)  | None |  |
 
 ## Community development and contribution
 As more OWLs are built and fallow weed control systems developed, we would love to share the end results here. Please get in contact and we can upload images of the finished systems on this page.
@@ -309,7 +322,14 @@ The disk image that you downloaded is likely to be a few versions behind the mos
   
 1. Have the OWL powered on with screen, keyboard and mouse connected. You should see a desktop with the OWL logo.
 2. Press CTRL + ALT + T to open a Terminal window or click the black icon with blue line and >_ symbol.
-3. Once the Terminal window is open, enter these commands on each new line:
+3. Once the Terminal window is open, make sure you are working in the `owl` virtual environment by running:
+```
+pi@raspberrypi:~ $ workon owl
+(owl) pi@raspberrypi:~ $
+```
+Notice that (owl) now appears before the line in the Terminal window. This indicates you are in the `owl` virtual environment. This is **critical** to make sure you install everything in the `requirements.txt` file into the right spot.
+
+4. Once you are in the `owl` environment, enter these commands on each new line:
  
 ```
 (owl) pi@raspberrypi:~ $ cd ~
@@ -317,11 +337,10 @@ The disk image that you downloaded is likely to be a few versions behind the mos
 (owl) pi@raspberrypi:~ $ git clone https://github.com/geezacoleman/OpenWeedLocator        # download the new software
 (owl) pi@raspberrypi:~ $ mv OpenWeedLocator owl      # rename the download to 'owl'
 (owl) pi@raspberrypi:~ $ cd ~/owl
-(owl) pi@raspberrypi:~/owl $ pip install -r requirements.txt
-(owl) pi@raspberrypi:~/owl $ chmod a+x greenonbrown.py
-(owl) pi@raspberrypi:~/owl $ chmod a+x owl_boot.sh
+(owl) pi@raspberrypi:~/owl $ pip install -r requirements.txt                # installs the necessary software into the (owl) environment 
+(owl) pi@raspberrypi:~/owl $ chmod a+x greenonbrown.py                  # changes greenonbrown.py to be executable
+(owl) pi@raspberrypi:~/owl $ chmod a+x owl_boot.sh                     # changes owl_boot.sh to be executable
 ```
-
 Once this is complete your software will be up to date and you can move on to focusing the camera.  
 
 ### Step 5 - focusing the camera
@@ -335,9 +354,9 @@ After pressing ENTER, you should receive the following output:
 PID TTY              TIME CMD
 515 ?            00:00:00 greenonbrown.py
 ```
-The PID is the important part, it's the ID number for the `greenonbrown.py` program. In this case it is 515, but it is likely to be different on your OWL.
+The PID is the important part, it's the ID number for the `greenonbrown.py` program. In this case it is 515, but it is likely to be different on your OWL. If the headings `PID TTY              TIME CMD` appear but a PID/line for greenonbrown.py doesn't appear it could mean two things. Firstly make sure you've typed `greenonbrown.py` correctly. If it doesn't have the right program to look for, it won't find it. The other option is that `greenonbrown.py` isn't running, which may also be the case. If you're certain it's not running in the background, skip the stop program step below, and move straight to launching `greenonbrown.py`.
  
-To stop the program, you need to enter the following command:
+If a PID appears, you'll need to stop it operating. To stop the program, enter the following command:
 ```
 (owl) pi@raspberrypi:~ $ sudo kill enter_your_PID_number_here
 ```
@@ -426,6 +445,8 @@ Dependencies are Python packages on which the code relies to function correctly.
 * pandas (for data collection only)
 * glob (for data collection only)
 * threading, collections, queue, time, os (though these are included as standard Python modules).
+
+**NOTE**: Before continuing make sure you are in the `owl` virtual environment. Check that `(owl)` appears at the start of each command line, e.g. `(owl) pi@raspberrypi:~ $`. Run `workon owl` if you are unsure. If you are not in the `owl` environment, you will run into errors when starting `greenonbrown.py`.
 
 To install all the requirements.txt, simply run:
 ```
@@ -618,9 +639,9 @@ if __name__ == "__main__":
     # start the targeting!
     owl.hoot(sprayDur=0.15,
              delay=0,
-             sample=False,
-             sampleDim=1000,
-             saveDir='/home/pi',
+             sampleMethod=None,
+             sampleFreq=60,
+             saveDir='/home/pi/owl-images',
              algorithm=args.algorithm,
              selectorEnabled=False,
              camera_name='hsv',
@@ -645,15 +666,41 @@ Here's a summary table of what each parameter does. Run `./greenonbrown.py --sho
 `resolution`|Tuple of (w, h) resolution| Changes output resolution from camera. Increasing rapidly decreased framerate but improves detection of small weeds.
 **hoot()** | | All options when the sprayer.start() function is called
 `sprayDur`|Any float (decimal)|Changes the length of time for which the relay is activated.|
-`sample`|`True` or `False`| If sampling code is uncommented, images of weeds detected will be saved to OWL folder. Do not leave on for long periods or SD card will fill up and stop working.|
-`sampleDim` | Any float (decimal) | Changes the length of time for which the relay is activated.|
-`saveDir` | Any integer| Changes the width of the saved image.|
+`sampleMethod`|Choose from None, 'bbox', 'square', 'whole' | If sampleMethod=None, sampling is deactivated. Do not leave on for long periods or SD card will fill up and stop working.|
+`sampleFreq` | Any positive integer | Changes how often (after how many frames) image sampling will occur. If sampleFreq=60, images will be sampled every 60 frames. |
+`saveDir` | Path to save directory | Set where you want the images saved. If you insert a USB and would like to save images to it, put the path for that here. |
 `algorithm`|Any of: `exg`,`exgr`,`exgs`,`exhu`,`hsv`| Changes the selected algorithm. Most sensitive: 'exg', least sensitive/most precise (least false positives): 'exgr', 'exhu', 'hsv'|
-`selectorEnabled`|`True` or `False`| Enables algorithm selection based on a rotary switch. Only enable is switch is connected.|
+`selectorEnabled`|`True` or `False`| Enables algorithm selection based on a rotary switch. Only enable if switch is connected.|
 `cameraName` | Any string | Changes the save name if recording videos of the camera. Ignore - only used if recording data.|
 `minArea`| Any integer  | Changes the minimum size of the detection. Leave low for more sensitivity of small weeds and increase to reduce false positives.|
  </details>
+
+## Non-Raspberry Pi Installation
+<details>
+<summary>Installing OWL software on a non-Raspberry Pi system</summary>
+<br>
+Using OWL software on your laptop/desktop or other non-Raspberry Pi system is a great way to test, develop and learn more about how it works. To start using the software, just follow the steps below. You will need access to virtual environments and your IDE/editor of choice. This method has been successfully tested on PyCharm with Anaconda environments.
+
+```
+> git clone https://github.com/geezacoleman/OpenWeedLocator
+> cd OpenWeedLocator
+```
+
+For the next part, make sure you are in the virtual environment you will be working from. If you're unsure about virtual environments, read through [this PyImageSearch blog](https://pyimagesearch.com/2017/09/25/configuring-ubuntu-for-deep-learning-with-python/) on configuring an Ubuntu environment for deep learning - just skip to the virtual environment step. [FreeCodeCamp](https://www.freecodecamp.org/news/how-to-setup-virtual-environments-in-python/) has a great blog describing them too.
   
+Assuming the virtual environment is working and is activated, run through these next couple of steps:
+```
+> pip install -r non_rpi_requirements.txt     # this will install all the necessary packages, without including the Raspberry Pi specific ones.
+```
+
+It may take a minute or two for those to complete installing. But once they are done you are free to run the `greenonbrown.py` software.
+```
+> python greenonbrown.py --show-display
+```
+
+From there you can change the command line flags (as described above) or play around with the settings to see how it works.
+</details>
+
 # Image Processing
 <details>
 <summary>Image processing details and in-field results</summary>
@@ -721,6 +768,8 @@ All .stl files for the 3D printed components of this build are available in the 
 
 We and others will be continually contributing to and improving OWL as we become aware of issues or opportunities to increase detection performance. Once you have a functioning setup the process to update is simple. First, you'll need to connect a screen, keyboard and mouse to the OWL unit and boot it up. Navigate to the existing owl directory in `/home/owl/` and either delete or rename that folder. Remember if you've made any of your own changes to the parameters/code, write them down. Then open up a Terminal window (Ctrl + T) and follow these steps:
 
+**IMPORTANT**: Before continuing make sure you are in the `owl` virtual environment. Check that `(owl)` appears at the start of each command line, e.g. `(owl) pi@raspberrypi:~ $`. Run `workon owl` if you are unsure. If you are not in the `owl` environment, you will run into errors when starting `greenonbrown.py`.
+
 ```
 (owl) pi@raspberrypi:~ $ cd ~
 (owl) pi@raspberrypi:~ $ mv owl owl-old      # this renames the old 'owl' folder to 'owl-old'
@@ -751,6 +800,8 @@ v1.0.0-owl.img | https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0
 
 
 Here's a table of some of the common symptoms and possible explanations for errors we've come across. This is by no means exhaustive, but hopefully helps in diagnosing any issues you might have. If you come across any others please contact us so we can improve the software, hardware and guide.
+
+**NOTE** If you are using the original disk image without updating, there are a number of issues that will appear. We recommend updating to the latest software by following the procedure detailed in the [Updating OWL](#updating-owl) section above.
 
 Symptom | Explanation | Possible solution
 :-------------------------:|:-------------------------:|:-------------------------:

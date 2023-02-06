@@ -1,17 +1,20 @@
 #!/home/pi/.virtualenvs/owl/bin/python3
 from algorithms import exg, exg_standardised, exg_standardised_hue, hsv, exgr, gndvi, maxg
 from button_inputs import Recorder
-from image_sampler import image_sample
+from image_sampler import bounding_box_image_sample, square_image_sample, whole_image_save
+from datetime import datetime, timezone
 from imutils.video import VideoStream, FileVideoStream, FPS
 from imutils import grab_contours
 from relay_control import Controller
 from queue import Queue
 from time import strftime
+from threading import Thread
 import subprocess
 import argparse
 import imutils
 import shutil
 import numpy as np
+import json
 import time
 import sys
 import cv2
@@ -150,7 +153,8 @@ class Owl:
                  exp_mode='sports',
                  awb_mode='auto',
                  sensor_mode=0,
-                 exp_compensation=-4):
+                 exp_compensation=-4,
+                 parameters_json=None):
 
         # different detection parameters
         self.show_display = show_display
@@ -171,6 +175,28 @@ class Owl:
         self.saturationMax = saturationMax
         self.brightnessMin = brightnessMin
         self.brightnessMax = brightnessMax
+
+        self.thresholdDict = {}
+
+        if parameters_json:
+            try:
+                with open(parameters_json) as f:
+                    self.thresholdDict = json.load(f)
+                    self.exgMin = self.thresholdDict['exgMin']
+                    self.exgMax = self.thresholdDict['exgMax']
+                    self.hueMin = self.thresholdDict['hueMin']
+                    self.hueMax = self.thresholdDict['hueMax']
+                    self.saturationMin = self.thresholdDict['saturationMin']
+                    self.saturationMax = self.thresholdDict['saturationMax']
+                    self.brightnessMin = self.thresholdDict['brightnessMin']
+                    self.brightnessMax = self.thresholdDict['brightnessMax']
+                    print('[INFO] Parameters successfully loaded.')
+
+            except FileExistsError:
+                print('[ERROR] Parameters file not found. Continuing with default settings.')
+
+            except KeyError:
+                print('[ERROR] Parameter key not found. Continuing with default settings.')
 
         # setup the track bars if show_display is True
         if self.show_display:
@@ -234,8 +260,8 @@ class Owl:
             except ModuleNotFoundError:
                 self.cam = VideoStream(src=0).start()
             time.sleep(2.0)
-        frame_width = self.cam.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
-        frame_height = self.cam.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        frame_width = self.resolution[0] # self.cam.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
+        frame_height = self.resolution[1] # self.cam.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
         # save camera settings to the log
         self.logger.log_line('[INFO] Camera setup complete. Settings: '
@@ -288,8 +314,13 @@ class Owl:
              algorithm='exg',
              minArea=10,
              log_fps=False):
-
+     
         # track FPS and framecount
+        frameCount = 0
+        if sampleMethod is not None:
+            if not os.path.exists(saveDir):
+                os.makedirs(saveDir)
+
         if log_fps:
             fps = FPS().start()
 
@@ -351,13 +382,36 @@ class Owl:
                                                                     algorithm=algorithm, minArea=minArea)
 
                 ##### IMAGE SAMPLER #####
-                # record sample images if required of weeds detected
-                # uncomment if needed
-                # if frameCount % 60 == 0 and sample is True:
-                #     saveFrame = frame.copy()
-                #     sampleThread = Thread(target=image_sample, args=[saveFrame, weedCentres, saveDir, sampleDim])
-                #     sampleThread.start()
-                #########################
+                # record sample images if required of weeds detected. sampleFreq specifies how often
+                if sampleMethod is not None:
+                    # only record every sampleFreq number of frames. If sampleFreq = 60, this will activate every 60th frame
+                    if frameCount % sampleFreq == 0:
+                        saveFrame = frame.copy()
+
+                        if sampleMethod == 'whole':
+                            whole_image_thread = Thread(target=whole_image_save,
+                                                        args=[saveFrame, saveDir, frameCount])
+                            whole_image_thread.start()
+
+                        elif sampleMethod == 'bbox':
+                            sample_thread = Thread(target=bounding_box_image_sample,
+                                                   args=[saveFrame, boxes, saveDir, frameCount])
+                            sample_thread.start()
+
+                        elif sampleMethod == 'square':
+                            sample_thread = Thread(target=square_image_sample,
+                                                   args=[saveFrame, weedCentres, saveDir, frameCount, 200])
+                            sample_thread.start()
+
+                        else:
+                            # if nothing/incorrect specified - sample the whole image
+                            whole_image_thread = Thread(target=whole_image_save,
+                                                        args=[imageOut, saveDir, frameCount])
+                            whole_image_thread.start()
+
+
+                    frameCount += 1
+                # ########################
 
                 # loop over the ID/weed centres from contours
                 for ID, centre in enumerate(weedCentres):
@@ -376,6 +430,10 @@ class Owl:
                     fps.update()
 
                 if self.show_display:
+                    cv2.putText(imageOut, 'OWL-gorithm: {}'.format(algorithm), (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
+                                (80, 80, 255), 1)
+                    cv2.putText(imageOut, 'Press "S" to save thresholds to file.'.format(algorithm),
+                                (20, int(imageOut.shape[1]*0.72)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 80, 255), 1)
                     cv2.imshow("Detection Output", imutils.resize(imageOut, width=600))
 
                 if self.record and not self.saveRecording:
@@ -395,26 +453,31 @@ class Owl:
                     self.logger.log_line_video("[INFO] {} stopped.".format(self.baseName), verbose=True)
 
                 k = cv2.waitKey(1) & 0xFF
+                if k == ord('s'):
+                    self.save_parameters()
+                    self.logger.log_line("[INFO] Parameters saved.", verbose=True)
+
                 if k == 27:
                     if log_fps:
                         fps.stop()
                         self.logger.log_line_video(
                             "[INFO] Approximate FPS: {:.2f}".format(fps.fps()),
                             verbose=True)
-                    self.logger.log_line_video("[INFO] Stopped.", verbose=True)
+                    self.logger.log_line("[INFO] Stopped.", verbose=True)
                     self.stop()
                     break
 
         except KeyboardInterrupt:
             if log_fps:
                 fps.stop()
-                self.logger.log_line_video(
+                self.logger.log_line(
                     "[INFO] Approximate FPS: {:.2f}".format(fps.fps()),
                     verbose=True)
-            self.logger.log_line_video("[INFO] Stopped.", verbose=True)
+            self.logger.log_line("[INFO] Stopped.", verbose=True)
             self.stop()
 
         except Exception as e:
+            print(e)
             self.controller.solenoid.beep(duration=0.5, repeats=5)
             self.logger.log_line("[CRITICAL ERROR] STOPPED: {}".format(e))
 
@@ -460,6 +523,20 @@ class Owl:
         # if GPS added, could use it here to return a delay variable based on speed.
         return delay
 
+    def save_parameters(self):
+        self.thresholdDict['exgMin'] = cv2.getTrackbarPos("ExG-Min", self.window_name)
+        self.thresholdDict['exgMax'] = cv2.getTrackbarPos("ExG-Max", self.window_name)
+        self.thresholdDict['hueMin'] = cv2.getTrackbarPos("Hue-Min", self.window_name)
+        self.thresholdDict['hueMax'] = cv2.getTrackbarPos("Hue-Max", self.window_name)
+        self.thresholdDict['saturationMin'] = cv2.getTrackbarPos("Sat-Min", self.window_name)
+        self.thresholdDict['saturationMax'] = cv2.getTrackbarPos("Sat-Max", self.window_name)
+        self.thresholdDict['brightnessMin'] = cv2.getTrackbarPos("Bright-Min", self.window_name)
+        self.thresholdDict['brightnessMax'] = cv2.getTrackbarPos("Bright-Max", self.window_name)
+
+        datetime.now(timezone.utc).strftime("%Y%m%d")
+        json_name = datetime.now(timezone.utc).strftime("%Y%m%d%H%M") + '-owl-parameters.json'
+        with open(json_name, 'w') as f:
+            json.dump(self.thresholdDict, f)
 
 def check_for_usb():
     try:
@@ -530,15 +607,16 @@ if __name__ == "__main__":
               exp_mode=args.exp_mode,
               exp_compensation=args.exp_compensation,
               awb_mode=args.awb_mode,
-              sensor_mode=args.sensor_mode
+              sensor_mode=args.sensor_mode,
+              parameters_json=None
               )
 
     # start the targeting!
     owl.hoot(sprayDur=0.15,
              delay=0,
-             sample=False,
-             sampleDim=1000,
-             saveDir='/home/pi',
+             sampleMethod=None, # choose from 'bbox' | 'square' | 'whole'. If sampleMethod=None, it won't sample anything
+             sampleFreq=30, # select how often to sample - number of frames to skip.
+             saveDir='images/bbox2',
              algorithm=args.algorithm,
              camera_name='hsv',
              minArea=10

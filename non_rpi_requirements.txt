@@ -1,0 +1,7 @@
+## IMPORTANT - for NON Raspberry Pi use. Only use this file if you are setting up an environment on a non Rasperry Pi device. ##
+
+glob2==0.7
+imutils==0.5.4
+numpy==1.23.4
+opencv-python==4.6.0.66
+pandas==1.5.1

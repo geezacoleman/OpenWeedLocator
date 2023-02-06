@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Coleman"
+  given-names: "Guy"
+  orcid: "https://orcid.org/0000-0002-8808-2965"
+- family-names: "Salter"
+  given-names: "William"
+  orcid: "https://orcid.org/0000-0003-1653-5192"
+- family-names: "Walsh"
+  given-names: "Michael"
+title: "OpenWeedLocator (OWL)"
+version: 1.0.0
+doi: 10.5281/zenodo.1234
+date-released: 2021-08-24
+url: "https://github.com/geezacoleman/OpenWeedLocator"
+preferred-citation:
+  type: article
+  authors:
+  - family-names: "Coleman"
+    given-names: "Guy"
+    orcid: "https://orcid.org/0000-0002-8808-2965"
+  - family-names: "Salter"
+    given-names: "William"
+    orcid: "https://orcid.org/0000-0003-1653-5192"
+  - family-names: "Walsh"
+    given-names: "Michael"
+  doi: "10.1038/s41598-021-03858-9"
+  journal: "Scientific Reports"
+  month: 9
+  start: 1 # First page number
+  end: 12 # Last page number
+  title: "OpenWeedLocator (OWL): an open-source, low-cost device for fallow weed detection"
+  issue: 170
+  volume: 12
+  year: 2022

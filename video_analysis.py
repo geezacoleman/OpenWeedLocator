@@ -1,8 +1,13 @@
+from tqdm import tqdm
+from datetime import datetime, timezone
 from greenonbrown import green_on_brown
+from image_sampler import bounding_box_image_sample, whole_image_save
 from imutils.video import count_frames, FileVideoStream
+from threading import Thread
 import pandas as pd
 import numpy as np
 import imutils
+import time
 import glob
 import cv2
 import csv
@@ -171,7 +176,7 @@ def four_frame_analysis(exgFile: str, exgsFile: str, hueFile: str, exhuFile: str
             break
 
 
-def single_frame_analysis(videoFile: str, HDFile: str, algorithm):
+def single_frame_analysis(videoFile: str, HDFile: str, algorithm='exhsv'):
     baseName = os.path.splitext(os.path.basename(videoFile))[0]
 
     video = cv2.VideoCapture(videoFile)
@@ -195,7 +200,7 @@ def single_frame_analysis(videoFile: str, HDFile: str, algorithm):
         k = cv2.waitKey(1) & 0xFF
         if k == ord('d') or hdFrame is None:
             if hdframecount >= len(hdFramesAll):
-                hdFrame = next(frame_processor(videoHD, 'hd'))
+                hdFrame = next(frame_processor(videoHD, videoName='hd'))
                 hdFrame = imutils.resize(hdFrame, height=640)
                 # hdFrame = imutils.rotate(hdFrame, angle=180)
                 hdframecount += 1
@@ -206,7 +211,7 @@ def single_frame_analysis(videoFile: str, HDFile: str, algorithm):
 
         if k == ord('s') or videoFrame is None:
             if videoframecount >= len(videoFramesAll):
-                videoFrame = next(frame_processor(video, algorithm))
+                videoFrame = next(frame_processor(video, algorithm=algorithm))
                 videoFrame = imutils.resize(videoFrame, height=640)
                 videoframecount += 1
                 videoFramesAll.append(videoFrame)
@@ -251,7 +256,7 @@ def single_frame_analysis(videoFile: str, HDFile: str, algorithm):
             break
 
 
-def frame_processor(videoFeed, videoName):
+def frame_processor(videoFeed, videoName='', algorithm='exhsv'):
     frameShape = None
     while True:
         k = cv2.waitKey(1) & 0xFF
@@ -276,7 +281,7 @@ def frame_processor(videoFeed, videoName):
                                                                 brightnessMin=60,
                                                                 brightnessMax=250,
                                                                 show_display=False,
-                                                                algorithm=videoName, minArea=10)
+                                                                algorithm=algorithm, minArea=10)
 
             yield imageOut
         if k == 27:
@@ -284,54 +289,186 @@ def frame_processor(videoFeed, videoName):
             break
 
 
-def blur_analysis(directory):
-    blurDict = {}
-    df = pd.DataFrame(columns=['field', 'algorithm', 'blur'])
-    for videoPath in glob.iglob(directory + '\*.mp4'):
-        allframeBlur = []
-        sampledframeBlur = []
-        video = FileVideoStream(videoPath).start()
-        frameCount = 0
-        while True:
-            frame = video.read()
-            if video.stopped:
-                meanBlur = np.mean(allframeBlur)
-                stdBlur = np.std(allframeBlur)
-                vidName = os.path.basename(videoPath)
-                fieldNameList = [vidName.split("-")[0] for i in range(100)]
-                print(fieldNameList)
-                algorithmNameList = [os.path.splitext(vidName.split("-")[2])[0] for i in range(100)]
+def size_analysis(directory, sample_number=10, save_directory=None):
+    '''
+    take a directory of videos, save all frames to a list, randomly sample X number of frames, run EXHSV algorithm that returns contour list
+    iterate over each contour and save frame ID, contour ID, contour area, bbox area, calibrated area
+    :param directory:
+    :return:
+    '''
+    ### IMPORTANT ###
+    # this sets the random state - random values won't change unless you change this number
+    RANDOM_STATE = 42
+    np.random.seed(RANDOM_STATE)
+    #################
 
-                for i in range(100):
-                    randint = np.random.randint(0, len(allframeBlur))
-                    sampledframeBlur.append(allframeBlur[randint])
-                df2 = pd.DataFrame(list(zip(fieldNameList, algorithmNameList, sampledframeBlur)),
-                                   columns=['field', 'algorithm', 'blur'])
-                print(df2)
-                df = df.append(df2)
-                print(df)
-                df.to_csv(r"videos\blur\blurriness.csv")
-                blurDict[vidName] = [meanBlur, stdBlur]
-                break
+    ### ALSO IMPORTANT ###
+    # based on bench calibration - changing this will change the calibrated area
+    # structure: 'camera': (on_ground_width_in_mm / image_width_pixels) ** 2 = area of one pixel
+    calibration_dictionary = {
+        'ard': (964 / 416) ** 2,
+        'hq1': (1125 / 640) ** 2,
+        'hq2': (1125 / 416) ** 2,
+        'v2': (1153 / 416) ** 2,
+    }
+    df_columns = ['video_name', 'camera', 'rep', 'speed', 'frame_id',
+                  'contour_px_area', 'bbox_px_area', 'mm2_contour_area', 'mm2_bbox_area']
 
-            greyscale = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    df = pd.DataFrame(columns=df_columns)
+
+    for videoPath in tqdm(glob.iglob(directory + '\*.mp4')):
+        video_name = os.path.basename(videoPath).split('.')[0]
+        camera_name = video_name.split('-')[0].lower()
+        rep = video_name.split('-')[1]
+        speed = video_name.split('-')[2]
+
+        cap = cv2.VideoCapture(videoPath)
+        video_length = count_frames(videoPath, override=True) - 1
+
+        # randomly sample frames
+        for i in tqdm(range(sample_number)):
+
+            randint = np.random.randint(0, video_length)
+            cap.set(1, randint)
+            ret, frame = cap.read()
+
+            # uses same parameters as the above image analysis settings
+            cnts, boxes, weedCentres, imageOut = green_on_brown(frame.copy(), exgMin=29,
+                                                                exgMax=200,
+                                                                hueMin=30,
+                                                                hueMax=92,
+                                                                saturationMin=10,
+                                                                saturationMax=250,
+                                                                brightnessMin=60,
+                                                                brightnessMax=250,
+                                                                show_display=False,
+                                                                algorithm='exhsv', minArea=-10)
+            # cv2.imshow('Output', imageOut)
+            # cv2.waitKey(10)
+            # calculate and append the individual contour areas
+            px_contour_area = []
+            cal_contour_area = []
+            px_bbox_area = []
+            cal_bbox_area = []
+
+            if save_directory is not None:
+                save_frame = frame.copy()
+                sample_thread = Thread(target=bounding_box_image_sample,
+                                       args=[save_frame, boxes, save_directory, randint])
+                sample_thread.start()
+
+                whole_image_thread = Thread(target=whole_image_save,
+                                            args=[imageOut, save_directory, randint])
+                whole_image_thread.start()
+
+
+            for c in cnts:
+                c_px_area = cv2.contourArea(c)
+                c_cal_area = c_px_area * calibration_dictionary[camera_name]
+                px_contour_area.append(c_px_area)
+                cal_contour_area.append(c_cal_area)
+
+            for box in boxes:
+                boxW = box[2]
+                boxH = box[3]
+
+                bbox_px_area = boxW * boxH
+                bbox_cal_area = bbox_px_area * calibration_dictionary[camera_name]
+
+                px_bbox_area.append(bbox_px_area)
+                cal_bbox_area.append(bbox_cal_area)
+
+            print(px_bbox_area)
+            print("-----------------------")
+            print(cal_bbox_area)
+            frame_id = [randint for x in boxes]
+            video_name_id = [video_name for x in boxes]
+            camera_id = [camera_name for x in boxes]
+            rep_id = [rep for x in boxes]
+            speed_id = [speed for x in boxes]
+
+            df2 = pd.DataFrame(list(zip(video_name_id, camera_id, rep_id, speed_id, frame_id,
+                                        px_contour_area, px_bbox_area, cal_contour_area, cal_bbox_area)),
+                               columns=df_columns)
+
+            print(df2)
+            df = df.append(df2)
+
+    df.to_csv(r"logs\{}_size_analysis_rstate_{}.csv".format(datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S"),
+                                                                      RANDOM_STATE))
+    time.sleep(2)
+
+def blur_analysis(directory, sample_number=10, save_directory=None, display=False):
+    ### IMPORTANT ###
+    # this sets the random state - random values won't change unless you change this number
+    RANDOM_STATE = 42
+    np.random.seed(RANDOM_STATE)
+    #################
+
+    df_columns = ['video_name', 'camera', 'rep', 'speed', 'frame_id', 'blur']
+    df = pd.DataFrame(columns=df_columns)
+
+    for videoPath in tqdm(glob.iglob(directory + '\*.mp4')):
+        blur_list = []
+        video_name = os.path.basename(videoPath).split('.')[0]
+        camera_name = video_name.split('-')[0].lower()
+        rep = video_name.split('-')[1]
+        speed = video_name.split('-')[2]
+
+        cap = cv2.VideoCapture(videoPath)
+        video_length = count_frames(videoPath, override=True) - 1
+
+        # randomly sample frames
+        for i in tqdm(range(sample_number)):
+            randint = np.random.randint(0, video_length)
+            cap.set(1, randint)
+            ret, frame = cap.read()
+
+            if save_directory is not None:
+                save_frame = frame.copy()
+
+                whole_image_thread = Thread(target=whole_image_save,
+                                            args=[save_frame, save_directory, randint])
+                whole_image_thread.start()
+
+            greyscale = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2GRAY)
             blurriness = cv2.Laplacian(greyscale, cv2.CV_64F).var()
-            allframeBlur.append(blurriness)
-            frameCount += 1
+            blur_list.append(blurriness)
 
-        print(vidName, ',', np.round(meanBlur, 2), ',', np.round(stdBlur, 2), ',', frameCount)
+            data = [video_name, camera_name, rep, speed, randint, blurriness]
+            df2 = pd.DataFrame([data], columns=df_columns)
+            if display:
+                display_frame = frame.copy()
+                cv2.putText(display_frame, 'SPEED: {} | BLUR: {}'.format(speed, blurriness), (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
+                            (80, 80, 255), 1)
+                cv2.imshow(video_name, display_frame)
+                cv2.waitKey(1000)
+                cv2.destroyAllWindows()
 
-    print(blurDict)
+            df = df.append(df2)
+        print("-----------------------")
+        print(df)
+
+    df.to_csv(r"logs\{}_BLUR_analysis_rstate_{}.csv".format(datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S"),
+                                                            RANDOM_STATE))
+    time.sleep(2)
 
 
 if __name__ == "__main__":
-    videoFile = r"videos/ard-1-30.avi"
-    hdFile = r"videos/ard-5-15.avi"
-
-    single_frame_analysis(videoFile=videoFile,
-                          HDFile=hdFile,
-                          algorithm='exg')
-
+    # videoFile = r"videos/HQ2-1-5.avi"
+    # hdFile = r"videos/ard-1-5.avi"
+    #
+    # single_frame_analysis(videoFile=videoFile,
+    #                       HDFile=hdFile,
+    #                       algorithm='exg')
+    #
     # # blur analysis
-    # directory = r"videos/blur"
-    # blur_analysis(directory=directory)
+    directory = r"videos"
+    save_directory = r'images/bbox'
+    # size_analysis(directory=directory, save_directory=save_directory)
+
+    blur_analysis(directory=directory,
+                  sample_number=20,
+                  save_directory=save_directory,
+                  display=False)
+
