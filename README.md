@@ -23,7 +23,7 @@ Internal electronics       |  Fitted module - vehicle | Fitted module - robot
   - [Quick Method](#quick-method)
   - [Detailed Method](#detailed-method)
   - [Changing Detection Settings](#changing-detection-settings)
-  - [Green-on-Green (under development)](#green-on-green)
+  - [Green-on-Green (under development) :eyes::dart::seedling:](#green-on-green)
   - [Installing on non-Raspberry Pi Computers](#non-raspberry-pi-installation)
 * [3D Printing](#3d-printing)
 * [Updating OWL](#updating-owl)
