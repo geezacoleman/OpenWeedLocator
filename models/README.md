@@ -1,5 +1,17 @@
 # Model directory for .tflite files
 
+## Google Coral Installation - Raspberry Pi
+In addition to the other software installation to get the OpenWeedLocator running, you will also need to install the Google Coral supporting software onto the Raspberry Pi. Simply run `install_coral.sh` from the command line using the instructions below. Firstly, navigate to this directory with:
+
+`pi@raspberrypi:~ $ cd ~/owl/models`
+
+Then, run the installation file:
+
+`pi@raspberrypi:~ $ chmod +x install_coral.sh && ./install_coral.sh`.
+
+During the installation, you will be asked to confirm options and connect the Google Coral USB to the USB3.0 ports (blue). For full instructions on the installation process, check out the Google Coral [documentation](https://coral.ai/docs/accelerator/get-started/).
+
+## Training/exporting detection models for inference with the Coral
 Once you have trained and exported your weed detection model (check out this notebook we have for [Weed-AI datasets](https://colab.research.google.com/github/Weed-AI/Weed-AI/blob/master/weed_ai_yolov5.ipynb)), 
 you must export it using the command: 
 
