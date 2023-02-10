@@ -681,7 +681,16 @@ Here's a summary table of what each parameter does. Run `./greenonbrown.py --sho
 <summary>How to detect in-crop weeds with the OWL</summary>
 <br>
 
-The official launch of green-on-green capability should be happening soon. Keep an eye on this section and [the branch](https://github.com/geezacoleman/OpenWeedLocator/tree/add-google-coral) in which it's being developed so you don't miss the release. Effective models need training data, so if you're interested in using the Green-on-Green functionality, you will need to start collecting and annotating images of relevant weeds for training. Alternatively, head over to [Weed-AI](https://weed-ai.sydney.edu.au/explore?is_head_filter=%5B%22latest+version%22%5D) to see if any image data may be relevant for your purposes.   
+### OWL Integration
+The official launch of green-on-green capability should be happening soon. Keep an eye on this section and [the branch](https://github.com/geezacoleman/OpenWeedLocator/tree/add-google-coral) in which it's being developed so you don't miss the release. 
+
+### Model Training
+Effective models need training data, so if you're interested in using the Green-on-Green functionality when it is released, you will need to start collecting and annotating images of relevant weeds for training. Alternatively, head over to [Weed-AI](https://weed-ai.sydney.edu.au/explore?is_head_filter=%5B%22latest+version%22%5D) to see if any image data may be relevant for your purposes.
+
+[YOLOv8](https://github.com/ultralytics/ultralytics) and [YOLOv5](https://github.com/ultralytics/yolov5) currently provide the most user friendly methods of training, optimisation and exporting as `.tflite` files for use with the Google Coral. There is also a Weed-AI Google Colab Notebook <a target="_blank" href="https://colab.research.google.com/github/Weed-AI/Weed-AI/blob/master/weed_ai_yolov5.ipynb">
+  <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
+</a>
+which can be used to train models from Weed-AI data directly.
 
 </details>
 
