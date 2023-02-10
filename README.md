@@ -23,6 +23,7 @@ Internal electronics       |  Fitted module - vehicle | Fitted module - robot
   - [Quick Method](#quick-method)
   - [Detailed Method](#detailed-method)
   - [Changing Detection Settings](#changing-detection-settings)
+  - [Green-on-Green (under development)](#green-on-green)
   - [Installing on non-Raspberry Pi Computers](#non-raspberry-pi-installation)
 * [3D Printing](#3d-printing)
 * [Updating OWL](#updating-owl)
@@ -674,6 +675,16 @@ Here's a summary table of what each parameter does. Run `./greenonbrown.py --sho
 `cameraName` | Any string | Changes the save name if recording videos of the camera. Ignore - only used if recording data.|
 `minArea`| Any integer  | Changes the minimum size of the detection. Leave low for more sensitivity of small weeds and increase to reduce false positives.|
  </details>
+
+## Green-on-Green
+<details>
+<summary>How to detect in-crop weeds with the OWL</summary>
+<br>
+
+The official launch of green-on-green capability should be happening soon. Keep an eye on this section and [the branch](https://github.com/geezacoleman/OpenWeedLocator/tree/add-google-coral) in which it's being developed so you don't miss the release. Effective models need training data, so if you're interested in using the Green-on-Green functionality, you will need to start collecting and annotating images of relevant weeds for training. Alternatively, head over to [Weed-AI](https://weed-ai.sydney.edu.au/explore?is_head_filter=%5B%22latest+version%22%5D) to see if any image data may be relevant for your purposes.   
+
+</details>
+
 
 ## Non-Raspberry Pi Installation
 <details>
