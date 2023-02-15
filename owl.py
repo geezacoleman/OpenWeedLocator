@@ -1,4 +1,6 @@
 #!/home/pi/.virtualenvs/owl/bin/python3
+import numpy as np
+
 from algorithms import exg, exg_standardised, exg_standardised_hue, hsv, exgr, gndvi, maxg
 from button_inputs import Recorder
 from image_sampler import bounding_box_image_sample, square_image_sample, whole_image_save
@@ -138,6 +140,9 @@ class Owl:
         # check if test video or videostream from camera
         if videoFile:
             self.cam = FileVideoStream(videoFile).start()
+            frame_width = self.cam.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
+            frame_height = self.cam.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
+            self.logger.log_line(f'[INFO] Using video {videoFile}...', verbose=True)
         # if no video, start the camera with the provided parameters
         else:
             try:
@@ -148,25 +153,33 @@ class Owl:
                                        awb_mode=self.awb_mode,
                                        sensor_mode=self.sensor_mode,
                                        exposure_compensation=self.exp_compensation).start()
+                frame_width = self.resolution[0]  #
+                frame_height = self.resolution[1]  #
+
+                # save camera settings to the log
+                self.logger.log_line('[INFO] Camera setup complete. Settings: '
+                                     '\nResolution: {}'
+                                     '\nFramerate: {}'
+                                     '\nExposure Mode: {}'
+                                     '\nAutoWhiteBalance: {}'
+                                     '\nExposure Compensation: {}'
+                                     '\nSensor Mode: {}'.format(self.resolution,
+                                                                self.framerate,
+                                                                self.exp_mode,
+                                                                self.awb_mode,
+                                                                self.exp_compensation,
+                                                                self.sensor_mode), verbose=True)
+
+
+
             except ModuleNotFoundError:
                 self.cam = VideoStream(src=0).start()
-            time.sleep(2.0)
-        frame_width = self.resolution[0] # self.cam.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
-        frame_height = self.resolution[1] # self.cam.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                frame_width = self.cam.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
+                frame_height = self.cam.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                self.logger.log_line('[INFO] Camera setup complete. Using inbuilt webcam...')
 
-        # save camera settings to the log
-        self.logger.log_line('[INFO] Camera setup complete. Settings: '
-                             '\nResolution: {}'
-                             '\nFramerate: {}'
-                             '\nExposure Mode: {}'
-                             '\nAutoWhiteBalance: {}'
-                             '\nExposure Compensation: {}'
-                             '\nSensor Mode: {}'.format(self.resolution,
-                                                        self.framerate,
-                                                        self.exp_mode,
-                                                        self.awb_mode,
-                                                        self.exp_compensation,
-                                                        self.sensor_mode), verbose=True)
+            time.sleep(2.0)
+
 
         # set the sprayqueue size
         self.sprayQueue = Queue(maxsize=10)
@@ -194,6 +207,9 @@ class Owl:
             laneX = int(i * self.laneWidth)
             self.laneCoords[i] = laneX
 
+        self.nozzle_vis = self.controller.nozzle_vis
+        self.nozzle_vis.setup()
+        self.controller.vis = True
 
     def hoot(self,
              sprayDur,
@@ -203,6 +219,7 @@ class Owl:
              saveDir='output',
              camera_name='cam1',
              algorithm='exg',
+             confidence=0.5,
              minArea=10,
              log_fps=False):
 
@@ -269,7 +286,8 @@ class Owl:
                 # pass image, thresholds to green_on_brown function
                 if algorithm == 'gog':
                     cnts, boxes, weedCentres, imageOut = weed_detector.inference(frame.copy(),
-                                                                                  confidence=0.5)
+                                                                                 confidence=confidence,
+                                                                                 filter_id=63)
                 else:
                     cnts, boxes, weedCentres, imageOut = weed_detector.inference(frame.copy(), exgMin=self.exgMin,
                                                                                   exgMax=self.exgMax,
@@ -364,6 +382,7 @@ class Owl:
                         self.logger.log_line_video(
                             "[INFO] Approximate FPS: {:.2f}".format(fps.fps()),
                             verbose=True)
+                    self.controller.nozzle_vis.close()
                     self.logger.log_line("[INFO] Stopped.", verbose=True)
                     self.stop()
                     break
@@ -374,6 +393,7 @@ class Owl:
                 self.logger.log_line(
                     "[INFO] Approximate FPS: {:.2f}".format(fps.fps()),
                     verbose=True)
+            self.controller.nozzle_vis.close()
             self.logger.log_line("[INFO] Stopped.", verbose=True)
             self.stop()
 
@@ -470,6 +490,8 @@ if __name__ == "__main__":
     ap.add_argument('--show-display', action='store_true', default=False, help='show display windows')
     ap.add_argument('--recording', action='store_true', default=False, help='record video')
     ap.add_argument('--algorithm', type=str, default='exhsv', choices=['exg', 'nexg', 'exgr', 'maxg', 'exhsv', 'hsv', 'gog'])
+    ap.add_argument('--conf', type=float, default=0.5, choices=np.arange(0.01, 0.99, 0.01), metavar="2 s.f. Float between 0.01 and 1.00",
+                    help='set the confidence value for a "green-on-green" algorithm between 0.01 and 1.00. Must be a two-digit float.')
     ap.add_argument('--framerate', type=int, default=40, choices=range(10, 121), metavar="[10-120]",
                     help='set camera framerate between 10 and 120 FPS. Framerate will depend on sensor mode, though'
                          ' setting framerate takes precedence over sensor_mode, For example sensor_mode=0 and framerate=120'
@@ -520,5 +542,6 @@ if __name__ == "__main__":
              saveDir='images/bbox2',
              algorithm=args.algorithm,
              camera_name='hsv',
-             minArea=10
+             minArea=10,
+             confidence=args.conf
              )

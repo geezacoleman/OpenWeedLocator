@@ -8,8 +8,6 @@ import cv2
 class GreenOnBrown:
     def __init__(self, algorithm='exg', label_file='models/labels.txt'):
         self.algorithm = algorithm
-        self.weedCenters = []
-        self.boxes = []
 
     def inference(self,
                   image,
@@ -75,6 +73,8 @@ class GreenOnBrown:
 
         # run the thresholds provided
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        self.weedCenters = []
+        self.boxes = []
 
         # if not a binary image, run an adaptive threshold on the area that fits within the thresholded bounds.
         if not threshedAlready:
