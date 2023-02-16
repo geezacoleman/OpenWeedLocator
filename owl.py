@@ -224,6 +224,7 @@ class Owl:
              log_fps=False):
 
         # track FPS and framecount
+        time.sleep(0.01)
         frameCount = 0
         if sampleMethod is not None:
             if not os.path.exists(saveDir):

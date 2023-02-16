@@ -1,6 +1,7 @@
 from logger import Logger
 from threading import Thread, Condition
 from utils.cli_vis import NozzleVis
+from utils.mqtt_comms import OWLPublisher
 import collections
 import time
 import os
@@ -100,6 +101,9 @@ class Controller:
         self.nozzleQueueDict = {}
         self.nozzleconditionDict = {}
 
+        # start the MQTT comms
+        self.publisher = OWLPublisher('localhost', 'TEST OWL')
+
         # start the logger and log file using absolute path of python file
         self.saveDir = os.path.join(os.path.dirname(__file__), 'logs')
         self.logger = Logger(name="weed_log.txt", saveDir=self.saveDir)
@@ -165,6 +169,7 @@ class Controller:
                 if not nozzleOn:
                     time.sleep(sprayJob[2]) # add in the delay variable
                     self.solenoid.relay_on(nozzle, verbose=False)
+                    self.publisher.publish(f"{nozzle}, 'on', {sprayJob[1]}", topic='detection')
                     if self.vis:
                         self.nozzle_vis.update(relay=nozzle, status=True)
                     nozzleOn = True
@@ -181,6 +186,8 @@ class Controller:
                 inputCondition.acquire()
             if len(nozzleQueue) == 0:
                 self.solenoid.relay_off(nozzle, verbose=False)
+                self.publisher.publish(f"{nozzle}, 'off', {time.time()}", topic='detection')
+
                 if self.vis:
                     self.nozzle_vis.update(relay=nozzle, status=False)
                 nozzleOn = False
