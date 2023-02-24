@@ -616,8 +616,19 @@ Flag | Usage | Description
   
 ### Changing threshold values in `greenonbrown.py`
   
-Other parameters such as selecting modifying sensitivity settings can be adjusted in the greenonbrown.py file itself. To edit this file, connect a screen, keyboard and mouse and boot up the OWL. Navigate to the owl directory and open up `greenonbrown.py` in an editor. You'll need to right click, select open with and then choose an  integrated development environment (IDE). Once it's open, scroll down to the very bottom and you should come across:
+Other parameters such as selecting or modifying sensitivity settings can be adjusted in the greenonbrown.py file itself. 
 
+To edit this file, connect a screen, keyboard and mouse and boot up the OWL. Navigate to the `owl` directory and open up `greenonbrown.py` in an editor. If it's an executable file, it will ask you if you want to "Execute", "Execute in Terminal" or "Open" (see image below). Make sure to select the `Open` option. 
+
+Navigate to the `owl` directory  | Open the `greenonbrown.py` file
+:-------------------------:|:-------------------------:
+![owl_dir](https://user-images.githubusercontent.com/51358498/221152779-46c78fe2-92e6-4e65-9ebd-234ae02c33f6.png) | ![open_greenonbrown_py](https://user-images.githubusercontent.com/51358498/221153072-922d9ed6-8120-4c2d-9bd2-a999030b4723.png)
+
+Once you have opened the file in an editor (this can be a text editor, Thonny, Geany or other code editors), scroll down to the very bottom and you should come across values you can change, such as in the image or written out below.
+
+![image](https://user-images.githubusercontent.com/51358498/221154007-69007ab9-e1b9-4c2f-84dd-efe6b17ff3ca.png)
+
+Editable values for sensitivity:
 ```
 if __name__ == "__main__":
     owl = Owl(videoFile=args.video_file,
