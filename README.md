@@ -23,7 +23,7 @@ Internal electronics       |  Fitted module - vehicle | Fitted module - robot
   - [Quick Method](#quick-method)
   - [Detailed Method](#detailed-method)
   - [Changing Detection Settings](#changing-detection-settings)
-  - [Green-on-Green (under development) :eyes::dart::seedling:](#green-on-green)
+  - [Green-on-Green (available NOW) :eyes::dart::seedling:](#green-on-green)
   - [Installing on non-Raspberry Pi Computers](#non-raspberry-pi-installation)
 * [3D Printing](#3d-printing)
 * [Updating OWL](#updating-owl)
@@ -96,6 +96,7 @@ A complete list of components is provided below. Further details on 3D models an
 | Enclosure Plug  | 1 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Enclosure%20plug.stl) |
 | **Computing**  |  |  |
 | Raspberry Pi 4 8GB  | 1  | [Link](https://core-electronics.com.au/raspberry-pi-4-model-b-8gb.html) |
+| *Green-on-Green ONLY - Google Coral USB Accelerator | 1 | [Link](https://coral.ai/products/accelerator) |
 | 64GB SD Card  | 1  | [Link](https://core-electronics.com.au/extreme-sd-microsd-memory-card-64gb-class-10-adapter-included.html) |
 | **Camera**  |  |  |
 | Raspberry Pi HQ Camera  | 1  | [Link](https://core-electronics.com.au/raspberry-pi-hq-camera.html) |
@@ -288,6 +289,8 @@ Bulgin plug | Ground wiring harness
 # Software
 The project will eventually support the use of the two major embedded computing devices, the Raspberry Pi (models 3B+ and 4) and the Jetson Nano/Jetson Xavier NX for possible green-on-green detection with deep learning algorithms. At present, just the details on setting up the Raspberry Pi 3B+/4 are provided below. There are two options for installation. For the first, all you'll need to do is download the disk image file (vX.X.X-owl.img) and flash it to an SD card. The second method is more in depth, but takes you through the entire process from beginning to end. If you're looking to learn about how everything works, take some time to work through this process.
 
+**NOTE** In the major update on 17/03/2023 running of the OWL changed from using `greenonbrown.py` to `owl.py`. This ensures better cross compatibility with GoG algorithms. It improves the modularity of the system.
+
 ## Quick Method
 For this method you'll need access to:
 * Desktop/laptop computer
@@ -339,7 +342,7 @@ Notice that (owl) now appears before the line in the Terminal window. This indic
 (owl) pi@raspberrypi:~ $ mv OpenWeedLocator owl      # rename the download to 'owl'
 (owl) pi@raspberrypi:~ $ cd ~/owl
 (owl) pi@raspberrypi:~/owl $ pip install -r requirements.txt                # installs the necessary software into the (owl) environment 
-(owl) pi@raspberrypi:~/owl $ chmod a+x greenonbrown.py                  # changes greenonbrown.py to be executable
+(owl) pi@raspberrypi:~/owl $ chmod a+x owl.py                  # changes owl.py to be executable
 (owl) pi@raspberrypi:~/owl $ chmod a+x owl_boot.sh                     # changes owl_boot.sh to be executable
 ```
 Once this is complete your software will be up to date and you can move on to focusing the camera.  
@@ -347,15 +350,15 @@ Once this is complete your software will be up to date and you can move on to fo
 ### Step 5 - focusing the camera
 The final step in the process is to make sure the camera and lens are correctly focused for the mounting height. To view the live camera feed, we need to stop the process that is running in the background that would have started when you first turned on the OWL. Enter the following into the terminal:
 ```
-(owl) pi@raspberrypi:~ $ ps -C greenonbrown.py
+(owl) pi@raspberrypi:~ $ ps -C owl.py
 ```
 After pressing ENTER, you should receive the following output:
 ```
-(owl) pi@raspberrypi:~ $ ps -C greenonbrown.py
+(owl) pi@raspberrypi:~ $ ps -C owl.py
 PID TTY              TIME CMD
-515 ?            00:00:00 greenonbrown.py
+515 ?            00:00:00 owl.py
 ```
-The PID is the important part, it's the ID number for the `greenonbrown.py` program. In this case it is 515, but it is likely to be different on your OWL. If the headings `PID TTY              TIME CMD` appear but a PID/line for greenonbrown.py doesn't appear it could mean two things. Firstly make sure you've typed `greenonbrown.py` correctly. If it doesn't have the right program to look for, it won't find it. The other option is that `greenonbrown.py` isn't running, which may also be the case. If you're certain it's not running in the background, skip the stop program step below, and move straight to launching `greenonbrown.py`.
+The PID is the important part, it's the ID number for the `owl.py` program. In this case it is 515, but it is likely to be different on your OWL. If the headings `PID TTY              TIME CMD` appear but a PID/line for owl.py doesn't appear it could mean two things. Firstly make sure you've typed `owl.py` correctly. If it doesn't have the right program to look for, it won't find it. The other option is that `owl.py` isn't running, which may also be the case. If you're certain it's not running in the background, skip the stop program step below, and move straight to launching `owl.py`.
  
 If a PID appears, you'll need to stop it operating. To stop the program, enter the following command:
 ```
@@ -363,9 +366,9 @@ If a PID appears, you'll need to stop it operating. To stop the program, enter t
 ```
 The program should now be stopped
   
-Now you'll need to launch `greenonbrown.py` manually with the video feed visible. To do this use the Terminal window and type the following commands:
+Now you'll need to launch `owl.py` manually with the video feed visible. To do this use the Terminal window and type the following commands:
 ```
-(owl) pi@raspberrypi:~ $ ~/owl/./greenonbrown.py --show-display
+(owl) pi@raspberrypi:~ $ ~/owl/./owl.py --show-display
 ```
 This will bring up a video feed you can use to visualise the OWL detector and also use it to focus the camera. Once you're happy with the focus, press Esc to exit. 
 
@@ -435,7 +438,7 @@ The next step is to download the entire OpenWeedLocator repository into your *ho
 (owl) pi@raspberrypi:~ $ git clone https://github.com/geezacoleman/OpenWeedLocator
 (owl) pi@raspberrypi:~ $ mv OpenWeedLocator owl
 ```
-Double check it is there by typing `(owl) (owl) pi@raspberrypi:~ $ ls` and reading through the results, alternatively open up the Home folder using a mousee. If that was sucessful, you can now move on to Step 4.
+Double check it is there by typing `(owl) (owl) pi@raspberrypi:~ $ ls` and reading through the results, alternatively open up the Home folder using a mouse. If that was sucessful, you can now move on to Step 4.
 
 ### Step 4 - installing the OWL Python dependencies
 Dependencies are Python packages on which the code relies to function correctly. With a range of versions and possible comptibility issues, this is the step where issues might come up. There aren't too many packages, but please make sure each and every module in the requirements.txt file has been installed correctly. These include:
@@ -447,7 +450,7 @@ Dependencies are Python packages on which the code relies to function correctly.
 * glob (for data collection only)
 * threading, collections, queue, time, os (though these are included as standard Python modules).
 
-**NOTE**: Before continuing make sure you are in the `owl` virtual environment. Check that `(owl)` appears at the start of each command line, e.g. `(owl) pi@raspberrypi:~ $`. Run `workon owl` if you are unsure. If you are not in the `owl` environment, you will run into errors when starting `greenonbrown.py`.
+**NOTE**: Before continuing make sure you are in the `owl` virtual environment. Check that `(owl)` appears at the start of each command line, e.g. `(owl) pi@raspberrypi:~ $`. Run `workon owl` if you are unsure. If you are not in the `owl` environment, you will run into errors when starting `owl.py`.
 
 To install all the requirements.txt, simply run:
 ```
@@ -477,9 +480,9 @@ If any errors appear, you'll need to go back and check that the modules above ha
 ```
 
 ### Step 5 - starting OWL on boot
-Now that these dependencies have been installed into the owl virtual environment, it's time to make sure it runs on startup! The first step is to make the Python file `greenonbrown.py` executable using the Terminal window.
+Now that these dependencies have been installed into the owl virtual environment, it's time to make sure it runs on startup! The first step is to make the Python file `owl.py` executable using the Terminal window.
 ```
-(owl) (owl) pi@raspberrypi:~ $ chmod a+x ~/owl/greenonbrown.py
+(owl) (owl) pi@raspberrypi:~ $ chmod a+x ~/owl/owl.py
 ```
 After it's been made executable, the file needs to be launched on startup so each time the Raspberry Pi is powered on, the detection systems starts. The easiest way to do this
 by using cron, a scheduler for starting code. So you'll need to add the `owl_boot.sh` file to the schedule so that it launches on boot. The `owl_boot.sh` file is fairly straightforward. It's what's known as a [bash script](https://ryanstutorials.net/bash-scripting-tutorial/bash-script.php) which is just a text file that contains commands we would normally enter on the command line in Terminal. 
@@ -490,7 +493,7 @@ source /home/pi/.bashrc
 workon owl
 lxterminal
 cd /home/pi/owl
-./greenonbrown.py
+./owl.py
 ```
 In the file, the first two commands launch our `owl` virtual environment, then `lxterminal` creates a virtual terminal environment so outputs are logged. Finally we change directory `cd` into the owl folder and run the python program. 
 
@@ -514,15 +517,15 @@ If you get stuck, [this guide](https://www.makeuseof.com/how-to-run-a-raspberry-
 ### Step 6 - focusing the camera
 The final step in the process is to make sure the camera and lens are correctly focused for the mounting height. To view the live camera feed, we need to stop the process that is running in the background that would have started when you first turned on the OWL. Enter the following into the terminal:
 ```
-(owl) pi@raspberrypi:~ $ ps -C greenonbrown.py
+(owl) pi@raspberrypi:~ $ ps -C owl.py
 ```
 After pressing ENTER, you should receive the following output:
 ```
-(owl) pi@raspberrypi:~ $ ps -C greenonbrown.py
+(owl) pi@raspberrypi:~ $ ps -C owl.py
 PID TTY              TIME CMD
-515 ?            00:00:00 greenonbrown.py
+515 ?            00:00:00 owl.py
 ```
-The PID is the important part, it's the ID number for the `greenonbrown.py` program. In this case it is 515, but it is likely to be different on your OWL.
+The PID is the important part, it's the ID number for the `owl.py` program. In this case it is 515, but it is likely to be different on your OWL.
  
 To stop the program, you need to enter the following command:
 ```
@@ -530,9 +533,9 @@ To stop the program, you need to enter the following command:
 ```
 The program should now be stopped
   
-Now you'll need to launch `greenonbrown.py` manually with the video feed visible. To do this use the Terminal window and type the following commands:
+Now you'll need to launch `owl.py` manually with the video feed visible. To do this use the Terminal window and type the following commands:
 ```
-(owl) pi@raspberrypi:~ $ ~/owl/./greenonbrown.py --show-display
+(owl) pi@raspberrypi:~ $ ~/owl/./owl.py --show-display
 ```
 This will bring up a video feed you can use to visualise the OWL detector and also use it to focus the camera. Once you're happy with the focus, press Esc to exit. 
 
@@ -574,14 +577,14 @@ The optional real time clock module can be set up by following the [detailed ins
 <br>
 If you're interested in changing settings there are now two ways to do this:
 1. Using command line flags
-2. Opening the greenonbrown.py file and changing threshold values
+2. Opening the owl.py file and changing threshold values
   
 ### Command line flags
 Command line flags are let you specify options on the command line within the Terminal window. It means you don't have to open up the code and make changes directly. OWL now supports the use of flags for some parameters. To read a description of all flags available type:
 
 ```
-(owl) pi@raspberrypi:~ $./greenonbrown.py --help
-usage: greenonbrown.py [-h] [--video-file VIDEO_FILE] [--show-display] [--recording] [--algorithm {exg,nexg,exgr,maxg,exhsv,hsv}] [--framerate [10-120]]
+(owl) pi@raspberrypi:~ $./owl.py --help
+usage: owl.py [-h] [--video-file VIDEO_FILE] [--show-display] [--recording] [--algorithm {exg,nexg,exgr,maxg,exhsv,hsv}] [--framerate [10-120]]
                        [--exposure-mode {off,auto,nightpreview,backlight,spotlight,sports,snow,beach,verylong,fixedfps,antishake,fireworks}]
                        [--awb-mode {off,auto,sunlight,cloudy,shade,tungsten,fluorescent,incandescent,flash,horizon}] [--sensor-mode [0-3]]
 
@@ -594,11 +597,14 @@ optional arguments:
   --algorithm {exg,nexg,exgr,maxg,exhsv,hsv}
   --framerate [10-120]  set camera framerate between 10 and 120 FPS. Framerate will depend on sensor mode, though setting framerate takes precedence over sensor_mode, For example sensor_mode=0 and framerate=120 will reset the
                         sensor_mode to 3.
-  --exposure-mode {off,auto,nightpreview,backlight,spotlight,sports,snow,beach,verylong,fixedfps,antishake,fireworks}
+  --exp-mode {off,auto,nightpreview,backlight,spotlight,sports,snow,beach,verylong,fixedfps,antishake,fireworks}
                         set exposure mode of camera
   --awb-mode {off,auto,sunlight,cloudy,shade,tungsten,fluorescent,incandescent,flash,horizon}
                         set the auto white balance mode of the camera
   --sensor-mode [0-3]   set the sensor mode for the camera between 0 and 3. Check Raspberry Pi camera documentation for specifics of each mode
+  --exp-compensation [-24 to 24]
+                        set the exposure compensation (EV) for the camera between -24 and 24. Raspberry Pi cameras seem to overexpose images preferentially.
+
 
 
 ```
@@ -606,21 +612,22 @@ optional arguments:
 Flag | Usage | Description
 :-------------: | :-------------: | :-------------:
 --video-file | Specify the path to the video file. | This is used when a video file is run instead of the live feed from a camera. It is mostly used in testing new algorithms. If this is not included, a connected camera will be used instead.
---show-display | If flag is present, this will return True | When this flag is included, video feeds and threshold adjustments will appear. Without the flag, the OWL will run `headless` with no display. This flag replaces the `Headless=True` variable in the `greenonbrown.py` file.
---algorithm | exg, nexg, exgr, maxg, exhsv, hsv | Select from the list of algorithms to use. Defaults to `exhsv`
+--show-display | If flag is present, this will return True | When this flag is included, video feeds and threshold adjustments will appear. Without the flag, the OWL will run `headless` with no display. This flag replaces the `Headless=True` variable in the `owl.py` file.
+--algorithm | gog, exg, nexg, exgr, maxg, exhsv, hsv | Select from the list of algorithms to use. Defaults to `exhsv`. GoG will enable the Google Coral and import 'pycoral' and related libraries. Only use if you have followed the instructions under the [Green-on-Green](#green-on-green) section.
 --recording | If flag is present, this will return True | Record video to a file
 --framerate | between 10 and 120 FPS, default=40 | sets the framerate for the camera.
---exposure-mode | off, auto, nightpreview, backlight, spotlight, sports, snow, beach, verylong, fixedfps, antishake, fireworks | Select from the list of exposure modes available on the [Picamera](https://picamera.readthedocs.io/en/release-1.13/api_camera.html#picamera.PiCamera.exposure_mode). Defaults to 'sports' for faster shutter speed.
+--exp-mode | off, auto, nightpreview, backlight, spotlight, sports, snow, beach, verylong, fixedfps, antishake, fireworks | Select from the list of exposure modes available on the [Picamera](https://picamera.readthedocs.io/en/release-1.13/api_camera.html#picamera.PiCamera.exposure_mode). Defaults to 'sports' for faster shutter speed.
 --awb-mode | off, auto, sunlight, cloudy, shade, tungsten, fluorescent, incandescent, flash, horizon | set the automatic white balance mode from [Picamera options](https://picamera.readthedocs.io/en/release-1.13/api_camera.html#picamera.PiCamera.awb_mode).
 --sensor-mode | 0: default - automatic; modes 1, 2 and 3 are defined in the picamera documentation. | the sensor mode is specific to the camera. The Raspberry Pi v2 camera has 7 modes, whereas the HQ camera has only 4. Framerate is prioritised over sensor mode. WARNING: high framerates and larger resolutions may 'brick' the SD card. Always backup your SD card before testing new settings, or update from this repository if settings are lost.
+--exp-compensation | Default: -4, use even values between between -24 and 24. | This sets the target brightness level for the camera. Typically it defaults to being overexposed in bright sun conditions so lower values will improve performance.
   
-### Changing threshold values in `greenonbrown.py`
+### Changing threshold values in `owl.py`
   
-Other parameters such as selecting or modifying sensitivity settings can be adjusted in the greenonbrown.py file itself. 
+Other parameters such as selecting or modifying sensitivity settings can be adjusted in the owl.py file itself. 
 
 To edit this file, connect a screen, keyboard and mouse and boot up the OWL. Navigate to the `owl` directory and open up `greenonbrown.py` in an editor. If it's an executable file, it will ask you if you want to "Execute", "Execute in Terminal" or "Open" (see image below). Make sure to select the `Open` option. 
 
-Navigate to the `owl` directory  | Open the `greenonbrown.py` file
+Navigate to the `owl` directory  | Open the `owl.py` file
 :-------------------------:|:-------------------------:
 ![owl_dir](https://user-images.githubusercontent.com/51358498/221152779-46c78fe2-92e6-4e65-9ebd-234ae02c33f6.png) | ![open_greenonbrown_py](https://user-images.githubusercontent.com/51358498/221153072-922d9ed6-8120-4c2d-9bd2-a999030b4723.png)
 
@@ -660,7 +667,7 @@ if __name__ == "__main__":
              minArea=10)
 ```
 
-Here's a summary table of what each parameter does. Run `./greenonbrown.py --show-display` to view the output results. Without this `--show-display` flag the video will not appear on the screen.
+Here's a summary table of what each parameter does. Run `./owl.py --show-display` to view the output results. Without this `--show-display` flag the video will not appear on the screen.
 
 **NOTE** In older versions ONLY, ff you change the now defunct parameter of `headless` to `False`, you'll be able to see a real time feed of what the algorithm is doing and where the detections are occurring. This will need to be switched back to `headless=True` if you decide to run it without the screen connected. Note that the owl program will not run on startup if `headless=False`.
 
@@ -681,7 +688,7 @@ Here's a summary table of what each parameter does. Run `./greenonbrown.py --sho
 `sampleMethod`|Choose from None, 'bbox', 'square', 'whole' | If sampleMethod=None, sampling is deactivated. Do not leave on for long periods or SD card will fill up and stop working.|
 `sampleFreq` | Any positive integer | Changes how often (after how many frames) image sampling will occur. If sampleFreq=60, images will be sampled every 60 frames. |
 `saveDir` | Path to save directory | Set where you want the images saved. If you insert a USB and would like to save images to it, put the path for that here. |
-`algorithm`|Any of: `exg`,`exgr`,`exgs`,`exhu`,`hsv`| Changes the selected algorithm. Most sensitive: 'exg', least sensitive/most precise (least false positives): 'exgr', 'exhu', 'hsv'|
+`algorithm`|Any of: `gog`,`exg`,`exgr`,`exgs`,`exhu`,`hsv`| Changes the selected algorithm. Most sensitive: 'exg', least sensitive/most precise (least false positives): 'exgr', 'exhu', 'hsv'. `gog` will activate a provided Green-on-Green detection algorithm, a .tflite model in the models folder. Ensure you have connected and installed a Google Coral using the procedure [here](#green-on-green). |
 `selectorEnabled`|`True` or `False`| Enables algorithm selection based on a rotary switch. Only enable if switch is connected.|
 `cameraName` | Any string | Changes the save name if recording videos of the camera. Ignore - only used if recording data.|
 `minArea`| Any integer  | Changes the minimum size of the detection. Leave low for more sensitivity of small weeds and increase to reduce false positives.|
@@ -693,10 +700,16 @@ Here's a summary table of what each parameter does. Run `./greenonbrown.py --sho
 <br>
 
 ### OWL Integration
-The official launch of green-on-green capability should be happening soon. Keep an eye on this section and [the branch](https://github.com/geezacoleman/OpenWeedLocator/tree/add-google-coral) in which it's being developed so you don't miss the release. 
+Green-on-Green capability is here! 
+
+Deep learning object detection algorithms for in-crop or 'Green-on-Green' (GoG) require much more processing power than the green detection algorithms we have used previously. If we ran these GoG algorithms directly on the Raspberry Pi, the frame rate would be prohibitively slow. To overcome this, you can use more powerful computers with GPUs (i.e. any of NVIDIA's Jetson series), alternatively you can connect a third party processor such as Google Coral's TPU through the USB3.0 ports of the Raspberry Pi 4. This means increased performance without needing to purchase another embedded computer.
+
+The [Google Coral USB accelerator](https://coral.ai/products/accelerator) is only $59.99, so it provides performance upgrades without substantial cost increases. With the added hardware, there are some additional software installation details that you should follow. And you will need to connect the Google Coral to the Raspberry Pi USB3.0 port too. At the moment, this won't fit neatly in the case, but we are continuing to work on improving this.
+
+For all the details on how to install the Google Coral, please head over to the `models` directory. We have provided an installation script to make it as straightforward as possible.
 
 ### Model Training
-Effective models need training data, so if you're interested in using the Green-on-Green functionality when it is released, you will need to start collecting and annotating images of relevant weeds for training. Alternatively, head over to [Weed-AI](https://weed-ai.sydney.edu.au/explore?is_head_filter=%5B%22latest+version%22%5D) to see if any image data may be relevant for your purposes.
+Effective models need training data, so if you're interested in using the Green-on-Green functionality, you will need to start collecting and annotating images of relevant weeds for training. Alternatively, head over to [Weed-AI](https://weed-ai.sydney.edu.au/explore?is_head_filter=%5B%22latest+version%22%5D) to see if any image data may be relevant for your purposes.
 
 [YOLOv8](https://github.com/ultralytics/ultralytics) and [YOLOv5](https://github.com/ultralytics/yolov5) currently provide the most user friendly methods of training, optimisation and exporting as `.tflite` files for use with the Google Coral. There is also a Weed-AI Google Colab Notebook <a target="_blank" href="https://colab.research.google.com/github/Weed-AI/Weed-AI/blob/master/weed_ai_yolov5.ipynb">
   <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
@@ -724,9 +737,9 @@ Assuming the virtual environment is working and is activated, run through these 
 > pip install -r non_rpi_requirements.txt     # this will install all the necessary packages, without including the Raspberry Pi specific ones.
 ```
 
-It may take a minute or two for those to complete installing. But once they are done you are free to run the `greenonbrown.py` software.
+It may take a minute or two for those to complete installing. But once they are done you are free to run the `owl.py` software.
 ```
-> python greenonbrown.py --show-display
+> python owl.py --show-display
 ```
 
 From there you can change the command line flags (as described above) or play around with the settings to see how it works.
@@ -799,7 +812,7 @@ All .stl files for the 3D printed components of this build are available in the 
 
 We and others will be continually contributing to and improving OWL as we become aware of issues or opportunities to increase detection performance. Once you have a functioning setup the process to update is simple. First, you'll need to connect a screen, keyboard and mouse to the OWL unit and boot it up. Navigate to the existing owl directory in `/home/owl/` and either delete or rename that folder. Remember if you've made any of your own changes to the parameters/code, write them down. Then open up a Terminal window (Ctrl + T) and follow these steps:
 
-**IMPORTANT**: Before continuing make sure you are in the `owl` virtual environment. Check that `(owl)` appears at the start of each command line, e.g. `(owl) pi@raspberrypi:~ $`. Run `workon owl` if you are unsure. If you are not in the `owl` environment, you will run into errors when starting `greenonbrown.py`.
+**IMPORTANT**: Before continuing make sure you are in the `owl` virtual environment. Check that `(owl)` appears at the start of each command line, e.g. `(owl) pi@raspberrypi:~ $`. Run `workon owl` if you are unsure. If you are not in the `owl` environment, you will run into errors when starting `owl.py`.
 
 ```
 (owl) pi@raspberrypi:~ $ cd ~
@@ -808,7 +821,7 @@ We and others will be continually contributing to and improving OWL as we become
 (owl) pi@raspberrypi:~ $ mv OpenWeedLocator owl      # rename the download to 'owl'
 (owl) pi@raspberrypi:~ $ cd ~/owl
 (owl) pi@raspberrypi:~/owl $ pip install -r requirements.txt
-(owl) pi@raspberrypi:~/owl $ chmod a+x greenonbrown.py
+(owl) pi@raspberrypi:~/owl $ chmod a+x owl.py
 (owl) pi@raspberrypi:~/owl $ chmod a+x owl_boot.sh
 ```
 
@@ -837,8 +850,8 @@ Here's a table of some of the common symptoms and possible explanations for erro
 Symptom | Explanation | Possible solution
 :-------------------------:|:-------------------------:|:-------------------------:
 Raspberry Pi won't start (no green/red lights) | No power getting to the computer | Check the power source, and all downstream components. Such as Bulgin panel/plug connections fuse connections and fuse, connections to Wago 2-way block, voltage regulator connections, cable into the Raspberry Pi.
-Raspberry Pi starts (green light flashing) but no beep | OWL software has not started | This is likely a configuration/camera connection error with many possible causes. To get more information, boot the Raspberry Pi with a screen connected, open up a Terminal window (Ctrl + T) and type `~/owl/./greenonbrown.py`. This will run the program. Check any errors that emerge.
-Beep heard, but no relays activating when tested with green | Relays are not receiving (1) 12V power, (2) a signal from the Pi, (3) the Pi is not sending a signal | Check all your connections with a multimeter if necessary for the presence of 12V. Make sure everything is connected as per the wiring diagram. If you're confident there are no connection issues, open up a Terminal window (Ctrl + T) and type `~/owl/./greenonbrown.py`. This will run the program. Check any errors that emerge.
+Raspberry Pi starts (green light flashing) but no beep | OWL software has not started | This is likely a configuration/camera connection error with many possible causes. To get more information, boot the Raspberry Pi with a screen connected, open up a Terminal window (Ctrl + T) and type `~/owl/./owl.py`. This will run the program. Check any errors that emerge.
+Beep heard, but no relays activating when tested with green | Relays are not receiving (1) 12V power, (2) a signal from the Pi, (3) the Pi is not sending a signal | Check all your connections with a multimeter if necessary for the presence of 12V. Make sure everything is connected as per the wiring diagram. If you're confident there are no connection issues, open up a Terminal window (Ctrl + T) and type `~/owl/./owl.py`. This will run the program. Check any errors that emerge.
 </details>
 
 # Citing OWL
