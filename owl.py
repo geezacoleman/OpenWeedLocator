@@ -1,11 +1,9 @@
 #!/home/pi/.virtualenvs/owl/bin/python3
 import numpy as np
 
-from algorithms import exg, exg_standardised, exg_standardised_hue, hsv, exgr, gndvi, maxg
 from button_inputs import Recorder
 from image_sampler import bounding_box_image_sample, square_image_sample, whole_image_save
 from greenonbrown import GreenOnBrown
-from greenongreen import GreenOnGreen
 from datetime import datetime, timezone
 from imutils.video import VideoStream, FileVideoStream, FPS
 from relay_control import Controller
@@ -233,6 +231,7 @@ class Owl:
             fps = FPS().start()
 
         if algorithm == 'gog':
+            from greenongreen import GreenOnGreen
             weed_detector = GreenOnGreen()
 
         else:
