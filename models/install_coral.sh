@@ -41,3 +41,18 @@ done
 echo "The pycoral library will now be installed."
 
 sudo apt-get install python3-pycoral
+
+# Link the system wide installation to the OWL virtual environment 
+# Find the directories containing pycoral and tflite
+PYCORAL_DIRS=$(find /usr/lib/python3/dist-packages -name "*pycoral*" -type d)
+TFLITE_DIRS=$(find /usr/lib/python3/dist-packages -name "*tflite*" -type d)
+
+# Find the site-packages directory of the virtual environment 'owl'
+OWL_SITE_PACKAGES=$(python -c "import site; print(site.getsitepackages())" | grep owl | xargs)
+
+# Copy the directories containing pycoral and tflite to the site-packages directory
+for DIR in $PYCORAL_DIRS $TFLITE_DIRS; do
+    cp -r $DIR $OWL_SITE_PACKAGES
+done
+
+
