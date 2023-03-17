@@ -3,6 +3,7 @@ import numpy as np
 import cv2
 import os
 
+
 def whole_image_save(image, save_directory, frame_id):
     fname = "{}_frame_{}.png".format(strftime("%Y%m%d-%H%M%S_"), frame_id)
     cv2.imwrite(os.path.join(save_directory, fname), image)
@@ -24,6 +25,7 @@ def bounding_box_image_sample(image, bounding_boxes, save_directory, frame_id):
         cropped_image = image[startY:endY, startX:endX]
         fname = "{}_frame_{}_n_{}.png".format(strftime("%Y%m%d-%H%M%S_"), frame_id, str(contour_id))
         cv2.imwrite(os.path.join(save_directory, fname), cropped_image)
+
 
 def square_image_sample(image, centres_list, save_directory, frame_id, side_length=200):
     """
