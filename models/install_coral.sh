@@ -48,7 +48,7 @@ PYCORAL_DIRS=$(find /usr/lib/python3/dist-packages -name "*pycoral*" -type d)
 TFLITE_DIRS=$(find /usr/lib/python3/dist-packages -name "*tflite*" -type d)
 
 # Find the site-packages directory of the virtual environment 'owl'
-OWL_SITE_PACKAGES=$(python -c "import site; print(site.getsitepackages())" | grep owl | xargs)
+OWL_SITE_PACKAGES=$(python -c "import site; print(site.getsitepackages()[0])" | grep owl | xargs)
 
 # Copy the directories containing pycoral and tflite to the site-packages directory
 for DIR in $PYCORAL_DIRS $TFLITE_DIRS; do
