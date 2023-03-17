@@ -48,8 +48,8 @@ class GreenOnGreen:
                 bbox = det_object.bbox.scale(scale_x, scale_y)
                 startX, startY = int(bbox.xmin), int(bbox.ymin)
                 endX, endY = int(bbox.xmax), int(bbox.ymax)
-                boxW = startX - endX
-                boxH = startY - endY
+                boxW = endX - startX
+                boxH = endY = startY
 
                 # save the bounding box
                 self.boxes.append([startX, startY, boxW, boxH])
