@@ -507,7 +507,7 @@ if __name__ == "__main__":
     ap.add_argument('--sensor-mode', type=int, default=0, choices=[0, 1, 2, 3], metavar="[0 to 3]",
                     help='set the sensor mode for the camera between 0 and 3. '
                          'Check Raspberry Pi camera documentation for specifics of each mode')
-    ap.add_argument('--exp-compensation', type=int, default=-6, choices=range(-24, 24), metavar="[-24 to 24]",
+    ap.add_argument('--exp-compensation', type=int, default=-4, choices=range(-24, 24), metavar="[-24 to 24]",
                     help='set the exposure compensation (EV) for the camera between -24 and 24. '
                          'Raspberry Pi cameras seem to overexpose images preferentially.')
     args = ap.parse_args()
