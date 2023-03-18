@@ -711,6 +711,8 @@ For all the details on how to install the Google Coral, please head over to the 
 ### Model Training
 Effective models need training data, so if you're interested in using the Green-on-Green functionality, you will need to start collecting and annotating images of relevant weeds for training. Alternatively, head over to [Weed-AI](https://weed-ai.sydney.edu.au/explore?is_head_filter=%5B%22latest+version%22%5D) to see if any image data may be relevant for your purposes.
 
+**NOTE** There do appear to be some issues with the exporting functionality of YOLOv5/v8 to .tflite models for use with the Coral. The issue has been raised on the Ultralytics repository and should hopefully be resolved soon. You can follow the updates [here](https://github.com/ultralytics/ultralytics/issues/1312).
+
 [YOLOv8](https://github.com/ultralytics/ultralytics) and [YOLOv5](https://github.com/ultralytics/yolov5) currently provide the most user friendly methods of training, optimisation and exporting as `.tflite` files for use with the Google Coral. There is also a Weed-AI Google Colab Notebook <a target="_blank" href="https://colab.research.google.com/github/Weed-AI/Weed-AI/blob/master/weed_ai_yolov5.ipynb">
   <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
 </a>
