@@ -1,1 +1,1 @@
-16  blue_lupin
+16  object
