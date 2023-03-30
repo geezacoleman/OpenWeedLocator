@@ -19,6 +19,7 @@ Internal electronics       |  Fitted module - vehicle | Fitted module - robot
 * [Community Development](#community-development-and-contribution)
 * [Hardware Requirements](#hardware-requirements)
   - [Hardware Assembly](#hardware-assembly)
+  - [Single Board Computer (SBC) Options](#sbc-options)
 * [Software Installation](#software)
   - [Quick Method](#quick-method)
   - [Detailed Method](#detailed-method)
@@ -222,8 +223,6 @@ Connect the Raspberry Pi GPIO to the relay control board header pins, using the 
 The GPIO pins on the Raspberry Pi are not clearly labelled, so use this guide to help. Be careful when connecting these pins as incorrect wiring can shortcircuit/damage your Pi.
 ![image](https://user-images.githubusercontent.com/51358498/152514046-37d5bcf5-348b-4e39-8810-c877acfed852.png)
 
-
-
 RPi GPIO pin | Relay header pin
 :-------------: | :-------------: 
 13 | IN1
@@ -285,7 +284,31 @@ Bulgin plug | Ground wiring harness
 :-------------: | :-------------:
 ![Bulginplug](https://media.github.sydney.edu.au/user/5402/files/7f753380-d03a-11eb-8d9b-658db73d3408) | ![Groundharness](https://media.github.sydney.edu.au/user/5402/files/7e440680-d03a-11eb-9af1-67132f4cc36f)
 </details>
-  
+
+### SBC Options
+A single board computer or SBC is the brains behind the OWL. It can do all the image processing and logic within a single, roughly credit card sized board without moving parts. These SBCs are the backbone of embedded computing or 'edge computing'. While the Raspberry Pi is arguably one of the most widely used and well supported SBCs there are many different options out there. Each has their strengths and weaknesses and may or may not be good fits with the OWL. We've providing a summary of some SBCs below, but this isn't an exhaustive list. 
+
+Currently, only Raspberry Pi 4 and 3B+ work with the OWL and have been tested in full. Early tests (alpha) have been made with the LibreComputer LePotato. We will update the 'Works with OWL' column as more boards are tested in the community.
+
+<details>
+<summary> A summary of possible single board computers (SBCs) to use with the OWL</summary>
+<br>
+
+| SBC Name | Processor | RAM | CSI | USB | GPU | Pros | Cons | Dimensions | Works with OWL? |
+|----------|-----------|-----|---------------|-----------|-----|------|------|------------|-------------------|
+| [Raspberry Pi 4B](https://www.raspberrypi.com/products/raspberry-pi-4-model-b/specifications/) | Broadcom BCM2711, quad-core Cortex-A72 | 1/2/4/8GB | 2 | 2x3.0, 2x2.0 | VideoCore VI | Large community, affordable | Limited GPU performance, no eMMC storage | 88 x 58 x 19.5mm | :heavy_check_mark: |
+| [Raspberry Pi 3B+](https://www.raspberrypi.com/products/raspberry-pi-3-model-b-plus/) | Broadcom BCM2837B0, quad-core Cortex-A53 | 1GB | 1 | 4x2.0 | VideoCore IV | Large community, affordable | Limited GPU performance, no eMMC storage | 85 x 56 x 17mm | :heavy_check_mark: |
+| [Libre Computer AML-S905X-CC (LePotato)](https://libre.computer/products/aml-s905x-cc/) | Amlogic S905X | 1/2GB | 0 | 4x2.0 | Mali-450 @ 750MHz | Affordable | Limited community support, no onboard Wi-Fi | 85 x 56mm | :warning: alpha ([full report here](https://github.com/geezacoleman/OpenWeedLocator/discussions/70)) |
+| [Libre Computer ROC-RK3328-CC (Renegade)](https://libre.computer/products/roc-rk3328-cc/) | Rockchip RK3328, 4 Core Cortex-A53 | 1/2/4GB | 0 | 1x3.0, 2x2.0 | Mali-450 @ 500MHz  | 4K HDR support | Limited community support, no onboard Wi-Fi | 85 x 56mm | |
+| [Libre Computer ROC-RK3399-PC (Renegade Elite)](https://libre.computer/products/roc-rk3399-pc/) | Rockchip RK3399, 2 Core Cortex-A72 + 4 Core Cortex-A53 | 4GB | 2 | 4x3.0 | 4 Core Mali-T860 | PCIe, highest performance Libre Computer | Higher cost compared to other options | 128 x 64mm | |
+| [Rock Pi 4B](https://rockpi.org/rockpi4) | Rockchip RK3399, 2 Core Cortex-A72 + 4 Core Cortex-A53 | 4GB | 1 | 2x2.0 2x3.0 | 4 Core Mali-T860 | PCIe, M.2 slot | Limited community support, no onboard Wi-Fi | 85 x 54mm | |
+| [ODROID-XU4](https://wiki.odroid.com/odroid-xu4/odroid-xu4) | Samsung Exynos5422 ARM Cortex-A15 Quad 2Ghz and Cortex-A7 Octa | 2GB | 0 | 2x3.0, 1x2.0 | Mali-T628 MP6 | eMMC module support | Higher cost compared to Raspberry Pi options | 83 x 58 x 20mm | |
+| [NVIDIA Jetson Nano](https://developer.nvidia.com/embedded/jetson-nano-developer-kit) |  4 Core ARM Cortex-A57 | 2/4GB | 2 | 4x3.0 | 128-core Maxwell | Powerful GPU, CSI camera | Higher cost compared to Raspberry Pi options | 100 x 79 x 30.2mm | |
+
+NVIDIA has released numerous powerful, [embedded computers](https://www.nvidia.com/en-us/autonomous-machines/) such as the Jetson Orin series (and previously the Jetson Xavier NX). These would likely be good options for the OWL, but are substantially more expensive than the options listed above.
+
+</details>
+
 # Software
 The project will eventually support the use of the two major embedded computing devices, the Raspberry Pi (models 3B+ and 4) and the Jetson Nano/Jetson Xavier NX for possible green-on-green detection with deep learning algorithms. At present, just the details on setting up the Raspberry Pi 3B+/4 are provided below. There are two options for installation. For the first, all you'll need to do is download the disk image file (vX.X.X-owl.img) and flash it to an SD card. The second method is more in depth, but takes you through the entire process from beginning to end. If you're looking to learn about how everything works, take some time to work through this process.
 
