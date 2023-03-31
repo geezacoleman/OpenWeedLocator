@@ -34,11 +34,13 @@ Internal electronics       |  Fitted module - vehicle | Fitted module - robot
 * [Acknowledgements](#acknowledgements)
 * [References](#references)
 
-## Manuals
-If you prefer a hardcopy version of these instructions, you can view and download the PDF using the link below:
+### Manuals
+If you prefer a hardcopy version of these instructions, you can view and download the PDF using one of the links below. These will be updated as major changes are made. All older versions will be retained within the `docs` folder.
 
-**Version**
-* 2023-03-31 - [Download OWL manual](docs/20230331_owl_readme.pdf)
+**Current**
+* [2023-03-31 - Download OWL manual](docs/20230331_owl_readme.pdf)
+
+[View all versions](docs)
 
 # OWL Use Cases
 ## Vehicle-mounted spot spraying
