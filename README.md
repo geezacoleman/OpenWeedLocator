@@ -34,6 +34,12 @@ Internal electronics       |  Fitted module - vehicle | Fitted module - robot
 * [Acknowledgements](#acknowledgements)
 * [References](#references)
 
+## Manuals
+If you prefer a hardcopy version of these instructions, you can view and download the PDF using the link below:
+
+**Version**
+* 2023-03-31 - [Download OWL manual](docs/20230331_owl_readme.pdf)
+
 # OWL Use Cases
 ## Vehicle-mounted spot spraying
 The first, and most clear use case for the OWL is for the site-specific application of herbicide in fallow. As part of the development and testing of the unit, the OWL team designed and assembled a 2 m spot spraying boom, using two OWLs to control four 12 V solenoids each. The boom was mounted on the back of a ute/utility vehicle with the spray tank located in the tray and powered by a 12V car battery. Indicator lights for each nozzle were used to highlight more clearly when each solenoid had been activated for demonstration and testing purposes.
