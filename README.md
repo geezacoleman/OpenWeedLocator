@@ -294,16 +294,18 @@ Currently, only Raspberry Pi 4 and 3B+ work with the OWL and have been tested in
 <summary> A summary of possible single board computers (SBCs) to use with the OWL</summary>
 <br>
 
-| SBC Name | Processor | RAM | CSI | USB | GPU | Pros | Cons | Dimensions | Works with OWL? |
-|----------|-----------|-----|---------------|-----------|-----|------|------|------------|-------------------|
-| [Raspberry Pi 4B](https://www.raspberrypi.com/products/raspberry-pi-4-model-b/specifications/) | Broadcom BCM2711, quad-core Cortex-A72 | 1/2/4/8GB | 2 | 2x3.0, 2x2.0 | VideoCore VI | Large community, affordable | Limited GPU performance, no eMMC storage | 88 x 58 x 19.5mm | :heavy_check_mark: |
-| [Raspberry Pi 3B+](https://www.raspberrypi.com/products/raspberry-pi-3-model-b-plus/) | Broadcom BCM2837B0, quad-core Cortex-A53 | 1GB | 1 | 4x2.0 | VideoCore IV | Large community, affordable | Limited GPU performance, no eMMC storage | 85 x 56 x 17mm | :heavy_check_mark: |
-| [Libre Computer AML-S905X-CC (LePotato)](https://libre.computer/products/aml-s905x-cc/) | Amlogic S905X | 1/2GB | 0 | 4x2.0 | Mali-450 @ 750MHz | Affordable | Limited community support, no onboard Wi-Fi | 85 x 56mm | :warning: alpha ([full report here](https://github.com/geezacoleman/OpenWeedLocator/discussions/70)) |
-| [Libre Computer ROC-RK3328-CC (Renegade)](https://libre.computer/products/roc-rk3328-cc/) | Rockchip RK3328, 4 Core Cortex-A53 | 1/2/4GB | 0 | 1x3.0, 2x2.0 | Mali-450 @ 500MHz  | 4K HDR support | Limited community support, no onboard Wi-Fi | 85 x 56mm | |
-| [Libre Computer ROC-RK3399-PC (Renegade Elite)](https://libre.computer/products/roc-rk3399-pc/) | Rockchip RK3399, 2 Core Cortex-A72 + 4 Core Cortex-A53 | 4GB | 2 | 4x3.0 | 4 Core Mali-T860 | PCIe, highest performance Libre Computer | Higher cost compared to other options | 128 x 64mm | |
-| [Rock Pi 4B](https://rockpi.org/rockpi4) | Rockchip RK3399, 2 Core Cortex-A72 + 4 Core Cortex-A53 | 4GB | 1 | 2x2.0 2x3.0 | 4 Core Mali-T860 | PCIe, M.2 slot | Limited community support, no onboard Wi-Fi | 85 x 54mm | |
-| [ODROID-XU4](https://wiki.odroid.com/odroid-xu4/odroid-xu4) | Samsung Exynos5422 ARM Cortex-A15 Quad 2Ghz and Cortex-A7 Octa | 2GB | 0 | 2x3.0, 1x2.0 | Mali-T628 MP6 | eMMC module support | Higher cost compared to Raspberry Pi options | 83 x 58 x 20mm | |
-| [NVIDIA Jetson Nano](https://developer.nvidia.com/embedded/jetson-nano-developer-kit) |  4 Core ARM Cortex-A57 | 2/4GB | 2 | 4x3.0 | 128-core Maxwell | Powerful GPU, CSI camera | Higher cost compared to Raspberry Pi options | 100 x 79 x 30.2mm | |
+| Name | CPU | RAM | CSI | USB | GPU | Pros | Cons | Dimensions | OWL? | Image |
+|----------|-----------|-----|---------------|-----------|-----|------|------|------------|-------------------|-------------------|
+| [Raspberry Pi 4B](https://www.raspberrypi.com/products/raspberry-pi-4-model-b/specifications/) | Broadcom BCM2711, quad-core Cortex-A72 | 1-8GB | 2 | 2x3.0, 2x2.0 | VideoCore VI | Large community, affordable | Limited GPU performance, no eMMC storage | 88 x 58 x 19.5mm | :heavy_check_mark: | [OWL v1.0.0](https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0) |
+| [Raspberry Pi 3B+](https://www.raspberrypi.com/products/raspberry-pi-3-model-b-plus/) | Broadcom BCM2837B0, quad-core Cortex-A53 | 1GB | 1 | 4x2.0 | VideoCore IV | Large community, affordable | Limited GPU performance, no eMMC storage | 85 x 56 x 17mm | :heavy_check_mark: | [OWL v1.0.0](https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0) |
+| [Libre Computer LePotato](https://libre.computer/products/aml-s905x-cc/) | Amlogic S905X | 1/2GB | 0 | 4x2.0 | Mali-450 @ 750MHz | Affordable | Limited community support, no onboard Wi-Fi | 85 x 56mm | :warning: alpha ([full report here](https://github.com/geezacoleman/OpenWeedLocator/discussions/70)) | TBA |
+| [Libre Computer Renegade](https://libre.computer/products/roc-rk3328-cc/) | Rockchip RK3328, 4 Core Cortex-A53 | 1-4GB | 0 | 1x3.0, 2x2.0 | Mali-450 @ 500MHz  | 4K HDR support | Limited community support, no onboard Wi-Fi | 85 x 56mm | - | - |
+| [Libre Computer Renegade Elite](https://libre.computer/products/roc-rk3399-pc/) | Rockchip RK3399, 2 Core Cortex-A72 + 4 Core Cortex-A53 | 4GB | 2 | 4x3.0 | 4 Core Mali-T860 | PCIe, highest performance Libre Computer | Higher cost compared to other options | 128 x 64mm | - | - |
+| [Rock Pi 4B](https://rockpi.org/rockpi4) | Rockchip RK3399, 2 Core Cortex-A72 + 4 Core Cortex-A53 | 4GB | 1 | 2x2.0 2x3.0 | 4 Core Mali-T860 | PCIe, M.2 slot | Limited community support, no onboard Wi-Fi | 85 x 54mm | - | - |
+| [ODROID-XU4](https://wiki.odroid.com/odroid-xu4/odroid-xu4) | Samsung Exynos5422 ARM Cortex-A15 Quad 2Ghz and Cortex-A7 Octa | 2GB | 0 | 2x3.0, 1x2.0 | Mali-T628 MP6 | eMMC module support | Higher cost compared to Raspberry Pi options | 83 x 58 x 20mm | - | - |
+| [NVIDIA Jetson Nano](https://developer.nvidia.com/embedded/jetson-nano-developer-kit) |  4 Core ARM Cortex-A57 | 2/4GB | 2 | 4x3.0 | 128-core Maxwell | Powerful GPU, CSI camera | Higher cost compared to Raspberry Pi options | 100 x 79 x 30.2mm | - | - |
+
+Want to help fill in this table? Find one of the untested platforms and give the OWL a go! 
 
 NVIDIA has released numerous powerful, [embedded computers](https://www.nvidia.com/en-us/autonomous-machines/) such as the Jetson Orin series (and previously the Jetson Xavier NX). These would likely be good options for the OWL, but are substantially more expensive than the options listed above.
 
