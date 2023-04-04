@@ -18,7 +18,7 @@ class SensitivitySelector:
         self.buttonList = []
 
         for sensitivityList, GPIOpin in self.switchDict.items():
-            button = Button("BOARD{}".format(GPIOpin))
+            button = Button(f"BOARD{GPIOpin}")
             self.buttonList.append([button, sensitivityList])
 
     def sensitivity_selector(self):
@@ -32,7 +32,7 @@ class Selector:
         self.buttonList = []
 
         for algorithm, GPIOpin in self.switchDict.items():
-            button = Button("BOARD{}".format(GPIOpin))
+            button = Button(f"BOARD{GPIOpin}")
             self.buttonList.append([button, algorithm])
 
     def algorithm_selector(self, algorithm):
@@ -48,7 +48,7 @@ class Selector:
 # video recording button
 class Recorder:
     def __init__(self, recordGPIO: int):
-        self.recordButton = Button("BOARD{}".format(recordGPIO))
+        self.recordButton = Button(f"BOARD{recordGPIO}")
         self.record = False
         self.saveRecording = False
         self.running = True

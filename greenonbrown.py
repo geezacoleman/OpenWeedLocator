@@ -106,7 +106,11 @@ class GreenOnBrown:
                 startX, startY, boxW, boxH = cv2.boundingRect(c)
                 endX = startX + boxW
                 endY = startY + boxH
+
+                label = 'WEED'
+                cv2.putText(image, label, (startX, startY + 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
                 cv2.rectangle(image, (int(startX), int(startY)), (endX, endY), (0, 0, 255), 2)
+
                 # save the bounding box
                 self.boxes.append([startX, startY, boxW, boxH])
                 # compute box center

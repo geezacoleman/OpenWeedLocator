@@ -59,9 +59,7 @@ class GreenOnGreen:
                 self.weedCenters.append([centerX, centerY])
 
                 percent = int(100 * det_object.score)
-                label = '{}% {}'.format(percent, self.labels.get(det_object.id, det_object.id))
-
-
+                label = f'{percent}% {self.labels.get(det_object.id, det_object.id)}'
                 cv2.rectangle(image, (startX, startY), (endX, endY), (0, 0, 255), 2)
                 cv2.putText(image, label, (startX, startY + 30),
                                      cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
