@@ -24,11 +24,11 @@ class TestRelay:
 
     def on(self):
         if self.verbose:
-            print("[TEST] Relay {} ON".format(self.relayNumber))
+            print(f"[TEST] Relay {self.relayNumber} ON")
 
     def off(self):
         if self.verbose:
-            print("[TEST] Relay {} OFF".format(self.relayNumber))
+            print(f"[TEST] Relay {self.relayNumber} OFF")
 
 class TestBuzzer:
     def beep(self, on_time: int, off_time: int, n=1, verbose=False):
@@ -46,7 +46,7 @@ class RelayControl:
         if not self.testing:
             self.buzzer = Buzzer(pin='BOARD7')
             for nozzle, boardPin in self.solenoidDict.items():
-                self.solenoidDict[nozzle] = OutputDevice(pin='BOARD{}'.format(boardPin))
+                self.solenoidDict[nozzle] = OutputDevice(pin=f'BOARD{boardPin}')
 
         else:
             self.buzzer = TestBuzzer()
@@ -59,14 +59,14 @@ class RelayControl:
         relay.on()
 
         if verbose:
-            print("Solenoid {} ON".format(solenoidNumber))
+            print(f"Solenoid {solenoidNumber} ON")
 
     def relay_off(self, solenoidNumber, verbose=True):
         relay = self.solenoidDict[solenoidNumber]
         relay.off()
 
         if verbose:
-            print("Solenoid {} OFF".format(solenoidNumber))
+            print(f"Solenoid {solenoidNumber} OFF")
 
     def beep(self, duration=0.2, repeats=2):
         self.buzzer.beep(on_time=duration, off_time=(duration / 2), n=repeats)
@@ -139,7 +139,7 @@ class Controller:
             inputQ.append(inputQMessage)
             inputCondition.notify()
 
-        line = "nozzle: {} | time: {} | location {} | delay: {} | duration: {}".format(nozzle, timeStamp, location, delay, duration)
+        line = f"nozzle: {nozzle} | time: {timeStamp} | location {location} | delay: {delay} | duration: {duration}"
         self.logger.log_line(line, verbose=False)
 
     def consumer(self, nozzle):
@@ -170,14 +170,11 @@ class Controller:
                     nozzleOn = True
                 try:
                     time.sleep(onDur)
-                    self.logger.log_line(
-                        '[INFO] onDur {} for nozzle {} received.'.format(onDur, nozzle))
+                    self.logger.log_line(f'[INFO] onDur {onDur} for nozzle {nozzle} received.')
 
                 except ValueError:
                     time.sleep(0)
-                    self.logger.log_line(
-                        '[ERROR] negative onDur {} for nozzle {} received. Turning on for 0 seconds.'.format(onDur,
-                                                                                                             nozzle))
+                    self.logger.log_line(f'[ERROR] negative onDur {onDur} for nozzle {nozzle} received. Turning on for 0 seconds.')
                 inputCondition.acquire()
             if len(nozzleQueue) == 0:
                 self.solenoid.relay_off(nozzle, verbose=False)

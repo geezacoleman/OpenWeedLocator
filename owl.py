@@ -122,8 +122,8 @@ class Owl:
         if total_pixels > (832 * 640):
             # change here if you want to test higher resolutions, but be warned, backup your current image!
             self.resolution = (416, 320)
-            self.logger.log_line('[WARNING] Resolution {} selected is dangerously high. '
-                                 'Resolution has been reset to default to avoid damaging the OWL'.format(resolution),
+            self.logger.log_line(f'[WARNING] Resolution {resolution} selected is dangerously high. '
+                                 'Resolution has been reset to default to avoid damaging the OWL',
                                  verbose=True)
 
         # instantiate the recorder if recording is True
@@ -156,19 +156,12 @@ class Owl:
 
                 # save camera settings to the log
                 self.logger.log_line('[INFO] Camera setup complete. Settings: '
-                                     '\nResolution: {}'
-                                     '\nFramerate: {}'
-                                     '\nExposure Mode: {}'
-                                     '\nAutoWhiteBalance: {}'
-                                     '\nExposure Compensation: {}'
-                                     '\nSensor Mode: {}'.format(self.resolution,
-                                                                self.framerate,
-                                                                self.exp_mode,
-                                                                self.awb_mode,
-                                                                self.exp_compensation,
-                                                                self.sensor_mode), verbose=True)
-
-
+                                     f'\nResolution: {self.resolution}'
+                                     f'\nFramerate: {self.framerate}'
+                                     f'\nExposure Mode: {self.exp_mode}'
+                                     f'\nAutoWhiteBalance: {self.awb_mode}'
+                                     f'\nExposure Compensation: {self.exp_compensation}'
+                                     f'\nSensor Mode: {self.sensor_mode}', verbose=True)
 
             except ModuleNotFoundError:
                 self.cam = VideoStream(src=0).start()
@@ -249,7 +242,7 @@ class Owl:
                 if frame is None:
                     if log_fps:
                         fps.stop()
-                        print("[INFO] Stopped. Approximate FPS: {:.2f}".format(fps.fps()))
+                        print(f"[INFO] Stopped. Approximate FPS: {fps.fps():.2f}")
                         self.stop()
                         break
                     else:
@@ -258,11 +251,11 @@ class Owl:
                         break
 
                 if self.record and self.writer is None:
-                    saveDir = os.path.join(saveDir, strftime("%Y%m%d-{}-{}".format(camera_name, algorithm)))
+                    saveDir = os.path.join(saveDir, strftime(f"%Y%m%d-{camera_name}-{algorithm}"))
                     if not os.path.exists(saveDir):
                         os.makedirs(saveDir)
 
-                    self.baseName = os.path.join(saveDir, strftime("%Y%m%d-%H%M%S-{}-{}".format(camera_name, algorithm)))
+                    self.baseName = os.path.join(saveDir, strftime(f"%Y%m%d-%H%M%S-{camera_name}-{algorithm}"))
                     videoName = self.baseName + '.avi'
                     self.logger.new_video_logfile(name=self.baseName + '.txt')
                     self.writer = cv2.VideoWriter(videoName, self.fourcc, 30, (frame.shape[1], frame.shape[0]), True)
@@ -348,9 +341,9 @@ class Owl:
                     fps.update()
 
                 if self.show_display:
-                    cv2.putText(imageOut, 'OWL-gorithm: {}'.format(algorithm), (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
+                    cv2.putText(imageOut, f'OWL-gorithm: {algorithm}', (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
                                 (80, 80, 255), 1)
-                    cv2.putText(imageOut, 'Press "S" to save thresholds to file.'.format(algorithm),
+                    cv2.putText(imageOut, f'Press "S" to save {algorithm} thresholds to file.',
                                 (20, int(imageOut.shape[1 ] *0.72)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 80, 255), 1)
                     cv2.imshow("Detection Output", imutils.resize(imageOut, width=600))
 
@@ -363,12 +356,11 @@ class Owl:
                     self.recorderButton.saveRecording = False
                     if log_fps:
                         fps.stop()
-                        self.logger.log_line_video(
-                            "[INFO] Approximate FPS: {:.2f}".format(fps.fps()), verbose=True)
+                        self.logger.log_line_video(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
                         fps = FPS().start()
 
                     self.writer = None
-                    self.logger.log_line_video("[INFO] {} stopped.".format(self.baseName), verbose=True)
+                    self.logger.log_line_video(f"[INFO] {self.baseName} stopped.", verbose=True)
 
                 k = cv2.waitKey(1) & 0xFF
                 if k == ord('s'):
@@ -378,9 +370,7 @@ class Owl:
                 if k == 27:
                     if log_fps:
                         fps.stop()
-                        self.logger.log_line_video(
-                            "[INFO] Approximate FPS: {:.2f}".format(fps.fps()),
-                            verbose=True)
+                        self.logger.log_line_video(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
                     self.controller.nozzle_vis.close()
                     self.logger.log_line("[INFO] Stopped.", verbose=True)
                     self.stop()
@@ -389,9 +379,7 @@ class Owl:
         except KeyboardInterrupt:
             if log_fps:
                 fps.stop()
-                self.logger.log_line(
-                    "[INFO] Approximate FPS: {:.2f}".format(fps.fps()),
-                    verbose=True)
+                self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
             self.controller.nozzle_vis.close()
             self.logger.log_line("[INFO] Stopped.", verbose=True)
             self.stop()
@@ -399,7 +387,7 @@ class Owl:
         except Exception as e:
             print(e)
             self.controller.solenoid.beep(duration=0.5, repeats=5)
-            self.logger.log_line("[CRITICAL ERROR] STOPPED: {}".format(e))
+            self.logger.log_line(f"[CRITICAL ERROR] STOPPED: {e}")
 
     # still in development
     def update_software(self):
@@ -465,8 +453,8 @@ def check_for_usb():
         usbName = proc.stdout.readline().rstrip().decode('utf-8')
 
         if len(usbName) > 0:
-            print('[INFO] Saving to {} usb'.format(usbName))
-            saveDir = '/media/pi/{}/'.format(usbName)
+            print(f'[INFO] Saving to {usbName} usb')
+            saveDir = f'/media/pi/{usbName}/'
             return saveDir, True
 
         else:

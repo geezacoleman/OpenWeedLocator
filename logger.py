@@ -33,4 +33,4 @@ class Logger:
 
     def new_video_logfile(self, name):
         self.videoLog = name
-        self.log_line_video('NEW VIDEO LOG CREATED {}'.format(name), verbose=True)
+        self.log_line_video(f'NEW VIDEO LOG CREATED {name}', verbose=True)
