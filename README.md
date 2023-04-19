@@ -329,7 +329,7 @@ The project will eventually support the use of the two major embedded computing 
 For this method you'll need access to:
 * Desktop/laptop computer
 * Micro SD card reader
-* Internet with large data capacity and high speed (WARNING: the image file is large and downloading will take time and use up a substantial quantity of your data allowance if you have are on a limited plan)
+* Internet with large data capacity and high speed (WARNING: the image file is large, and downloading will take time and use up a substantial quantity of your data allowance if you have are on a limited plan)
 
 <details>
 <summary><b>Quick method for software installation</b></summary>
@@ -337,6 +337,8 @@ For this method you'll need access to:
 
 ### Step 1 - download the disk image file
 Download the entire disk image file (v1.0.0-owl.img) here: [OWL disk image](https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0)
+
+**NOTE** The v1.0.0-owl.img file contains the original software and we strongly recommend updating using the process below. It also includes the deprecated naming of `greenonbrown.py` instead of `owl.py`. If you do not update the software, be aware that you will need to run `greenonbrown.py` instead. 
 
 The latest, stable version will be linked above, however, all other older versions or versions with features being tested are available [here](#version-history).
 
@@ -423,6 +425,25 @@ enable_uart=1
 Press `ctrl + x` to exit, then type `y` to save and then `enter`.
 
 You're now ready to run!
+
+### OPTIONAL Step 7 - running original `greenonbrown.py`
+
+If you are using the v1.0.0-owl.img file and don't update the OWL software as above, you will be using the original `greenonbrown.py` Python script. Running it from the command line will require slightly different commands. Please follow this guide if this is you.
+
+In the `greenonbrown.py` file there is a parameter `headless` which determines if a video is shown. If set to `True` a video feed is NOT displayed and the system will operate whenever it is powered on. If it is set to `False` a video feed will be displayed. To change this parameter, scroll to the bottom of `greenonbrown.py` and find the line `headless=True`. Change as desired.
+
+**NOTE** `headless` must be set to `True` for operation without a screen. If a screen is not attached but `headless=False` the Raspberry Pi will not boot correctly and the OWL software will not run.
+
+To run the software from the command line (assuming it is not currently running), follow these steps:
+```
+pi@raspberrypi:~ $ workon owl
+(owl) pi@raspberrypi:~ $ cd owl 
+(owl) pi@raspberrypi:~ /owl $ ./greenonbrown.py  
+```
+
+**BUG ALERT** There is a known bug with this version where the script will not run if you are running it outside of the `owl` directory. If you enocunter this error, `cd` into the `owl` directory and run the code again.
+
+
 </details>  
   
 ## Detailed Method
