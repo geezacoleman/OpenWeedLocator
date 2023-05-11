@@ -72,15 +72,21 @@ class Owl:
 
         # Automatic check if program is running in the background -
         # will terminate background owl.py if already running
-        self.pid_file = "tmp/owl.pid"
+        dir_name = os.path.dirname(os.path.abspath(__file__))
 
-        # Check if the process is already running
+        # check tmp directory exists
+        tmp_dir = os.path.join(dir_name, 'tmp')
+        os.makedirs(tmp_dir, exist_ok=True)
+
+        self.pid_file = os.path.join(tmp_dir, 'owl.pid')
+
+        # check if the process is already running
         pid = self.get_pid(self.pid_file)
         if pid:
             print(f"Found running process with PID {pid}. Killing it...")
             self.kill_process(pid)
 
-        # Write current process PID to the file
+        # write current process PID to the file
         self.write_pid(self.pid_file)
 
         if parameters_json:
