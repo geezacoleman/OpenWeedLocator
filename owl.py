@@ -14,6 +14,7 @@ import subprocess
 import argparse
 import imutils
 import shutil
+import psutil
 import json
 import time
 import sys
@@ -68,6 +69,19 @@ class Owl:
         self.brightnessMax = brightnessMax
 
         self.thresholdDict = {}
+
+        # Automatic check if program is running in the background -
+        # will terminate background owl.py if already running
+        self.pid_file = "tmp/owl.pid"
+
+        # Check if the process is already running
+        pid = self.get_pid(self.pid_file)
+        if pid:
+            print(f"Found running process with PID {pid}. Killing it...")
+            self.kill_process(pid)
+
+        # Write current process PID to the file
+        self.write_pid(self.pid_file)
 
         if parameters_json:
             try:
@@ -389,24 +403,33 @@ class Owl:
             self.controller.solenoid.beep(duration=0.5, repeats=5)
             self.logger.log_line(f"[CRITICAL ERROR] STOPPED: {e}")
 
-    # still in development
-    def update_software(self):
-        USBDir, USBConnected = check_for_usb()
-        if USBConnected:
-            files = os.listdir(USBDir)
-            workingDir = '/home/pi'
+    @staticmethod
+    def get_pid(pid_file):
+        try:
+            if os.path.isfile(pid_file):
+                with open(pid_file, 'r') as f:
+                    return int(f.read().strip())
+            else:
+                return None
+        except Exception as e:
+            print(f"[ERROR] An error occurred while getting PID: {e}")
+            return None
 
-            # move old version to version control directory first
-            oldVersionDir = strftime(workingDir + "/%Y%m%d-%H%M%S_update")
-            os.mkdir(oldVersionDir)
+    @staticmethod
+    def kill_process(pid):
+        try:
+            p = psutil.Process(pid)
+            p.terminate()  # or p.kill() if necessary
+        except Exception as e:
+            print(f"[ERROR] An error occurred while killing process: {e}")
 
-            currentDir = '/home/pi/owl'
-            shutil.move(currentDir, oldVersionDir)
-
-            # move new directory to working directory
-            for item in files:
-                if 'owl' in item:
-                    shutil.move()
+    @staticmethod
+    def write_pid(pid_file):
+        try:
+            with open(pid_file, 'w') as f:
+                f.write(str(os.getpid()))
+        except Exception as e:
+            print(f"[ERROR] An error occurred while writing PID: {e}")
 
     def stop(self):
         self.controller.running = False
@@ -445,27 +468,6 @@ class Owl:
         json_name = datetime.now(timezone.utc).strftime("%Y%m%d%H%M") + '-owl-parameters.json'
         with open(json_name, 'w') as f:
             json.dump(self.thresholdDict, f)
-
-def check_for_usb():
-    try:
-        nanoMediaFolder = 'ls /media/pi'
-        proc = subprocess.Popen(nanoMediaFolder, shell=True, preexec_fn=os.setsid, stdout=subprocess.PIPE)
-        usbName = proc.stdout.readline().rstrip().decode('utf-8')
-
-        if len(usbName) > 0:
-            print(f'[INFO] Saving to {usbName} usb')
-            saveDir = f'/media/pi/{usbName}/'
-            return saveDir, True
-
-        else:
-            print('[INFO] No USB connected. Saving to videos')
-            saveDir = '/home/pi/owl/videos'
-            return saveDir, False
-
-    except AttributeError:
-        print('[INFO] Windows computer detected...')
-        saveDir = '/videos/'
-        return saveDir, False
 
 
 # business end of things
