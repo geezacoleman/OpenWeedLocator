@@ -384,25 +384,8 @@ Notice that (owl) now appears before the line in the Terminal window. This indic
 Once this is complete your software will be up to date and you can move on to focusing the camera.  
 
 ### Step 5 - focusing the camera
-The final step in the process is to make sure the camera and lens are correctly focused for the mounting height. To view the live camera feed, we need to stop the process that is running in the background that would have started when you first turned on the OWL. Enter the following into the terminal:
-```
-(owl) pi@raspberrypi:~ $ ps -C owl.py
-```
-After pressing ENTER, you should receive the following output:
-```
-(owl) pi@raspberrypi:~ $ ps -C owl.py
-PID TTY              TIME CMD
-515 ?            00:00:00 owl.py
-```
-The PID is the important part, it's the ID number for the `owl.py` program. In this case it is 515, but it is likely to be different on your OWL. If the headings `PID TTY              TIME CMD` appear but a PID/line for owl.py doesn't appear it could mean two things. Firstly make sure you've typed `owl.py` correctly. If it doesn't have the right program to look for, it won't find it. The other option is that `owl.py` isn't running, which may also be the case. If you're certain it's not running in the background, skip the stop program step below, and move straight to launching `owl.py`.
- 
-If a PID appears, you'll need to stop it operating. To stop the program, enter the following command:
-```
-(owl) pi@raspberrypi:~ $ sudo kill enter_your_PID_number_here
-```
-The program should now be stopped
+The focusing camera step has been simplified considerably (as of May 2023), all stopping/rebooting of existing OWL software is handled automaticallly. Boot up your OWL and run the following command:
   
-Now you'll need to launch `owl.py` manually with the video feed visible. To do this use the Terminal window and type the following commands:
 ```
 (owl) pi@raspberrypi:~ $ ~/owl/./owl.py --show-display
 ```
@@ -500,6 +483,7 @@ Dependencies are Python packages on which the code relies to function correctly.
 * OpenCV (should already be in 'owl' virtual environment from Step 1)
 * numpy
 * imutils
+* psutil
 * gpiozero
 * pandas (for data collection only)
 * glob (for data collection only)
@@ -570,29 +554,12 @@ Finally you just need to make `owl_boot.sh` executable so it can be run on start
 If you get stuck, [this guide](https://www.makeuseof.com/how-to-run-a-raspberry-pi-program-script-at-startup/) or [this guide](https://www.tomshardware.com/how-to/run-script-at-boot-raspberry-pi) both have a bit more detail on cron and some other methods too. 
 
 ### Step 6 - focusing the camera
-The final step in the process is to make sure the camera and lens are correctly focused for the mounting height. To view the live camera feed, we need to stop the process that is running in the background that would have started when you first turned on the OWL. Enter the following into the terminal:
-```
-(owl) pi@raspberrypi:~ $ ps -C owl.py
-```
-After pressing ENTER, you should receive the following output:
-```
-(owl) pi@raspberrypi:~ $ ps -C owl.py
-PID TTY              TIME CMD
-515 ?            00:00:00 owl.py
-```
-The PID is the important part, it's the ID number for the `owl.py` program. In this case it is 515, but it is likely to be different on your OWL.
- 
-To stop the program, you need to enter the following command:
-```
-(owl) pi@raspberrypi:~ $ sudo kill enter_your_PID_number_here
-```
-The program should now be stopped
+The focusing camera step has been simplified considerably (as of May 2023), all stopping/rebooting of existing OWL software is handled automaticallly. Boot up your OWL and run the following command:
   
-Now you'll need to launch `owl.py` manually with the video feed visible. To do this use the Terminal window and type the following commands:
 ```
 (owl) pi@raspberrypi:~ $ ~/owl/./owl.py --show-display
 ```
-This will bring up a video feed you can use to visualise the OWL detector and also use it to focus the camera. Once you're happy with the focus, press Esc to exit. 
+This will bring up a video feed you can use to visualise the OWL detector and also use it to focus the camera. Once you're happy with the focus, press Esc to exit.
 
 ### OPTIONAL Step 6 - enabling UART for status LED
 This is just the cherry on top and non-essential to correct operation of the OWL but to make sure the status LED you connected earlier blinks correctly the GPIO UART needs to be enabled. 
