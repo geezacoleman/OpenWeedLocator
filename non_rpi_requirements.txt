@@ -5,3 +5,4 @@ imutils==0.5.4
 numpy==1.23.4
 opencv-python==4.6.0.66
 pandas==1.5.1
+psutil==5.9.5

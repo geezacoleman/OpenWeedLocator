@@ -10,10 +10,8 @@ from relay_control import Controller
 from queue import Queue
 from time import strftime
 from threading import Thread
-import subprocess
 import argparse
 import imutils
-import shutil
 import psutil
 import json
 import time
@@ -83,7 +81,7 @@ class Owl:
         # check if the process is already running
         pid = self.get_pid(self.pid_file)
         if pid:
-            print(f"Found running process with PID {pid}. Killing it...")
+            print(f"[INFO] Found existing OWL process with PID {pid}. Stopping it...")
             self.kill_process(pid)
 
         # write current process PID to the file
