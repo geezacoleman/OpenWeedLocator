@@ -9,6 +9,8 @@ class OwlGPS():
 	OWLGPS utilizes serial and pynmea2 to read back GPS values from a UART
 	NMEA stream into a centralized location. All the values read back from via
 	the object properties. 
+
+	TODO: FIGURE OUT A CLEAN CLASS METHOD FOR WRITING DATA TO EXIF METADATA
 	'''
 	def __init__(self, port = '/dev/ttyS0', baud = 9600):
 		self.ser = serial.Serial('/dev/ttyS0', 9600, timeout=1)
@@ -16,8 +18,11 @@ class OwlGPS():
 		
 		self._fixed = False
 		self._latitude = None
+		self._latitude_direction = None
 		self._longitude = None
+		self._longitude_direction = None
 		self._altitude = None
+		self._altitude_units = None
 		self._speed_knots = None
 		self._speed_mps = None
 		self._num_sats = None
@@ -41,15 +46,20 @@ class OwlGPS():
 				#print(line)
 				if 'GPGGA' in line:   # Fields contained in GGA lines
 					self.altitude = msg.altitude
+					self.latitude_direction = msg.lat_dir
 					self.latitude = msg.lat
+					self.longitude_direction = msg.lon_dir
 					self.longitude = msg.lon
 					self.num_sats = msg.num_sats
 					self.last_alive = msg.timestamp
+					self.altitude_units = msg.altitude_units
+
 				elif 'GPRMC' in line:    # Fields contained in RMC lines 
 					self.fixed = msg.status
 					self.last_alive = msg.timestamp
-						
+					self.latitude_direction = msg.lat_dir
 					self.latitude = msg.lat
+					self.longitude_direction = msg.lon_dir
 					self.longitude = msg.lon
 					self.speed_knots = msg.spd_over_grnd
 					
@@ -89,7 +99,19 @@ class OwlGPS():
 				self._fixed = None
 		else:
 			self._fixed = None
-			
+		
+	@property
+	def latitude_direction(self):
+		return self._latitude_direction
+		
+	@latitude_direction.setter 
+	def latitude_direction(self, value):
+		
+		if isinstance(value, str):
+			self._latitude_direction = value
+		else:
+			self._latitude_direction = None
+
 	@property
 	def latitude(self):
 		return self._latitude
@@ -106,7 +128,19 @@ class OwlGPS():
 				self._latitude = None
 		else:
 			self._latitude = None
+	
+	@property
+	def longitude_direction(self):
+		return self._longitude_direction
 		
+	@longitude_direction.setter 
+	def longitude_direction(self, value):
+		
+		if isinstance(value, str):
+			self._longitude_direction = value
+		else:
+			self._longitude_direction = None
+
 	@property
 	def longitude(self):
 		return self._longitude
@@ -140,7 +174,19 @@ class OwlGPS():
 				self._altitude = None
 		else:
 			self._altitude = None
-			
+	
+	@property
+	def altitude_units(self):
+		return self._altitude_units
+		
+	@altitude_units.setter 
+	def altitude_units(self, value):
+		
+		if isinstance(value, str):
+			self._altitude_units = value
+		else:
+			self._altitude_units = None		
+
 	@property
 	def speed_knots(self):
 		return self._speed_knots
