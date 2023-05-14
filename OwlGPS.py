@@ -29,13 +29,13 @@ class OwlGPS():
 		self._last_alive = None		
 		
 	def update(self):
-	'''
-	update uses the serial port defined in the constructor to update the GPS's attributes with 
-	current data. update is designed to run in a thread while the gps 
-	attributes are read externally. 
-	update will optimistically continue in case of SerialException or ParseError.
-	All other exceptions will cause a return
-	'''
+    	'''
+    	update uses the serial port defined in the constructor to update the GPS's attributes with 
+    	current data. update is designed to run in a thread while the gps 
+    	attributes are read externally. 
+    	update will optimistically continue in case of SerialException or ParseError.
+    	All other exceptions will cause a return
+    	'''
 		while True:
 			try:
 				# Read the lines from the SPI
