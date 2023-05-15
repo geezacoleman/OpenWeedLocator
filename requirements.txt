@@ -4,12 +4,8 @@ numpy~=1.21.2
 imutils~=0.5.4
 gpiozero
 pandas~=1.3.2
-glob2
 RPi.GPIO
 picamera
 
-piexif~=1.1.3
-folium~=0.14.0
 opencv-python~=4.5.5.64
-pycoral~=2.0.0
 tqdm~=4.64.1
