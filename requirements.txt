@@ -1,9 +1,9 @@
 ## OWL requirements file ##
 # OpenCV should be installed separately
-numpy~=1.21.2
-imutils~=0.5.4
+numpy
+imutils
 gpiozero
-pandas~=1.3.2
+pandas
 RPi.GPIO
 picamera
-tqdm~=4.64.1
+tqdm
