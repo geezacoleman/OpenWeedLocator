@@ -246,7 +246,7 @@ class Owl:
                         self.stop()
                         break
                     else:
-                        print("[INFO] Stopped.")
+                        print("[INFO] frame is None. Stopped.")
                         self.stop()
                         break
 
