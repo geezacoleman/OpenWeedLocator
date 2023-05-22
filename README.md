@@ -2,17 +2,22 @@
 <img src="https://user-images.githubusercontent.com/51358498/152991504-005a1daa-2900-4f48-8bec-d163d6336ed2.png" width="400">
 </p>
 
-Welcome to the OpenWeedLocator (OWL) project, an opensource hardware and software green-on-brown weed detector that uses entirely off-the-shelf componentry, very simple green-detection algorithms and entirely 3D printable parts. OWL integrates weed detection on a Raspberry Pi with a relay control board in a custom designed case so you can attach any 12V solenoid, relay, lightbulb or device for low-cost, simple and opensource site-specific weed control. Projects to date have seen OWL mounted on robots and vehicles for spot spraying! 
-
-On the weed detection front, a range of algorithms have been provided, each with advantages and disadvantages for your use case. They include ExG (excess green 2g - r - b, developed by Woebbecke et al. 1995), a hue, saturation and value (HSV) threshold and a combined ExG + HSV algorithm. These algorithms have all been tested in a wide range of conditions. The article has now been published in [Scientific Reports (open access)](https://www.nature.com/articles/s41598-021-03858-9).
-
-Repository DOI: [![DOI](https://zenodo.org/badge/399194159.svg)](https://zenodo.org/badge/latestdoi/399194159)
-
-**Note**: The project is in the process of transitioning to picamera2 on the [picamera2 branch](https://github.com/geezacoleman/OpenWeedLocator/tree/picamera2).
+Welcome to the OpenWeedLocator (OWL) project, an opensource hardware and software weed detector that uses entirely off-the-shelf componentry, very simple green-detection algorithms (with capacity to upgrade to in-crop detection) and 3D printable parts. OWL integrates weed detection on a Raspberry Pi with a relay control board in a custom designed case so you can attach any 12V solenoid, relay, lightbulb or device for low-cost, simple and open-source site-specific weed control. Projects to date have seen OWL mounted on robots, vehicles and bicycles for spot spraying. For the latest ideas and news, check out the [Discussion](https://github.com/geezacoleman/OpenWeedLocator/discussions) tab.
 
 Internal electronics       |  Fitted module - vehicle | Fitted module - robot 
 :-------------------------:|:-------------------------: |:-------------------------:
 ![Internal view](https://user-images.githubusercontent.com/51358498/152991433-e3cfa53a-bb8d-4754-81b2-17b9cb9cb1e5.png)  |  ![Fitted module - spot spraying vehicle](https://user-images.githubusercontent.com/51358498/130522810-bb19e6ca-5019-4de4-83cc-858eca358ef8.jpg) | ![Fitted module - robot](https://user-images.githubusercontent.com/51358498/152991300-32003505-6ed2-49ba-9d00-8e3db4cb5db4.png)
+
+### Official Publications
+#### OpenWeedLocator (OWL): An open-source, low-cost device for fallow weed detection
+This is the original OWL publication, released in [Scientific Reports (open access)](https://www.nature.com/articles/s41598-021-03858-9). A range of green detection algorithms were tested including ExG (excess green 2g - r - b, developed by Woebbecke et al. 1995), a hue, saturation and value (HSV) threshold and a combined ExG + HSV algorithm. If you use the OWL in your research please consider citing this publication.
+
+#### Investigating image-based fallow weed detection performance on Raphanus sativus and Avena sativa at speeds up to 30 km/h
+The performance of the OWL from 5 - 30 km/h with different cameras and on broadleaf and grass 'weeds' was tested and released in an [arXiv pre-print](https://arxiv.org/abs/2305.10311). The current Raspberry Pi HQ Camera + latest software combination provided a recall of 74.8% at 5 km/h and 50.5 % at 30 km/h. Recall of up to 95.7% at 5 km/h was achieved by the global shutter Arducam AR0234.
+
+Repository DOI: [![DOI](https://zenodo.org/badge/399194159.svg)](https://zenodo.org/badge/latestdoi/399194159)
+
+**Note**: The project is in the process of transitioning to picamera2 on the [picamera2 branch](https://github.com/geezacoleman/OpenWeedLocator/tree/picamera2).
 
 # Overview
 * [OWL Use Cases](#owl-use-cases)
