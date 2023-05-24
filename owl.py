@@ -4,15 +4,17 @@ import numpy as np
 from button_inputs import Recorder
 from image_sampler import bounding_box_image_sample, square_image_sample, whole_image_save
 from greenonbrown import GreenOnBrown
+from relay_control import Controller
+from utils.pid_management import oldest_pid, send_sigint
+
 from datetime import datetime, timezone
 from imutils.video import VideoStream, FileVideoStream, FPS
-from relay_control import Controller
 from queue import Queue
 from time import strftime
 from threading import Thread
+
 import argparse
 import imutils
-import psutil
 import json
 import time
 import sys
@@ -68,24 +70,10 @@ class Owl:
 
         self.thresholdDict = {}
 
-        # Automatic check if program is running in the background -
-        # will terminate background owl.py if already running
-        dir_name = os.path.dirname(os.path.abspath(__file__))
-
-        # check tmp directory exists
-        tmp_dir = os.path.join(dir_name, 'tmp')
-        os.makedirs(tmp_dir, exist_ok=True)
-
-        self.pid_file = os.path.join(tmp_dir, 'owl.pid')
-
-        # check if the process is already running
-        pid = self.get_pid(self.pid_file)
+        pid = oldest_pid()
         if pid:
             print(f"[INFO] Found existing OWL process with PID {pid}. Stopping it...")
-            self.kill_process(pid)
-
-        # write current process PID to the file
-        self.write_pid(self.pid_file)
+            send_sigint(pid)
 
         if parameters_json:
             try:
@@ -406,34 +394,6 @@ class Owl:
             print(e)
             self.controller.solenoid.beep(duration=0.5, repeats=5)
             self.logger.log_line(f"[CRITICAL ERROR] STOPPED: {e}")
-
-    @staticmethod
-    def get_pid(pid_file):
-        try:
-            if os.path.isfile(pid_file):
-                with open(pid_file, 'r') as f:
-                    return int(f.read().strip())
-            else:
-                return None
-        except Exception as e:
-            print(f"[ERROR] An error occurred while getting PID: {e}")
-            return None
-
-    @staticmethod
-    def kill_process(pid):
-        try:
-            p = psutil.Process(pid)
-            p.terminate()  # or p.kill() if necessary
-        except Exception as e:
-            print(f"[ERROR] An error occurred while killing process: {e}")
-
-    @staticmethod
-    def write_pid(pid_file):
-        try:
-            with open(pid_file, 'w') as f:
-                f.write(str(os.getpid()))
-        except Exception as e:
-            print(f"[ERROR] An error occurred while writing PID: {e}")
 
     def stop(self):
         self.controller.running = False
