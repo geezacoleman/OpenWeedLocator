@@ -2,8 +2,10 @@
 
 cd ~
 
-# Rename the old 'owl' folder to 'owl-old'
-mv owl owl-old     
+# Rename the old 'owl' folder to 'owl-DATE'
+if [ -d "owl" ]; then
+    mv owl "owl_$(date +'%Y%m%d_%H%M%S')"
+fi    
 
 # Download the new software from GitHub
 git clone https://github.com/geezacoleman/OpenWeedLocator owl     
