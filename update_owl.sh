@@ -16,7 +16,7 @@ sudo apt-get upgrade
 
 # Installing the requirements
 echo "[INFO] Upgrading OWL requirements."
-workon 'owl'
+source `which workon` owl
 pip install -r requirements.txt
 
 # Changing permissions to make files executable
