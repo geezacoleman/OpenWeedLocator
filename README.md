@@ -389,9 +389,22 @@ Notice that (owl) now appears before the line in the Terminal window. This indic
 Once this is complete your software will be up to date and you can move on to focusing the camera.  
 
 ### Step 5 - focusing the camera
-The final step in the process is to make sure the camera and lens are correctly focused for the mounting height. To view the live camera feed, we need to stop the process that is running in the background that would have started when you first turned on the OWL. Enter the following into the terminal:
+The final step in the process is to make sure the camera is correctly focused for the mounting height. With the latest software, when you run `owl.py --focus` a sharpness (i.e. least blurry) estimation is provided on the video feed. The algorithm determines how sharp an image is, so the higher the value the better. A single script is provided to make focusing as easy as possible. Simply run:
+  
+ ```
+(owl) pi@raspberrypi:~ $ cd ~/owl
+(owl) pi@raspberrypi:~/owl $ bash focus_owl.sh 
+ ```
+This will automate all the steps below. If this doesn't work, follow the steps below. If you would like to focus the OWL again, you can always run `./owl.py --focus`.
+
+| Blurry Image | Clear Image |
+|--------------|-------------|
+|![blurry owl](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/34ae71f2-8507-4892-b49a-195e515e56dd) | ![clear owl](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/20db536b-edaf-4085-a613-6ea786747998) |
+
+#### Legacy focusing
+With the older versions of the software, you need to stop all `owl.py` or `greenonbrown.py` background processes before you can restart the software with the video feed viewable on the screen. Enter the following into the terminal:
 ```
-(owl) pi@raspberrypi:~ $ ps -C owl.py
+(owl) pi@raspberrypi:~ $ ps -C owl.py # or ps -C greenonbrown.py if you still have the older version.
 ```
 After pressing ENTER, you should receive the following output:
 ```
@@ -399,7 +412,9 @@ After pressing ENTER, you should receive the following output:
 PID TTY              TIME CMD
 515 ?            00:00:00 owl.py
 ```
-The PID is the important part, it's the ID number for the `owl.py` program. In this case it is 515, but it is likely to be different on your OWL. If the headings `PID TTY              TIME CMD` appear but a PID/line for owl.py doesn't appear it could mean two things. Firstly make sure you've typed `owl.py` correctly. If it doesn't have the right program to look for, it won't find it. The other option is that `owl.py` isn't running, which may also be the case. If you're certain it's not running in the background, skip the stop program step below, and move straight to launching `owl.py`.
+The PID is the important part, it's the ID number for the `owl.py` program. In this case it is `515`, but it is likely to be different on your OWL. 
+
+IMPORTANT: If the headings `PID TTY              TIME CMD` appear but a PID/line for owl.py doesn't appear it could mean two things. Firstly make sure you've typed `owl.py` correctly. If it doesn't have the right program to look for, it won't find it. The other option is that `owl.py` isn't running, which may also be the case. If you're certain it's not running in the background, skip the stop program step below, and move straight to launching `owl.py`.
  
 If a PID appears, you'll need to stop it operating. To stop the program, enter the following command:
 ```
@@ -575,9 +590,22 @@ Finally you just need to make `owl_boot.sh` executable so it can be run on start
 If you get stuck, [this guide](https://www.makeuseof.com/how-to-run-a-raspberry-pi-program-script-at-startup/) or [this guide](https://www.tomshardware.com/how-to/run-script-at-boot-raspberry-pi) both have a bit more detail on cron and some other methods too. 
 
 ### Step 6 - focusing the camera
-The final step in the process is to make sure the camera and lens are correctly focused for the mounting height. To view the live camera feed, we need to stop the process that is running in the background that would have started when you first turned on the OWL. Enter the following into the terminal:
+The final step in the process is to make sure the camera is correctly focused for the mounting height. With the latest software, when you run `owl.py --focus` a sharpness (i.e. least blurry) estimation is provided on the video feed. The algorithm determines how sharp an image is, so the higher the value the better. A single script is provided to make focusing as easy as possible. Simply run:
+  
+ ```
+(owl) pi@raspberrypi:~ $ cd ~/owl
+(owl) pi@raspberrypi:~/owl $ bash focus_owl.sh 
+ ```
+This will automate all the steps below. If this doesn't work, follow the steps below. If you would like to focus the OWL again, you can always run `./owl.py --focus`.
+
+| Blurry Image | Clear Image |
+|--------------|-------------|
+|![blurry owl](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/34ae71f2-8507-4892-b49a-195e515e56dd) | ![clear owl](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/20db536b-edaf-4085-a613-6ea786747998) |
+
+#### Legacy focusing
+With the older versions of the software, you need to stop all `owl.py` or `greenonbrown.py` background processes before you can restart the software with the video feed viewable on the screen. Enter the following into the terminal:
 ```
-(owl) pi@raspberrypi:~ $ ps -C owl.py
+(owl) pi@raspberrypi:~ $ ps -C owl.py # or ps -C greenonbrown.py if you still have the older version.
 ```
 After pressing ENTER, you should receive the following output:
 ```
@@ -585,9 +613,11 @@ After pressing ENTER, you should receive the following output:
 PID TTY              TIME CMD
 515 ?            00:00:00 owl.py
 ```
-The PID is the important part, it's the ID number for the `owl.py` program. In this case it is 515, but it is likely to be different on your OWL.
+The PID is the important part, it's the ID number for the `owl.py` program. In this case it is `515`, but it is likely to be different on your OWL. 
+
+IMPORTANT: If the headings `PID TTY              TIME CMD` appear but a PID/line for owl.py doesn't appear it could mean two things. Firstly make sure you've typed `owl.py` correctly. If it doesn't have the right program to look for, it won't find it. The other option is that `owl.py` isn't running, which may also be the case. If you're certain it's not running in the background, skip the stop program step below, and move straight to launching `owl.py`.
  
-To stop the program, you need to enter the following command:
+If a PID appears, you'll need to stop it operating. To stop the program, enter the following command:
 ```
 (owl) pi@raspberrypi:~ $ sudo kill enter_your_PID_number_here
 ```
@@ -598,24 +628,6 @@ Now you'll need to launch `owl.py` manually with the video feed visible. To do t
 (owl) pi@raspberrypi:~ $ ~/owl/./owl.py --show-display
 ```
 This will bring up a video feed you can use to visualise the OWL detector and also use it to focus the camera. Once you're happy with the focus, press Esc to exit. 
-
-### OPTIONAL Step 6 - enabling UART for status LED
-This is just the cherry on top and non-essential to correct operation of the OWL but to make sure the status LED you connected earlier blinks correctly the GPIO UART needs to be enabled. 
-
-Open up a terminal console by pressing `Ctrl + T`. Type:
-
-```
-(owl) pi@owl :-$ sudo nano /boot/config.txt
-```
-
-This will open up the config.txt file. Scroll down to the bottom by holding the down arrow key and add the following line to the very last line of the file:
-```
-enable_uart=1
-```
-
-Press `ctrl + x` to exit, then type `y` to save and then `enter`.
-
-You're now ready to run!
 
 ### Step 8 - reboot
 The moment of truth. Shut the Raspberry Pi down and unplug the power. This is where you'll need to reconnect the camera and all the GPIO pins/power in the OWL unit if they have been disconnected. Once everything is connected again (double check the camera cable is inserted or this won't work), reconnect the power and wait for a beep!
@@ -644,7 +656,7 @@ Command line flags are let you specify options on the command line within the Te
 
 ```
 (owl) pi@raspberrypi:~ $./owl.py --help
-usage: owl.py [-h] [--video-file VIDEO_FILE] [--show-display] [--recording] [--algorithm {exg,nexg,exgr,maxg,exhsv,hsv}] [--framerate [10-120]]
+usage: owl.py [-h] [--video-file VIDEO_FILE] [--show-display] [--focus] [--recording] [--algorithm {exg,nexg,exgr,maxg,exhsv,hsv}] [--framerate [10-120]]
                        [--exposure-mode {off,auto,nightpreview,backlight,spotlight,sports,snow,beach,verylong,fixedfps,antishake,fireworks}]
                        [--awb-mode {off,auto,sunlight,cloudy,shade,tungsten,fluorescent,incandescent,flash,horizon}] [--sensor-mode [0-3]]
 
@@ -653,6 +665,7 @@ optional arguments:
   --video-file VIDEO_FILE
                         use video file instead
   --show-display        show display windows
+  --focus               focus the camera
   --recording           record video
   --algorithm {exg,nexg,exgr,maxg,exhsv,hsv}
   --framerate [10-120]  set camera framerate between 10 and 120 FPS. Framerate will depend on sensor mode, though setting framerate takes precedence over sensor_mode, For example sensor_mode=0 and framerate=120 will reset the
@@ -673,6 +686,7 @@ Flag | Usage | Description
 :-------------: | :-------------: | :-------------:
 --video-file | Specify the path to the video file. | This is used when a video file is run instead of the live feed from a camera. It is mostly used in testing new algorithms. If this is not included, a connected camera will be used instead.
 --show-display | If flag is present, this will return True | When this flag is included, video feeds and threshold adjustments will appear. Without the flag, the OWL will run `headless` with no display. This flag replaces the `Headless=True` variable in the `owl.py` file.
+--focus | If the flag is present, focusing mode is activated. | WHen the flag is included, a Fast Fourier Transform is used to estimate image blurriness. The mean of this value is displayed on the video feed. High values mean it is in focus, low values mean it is blurry. 
 --algorithm | gog, exg, nexg, exgr, maxg, exhsv, hsv | Select from the list of algorithms to use. Defaults to `exhsv`. GoG will enable the Google Coral and import 'pycoral' and related libraries. Only use if you have followed the instructions under the [Green-on-Green](#green-on-green) section.
 --recording | If flag is present, this will return True | Record video to a file
 --framerate | between 10 and 120 FPS, default=40 | sets the framerate for the camera.
@@ -700,6 +714,7 @@ Editable values for sensitivity:
 if __name__ == "__main__":
     owl = Owl(videoFile=args.video_file,
               show_display=args.show_display,
+              focus=args.focus,
               recording=args.recording,
               exgMin=25,
               exgMax=200,
