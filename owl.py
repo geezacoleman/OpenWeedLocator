@@ -1,19 +1,19 @@
 #!/home/pi/.virtualenvs/owl/bin/python3
-import numpy as np
-
 from button_inputs import Recorder
 from image_sampler import bounding_box_image_sample, square_image_sample, whole_image_save
+from utils.blur_algorithms import fft_blur
 from greenonbrown import GreenOnBrown
+from relay_control import Controller
+
 from datetime import datetime, timezone
 from imutils.video import VideoStream, FileVideoStream, FPS
-from relay_control import Controller
 from queue import Queue
 from time import strftime
 from threading import Thread
-import subprocess
+
+import numpy as np
 import argparse
 import imutils
-import shutil
 import json
 import time
 import sys
@@ -29,6 +29,7 @@ class Owl:
     def __init__(self,
                  videoFile=None,
                  show_display=False,
+                 focus=False,
                  recording=False,
                  nozzleNum=4,
                  exgMin=30,
@@ -50,6 +51,10 @@ class Owl:
         # different detection parameters
         self.show_display = show_display
         self.recording = recording
+        self.focus = focus
+        if self.focus:
+            self.show_display = True
+
         self.resolution = resolution
         self.framerate = framerate
         self.exp_mode = exp_mode
@@ -235,6 +240,10 @@ class Owl:
                 delay = self.update_delay(delay)
                 frame = self.cam.read()
 
+                if self.focus:
+                    grey = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2GRAY)
+                    blurriness = fft_blur(grey, size=30)
+
                 if self.recording:
                     self.record = self.recorderButton.record
                     self.saveRecording = self.recorderButton.saveRecording
@@ -246,7 +255,7 @@ class Owl:
                         self.stop()
                         break
                     else:
-                        print("[INFO] frame is None. Stopped.")
+                        print("[INFO] Frame is None. Stopped.")
                         self.stop()
                         break
 
@@ -345,6 +354,10 @@ class Owl:
                                 (80, 80, 255), 1)
                     cv2.putText(imageOut, f'Press "S" to save {algorithm} thresholds to file.',
                                 (20, int(imageOut.shape[1 ] *0.72)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 80, 255), 1)
+                    if self.focus:
+                        cv2.putText(imageOut, f'Blurriness: {blurriness:.2f}', (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                                    (80, 80, 255), 1)
+
                     cv2.imshow("Detection Output", imutils.resize(imageOut, width=600))
 
                 if self.record and not self.saveRecording:
@@ -389,25 +402,6 @@ class Owl:
             self.controller.solenoid.beep(duration=0.5, repeats=5)
             self.logger.log_line(f"[CRITICAL ERROR] STOPPED: {e}")
 
-    # still in development
-    def update_software(self):
-        USBDir, USBConnected = check_for_usb()
-        if USBConnected:
-            files = os.listdir(USBDir)
-            workingDir = '/home/pi'
-
-            # move old version to version control directory first
-            oldVersionDir = strftime(workingDir + "/%Y%m%d-%H%M%S_update")
-            os.mkdir(oldVersionDir)
-
-            currentDir = '/home/pi/owl'
-            shutil.move(currentDir, oldVersionDir)
-
-            # move new directory to working directory
-            for item in files:
-                if 'owl' in item:
-                    shutil.move()
-
     def stop(self):
         self.controller.running = False
         self.controller.solenoid.all_off()
@@ -446,27 +440,6 @@ class Owl:
         with open(json_name, 'w') as f:
             json.dump(self.thresholdDict, f)
 
-def check_for_usb():
-    try:
-        nanoMediaFolder = 'ls /media/pi'
-        proc = subprocess.Popen(nanoMediaFolder, shell=True, preexec_fn=os.setsid, stdout=subprocess.PIPE)
-        usbName = proc.stdout.readline().rstrip().decode('utf-8')
-
-        if len(usbName) > 0:
-            print(f'[INFO] Saving to {usbName} usb')
-            saveDir = f'/media/pi/{usbName}/'
-            return saveDir, True
-
-        else:
-            print('[INFO] No USB connected. Saving to videos')
-            saveDir = '/home/pi/owl/videos'
-            return saveDir, False
-
-    except AttributeError:
-        print('[INFO] Windows computer detected...')
-        saveDir = '/videos/'
-        return saveDir, False
-
 
 # business end of things
 if __name__ == "__main__":
@@ -475,6 +448,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument('--video-file', type=str, default=None, help='use video file instead')
     ap.add_argument('--show-display', action='store_true', default=False, help='show display windows')
+    ap.add_argument('--focus', action='store_true', default=False, help='add FFT blur to output frame')
     ap.add_argument('--recording', action='store_true', default=False, help='record video')
     ap.add_argument('--algorithm', type=str, default='exhsv', choices=['exg', 'nexg', 'exgr', 'maxg', 'exhsv', 'hsv', 'gog'])
     ap.add_argument('--conf', type=float, default=0.5, choices=np.arange(0.01, 0.99, 0.01), metavar="2 s.f. Float between 0.01 and 1.00",
@@ -502,6 +476,7 @@ if __name__ == "__main__":
 
     owl = Owl(videoFile=args.video_file,
               show_display=args.show_display,
+              focus=args.focus,
               recording=args.recording,
               exgMin=25,
               exgMax=200,
