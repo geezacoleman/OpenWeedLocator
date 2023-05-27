@@ -23,4 +23,4 @@ fi
 
 # Launch owl.py with focusing flag
 cd ~/owl
-./owl.py --focusing --show-display
+./owl.py --focus
