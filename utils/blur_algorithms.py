@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-import pywt
 
 # some algorithms developed with the help of Chat-GPT!
 
@@ -75,6 +74,7 @@ def entropy_blur(image):
 
 
 def wavelet_blur(image):
+    import pywt
     grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     coeffs = pywt.dwt2(grey, 'haar')
     LL, (LH, HL, HH) = coeffs
