@@ -2,7 +2,40 @@ import cv2
 import numpy as np
 import pywt
 
-# developed with the help of Chat-GPT!
+# some algorithms developed with the help of Chat-GPT!
+
+# used before passing image into blur algorithms
+def normalize_brightness(image, intensity=0.8):
+    img_yuv = cv2.cvtColor(image, cv2.COLOR_BGR2YUV)
+    img_yuv[:, :, 0] = cv2.equalizeHist(img_yuv[:, :, 0])
+    img_yuv[:, :, 0] = np.clip(intensity * img_yuv[:, :, 0], 0, 255)
+    normalized = cv2.cvtColor(img_yuv, cv2.COLOR_YUV2BGR)
+
+    # Return the normalized image
+    #stacked = np.hstack((image, normalized))
+    #cv2.imshow('normalised', stacked)
+    #cv2.waitKey(0)
+
+    return normalized
+
+def fft_blur(image, size=60):
+    """
+    Adapted from:
+    https://pyimagesearch.com/2020/06/15/opencv-fast-fourier-transform-fft-for-blur-detection-in-images-and-video-streams/
+    """
+    (h, w) = image.shape
+    (cX, cY) = (int(w / 2.0), int(h / 2.0))
+    fft = np.fft.fft2(image)
+    fftShift = np.fft.fftshift(fft)
+
+    fftShift[cY - size:cY + size, cX - size:cX + size] = 0
+    fftShift = np.fft.ifftshift(fftShift)
+    recon = np.fft.ifft2(fftShift)
+
+    magnitude = 20 * np.log(np.abs(recon))
+    mean = np.mean(magnitude)
+
+    return mean
 
 def laplacian_blur(image):
     grey = cv2.cvtColor(image.copy(), cv2.COLOR_BGR2GRAY)

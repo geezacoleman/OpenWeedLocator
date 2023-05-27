@@ -316,6 +316,9 @@ def size_analysis(directory, sample_number=10, save_directory=None):
 
     df = pd.DataFrame(columns=df_columns)
 
+    if not os.path.exists(save_directory):
+        os.makedirs(save_directory)
+
     for videoPath in tqdm(glob.iglob(directory + '\*.mp4')):
         video_name = os.path.basename(videoPath).split('.')[0]
         camera_name = video_name.split('-')[0].lower()
@@ -398,8 +401,17 @@ def size_analysis(directory, sample_number=10, save_directory=None):
                                                                       RANDOM_STATE))
     time.sleep(2)
 
-def blur_analysis(directory, sample_number=10, save_directory=None, display=False):
+def blur_analysis(directory, csv_save_directory='logs', sample_number=10, im_save_directory=None, display=False,
+                  use_brisque=False, use_blur_detector=False, use_fft=False):
     import utils.blur_algorithms as blur
+    from utils.blur_algorithms import normalize_brightness
+
+    if use_brisque:
+        from brisque import BRISQUE
+        iqa_obj = BRISQUE(url=False)
+
+    if use_blur_detector:
+        from blur_detector import detectBlur
 
     ### IMPORTANT ###
     # this sets the random state - random values won't change unless you change this number
@@ -409,6 +421,12 @@ def blur_analysis(directory, sample_number=10, save_directory=None, display=Fals
 
     df_columns = ['video_name', 'camera', 'rep', 'speed', 'frame_id',
                   'laplacian_blur', 'variance_of_gradient_blur', 'tenengrad_blur', 'entropy_blur', 'wavelet_blur', 'gradient_blur']
+    if use_brisque:
+        df_columns.append('brisque')
+
+    if use_fft:
+        df_columns.append('fft_blur')
+
     df = pd.DataFrame(columns=df_columns)
 
     for videoPath in tqdm(glob.iglob(directory + '\*.mp4')):
@@ -418,6 +436,11 @@ def blur_analysis(directory, sample_number=10, save_directory=None, display=Fals
                        'entropy_blur': [],
                        'wavelet_blur': [],
                        'gradient_blur': []}
+        if use_brisque:
+            blur_scores['brisque'] = []
+
+        if use_fft:
+            blur_scores['fft_blur'] = []
 
         video_name = os.path.basename(videoPath).split('.')[0]
         camera_name = video_name.split('-')[0].lower()
@@ -433,46 +456,76 @@ def blur_analysis(directory, sample_number=10, save_directory=None, display=Fals
             randint = np.random.randint(0, video_length)
             cap.set(1, randint)
             ret, frame = cap.read()
-            if frame.shape[1] != 416:
-                frame = cv2.resize(frame, (416, 320), interpolation=cv2.INTER_CUBIC)
-                print('RESIZED', camera_name)
+            # if frame.shape[1] != 416:
+            #     frame = cv2.resize(frame, (416, 320), interpolation=cv2.INTER_CUBIC)
+            #     print('RESIZED', camera_name)
 
-            if save_directory is not None:
+            if im_save_directory is not None:
                 save_frame = frame.copy()
 
                 whole_image_thread = Thread(target=whole_image_save,
-                                            args=[save_frame, save_directory, randint])
+                                            args=[save_frame, im_save_directory, randint])
                 whole_image_thread.start()
 
-            for algo_name in blur_scores.keys():
-                blur_func = getattr(blur, algo_name)
-                score = blur_func(frame.copy())
-                blur_scores[algo_name].append(score)
-                scores.append(score)
+            if use_blur_detector:
+                gray = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2GRAY)
 
-            data = [video_name, camera_name, rep, speed, randint, scores[0], scores[1], scores[2], scores[3], scores[4], scores[5]]
+                blur_map = detectBlur(gray.copy(), downsampling_factor=4, num_scales=4, scale_start=2, num_iterations_RF_filter=3)
+                cv2.imshow(f'{camera_name} | {speed}', frame.copy())
+                cv2.imshow(f'{camera_name} | {speed} MAP', blur_map)
+                cv2.waitKey(0)
+                cv2.destroyAllWindows()
+
+                blur_id = f"{randint}_blur"
+                blur_image_thread = Thread(target=whole_image_save,
+                                            args=[blur_map, im_save_directory, blur_id])
+                blur_image_thread.start()
+
+            # frame = normalize_brightness(frame.copy())
+            for algo_name in blur_scores.keys():
+                if algo_name == "brisque":
+                    score = iqa_obj.score(frame.copy())
+                    blur_scores[algo_name].append(score)
+                    scores.append(score)
+
+                elif algo_name == "fft_blur":
+                    fft_func = getattr(blur, algo_name)
+                    gray = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2GRAY)
+                    score = fft_func(gray, size=10)
+                    blur_scores[algo_name].append(score)
+                    scores.append(score)
+
+
+                else:
+                    blur_func = getattr(blur, algo_name)
+                    score = blur_func(frame.copy())
+                    blur_scores[algo_name].append(score)
+                    scores.append(score)
+
+            if use_brisque and use_fft:
+                data = [video_name, camera_name, rep, speed, randint, scores[0], scores[1], scores[2], scores[3],
+                        scores[4], scores[5], scores[6], scores[7]]
+
+
+            elif use_brisque or use_fft:
+                data = [video_name, camera_name, rep, speed, randint, scores[0], scores[1], scores[2], scores[3],
+                        scores[4], scores[5], scores[6]]
+
+            else:
+                data = [video_name, camera_name, rep, speed, randint, scores[0], scores[1], scores[2], scores[3],
+                        scores[4], scores[5]]
+
             df2 = pd.DataFrame([data], columns=df_columns)
-            # print(
-            #     f'SPEED: {speed} | {df_columns[5]}: {scores[0]}\n{df_columns[6]}: {scores[1]}\n{df_columns[7]}: {scores[2]}\n'
-            #     f'{df_columns[8]}: {scores[3]}\n{df_columns[9]}: {scores[4]}\n{df_columns[10]}: {scores[5]}')
-            # print(blur_scores)
 
             if display:
                 display_frame = frame.copy()
-                cv2.putText(display_frame, f'SPEED: {speed} | {df_columns[5]}: {scores[0]}\n{df_columns[6]}: {scores[1]}\n{df_columns[7]}: {scores[2]}\n'
-                                           f'{df_columns[8]}: {scores[3]}\n{df_columns[9]}: {scores[4]}\n{df_columns[10]}: {scores[5]}', (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.25,
-                            (80, 80, 255), 1)
                 cv2.imshow(video_name, display_frame)
                 cv2.waitKey(100)
                 cv2.destroyAllWindows()
 
             df = df.append(df2)
 
-        # print("-----------------------")
-        # print(df)
-
-    df.to_csv(r"logs\{}_BLUR_analysis_rstate_{}.csv".format(datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S"),
-                                                            RANDOM_STATE))
+    df.to_csv(os.path.join(csv_save_directory, f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_BLUR_rstate_{RANDOM_STATE}.csv"))
     time.sleep(2)
 
 
@@ -484,13 +537,17 @@ if __name__ == "__main__":
     #                       HDFile=hdFile,
     #                       algorithm='exg')
     #
-    # # blur analysis
-    directory = r"C:\Users\gcol4791\OneDrive - The University of Sydney (Staff)\PhD\Publications\1. ANALYSIS - OWL v2\OneDrive_2023-02-08\All data\Angus Final Data\All"
-    save_directory = r'images/bbox'
-    # size_analysis(directory=directory, save_directory=save_directory)
+    # blur analysis
+    directory = r"input_video_directory"
+    csv_save_directory = "csv_output_directory"
+    im_save_directory = False
 
     blur_analysis(directory=directory,
+                  csv_save_directory=csv_save_directory,
                   sample_number=10,
-                  save_directory=None,
-                  display=False)
+                  im_save_directory=im_save_directory,
+                  display=False,
+                  use_brisque=True,
+                  use_blur_detector=True,
+                  use_fft=True)
 
