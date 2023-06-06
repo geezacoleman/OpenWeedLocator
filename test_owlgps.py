@@ -1,3 +1,4 @@
+
 from OwlGPS import OwlGPS
 import time
 import threading
@@ -16,9 +17,9 @@ if __name__ == "__main__":
 			print(f"Fixed: {gps.fixed}")
 			print(f"Num Sattelites: {gps.num_sats}")
 			print(f"Time: {gps.last_alive}")
-			print(f"Latitude: {gps.latitude}")
-			print(f"Longitude: {gps.longitude}")
-			print(f"Altitude: {gps.altitude}")
+			print(f"Latitude: {gps.latitude} {gps.latitude_direction}")
+			print(f"Longitude: {gps.longitude} {gps.longitude_direction}")
+			print(f"Altitude: {gps.altitude} {gps.altitude_units}")
 			print(f"Speed: {gps.speed_knots} knots, {gps.speed_mps} mps")
 			print(f"###############################################")
 			count+=1

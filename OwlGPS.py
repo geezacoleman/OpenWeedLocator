@@ -29,13 +29,13 @@ class OwlGPS():
 		self._last_alive = None		
 		
 	def update(self):
-    	'''
+		'''
     	update uses the serial port defined in the constructor to update the GPS's attributes with 
     	current data. update is designed to run in a thread while the gps 
     	attributes are read externally. 
     	update will optimistically continue in case of SerialException or ParseError.
     	All other exceptions will cause a return
-    	'''
+		'''
 		while True:
 			try:
 				# Read the lines from the SPI
@@ -70,15 +70,18 @@ class OwlGPS():
 			except serial.SerialException as e:
 				print(f"Device error: {e}")
 				continue
+			except UnicodeDecodeError as e:
+				print(f"Unicode Decode error: {e}")
+				continue
 			except pynmea2.ParseError as e:
 				print(f"Parse error: {e}")
 				self.fixed = False
 				continue
 			except KeyboardInterrupt:
-				print('Break from keyboard')
+				print('Break from keyboard...')
 				return
 			except Exception as e:
-				print(f"Unknown exception {e}. Terminating GPS Update loop...")
+				print(f"Unknown exception: {type(e)} : {e}.\n\n Terminating GPS Update loop...")
 				return
 	
 	@property
