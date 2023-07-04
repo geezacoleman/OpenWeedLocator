@@ -217,7 +217,8 @@ class Owl:
              algorithm='exg',
              confidence=0.5,
              minArea=10,
-             log_fps=False):
+             log_fps=False,
+             invert_hue=False):
 
         # track FPS and framecount
         frameCount = 0
@@ -291,15 +292,17 @@ class Owl:
                                                                                  filter_id=63)
                 else:
                     cnts, boxes, weedCentres, imageOut = weed_detector.inference(frame.copy(), exgMin=self.exgMin,
-                                                                                  exgMax=self.exgMax,
-                                                                                  hueMin=self.hueMin,
-                                                                                  hueMax=self.hueMax,
-                                                                                  saturationMin=self.saturationMin,
-                                                                                  saturationMax=self.saturationMax,
-                                                                                  brightnessMin=self.brightnessMin,
-                                                                                  brightnessMax=self.brightnessMax,
-                                                                                  show_display=self.show_display,
-                                                                                  algorithm=algorithm, minArea=minArea)
+                                                                                 exgMax=self.exgMax,
+                                                                                 hueMin=self.hueMin,
+                                                                                 hueMax=self.hueMax,
+                                                                                 saturationMin=self.saturationMin,
+                                                                                 saturationMax=self.saturationMax,
+                                                                                 brightnessMin=self.brightnessMin,
+                                                                                 brightnessMax=self.brightnessMax,
+                                                                                 show_display=self.show_display,
+                                                                                 algorithm=algorithm,
+                                                                                 minArea=minArea,
+                                                                                 invert_hue=invert_hue)
 
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often
@@ -499,11 +502,12 @@ if __name__ == "__main__":
     # start the targeting!
     owl.hoot(sprayDur=0.15,
              delay=0,
-             sampleMethod=None, # choose from 'bbox' | 'square' | 'whole'. If sampleMethod=None, it won't sample anything
-             sampleFreq=30, # select how often to sample - number of frames to skip.
+             sampleMethod=None,  # choose from 'bbox' | 'square' | 'whole'. If sampleMethod=None, it won't sample anything
+             sampleFreq=30,  # select how often to sample - number of frames to skip.
              saveDir='images/bbox2',
              algorithm=args.algorithm,
              camera_name='hsv',
              minArea=10,
-             confidence=args.conf
+             confidence=args.conf,
+             invert_hue=False  # invert the hue threshold - useful for excluding green to find red/purple stems
              )
