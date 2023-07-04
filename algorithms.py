@@ -34,7 +34,7 @@ def maxg(image):
     '''
     Takes an input image in int8 format and calculates the 'maxg' algorithm based on the following publication:
     'Weed Identification Using Deep Learning and Image Processing in Vegetable Plantation', Jin et al. 2021
-    :param image: 8 bit input image in BGR format (opencv)
+    :param image: image as a BGR array (i.e. opened with opencv not PIL)
     :return: grayscale image
     '''
     # using array slicing to split into channels with float32 for calculation
@@ -51,7 +51,7 @@ def maxg(image):
 def exg_standardised(image):
     '''
     Takes an input image in int8 format and calculates the standardised ExG algorithm
-    :param image: int8 image (opencv)
+    :param image: image as a BGR array (i.e. opened with opencv not PIL)
     :return: returns a grayscale image
     '''
     blue = image[:, :, 0].astype(np.float32)
@@ -73,16 +73,24 @@ def exg_standardised(image):
 
     return imgOut
 
-def exg_standardised_hue(image, hueMin=30, hueMax=90, brightnessMin=10, brightnessMax=220, saturationMin=30, saturationMax=255):
+def exg_standardised_hue(image,
+                         hueMin=30,
+                         hueMax=90,
+                         brightnessMin=10,
+                         brightnessMax=220,
+                         saturationMin=30,
+                         saturationMax=255,
+                         invert_hue=False):
     '''
     Takes an image and performs a combined ExG + HSV algorithm
-    :param image: input image
+    :param image: image as a BGR array (i.e. opened with opencv not PIL)
     :param hueMin: minimum hue value
     :param hueMax: maximum hue value
     :param brightnessMin: minimum 'value' or brightness value
-    :param brightnessMax: maximum
+    :param brightnessMax: maximum 'value' or brightness value
     :param saturationMin: minimum saturation
     :param saturationMax: maximum saturation
+    :param invert_hue: inverts the hue threshold to exclude anything within the thresholds
     :return: returns a grayscale image
     '''
     blue = image[:, :, 0].astype(np.float32)
@@ -105,7 +113,8 @@ def exg_standardised_hue(image, hueMin=30, hueMax=90, brightnessMin=10, brightne
     hsvThresh, _ = hsv(image,
                        hueMin=hueMin, hueMax=hueMax,
                        brightnessMin=brightnessMin, brightnessMax=brightnessMax,
-                       saturationMin=saturationMin, saturationMax=saturationMax)
+                       saturationMin=saturationMin, saturationMax=saturationMax,
+                       invert_hue=invert_hue)
     imgOut = hsvThresh & imgOut
     # cv2.imshow('exhu', imgOut)
 
@@ -114,7 +123,7 @@ def exg_standardised_hue(image, hueMin=30, hueMax=90, brightnessMin=10, brightne
 def exgr(image):
     '''
     performs the ExGR algorithm on the input image
-    :param image: input image
+    :param image: image as a BGR array (i.e. opened with opencv not PIL)
     :return: returns a grayscale image
     '''
     green = image[:, :, 1].astype(np.float32)
@@ -128,29 +137,42 @@ def exgr(image):
 
     return imgOut
 
-def hsv(image, hueMin=30, hueMax=90, brightnessMin=10, brightnessMax=220, saturationMin=30, saturationMax=255):
+def hsv(image,
+        hueMin=30,
+        hueMax=90,
+        brightnessMin=10,
+        brightnessMax=220,
+        saturationMin=30,
+        saturationMax=255,
+        invert_hue=False):
     '''
     Performs an HSV thresholding operation on the input image
-    :param image:
-    :param hueMin:
-    :param hueMax:
-    :param brightnessMin:
-    :param brightnessMax:
-    :param saturationMin:
-    :param saturationMax:
+    :param image: image as a BGR array (i.e. opened with opencv not PIL)
+    :param hueMin: minimum hue threshold
+    :param hueMax: maximum hue threshold
+    :param brightnessMin: minimum 'brightness' or 'value' threshold
+    :param brightnessMax: maximum 'brightness' or 'value' threshold
+    :param saturationMin: minimum saturation threshold
+    :param saturationMax: maximum saturation threshold
+    :param invert_hue: inverts the hue threshold to exclude anything within the thresholds
     :return: returns a binary image and boolean thresholded or not
     '''
     image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     hue = image[:, :, 0]
     sat = image[:, :, 1]
     val = image[:, :, 2]
-    # cv2.imshow('hue', hue)
-    # cv2.imshow('sat', sat)
-    # cv2.imshow('val', val)
 
     hueThresh = cv2.inRange(hue, hueMin, hueMax)
     satThresh = cv2.inRange(sat, saturationMin, saturationMax)
     valThresh = cv2.inRange(val, brightnessMin, brightnessMax)
+
+    # allow users to select purple/red colour ranges by excluding green
+    if invert_hue:
+        hueThresh = cv2.bitwise_not(hueThresh)
+
+    # cv2.imshow('hue', hueThresh)
+    # cv2.imshow('sat', satThresh)
+    # cv2.imshow('val', valThresh)
 
     outThresh = satThresh & valThresh & hueThresh
     # cv2.imshow('HSV Out', outThresh)

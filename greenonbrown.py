@@ -21,7 +21,8 @@ class GreenOnBrown:
                   saturationMax=255,
                   minArea=1,
                   show_display=False,
-                  algorithm='exg'):
+                  algorithm='exg',
+                  invert_hue=False):
         '''
         Uses a provided algorithm and contour detection to determine green objects in the image. Min and Max
         thresholds are provided.
@@ -57,12 +58,14 @@ class GreenOnBrown:
         elif algorithm == 'exhsv':
             output = exg_standardised_hue(image, hueMin=hueMin, hueMax=hueMax,
                                           brightnessMin=brightnessMin, brightnessMax=brightnessMax,
-                                          saturationMin=saturationMin, saturationMax=saturationMax)
+                                          saturationMin=saturationMin, saturationMax=saturationMax,
+                                          invert_hue=invert_hue)
 
         elif algorithm == 'hsv':
             output, threshedAlready = hsv(image, hueMin=hueMin, hueMax=hueMax,
                                           brightnessMin=brightnessMin, brightnessMax=brightnessMax,
-                                          saturationMin=saturationMin, saturationMax=saturationMax)
+                                          saturationMin=saturationMin, saturationMax=saturationMax,
+                                          invert_hue=invert_hue)
 
         elif algorithm == 'gndvi':
             output = gndvi(image)
