@@ -4,9 +4,10 @@ from image_sampler import bounding_box_image_sample, square_image_sample, whole_
 from utils.blur_algorithms import fft_blur
 from greenonbrown import GreenOnBrown
 from relay_control import Controller
+from utils.frame_reader import FrameReader
 
 from datetime import datetime, timezone
-from imutils.video import VideoStream, FileVideoStream, FPS
+from imutils.video import VideoStream, FPS
 from queue import Queue
 from time import strftime
 from threading import Thread
@@ -27,7 +28,7 @@ def nothing(x):
 
 class Owl:
     def __init__(self,
-                 videoFile=None,
+                 input_file_or_directory=None,
                  show_display=False,
                  focus=False,
                  recording=False,
@@ -46,7 +47,8 @@ class Owl:
                  awb_mode='auto',
                  sensor_mode=0,
                  exp_compensation=-4,
-                 parameters_json=None):
+                 parameters_json=None,
+                 image_loop_time=5):
 
         # different detection parameters
         self.show_display = show_display
@@ -73,6 +75,7 @@ class Owl:
         self.brightnessMax = brightnessMax
 
         self.thresholdDict = {}
+        self.image_loop_time = image_loop_time  # time spent on each image when looping over a directory
 
         if parameters_json:
             try:
@@ -141,11 +144,14 @@ class Owl:
             self.saveRecording = False
 
         # check if test video or videostream from camera
-        if videoFile:
-            self.cam = FileVideoStream(videoFile).start()
-            frame_width = self.cam.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
-            frame_height = self.cam.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
-            self.logger.log_line(f'[INFO] Using video {videoFile}...', verbose=True)
+        if input_file_or_directory:
+            self.cam = FrameReader(path=input_file_or_directory,
+                                   resolution=self.resolution,
+                                   loop_time=self.image_loop_time)
+            self.frame_width, self.frame_height = self.cam.resolution
+
+            self.logger.log_line(f'[INFO] Using {self.cam.input_type} from {input_file_or_directory}...', verbose=True)
+
         # if no video, start the camera with the provided parameters
         else:
             try:
@@ -156,8 +162,8 @@ class Owl:
                                        awb_mode=self.awb_mode,
                                        sensor_mode=self.sensor_mode,
                                        exposure_compensation=self.exp_compensation).start()
-                frame_width = self.resolution[0]  #
-                frame_height = self.resolution[1]  #
+                self.frame_width = self.resolution[0]  #
+                self.frame_height = self.resolution[1]  #
 
                 # save camera settings to the log
                 self.logger.log_line('[INFO] Camera setup complete. Settings: '
@@ -170,12 +176,11 @@ class Owl:
 
             except ModuleNotFoundError:
                 self.cam = VideoStream(src=0).start()
-                frame_width = self.cam.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
-                frame_height = self.cam.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                self.frame_width = self.cam.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
+                self.frame_height = self.cam.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
                 self.logger.log_line('[INFO] Camera setup complete. Using inbuilt webcam...')
 
             time.sleep(2.0)
-
 
         # set the sprayqueue size
         self.sprayQueue = Queue(maxsize=10)
@@ -195,8 +200,8 @@ class Owl:
         self.nozzleNum = nozzleNum
 
         # activation region limit - once weed crosses this line, nozzle is activated
-        self.yAct = int((0.2) * frame_height)
-        self.laneWidth = frame_width / self.nozzleNum
+        self.yAct = int(0.2 * self.frame_height)
+        self.laneWidth = self.frame_width / self.nozzleNum
 
         # calculate lane coords and draw on frame
         for i in range(self.nozzleNum):
@@ -449,7 +454,7 @@ if __name__ == "__main__":
     # these command line arguments enable people to operate/change some settings from the command line instead of
     # opening up a the OWL code each time.
     ap = argparse.ArgumentParser()
-    ap.add_argument('--video-file', type=str, default=None, help='use video file instead')
+    ap.add_argument('--input', type=str, default=None, help='path to image directory, single image or video file')
     ap.add_argument('--show-display', action='store_true', default=False, help='show display windows')
     ap.add_argument('--focus', action='store_true', default=False, help='add FFT blur to output frame')
     ap.add_argument('--recording', action='store_true', default=False, help='record video')
@@ -477,7 +482,7 @@ if __name__ == "__main__":
                          'Raspberry Pi cameras seem to overexpose images preferentially.')
     args = ap.parse_args()
 
-    owl = Owl(videoFile=args.video_file,
+    owl = Owl(input_file_or_directory=args.input,
               show_display=args.show_display,
               focus=args.focus,
               recording=args.recording,
@@ -496,8 +501,8 @@ if __name__ == "__main__":
               exp_compensation=args.exp_compensation,
               awb_mode=args.awb_mode,
               sensor_mode=args.sensor_mode,
-              parameters_json=None
-              )
+              parameters_json=None,
+              image_loop_time=5)
 
     # start the targeting!
     owl.hoot(sprayDur=0.15,
