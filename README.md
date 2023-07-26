@@ -1013,3 +1013,9 @@ Woebbecke, D. M., Meyer, G. E., Von Bargen, K., Mortensen, D. A., Bargen, K. Von
 [How to solder](https://www.makerspaces.com/how-to-solder/)
   
 </details>
+
+# Repository Stats
+### Star History
+[![Star History Chart](https://api.star-history.com/svg?repos=geezacoleman/OpenWeedLocator&type=Timeline)](https://star-history.com/#geezacoleman/OpenWeedLocator&Timeline)
+
+
