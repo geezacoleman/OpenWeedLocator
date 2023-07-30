@@ -130,8 +130,7 @@ class Owl:
         if total_pixels > (832 * 640):
             # change here if you want to test higher resolutions, but be warned, backup your current image!
             self.resolution = (416, 320)
-            self.logger.log_line(f'[WARNING] Resolution {resolution} selected is dangerously high. '
-                                 'Resolution has been reset to default to avoid damaging the OWL',
+            self.logger.log_line(f"[WARNING] Resolution {resolution} selected is dangerously high. Resolution has been reset to default to avoid damaging the OWL",
                                  verbose=True)
 
         # instantiate the recorder if recording is True
@@ -155,6 +154,12 @@ class Owl:
         # if no video, start the camera with the provided parameters
         else:
             try:
+                from picamera import PiCameraMMALError
+                
+            except ImportError:
+                PiCameraMMALError = None
+            
+            try:
                 self.cam = VideoStream(usePiCamera=True,
                                        resolution=self.resolution,
                                        framerate=self.framerate,
@@ -162,6 +167,7 @@ class Owl:
                                        awb_mode=self.awb_mode,
                                        sensor_mode=self.sensor_mode,
                                        exposure_compensation=self.exp_compensation).start()
+                
                 self.frame_width = self.resolution[0]  #
                 self.frame_height = self.resolution[1]  #
 
@@ -174,14 +180,31 @@ class Owl:
                                      f'\nExposure Compensation: {self.exp_compensation}'
                                      f'\nSensor Mode: {self.sensor_mode}', verbose=True)
 
-            except ModuleNotFoundError:
+            except ModuleNotFoundError as e:
                 self.cam = VideoStream(src=0).start()
                 self.frame_width = self.cam.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
                 self.frame_height = self.cam.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
-                self.logger.log_line('[INFO] Camera setup complete. Using inbuilt webcam...')
+                self.logger.log_line('[INFO] Camera setup complete. Using inbuilt webcam...', verbose=True)
 
-            time.sleep(2.0)
+            except PiCameraMMALError as e:
+                self.logger.log_line(f"[CAMERA ERROR] Note, camera is in use by another OWL process.\n"
+                                     f"To resolve this error, follow these steps:\n1. Use <ps -C owl.py> to find the process\n"
+                                     f"2. Run <sudo kill PID_NUM>\n"
+                                     f"This will close the other process using its PID.\n"
+                                     f"Original error message: {str(e)}", verbose=True)
 
+                self.controller.solenoid.beep(duration=0.1, repeats=3)
+                time.sleep(2)
+                sys.exit()
+
+            except Exception as e:
+                self.logger.log_line(f"[CRITICAL ERROR] STOPPED OWL AT START: {e}", verbose=True)
+                
+                self.controller.solenoid.beep(duration=1, repeats=1)
+                time.sleep(2)
+                sys.exit()
+
+        time.sleep(2.0)
         # set the sprayqueue size
         self.sprayQueue = Queue(maxsize=10)
 
@@ -234,12 +257,19 @@ class Owl:
         if log_fps:
             fps = FPS().start()
 
-        if algorithm == 'gog':
-            from greenongreen import GreenOnGreen
-            weed_detector = GreenOnGreen()
+        try:
+            if algorithm == 'gog':
+                from greenongreen import GreenOnGreen
+                weed_detector = GreenOnGreen()
 
-        else:
-            weed_detector = GreenOnBrown(algorithm=algorithm)
+            else:
+                weed_detector = GreenOnBrown(algorithm=algorithm)
+
+        except Exception as e:
+            self.logger.log_line(f"[ALGORITHM ERROR] Error while starting algorithm: {algorithm}."
+                                 f"Original error message: {e}")
+
+            self.controller.solenoid.beep(duration=0.5, repeats=4)
 
         try:
             while True:
