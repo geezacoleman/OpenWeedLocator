@@ -656,14 +656,13 @@ Command line flags are let you specify options on the command line within the Te
 
 ```
 (owl) pi@raspberrypi:~ $./owl.py --help
-usage: owl.py [-h] [--video-file VIDEO_FILE] [--show-display] [--focus] [--recording] [--algorithm {exg,nexg,exgr,maxg,exhsv,hsv}] [--framerate [10-120]]
+usage: owl.py [-h] [--input] [--show-display] [--focus] [--recording] [--algorithm {exg,nexg,exgr,maxg,exhsv,hsv}] [--framerate [10-120]]
                        [--exposure-mode {off,auto,nightpreview,backlight,spotlight,sports,snow,beach,verylong,fixedfps,antishake,fireworks}]
                        [--awb-mode {off,auto,sunlight,cloudy,shade,tungsten,fluorescent,incandescent,flash,horizon}] [--sensor-mode [0-3]]
 
 optional arguments:
   -h, --help            show this help message and exit
-  --video-file VIDEO_FILE
-                        use video file instead
+  --input               path to image directory, single image or video file
   --show-display        show display windows
   --focus               focus the camera
   --recording           record video
@@ -684,7 +683,8 @@ optional arguments:
   
 Flag | Usage | Description
 :-------------: | :-------------: | :-------------:
---video-file | Specify the path to the video file. | This is used when a video file is run instead of the live feed from a camera. It is mostly used in testing new algorithms. If this is not included, a connected camera will be used instead.
+--input | Specify the path to an image directory, single image or video file. | Use this if you want to run the software on images or videos. Useful when testing new algorithms or setting up the software without a camera connection.
+*legacy* --video-file | NOTE: this has been replaced by `--input` fag. Specify the path to the video file. | This is used when a video file is run instead of the live feed from a camera. It is mostly used in testing new algorithms. If this is not included, a connected camera will be used instead.
 --show-display | If flag is present, this will return True | When this flag is included, video feeds and threshold adjustments will appear. Without the flag, the OWL will run `headless` with no display. This flag replaces the `Headless=True` variable in the `owl.py` file.
 --focus | If the flag is present, focusing mode is activated. | WHen the flag is included, a Fast Fourier Transform is used to estimate image blurriness. The mean of this value is displayed on the video feed. High values mean it is in focus, low values mean it is blurry. 
 --algorithm | gog, exg, nexg, exgr, maxg, exhsv, hsv | Select from the list of algorithms to use. Defaults to `exhsv`. GoG will enable the Google Coral and import 'pycoral' and related libraries. Only use if you have followed the instructions under the [Green-on-Green](#green-on-green) section.
@@ -712,7 +712,7 @@ Once you have opened the file in an editor (this can be a text editor, Thonny, G
 Editable values for sensitivity:
 ```
 if __name__ == "__main__":
-    owl = Owl(videoFile=args.video_file,
+    owl = Owl(input_file_or_directory=args.input,
               show_display=args.show_display,
               focus=args.focus,
               recording=args.recording,
