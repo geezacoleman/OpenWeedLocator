@@ -253,12 +253,20 @@ Raspberry Pi GPIO pins | Relay control board header pins
 ### Step 8 - mounting and connecting camera
 Connect one end of the CSI ribbon cable to the camera. We provide a mounting plate that can be used with both the HQ or V2 cameras, however, we recommend the use of the HQ camera for improved image clarity. Attach the HQ camera to the 3D printed mount using 2.5 mm standoffs (or 2 mm standoffs if using the V2 camera). Ensuring that the CSI cable port on the camera is directed towards the Raspberry Pi, mount the camera inside the OWL case using four M3 standoffs (50 mm long for HQ camera; 20 mm long for V2 camera). Connect the other end of the CSI cable to the Raspberry Pi CSI camera port.
 
-**NOTE** the HQ lens comes with a C-CS mount adapter which needs to be removed before fitting to the camera sensor base. The image won't focus unless the adapter is removed. 
+Before connecting the lens, please be aware the HQ camera comes with fitted a C-CS mount adapter which needs to be removed before fitting the 6mm lens. The image won't focus unless the adapter is removed. More information is available below and in the [HQ Camera Datasheet](https://datasheets.raspberrypi.com/hq-camera/cs-mount-lens-guide.pdf)
 
+How to remove the C-CS mount adapter:
+
+HQ camera C-CS mount adapter | Camera and adapter separated | Lens fitted without adapter
+:-------------: | :-------------: | :-------------:
+![adapter1](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/3ab35c57-77c1-4ce0-b627-410a3598db93)|![adapter2](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/7f50e5c8-9dd7-4e29-94d7-8bf8e907e011)|![adapter3](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/322d6409-8509-4895-8896-5959a5f529bc)
+
+Mounting the HQ camera to the 3D printed mount:
 HQ camera and mount | HQ camera mounted in case
 :-------------: | :-------------:
 ![1T7A9544](https://user-images.githubusercontent.com/40649348/156695569-ded4679b-f94f-433a-a81f-08a5c409e61c.jpeg) | ![1T7A9545](https://user-images.githubusercontent.com/40649348/156695635-9fd58bb7-303c-4aa8-b5c7-c16b818a51f0.jpeg)
 
+Mounting the V2 camera to the 3D printed mount:
 V2 camera and mount | V2 camera mounted in case | Raspberry Pi camera port
 :-------------: | :-------------: | :-------------:
 ![1T7A9558](https://user-images.githubusercontent.com/40649348/156695701-49598e62-fdba-4416-88d1-fbf158fe99ef.jpeg) | ![1T7A9559](https://user-images.githubusercontent.com/40649348/156695786-c34f84e3-26db-4198-80e3-96a5da4b52d3.jpeg) | ![Cameracable](https://media.github.sydney.edu.au/user/5402/files/7ed2a200-d026-11eb-93cb-26a91d727094)
