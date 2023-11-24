@@ -533,24 +533,23 @@ def blur_analysis(directory, csv_save_directory='logs', sample_number=10, im_sav
 
 
 if __name__ == "__main__":
-    videoFile = r"/home/daniel/Downloads/GH010785.mp4"
-    hdFile = r"/home/daniel/Downloads/GH010785.mp4"
+    # videoFile = r"videos/HQ2-1-5.avi"
+    # hdFile = r"videos/ard-1-5.avi"
     #
-    single_frame_analysis(videoFile=videoFile,
-                          HDFile=hdFile,
-                          algorithm='exg')
+    # single_frame_analysis(videoFile=videoFile,
+    #                       HDFile=hdFile,
+    #                       algorithm='exg')
     #
     # blur analysis
-    # directory = r"input_video_directory"
-    # csv_save_directory = "csv_output_directory"
-    # im_save_directory = False
+    directory = r"input_video_directory"
+    csv_save_directory = "csv_output_directory"
+    im_save_directory = False
 
-    # blur_analysis(directory=directory,
-    #               csv_save_directory=csv_save_directory,
-    #               sample_number=10,
-    #               im_save_directory=im_save_directory,
-    #               display=False,
-    #               use_brisque=True,
-    #               use_blur_detector=True,
-    #               use_fft=True)
-
+    blur_analysis(directory=directory,
+                  csv_save_directory=csv_save_directory,
+                  sample_number=10,
+                  im_save_directory=im_save_directory,
+                  display=False,
+                  use_brisque=True,
+                  use_blur_detector=True,
+                  use_fft=True)
