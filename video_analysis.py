@@ -1,6 +1,6 @@
 from tqdm import tqdm
 from datetime import datetime, timezone
-from greenonbrown import green_on_brown
+from greenonbrown import GreenOnBrown
 from image_sampler import bounding_box_image_sample, whole_image_save
 from imutils.video import count_frames, FileVideoStream
 from threading import Thread
@@ -258,6 +258,7 @@ def single_frame_analysis(videoFile: str, HDFile: str, algorithm='exhsv'):
 
 def frame_processor(videoFeed, videoName='', algorithm='exhsv'):
     frameShape = None
+    gob = GreenOnBrown(algorithm=algorithm)
     while True:
         k = cv2.waitKey(1) & 0xFF
         ret, frame = videoFeed.read()
@@ -272,7 +273,7 @@ def frame_processor(videoFeed, videoName='', algorithm='exhsv'):
             yield frame
 
         else:
-            cnts, boxes, weedCentres, imageOut = green_on_brown(frame, exgMin=29,
+            cnts, boxes, weedCentres, imageOut = gob.inference(frame, exgMin=29,
                                                                 exgMax=200,
                                                                 hueMin=30,
                                                                 hueMax=92,
@@ -281,7 +282,7 @@ def frame_processor(videoFeed, videoName='', algorithm='exhsv'):
                                                                 brightnessMin=60,
                                                                 brightnessMax=250,
                                                                 show_display=False,
-                                                                algorithm=algorithm, minArea=10)
+                                                                minArea=10)
 
             yield imageOut
         if k == 27:
@@ -328,6 +329,8 @@ def size_analysis(directory, sample_number=10, save_directory=None):
         cap = cv2.VideoCapture(videoPath)
         video_length = count_frames(videoPath, override=True) - 1
 
+        gob = GreenOnBrown(algorithm='exhsv')
+
         # randomly sample frames
         for i in tqdm(range(sample_number)):
 
@@ -336,7 +339,7 @@ def size_analysis(directory, sample_number=10, save_directory=None):
             ret, frame = cap.read()
 
             # uses same parameters as the above image analysis settings
-            cnts, boxes, weedCentres, imageOut = green_on_brown(frame.copy(), exgMin=29,
+            cnts, boxes, weedCentres, imageOut = gob.inference(frame.copy(), exgMin=29,
                                                                 exgMax=200,
                                                                 hueMin=30,
                                                                 hueMax=92,
@@ -345,7 +348,7 @@ def size_analysis(directory, sample_number=10, save_directory=None):
                                                                 brightnessMin=60,
                                                                 brightnessMax=250,
                                                                 show_display=False,
-                                                                algorithm='exhsv', minArea=-10)
+                                                                minArea=-10)
             # cv2.imshow('Output', imageOut)
             # cv2.waitKey(10)
             # calculate and append the individual contour areas
@@ -530,24 +533,24 @@ def blur_analysis(directory, csv_save_directory='logs', sample_number=10, im_sav
 
 
 if __name__ == "__main__":
-    # videoFile = r"videos/HQ2-1-5.avi"
-    # hdFile = r"videos/ard-1-5.avi"
+    videoFile = r"/home/daniel/Downloads/GH010785.mp4"
+    hdFile = r"/home/daniel/Downloads/GH010785.mp4"
     #
-    # single_frame_analysis(videoFile=videoFile,
-    #                       HDFile=hdFile,
-    #                       algorithm='exg')
+    single_frame_analysis(videoFile=videoFile,
+                          HDFile=hdFile,
+                          algorithm='exg')
     #
     # blur analysis
-    directory = r"input_video_directory"
-    csv_save_directory = "csv_output_directory"
-    im_save_directory = False
+    # directory = r"input_video_directory"
+    # csv_save_directory = "csv_output_directory"
+    # im_save_directory = False
 
-    blur_analysis(directory=directory,
-                  csv_save_directory=csv_save_directory,
-                  sample_number=10,
-                  im_save_directory=im_save_directory,
-                  display=False,
-                  use_brisque=True,
-                  use_blur_detector=True,
-                  use_fft=True)
+    # blur_analysis(directory=directory,
+    #               csv_save_directory=csv_save_directory,
+    #               sample_number=10,
+    #               im_save_directory=im_save_directory,
+    #               display=False,
+    #               use_brisque=True,
+    #               use_blur_detector=True,
+    #               use_fft=True)
 
