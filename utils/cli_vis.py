@@ -1,6 +1,35 @@
 import time
-from blessed import Terminal
 import numpy as np
+import warnings
+
+class BasicTerminal:
+    def __init__(self):
+        self.width = 80
+        self.height = 24
+        self.class_name = "BasicTerminal"
+
+    @staticmethod
+    def move_x(x):
+        return f"\033[{x}G"
+
+    @property
+    def normal(self):
+        return "\033[0m"
+
+    def on_color_rgb(self, r, g, b):
+        return f"\033[48;2;{r};{g};{b}m"
+
+    def __str__(self):
+        return f"<{self.class_name} object with width={self.width} and height={self.height}>"
+
+try:
+    from blessed import Terminal
+
+except ModuleNotFoundError:
+    warnings.warn("[WARNING] blessed library not found. Using basic terminal functionality. "
+                  "\nNote, please run 'pip install blessed' and check OWL installation to fix.")
+    Terminal = BasicTerminal
+
 
 class NozzleVis:
     def __init__(self, relays=4):
@@ -17,7 +46,7 @@ class NozzleVis:
 
     def setup(self):
         for id, pos in enumerate(self.x_positions):
-            print(self.term.move_x(pos), f'Nozzle {id}', end=' ')
+            print(self.term.move_x(pos), f'Nozzle {id + 1}', end=' ')
         print('\r')
         for i, x_pos in enumerate(self.x_positions):
             r, g, b = self.inactive_color
@@ -41,32 +70,9 @@ class NozzleVis:
 
 if __name__ == "__main__":
     box_drawer = NozzleVis(relays=4)
-    #
+
     for i in range(0, 100):
         relay = np.random.randint(0, 4)
         status = bool(np.random.randint(0, 2))
         box_drawer.update(relay=relay, status=status)
         time.sleep(0.01)
-
-
-    # sys.exit()
-    # from blessed import Terminal
-    #
-    # term = Terminal()
-    #
-    # with term.fullscreen():
-    #     with term.cbreak():
-    #         # Set the position and size of the box
-    #         x_position = 10
-    #         y_position = 5
-    #         box_width = 10
-    #         box_height = 10
-    #
-    #         # Draw the box
-    #         # term.move_xy(x_position, y_position)
-    #         box_str = term.on_color_rgb(0, 255, 0) + " " * box_width + term.normal
-    #
-    #         print(f"{box_str}\n", end="")
-
-        # Wait for a key press before exiting
-        # term.inkey()
