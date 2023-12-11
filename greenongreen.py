@@ -12,17 +12,23 @@ import os
 
 class GreenOnGreen:
     def __init__(self, algorithm='gog', label_file='models/labels.txt'):
-        if algorithm == 'gog':
-            self.algorithm_file = Path(glob('models/*.tflite')[0])
-            print(f'[INFO] Using {self.algorithm_file.stem} model...')
+        model_files = glob('models/*.tflite')
+
+        if not model_files:
+            raise FileNotFoundError('No .tflite model files found.')
 
         elif algorithm.endswith('.tflite'):
-            self.algorithm_file = Path(algorithm)
-            print(f'[INFO] Using {self.algorithm_file.stem} model...')
+            if Path(algorithm).is_file():
+                self.algorithm_file = Path(algorithm)
+                print(f'[INFO] Using {self.algorithm_file.stem} model...')
+            else:
+                print(f'[ERROR] Specified algorithm file {algorithm} not found, using default...')
+                self.algorithm_file = Path(model_files[0])
+                print(f'[INFO] Using {self.algorithm_file.stem} model...')
 
         else:
             print(f'[ERROR] Unknown algorithm {algorithm}, using default...')
-            self.algorithm_file = Path(glob('models/*.tflite')[0])
+            self.algorithm_file = Path(model_files[0])
             print(f'[INFO] Using {self.algorithm_file.stem} model...')
 
         self.labels = read_label_file(label_file)
