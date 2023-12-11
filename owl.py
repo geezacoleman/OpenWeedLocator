@@ -265,11 +265,35 @@ class Owl:
             else:
                 weed_detector = GreenOnBrown(algorithm=algorithm)
 
-        except Exception as e:
-            self.logger.log_line(f"[ALGORITHM ERROR] Error while starting algorithm: {algorithm}."
-                                 f"Original error message: {e}")
+        except ModuleNotFoundError as e:
+            self.logger.log_line(f"\nModuleNotFoundError while starting algorithm: {algorithm}."
+                                 f"\nError message: {e}.\nIs pycoral correctly installed? Visit: https://coral.ai/docs/accelerator/get-started/#requirements",
+                                 verbose=True)
 
-            self.controller.solenoid.beep(duration=0.5, repeats=4)
+            self.controller.solenoid.beep(duration=0.25, repeats=4)
+            sys.exit()
+
+        except IndexError as e:
+            self.logger.log_line(f"\nIndexError while starting algorithm: {algorithm}."
+                                 f"\nError message: {e}\nAre there model files in the 'models' directory?",
+                                 verbose=True)
+
+            self.controller.solenoid.beep(duration=0.25, repeats=4)
+            sys.exit()
+
+        except FileNotFoundError as e:
+            self.logger.log_line(f"\nFileNotFoundError while starting algorithm: {algorithm}."
+                                 f"\nError message: {e}\nAre there model files in the 'models' directory?",
+                                 verbose=True)
+
+            self.controller.solenoid.beep(duration=0.25, repeats=4)
+            sys.exit()
+
+        except Exception as e:
+            self.logger.log_line(f"\n[ALGORITHM ERROR] Error while starting algorithm: {algorithm}."
+                                 f"\nError message: {e}",
+                                 verbose=True)
+            sys.exit()
 
         try:
             while True:
