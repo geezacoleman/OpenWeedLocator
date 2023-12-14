@@ -13,11 +13,12 @@ Internal electronics       |  Fitted module - vehicle | Fitted module - robot
 This is the original OWL publication, released in [Scientific Reports (open access)](https://www.nature.com/articles/s41598-021-03858-9). A range of green detection algorithms were tested including ExG (excess green 2g - r - b, developed by Woebbecke et al. 1995), a hue, saturation and value (HSV) threshold and a combined ExG + HSV algorithm. If you use the OWL in your research please consider citing this publication.
 
 #### Investigating image-based fallow weed detection performance on Raphanus sativus and Avena sativa at speeds up to 30 km/h
-The performance of the OWL from 5 - 30 km/h with different cameras and on broadleaf and grass 'weeds' was tested and released in an [arXiv pre-print](https://arxiv.org/abs/2305.10311). The current Raspberry Pi HQ Camera + latest software combination provided a recall of 74.8% at 5 km/h and 50.5 % at 30 km/h. Recall of up to 95.7% at 5 km/h was achieved by the global shutter Arducam AR0234.
+The performance of the OWL from 5 - 30 km/h with different cameras and on broadleaf and grass 'weeds' was tested and published in [Computers and Electronics in Agriculture](https://www.sciencedirect.com/science/article/pii/S0168169923008074). The current Raspberry Pi HQ Camera + latest software combination provided a recall of 74.8% at 5 km/h and 50.5 % at 30 km/h. Recall of up to 95.7% at 5 km/h was achieved by the global shutter Arducam AR0234.
 
 Repository DOI: [![DOI](https://zenodo.org/badge/399194159.svg)](https://zenodo.org/badge/latestdoi/399194159)
 
-**Note**: The project is in the process of transitioning to picamera2 on the [picamera2 branch](https://github.com/geezacoleman/OpenWeedLocator/tree/picamera2).
+### Raspian Operating System Support 
+**Important**: The current software only functions correctly on Raspian Buster (with picamera support). We are working on updating the image to function correctly with Raspian Bookworm for Raspberry Pi 5 and Picamera2 support. This is expected to be released in February 2024. In the meantime, we recommend downloading the existing image and updating it with `update_owl.sh`.
 
 # Overview
 * [OWL Use Cases](#owl-use-cases)
