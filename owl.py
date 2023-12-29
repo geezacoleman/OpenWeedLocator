@@ -52,6 +52,7 @@ class Owl:
 
         # different detection parameters
         self.show_display = show_display
+        self.nozzle_vis = None
         self.recording = recording
         self.focus = focus
         if self.focus:
@@ -231,10 +232,6 @@ class Owl:
             laneX = int(i * self.laneWidth)
             self.laneCoords[i] = laneX
 
-        self.nozzle_vis = self.controller.nozzle_vis
-        self.nozzle_vis.setup()
-        self.controller.vis = True
-
     def hoot(self,
              sprayDur,
              delay,
@@ -243,6 +240,7 @@ class Owl:
              saveDir='output',
              camera_name='cam1',
              algorithm='exg',
+             model_path='models/',
              confidence=0.5,
              minArea=10,
              log_fps=False,
@@ -260,39 +258,17 @@ class Owl:
         try:
             if algorithm == 'gog':
                 from greenongreen import GreenOnGreen
-                weed_detector = GreenOnGreen()
+                weed_detector = GreenOnGreen(model_path=model_path)
 
             else:
                 weed_detector = GreenOnBrown(algorithm=algorithm)
 
-        except ModuleNotFoundError as e:
-            self.logger.log_line(f"\nModuleNotFoundError while starting algorithm: {algorithm}."
-                                 f"\nError message: {e}.\nIs pycoral correctly installed? Visit: https://coral.ai/docs/accelerator/get-started/#requirements",
-                                 verbose=True)
-
-            self.controller.solenoid.beep(duration=0.25, repeats=4)
-            sys.exit()
-
-        except IndexError as e:
-            self.logger.log_line(f"\nIndexError while starting algorithm: {algorithm}."
-                                 f"\nError message: {e}\nAre there model files in the 'models' directory?",
-                                 verbose=True)
-
-            self.controller.solenoid.beep(duration=0.25, repeats=4)
-            sys.exit()
-
-        except FileNotFoundError as e:
-            self.logger.log_line(f"\nFileNotFoundError while starting algorithm: {algorithm}."
-                                 f"\nError message: {e}\nAre there model files in the 'models' directory?",
-                                 verbose=True)
-
-            self.controller.solenoid.beep(duration=0.25, repeats=4)
-            sys.exit()
+        except (ModuleNotFoundError, IndexError, FileNotFoundError, ValueError) as e:
+            self._handle_exceptions(e, algorithm)
 
         except Exception as e:
-            self.logger.log_line(f"\n[ALGORITHM ERROR] Error while starting algorithm: {algorithm}."
-                                 f"\nError message: {e}",
-                                 verbose=True)
+            self.logger.log_line(
+                f"\n[ALGORITHM ERROR] Unrecognised error while starting algorithm: {algorithm}.\nError message: {e}", verbose=True)
             sys.exit()
 
         try:
@@ -487,6 +463,32 @@ class Owl:
         # if GPS added, could use it here to return a delay variable based on speed.
         return delay
 
+    def _handle_exceptions(self, e, algorithm):
+        # handle exceptions cleanly
+        error_type = type(e).__name__
+        error_message = str(e)
+
+        if isinstance(e, ModuleNotFoundError):
+            detailed_message = f"\nIs pycoral correctly installed? Visit: https://coral.ai/docs/accelerator/get-started/#requirements"
+
+        elif isinstance(e, (IndexError, FileNotFoundError)):
+            detailed_message = "\nAre there model files in the 'models' directory?"
+
+        elif isinstance(e, ValueError) and 'delegate' in error_message:
+            detailed_message = (
+                "\nThis is due to an unrecognised Google Coral device. Please make sure it is connected correctly.\n"
+                "If the error persists, try unplugging it and plugging it again or restarting the\n"
+                "Raspberry Pi. For more information visit:\nhttps://github.com/tensorflow/tensorflow/issues/32743")
+
+        else:
+            detailed_message = ""
+
+        full_message = f"\n[{error_type}] while starting algorithm: {algorithm}.\nError message: {error_message}{detailed_message}"
+
+        self.logger.log_line(full_message, verbose=True)
+        self.controller.solenoid.beep(duration=0.25, repeats=4)
+        sys.exit()
+
     def save_parameters(self):
         self.thresholdDict['exgMin'] = cv2.getTrackbarPos("ExG-Min", self.window_name)
         self.thresholdDict['exgMax'] = cv2.getTrackbarPos("ExG-Max", self.window_name)
@@ -506,13 +508,14 @@ class Owl:
 # business end of things
 if __name__ == "__main__":
     # these command line arguments enable people to operate/change some settings from the command line instead of
-    # opening up a the OWL code each time.
+    # opening up the OWL code each time.
     ap = argparse.ArgumentParser()
     ap.add_argument('--input', type=str, default=None, help='path to image directory, single image or video file')
     ap.add_argument('--show-display', action='store_true', default=False, help='show display windows')
     ap.add_argument('--focus', action='store_true', default=False, help='add FFT blur to output frame')
     ap.add_argument('--recording', action='store_true', default=False, help='record video')
     ap.add_argument('--algorithm', type=str, default='exhsv', choices=['exg', 'nexg', 'exgr', 'maxg', 'exhsv', 'hsv', 'gog'])
+    ap.add_argument('--model-path', type=str, default=None, help='path to trained weed detection .tflite model or directory')
     ap.add_argument('--conf', type=float, default=0.5, choices=np.arange(0.01, 0.99, 0.01), metavar="2 s.f. Float between 0.01 and 1.00",
                     help='set the confidence value for a "green-on-green" algorithm between 0.01 and 1.00. Must be a two-digit float.')
     ap.add_argument('--framerate', type=int, default=40, choices=range(10, 121), metavar="[10-120]",
@@ -565,6 +568,7 @@ if __name__ == "__main__":
              sampleFreq=30,  # select how often to sample - number of frames to skip.
              saveDir='images/bbox2',
              algorithm=args.algorithm,
+             model_path=args.model_path,
              camera_name='hsv',
              minArea=10,
              confidence=args.conf,
