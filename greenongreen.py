@@ -11,28 +11,38 @@ import os
 
 
 class GreenOnGreen:
-    def __init__(self, algorithm='gog', label_file='models/labels.txt'):
-        model_files = glob('models/*.tflite')
+    def __init__(self, model_path='models', label_file='models/labels.txt'):
+        if model_path is None:
+            print('[WARNING] No model directory or path provided with --model-path flag. '
+                  'Attempting to load from default...')
+            model_path = 'models'
+        self.model_path = Path(model_path)
 
-        if not model_files:
-            raise FileNotFoundError('No .tflite model files found.')
+        if self.model_path.is_dir():
+            model_files = list(self.model_path.glob('*.tflite'))
+            if not model_files:
+                raise FileNotFoundError('No .tflite model files found. Please provide a directory or .tflite file.')
 
-        elif algorithm.endswith('.tflite'):
-            if Path(algorithm).is_file():
-                self.algorithm_file = Path(algorithm)
-                print(f'[INFO] Using {self.algorithm_file.stem} model...')
             else:
-                print(f'[ERROR] Specified algorithm file {algorithm} not found, using default...')
-                self.algorithm_file = Path(model_files[0])
-                print(f'[INFO] Using {self.algorithm_file.stem} model...')
+                self.model_path = model_files[0]
+                print(f'[INFO] Using {self.model_path.stem} model...')
+
+        elif self.model_path.suffix == '.tflite':
+            print(f'[INFO] Using {self.model_path.stem} model...')
 
         else:
-            print(f'[ERROR] Unknown algorithm {algorithm}, using default...')
-            self.algorithm_file = Path(model_files[0])
-            print(f'[INFO] Using {self.algorithm_file.stem} model...')
+            print(f'[WARNING] Specified model path {model_path} is unsupported, attempting to use default...')
+
+            model_files = Path('models').glob('*.tflite')
+            try:
+                self.model_path = next(model_files)
+                print(f'[INFO] Using {self.model_path.stem} model...')
+
+            except StopIteration:
+                print('[ERROR] No model files found.')
 
         self.labels = read_label_file(label_file)
-        self.interpreter = make_interpreter(self.algorithm_file.as_posix())
+        self.interpreter = make_interpreter(self.model_path.as_posix())
         self.interpreter.allocate_tensors()
         self.inference_size = input_size(self.interpreter)
         self.objects = None
@@ -52,10 +62,11 @@ class GreenOnGreen:
         for det_object in self.objects:
             if det_object.id == self.filter_id:
                 bbox = det_object.bbox.scale(scale_x, scale_y)
+
                 startX, startY = int(bbox.xmin), int(bbox.ymin)
                 endX, endY = int(bbox.xmax), int(bbox.ymax)
                 boxW = endX - startX
-                boxH = endY = startY
+                boxH = endY - startY
 
                 # save the bounding box
                 self.boxes.append([startX, startY, boxW, boxH])
