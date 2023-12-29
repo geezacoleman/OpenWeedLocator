@@ -271,6 +271,10 @@ class Owl:
                 f"\n[ALGORITHM ERROR] Unrecognised error while starting algorithm: {algorithm}.\nError message: {e}", verbose=True)
             sys.exit()
 
+        self.nozzle_vis = self.controller.nozzle_vis
+        self.nozzle_vis.setup()
+        self.controller.vis = True
+
         try:
             while True:
                 delay = self.update_delay(delay)
