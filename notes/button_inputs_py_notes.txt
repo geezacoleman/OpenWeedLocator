@@ -1,0 +1,44 @@
+################################################################################
+Notes on button_inputs.py
+################################################################################
+
+Purpose:
+
+
+Entrypoint:
+No __main__ check, although it sets a testing flag if the system is not a Pi.
+
+
+SensitivitySelector class:
+
+
+SensitivitySelector class --> __init__ method:
+
+
+SensitivitySelector class --> sensitivity_selector method:
+
+
+
+Selector class:
+
+
+Selector class --> __init__ method:
+
+
+Selector class --> algorithm_selector method:
+
+
+
+Recorder class:
+
+
+Recorder class --> __init__ method:
+
+
+Recorder class --> button_check method:
+
+
+Recorder class --> start_recording method:
+
+
+Recorder class --> stop_recording method:

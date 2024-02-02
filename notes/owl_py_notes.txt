@@ -1,0 +1,99 @@
+################################################################################
+Notes on owl.py
+################################################################################
+
+Purpose: 
+Top-level Python script for the OWL. Runs weed detection and generates signals. 
+
+
+Entrypoint:
+- When you execute owl.py, it parses any input flags into args. 
+- Then it creates an instance of the Owl class (called 'owl') using the args.
+  - The Owl class parameters mainly specify the camera and detection algorithm 
+    params.
+- Then it calls the 'hoot' method on 'owl'.
+  - The hoot method parameters mainly specify nozzle parameters, the chosen
+    algorithm, and optional image capture parameters.
+
+
+Owl class:
+- owl.py contains only one class ('Owl'). 
+- 'Owl' has 7 methods:
+  - __init__
+  - hoot
+  - stop
+  - update 
+  - update_delay
+  - _handle_exceptions
+  - save_parameters
+
+Owl class --> __init__ method:
+- Instantiates the class with default values if none are provided.
+- Creates a json file of the weed detection parameters (if enabled).
+- Creates a cv2 GUI for changing the parameters (if enabled).
+- Maps the Raspberry Pi's GPIO pins to sprayer nozzle numbers.
+- Starts up nozzle control and logging. 
+- Checks to see if camera resolution is dangerously high.
+- Initialises image stream.
+  - If test video, sets video as image stream using 'FrameReader'.
+  - If camera, tries to init camera, logs init params, and starts video stream.
+- Sets y-axis trigger line in image for weed detection.
+- Sets x-axis nozzle lane coordinates for targeted spraying.
+- Does NOT call hoot, hoot is called from the entrypoint block.
+
+Owl class --> hoot method:
+- Starts image frame and fps tracking (if enabled).
+- Tries to initialise the chosen weed detection algorithm (GoG or GoB).
+- Initialises and starts a terminal display for nozzle spraying status.
+- Enters the main weed detection loop:
+  - Reads the next image.
+  - Calculates image blurriness (if enabled).
+  - Checks if the recording button is pressed/released (if recording enabled).
+  - Exits program if image is None.
+  - Initialises the VideoWriter object for adding frames to video file (if not 
+    done already). 
+  - Reads the weed detection parameters from the GUI (if enabled).
+  - Runs the inference method of the chosen weed detection algorithm, returns 
+    the weed bounding boxes and centres, as well as the labelled image. 
+  - Saves the image if frame count is a multiple of capture rate with cropping
+    to whole/bounding-box/square (if enabled).
+  - Increments frame count. 
+  - Sprays the weed:
+    - Checks if weed centre is below the y-axis detection line in the image.
+    - Checks what lane the weed centre is in. 
+    - Queues a nozzle spray with a nozzle number, delay duration, timestamp, and
+      spray duration (which is hard-coded to 0.15). 
+  - Updates the frame rate. 
+  - Displays labelled image with algorithm and blurriness (if enabled).
+  - Writes frame to video file if recording button is pressed, and releases 
+    VideoWriter if button is released (if enabled). 
+  - Checks if 's' key is pressed and saves weed detection parameters if it is.
+  - Chekcs if 'ESC' key is pressed and exits if it is.
+
+Owl class --> stop method:
+- Turns off solenoids, stops spraying, stops recording, beeps, and exits.
+- Called in weed detection loop when when ESC is pressed or when no image is 
+  returned from camera read. 
+
+Owl class --> update method:
+- Sets the exgMin and exgMax parameters. 
+- This alters the sensitivity of the excess green algorithm.
+- Possibility to use a dial for dynamic user control of sensitivity.
+- Currently called repeatedly in detection loop if display is not enabled (?).
+
+Owl class --> update_delay method:
+- Empty function, not called anywhere. 
+- Could be modified to generate a delay if using GPS.
+
+Owl class --> _handle_exceptions method:
+- Currently only called once in the hoot method whilst instantiating the weed 
+  detection algorithm (green-on-green or green-on-brown).
+- Creates a more detailed error message for green-on-green initialisation errors
+  including pycoral installation, the location of model files, and connection of
+  Google Coral hardware. 
+- Logs (and prints if verbose) the detailed error message with timestamp.
+- Exits the program.
+
+Owl class --> save_parameters method:
+- Called in weed detection loop if the 's' key is pressed. 
+- Captures the weed detection algorithm parameters in a timestamped json file. 
