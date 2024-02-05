@@ -2,43 +2,93 @@
 Notes on button_inputs.py
 ################################################################################
 
-Purpose:
+Purpose: 
+- Currently, only the Recorder class from button_inputs is used in the project. 
+- It is imported into owl.py and controls the video capture functionality. 
+- It has three classes:
+  - SensitivitySelector
+  - Selector 
+  - Recorder
 
 
 Entrypoint:
-No __main__ check, although it sets a testing flag if the system is not a Pi.
+- No __main__ check, although it sets a testing flag if the system is not a Pi. 
+- However, this flag does not seem to affect anything.
 
 
 SensitivitySelector class:
-
+- Not used, but could be used for buttons to adjust model parameters.
+- It has two methods:
+  - __init__
+  - sensitivity_selector
 
 SensitivitySelector class --> __init__ method:
-
+- It takes a dictionary of key/value pairs as an input. 
+- The key is a list of sensitivities.
+- The value is the number of a GPIO pin.
+- Presumably, this could allow button presses to toggle through a predefined 
+  list of values for a given parameter.
+- Alternatively, could map multiple GPIO pins to a dial/encoder.
+- The __init__ method maps these sensitivites to the pin numbers using the 
+  Button object from gpiozero, which simplifies reading the pin states. 
+- It then adds the sensitivity/button-object pair to a list of sensitivities.
+- This list is an attribute of the class instance. 
 
 SensitivitySelector class --> sensitivity_selector method:
-
+- No function (pass).
 
 
 Selector class:
-
+- Not used, but could be used for a dial to select a weed detection algorithm.
+- It has two methods:
+  - __init__
+  - algorithm_selector
 
 Selector class --> __init__ method:
-
+- Identical to the __init__ method of SensitivitySelector, but maps algorithms 
+  to GPIO pins instead of sensitivities to GPIO pins.
 
 Selector class --> algorithm_selector method:
-
+- Not called anywhere. 
+- It takes the list of algorithms/button-object pairs and the currently-selected
+  algorithm as inputs. 
+- It then iterates through the buttons, checking if they are pressed. 
+  - If a button is pressed and it corresponds to the current algorithm, it 
+    returns the algorithm name and False (presumably for no change needed). 
+  - If a button is pressed and it does not correspond to the current algorithm, 
+    it returns the new algorithm's name and True (presumably for change needed).
+  - If no button is pressed, it returns 'exg' (Excess Green) as the default 
+    algorithm and False. 
+- Note that if multiple buttons are pressed at the time the buttons are read, 
+  the first one in the list will be selected. 
 
 
 Recorder class:
-
+- Used, manages the functionality of the recording button.
+- Called in owl.py if recording is enabled. 
+- It has four methods:
+  - __init__
+  - button_check
+  - start_recording
+  - stop_recording
 
 Recorder class --> __init__ method:
-
+- Takes the GPIO pin number of the recording button (currently 37) as an input. 
+- Makes this an attribute of the recorder instance, along with a pin number for
+  an indicator LED (currently 38).
+- Sets up some logical flags for managing the recording functionality. 
+- Assigns callback functions for when the button is pressed or released. 
+  - When pressed, a thread is started for running self.start_recording
+  - When released, a thread is started for running self.stop_recording.
 
 Recorder class --> button_check method:
-
+- Redundant and unused method for assiging the callback functions mentioned 
+  above.
 
 Recorder class --> start_recording method:
-
+- Tells the main loop not to release the frame writer object. 
+- Tells the main loop to save frames.
 
 Recorder class --> stop_recording method:
+- Tells the main loop to release the frame writer object.
+- Tells the main loop to stop saving frames.
