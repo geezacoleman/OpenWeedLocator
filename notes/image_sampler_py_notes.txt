@@ -1,0 +1,43 @@
+################################################################################
+Notes on image_sampler.py
+################################################################################
+
+Purpose: 
+- Provides functions for saving images as .png files either as whole images, 
+  cropped to bounding boxes, or cropped to squares.
+- It has three stand-alone functions:
+  - whole_image_save
+  - bounding_box_image_sample
+  - square_image_sample
+
+
+Entrypoint:
+- None. 
+
+
+whole_image_save(image, save_directory, frame_id):
+- Formats a timestamped name for the image being saved.
+- Saves the image as a .png file in the save directory.
+
+
+bounding_box_image_sample(image, bounding_boxes, save_directory, frame_id):
+- Each weed object in the image has an associated bounding box. 
+- For each bounding box:
+  - The original image is cropped to the bounding box.
+  - A timestamped, frame-numbered, box-numbered name for the image is formatted.
+  - The image is saved as a .png file in the save directory. 
+
+
+square_image_sample(image, centres_list, save_directory, frame_id, side_length):
+- Produces square images cropped around the centre of each weed in the image. 
+- Takes the desired side length of the square image as an input (side_length).
+- First ensures that the desired length is at most the height of the image. 
+- Then, for each weed in the image:
+  - Computes the start location of the image by subtracting half of side_length 
+    from the weed's centre, ensuring it's still in the image frame (not negative
+    pixel coordinates). 
+  - Computes the end location similarly, ensuring its still in the image frame 
+    (ensures pixel coordinates don't exceed image dimensions).
+  - Crops the image using the start and end coordinates. 
+  - A timestamped, frame-numbered, box-numbered name for the image is formatted.
+  - The image is saved as a .png file in the save directory. 
