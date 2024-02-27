@@ -2,6 +2,10 @@
 <img src="https://user-images.githubusercontent.com/51358498/152991504-005a1daa-2900-4f48-8bec-d163d6336ed2.png" width="400">
 </p>
 
+## NVIDIA JETSON BRANCH
+This branch is currently under development to port OWL to the Jetson series of embedded devices developed by Nvidia. Once complete and tested, these changes will be merged into main. Proceed with caution if cloning and using this branch for a Jetson or other device.
+
+## Welcome
 Welcome to the OpenWeedLocator (OWL) project, an opensource hardware and software weed detector that uses entirely off-the-shelf componentry, very simple green-detection algorithms (with capacity to upgrade to in-crop detection) and 3D printable parts. OWL integrates weed detection on a Raspberry Pi with a relay control board in a custom designed case so you can attach any 12V solenoid, relay, lightbulb or device for low-cost, simple and open-source site-specific weed control. Projects to date have seen OWL mounted on robots, vehicles and bicycles for spot spraying. For the latest ideas and news, check out the [Discussion](https://github.com/geezacoleman/OpenWeedLocator/discussions) tab.
 
 Internal electronics       |  Fitted module - vehicle | Fitted module - robot 
