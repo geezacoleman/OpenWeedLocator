@@ -1,0 +1,61 @@
+################################################################################
+Notes on greenongreen.py
+
+Summary completed on 07/02/2024
+Summary based on commit 962e3fb
+################################################################################
+
+Purpose: 
+- Uses a provided .tflite model to run weed detection and labelling.
+- It has only one class:
+  - GreenOnGreen
+
+
+Entrypoint:
+- None. 
+
+
+GreenOnGreen class:
+- Called in owl.py by the hoot method if 'gog' is selected as the algorithm.
+- It has two methods:
+  - __init__
+  - inference
+
+GreenOnGreen class --> __init__ method:
+- Takes a labels.txt file path and a .tflite model file path as inputs.
+- Attempts to import a .tflite model for green-on-green weed detection. 
+  - If no directory is provided or no models are found at the specified 
+    directory, prints a warning message to the terminal and attempts to load the 
+    default model. 
+    - If the default model is not found, prints a warning message.
+    - If the default model is found, prints an info message.
+  - If a model is found, prints an info message to the terminal with the name of
+    the model being used.
+  - If more than one model is found, uses the first one. 
+- Once a model is found:
+  - Reads the ./models/labels.txt file to determine the class being predicted.
+  - Creates an instance of the TensorFlow Lite interpreter and points it to the
+    model that it will be executing. 
+  - Allocates memory for the interpreter's tensors so they can accept input data
+    and generate output data.
+  - Saves the size of the model's input/output for preprocessing to ensure that
+    the size of incoming data matches the model's input.
+  - Initialises an empty variable for storing the inference output.
+
+GreenOnGreen class --> inference method:
+- Takes a BGR image, a confidence threshold, and an object filter id as inputs.
+- Converts the image from the BGR colour space to the RGB colour space. 
+- Resizes the image to match the input size of the model. 
+- Converts the image to byte data and feeds it to the inference model.
+- Gets the detected objects from the output of the inference models that have a 
+  confidence of at least the provided confidence threshold.
+- Calculates x and y scaling factors to account for input image resizing.
+- For each detected object that match the filter id (are weeds):
+  - Scales the bounding box calculated by the inference model so that the box 
+    coordinates match the original image resolution.
+  - Calculates the centre of the bounding box (as the weed centre estimate).
+  - Saves the starting coordinates, the centre coordinates, and the dimensions
+    of the scaled bounding box.
+  - Draws the bounding box on the original image with a text label of the 
+    percentage confidence and the filter id. 
+- Returns the boxes, centres, and the labelled image.

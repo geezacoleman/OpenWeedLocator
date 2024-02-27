@@ -1,0 +1,168 @@
+################################################################################
+Notes on algorithms.py
+
+Summary completed on 07/02/2024
+Summary based on commit 962e3fb
+################################################################################
+
+Purpose: 
+- A range of pixel-by-pixel colour thresholding algorithms for detecting green 
+  plants (on a non-green background).
+- Imported by greenonbrown.py. 
+- Can be used by owl.py for weed detection.
+- It has 11 stand-alone functions:
+  - exg 
+  - maxg
+  - exg_standardised
+  - exg_standardised_hue
+  - exgr 
+  - hsv
+  - gndvi
+  - veg
+  - cive 
+  - clahe_sat_val
+  - dgci
+
+
+Entrypoint:
+- None.
+
+
+exg(image):
+"""
+'Effective segmentation of green vegetation for resource-constrained real-time 
+applications', Woebbecke et al. 1995. 
+DOI: 10.3920/978-90-8686-814-8_31
+"""
+- Takes a uint8 BGR image as an input. 
+- Splits the three colour channels, casting them as float32 to prevent overflow. 
+- Applies the exg (Excess Green) algorithm (result = 2 * G - R - B).
+- Clips all pixels in the resulting image to be between 0 and 255. 
+- Casts the pixels back to uint8. 
+- Returns the single-channel grayscale image. 
+
+
+maxg(image):
+"""
+'Weed Identification Using Deep Learning and Image Processing in Vegetable
+Plantation', Jin et al. 2021.
+DOI: 10.1109/ACCESS.2021.3050296
+"""
+- Takes a uint8 BGR image as an input.
+- Splits the three colour channels, casting them as float32 to prevent overflow.
+- Applies the maxg (Max Green) algorithm (result = 24 * G - 19 * R - 2 * B).
+- Scales all the pixels so that the max pixel is 255. 
+- WARNING, does not clip pixel values to be above zero.
+- Casts the pixels back to uint8.
+- Returns the single-channel grayscale image. 
+
+
+exg_standardised(image):
+- Same as exg(), but scales BGR channels to relative intensities (all three 
+  channels between zero and one, all three channels sum to one).
+- Should make the algorithm less sensitive to changes in illumination intensity.
+- The regular exg algorithm is applied and the result is scaled back by 255.
+- Clips all pixels in the resulting image to be between 0 and 255. 
+- Casts the pixels back to uint8. 
+- Returns the single-channel grayscale image. 
+
+
+exg_standardised_hue(image, hueMin, hueMax, brightnessMin, brightnessMax, 
+  saturationMin, saturationMax, invert_hue):
+- Applies the exg_standardised algorithm to the original image. 
+- Then applies an HSV threshold to the original image (see hsv(image): below).
+- The HSV threshold produces a binary mask that is applied to the output of the
+  exg_standardised algorithm pixel-per-pixel. 
+- This filters out 'false-positives' that are not 'green' as specified by the 
+  user's HSV threshold ranges. 
+- Returns the single-channel grayscale image. 
+
+
+exgr(image):
+- Applies the exg (Excess Green) algorithm to the original image:
+  (result1 = 2 * G - R - B) 
+- Applies the exr (Excess Red) algorithm to the original image:
+  (result2 = 1.4 * R - G)
+- Subtracts exr from exg to produce exgr (Excess Green minus Excess Red).
+  (result = result1 - result2 = G - 2.4 * R - B)
+- Clips all pixels in the resulting image to be between 0 and 255. 
+- Casts the pixels back to uint8. 
+- Returns the single-channel grayscale image. 
+
+
+hsv(image, hueMin, hueMax, brightnessMin, brightnessMax, 
+  saturationMin, saturationMax, invert_hue):
+- Takes a uint8 BGR image as an input. 
+- Converts the image from BGR colour space to HSV colour space. 
+- Applies a pixel-by-pixel thresholding operation.
+- Pixels are set to a binary 1 (grayscale 255) if:
+  - They have a hue between hueMin and hueMax,
+  - AND they have a saturation between saturationMin and saturationMax, 
+  - AND they have a brightness (value) between brightnessMin and brightnessMax.
+- Otherwise, they are set to a binary 0 (grayscale 0).
+- Returns the single-channel binary (although still uint8) image.
+- Optionally, the resulting binary image can be inverted if invert_hue = True.
+
+
+gndvi(image):
+- Takes a uint8 BGR image as an input. 
+- Splits the colour channels, casting them as float32 to prevent overflow. 
+- Applies the gndvi (Green Normalised Difference Vegetation Index) algorithm:
+  (result = (NIR - G) / (NIR + G))
+- The OWL has no NIR sensor, so the red colour channel is used instead:
+  (result = (R - G) / (R + G))
+- Normalises all of the pixel values to between 0 and 255. 
+- Casts the pixels back to uint8. 
+- Returns the single-channel grayscale image. 
+
+
+veg(image):
+- NOT tested or integrated with greenonbrown.py
+- Takes a uint8 BGR image as an input. 
+- Splits the colour channels, casting them as float32 to prevent overflow. 
+- Applies the veg (Vegetation Index) algorithm:
+  (result = G / (R ^ 0.667 * B ^ 0.333))
+- Normalises all of the pixel values to between 0 and 255. 
+- (Redundant) clips all pixels to be between 0 and 255. 
+- Casts the pixels back to uint8. 
+- Returns the single-channel grayscale image. 
+
+cive(image):
+- NOT tested or integrated with greenonbrown.py
+- Takes a uint8 BGR image as an input. 
+- Splits the colour channels, casting them as float32 to prevent overflow. 
+- Applies the cive (Colour Index of Vegetation Extraction) algorithm:
+  (result = 0.441 * R − 0.881 * G + 0.385 * B + 18.78745)
+- Clips all pixels in the resulting image to be between 0 and 255. 
+- Casts the pixels back to uint8. 
+- Returns the single-channel grayscale image. 
+
+
+clahe_sat_val(image):
+- NOT tested or integrated with greenonbrown.py
+- Takes a uint8 BGR image as an input. 
+- Converts the image from BGR colour space to HSV colour space. 
+- Splits the colour channels.
+- Applies the Contrast Limited Adaptive Histogram Equalization algorithm
+  - This enhances the contrast of the image without affecting the hue channel.
+  - It only manipulates the saturation and value channels. 
+  - The image is broken up into tiles. 
+  - Histogram equalisation is applied to each tile independently, which should 
+    minimise noise amplification by respecting the local content of the image.
+- The hue and the modified saturation and value channels are recombined. 
+- The modified HSV image is converted back to the BGR colour space and returned.
+- Note: this does not actually identify green on brown. 
+- Note: this could act as more of a preprocessing step to possibly improve the 
+        performance of other weed-detecting algorithms, but this is untested.
+
+
+dgci(image):
+- NOT tested or integrated with greenonbrown.py
+- Takes a uint8 BGR image as an input. 
+- Converts the image from BGR colour space to HSV colour space. 
+- Splits the colour channels, casting them as float32 to prevent overflow.
+- Applies the dgci (Dark Green Colour Index) algorithm to the HSV channels:
+  (result = ((H - 60)/(60 + (1 - S) + (1 - V)))/3)
+- WARNING, the result is then cast back to uint8 (may cause overflow issues).
+- (Redundant) the result is then normalised between 0 and 255. 
+- The normalised result is returned as a single-channel grayscale image.

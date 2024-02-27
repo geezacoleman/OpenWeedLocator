@@ -1,0 +1,20 @@
+################################################################################
+Notes on video_analysis.py
+
+Summary completed on 07/02/2024
+Summary based on commit 962e3fb
+################################################################################
+
+Purpose: 
+- Note: none of the functions in video_analysis.py are used elsewhere in the 
+        project. four_frame_analysis, single_frame_analysis and size_analysis
+        are not called anywhere. frame_processor is only called in 
+        four_frame_analysis and single_frame_analysis. blur_analysis is only 
+        called in the main block of video_analysis.py. Seems to be for viewing,
+        comparing, and selectively saving frames from multiple videos.
+- It has five stand-alone functions:
+  - four_frame_analysis
+  - single_frame_analysis
+  - frame_processor
+  - size_analysis
+  - blur_analysis
