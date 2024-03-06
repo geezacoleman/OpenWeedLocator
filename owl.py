@@ -2,6 +2,7 @@
 from button_inputs import Recorder
 from image_sampler import bounding_box_image_sample, square_image_sample, whole_image_save
 from utils.blur_algorithms import fft_blur
+from logger import Logger
 from greenonbrown import GreenOnBrown
 from relay_control import Controller
 from utils.frame_reader import FrameReader
@@ -119,12 +120,12 @@ class Owl:
             2: 16,
             3: 18
         }
+        # instantiate the logger
+        self.saveDir = os.path.join(os.path.dirname(__file__), 'logs')
+        self.logger = Logger(db_name="weed_log.db", saveDir=self.saveDir)
 
         # instantiate the nozzle controller - successful start should beep the buzzer
-        self.controller = Controller(nozzleDict=self.nozzleDict)
-
-        # instantiate the logger
-        self.logger = self.controller.logger
+        self.controller = Controller(nozzleDict=self.nozzleDict, logger=self.logger)
 
         # check that the resolution is not so high it will entirely brick/destroy the OWL.
         total_pixels = resolution[0] * resolution[1]
@@ -232,6 +233,9 @@ class Owl:
             laneX = int(i * self.laneWidth)
             self.laneCoords[i] = laneX
 
+        self.processingTimes = []
+        self.sumOfLast10 = 0
+
     def hoot(self,
              sprayDur,
              delay,
@@ -276,6 +280,7 @@ class Owl:
         self.controller.vis = True
 
         try:
+
             while True:
                 delay = self.update_delay(delay)
                 frame = self.cam.read()
@@ -376,6 +381,7 @@ class Owl:
                 # ########################
 
                 # loop over the ID/weed centres from contours
+                startTime = time.time()
                 for ID, centre in enumerate(weedCentres):
                     # if they are in activation region the spray them
                     if centre[1] > self.yAct:
@@ -385,7 +391,19 @@ class Owl:
                             if int(self.laneCoords[i]) <= centre[0] < int(self.laneCoords[i] + self.laneWidth):
                                 # log a spray job with the controller using the nozzle, delay, timestamp and spray duration
                                 # if GPS is used/speed control, delay can be updated automatically based on forward speed
+                                # pass
                                 self.controller.receive(nozzle=i, delay=delay, timeStamp=sprayTime, duration=sprayDur)
+
+                endTime = time.time()
+
+                # Calculate elapsed time in milliseconds
+                elapsedTimeMs = (endTime - startTime) * 1000
+                self.processingTimes.append(elapsedTimeMs)
+
+                if len(self.processingTimes) > 10:
+                    self.processingTimes.pop(0)  # Remove the oldest number (first in the list)
+
+                rollingAverage = sum(self.processingTimes) / len(self.processingTimes)
 
                 # update the framerate counter
                 if log_fps:
@@ -394,6 +412,7 @@ class Owl:
                 if self.show_display:
                     cv2.putText(imageOut, f'OWL-gorithm: {algorithm}', (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
                                 (80, 80, 255), 1)
+                    cv2.putText(imageOut, f'Time (10 frames): {rollingAverage} ms', (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (80, 80, 255), 1)
                     cv2.putText(imageOut, f'Press "S" to save {algorithm} thresholds to file.',
                                 (20, int(imageOut.shape[1 ] *0.72)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 80, 255), 1)
                     if self.focus:
@@ -423,11 +442,13 @@ class Owl:
                     self.logger.log_line("[INFO] Parameters saved.", verbose=True)
 
                 if k == 27:
+                    print(rollingAverage)
                     if log_fps:
                         fps.stop()
-                        self.logger.log_line_video(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
+                        self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
                     self.controller.nozzle_vis.close()
                     self.logger.log_line("[INFO] Stopped.", verbose=True)
+                    self.logger.stop_logging()
                     self.stop()
                     break
 
@@ -437,12 +458,14 @@ class Owl:
                 self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
             self.controller.nozzle_vis.close()
             self.logger.log_line("[INFO] Stopped.", verbose=True)
+            self.logger.stop_logging()
             self.stop()
 
         except Exception as e:
             print(e)
             self.controller.solenoid.beep(duration=0.5, repeats=5)
             self.logger.log_line(f"[CRITICAL ERROR] STOPPED: {e}")
+            self.logger.stop_logging()
 
     def stop(self):
         self.controller.running = False
@@ -456,7 +479,7 @@ class Owl:
 
         if self.show_display:
             cv2.destroyAllWindows()
-
+        self.logger.stop_logging()
         sys.exit()
 
     def update(self, exgMin=30, exgMax=180):
@@ -576,5 +599,6 @@ if __name__ == "__main__":
              camera_name='hsv',
              minArea=10,
              confidence=args.conf,
-             invert_hue=False  # invert the hue threshold - useful for excluding green to find red/purple stems
+             invert_hue=False,  # invert the hue threshold - useful for excluding green to find red/purple stems
+             log_fps=True
              )

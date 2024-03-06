@@ -1,9 +1,10 @@
-from logger import Logger
 from threading import Thread, Condition
 from utils.cli_vis import NozzleVis
 import collections
 import time
 import os
+
+import logging
 
 import platform
 # check if the system is being tested on a Windows or Linux x86 64 bit machine
@@ -92,7 +93,7 @@ class RelayControl:
 # this class does the hard work of receiving detection 'jobs' and queuing them to be actuated. It only turns a nozzle on
 # if the sprayDur has not elapsed or if the nozzle isn't already on.
 class Controller:
-    def __init__(self, nozzleDict, vis=False):
+    def __init__(self, nozzleDict, logger, vis=False):
         self.nozzleDict = nozzleDict
         self.vis = vis
         # instantiate relay control with supplied nozzle dictionary to map to correct board pins
@@ -101,8 +102,7 @@ class Controller:
         self.nozzleconditionDict = {}
 
         # start the logger and log file using absolute path of python file
-        self.saveDir = os.path.join(os.path.dirname(__file__), 'logs')
-        self.logger = Logger(name="weed_log.txt", saveDir=self.saveDir)
+        self.logger = logger
 
         # create a job queue and Condition() for each nozzle
         print("[INFO] Setting up nozzles...")
@@ -140,6 +140,7 @@ class Controller:
             inputCondition.notify()
 
         line = f"nozzle: {nozzle} | time: {timeStamp} | location {location} | delay: {delay} | duration: {duration}"
+
         self.logger.log_line(line, verbose=False)
 
     def consumer(self, nozzle):
