@@ -1,6 +1,6 @@
 from tqdm import tqdm
 from datetime import datetime, timezone
-from greenonbrown import green_on_brown
+from greenonbrown import GreenOnBrown
 from image_sampler import bounding_box_image_sample, whole_image_save
 from imutils.video import count_frames, FileVideoStream
 from threading import Thread
@@ -258,6 +258,7 @@ def single_frame_analysis(videoFile: str, HDFile: str, algorithm='exhsv'):
 
 def frame_processor(videoFeed, videoName='', algorithm='exhsv'):
     frameShape = None
+    gob = GreenOnBrown(algorithm=algorithm)
     while True:
         k = cv2.waitKey(1) & 0xFF
         ret, frame = videoFeed.read()
@@ -272,7 +273,7 @@ def frame_processor(videoFeed, videoName='', algorithm='exhsv'):
             yield frame
 
         else:
-            cnts, boxes, weedCentres, imageOut = green_on_brown(frame, exgMin=29,
+            cnts, boxes, weedCentres, imageOut = gob.inference(frame, exgMin=29,
                                                                 exgMax=200,
                                                                 hueMin=30,
                                                                 hueMax=92,
@@ -281,7 +282,7 @@ def frame_processor(videoFeed, videoName='', algorithm='exhsv'):
                                                                 brightnessMin=60,
                                                                 brightnessMax=250,
                                                                 show_display=False,
-                                                                algorithm=algorithm, minArea=10)
+                                                                minArea=10)
 
             yield imageOut
         if k == 27:
@@ -316,6 +317,9 @@ def size_analysis(directory, sample_number=10, save_directory=None):
 
     df = pd.DataFrame(columns=df_columns)
 
+    if not os.path.exists(save_directory):
+        os.makedirs(save_directory)
+
     for videoPath in tqdm(glob.iglob(directory + '\*.mp4')):
         video_name = os.path.basename(videoPath).split('.')[0]
         camera_name = video_name.split('-')[0].lower()
@@ -325,6 +329,8 @@ def size_analysis(directory, sample_number=10, save_directory=None):
         cap = cv2.VideoCapture(videoPath)
         video_length = count_frames(videoPath, override=True) - 1
 
+        gob = GreenOnBrown(algorithm='exhsv')
+
         # randomly sample frames
         for i in tqdm(range(sample_number)):
 
@@ -333,7 +339,7 @@ def size_analysis(directory, sample_number=10, save_directory=None):
             ret, frame = cap.read()
 
             # uses same parameters as the above image analysis settings
-            cnts, boxes, weedCentres, imageOut = green_on_brown(frame.copy(), exgMin=29,
+            cnts, boxes, weedCentres, imageOut = gob.inference(frame.copy(), exgMin=29,
                                                                 exgMax=200,
                                                                 hueMin=30,
                                                                 hueMax=92,
@@ -342,7 +348,7 @@ def size_analysis(directory, sample_number=10, save_directory=None):
                                                                 brightnessMin=60,
                                                                 brightnessMax=250,
                                                                 show_display=False,
-                                                                algorithm='exhsv', minArea=-10)
+                                                                minArea=-10)
             # cv2.imshow('Output', imageOut)
             # cv2.waitKey(10)
             # calculate and append the individual contour areas
@@ -398,44 +404,132 @@ def size_analysis(directory, sample_number=10, save_directory=None):
                                                                       RANDOM_STATE))
     time.sleep(2)
 
-def blur_analysis(directory):
-    blurDict = {}
-    df = pd.DataFrame(columns=['field', 'algorithm', 'blur'])
-    for videoPath in glob.iglob(directory + '\*.mp4'):
-        allframeBlur = []
-        sampledframeBlur = []
-        video = FileVideoStream(videoPath).start()
-        frameCount = 0
-        while True:
-            frame = video.read()
-            if video.stopped:
-                meanBlur = np.mean(allframeBlur)
-                stdBlur = np.std(allframeBlur)
-                vidName = os.path.basename(videoPath)
-                fieldNameList = [vidName.split("-")[0] for i in range(100)]
-                print(fieldNameList)
-                algorithmNameList = [os.path.splitext(vidName.split("-")[2])[0] for i in range(100)]
+def blur_analysis(directory, csv_save_directory='logs', sample_number=10, im_save_directory=None, display=False,
+                  use_brisque=False, use_blur_detector=False, use_fft=False):
+    import utils.blur_algorithms as blur
+    from utils.blur_algorithms import normalize_brightness
 
-                for i in range(100):
-                    randint = np.random.randint(0, len(allframeBlur))
-                    sampledframeBlur.append(allframeBlur[randint])
-                df2 = pd.DataFrame(list(zip(fieldNameList, algorithmNameList, sampledframeBlur)),
-                                   columns=['field', 'algorithm', 'blur'])
-                print(df2)
-                df = df.append(df2)
-                print(df)
-                df.to_csv(r"videos\blur\blurriness.csv")
-                blurDict[vidName] = [meanBlur, stdBlur]
-                break
+    if use_brisque:
+        from brisque import BRISQUE
+        iqa_obj = BRISQUE(url=False)
 
-            greyscale = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            blurriness = cv2.Laplacian(greyscale, cv2.CV_64F).var()
-            allframeBlur.append(blurriness)
-            frameCount += 1
+    if use_blur_detector:
+        from blur_detector import detectBlur
 
-        print(vidName, ',', np.round(meanBlur, 2), ',', np.round(stdBlur, 2), ',', frameCount)
+    ### IMPORTANT ###
+    # this sets the random state - random values won't change unless you change this number
+    RANDOM_STATE = 42
+    np.random.seed(RANDOM_STATE)
+    #################
 
-    print(blurDict)
+    df_columns = ['video_name', 'camera', 'rep', 'speed', 'frame_id',
+                  'laplacian_blur', 'variance_of_gradient_blur', 'tenengrad_blur', 'entropy_blur', 'wavelet_blur', 'gradient_blur']
+    if use_brisque:
+        df_columns.append('brisque')
+
+    if use_fft:
+        df_columns.append('fft_blur')
+
+    df = pd.DataFrame(columns=df_columns)
+
+    for videoPath in tqdm(glob.iglob(directory + '\*.mp4')):
+        blur_scores = {'laplacian_blur': [],
+                       'variance_of_gradient_blur': [],
+                       'tenengrad_blur': [],
+                       'entropy_blur': [],
+                       'wavelet_blur': [],
+                       'gradient_blur': []}
+        if use_brisque:
+            blur_scores['brisque'] = []
+
+        if use_fft:
+            blur_scores['fft_blur'] = []
+
+        video_name = os.path.basename(videoPath).split('.')[0]
+        camera_name = video_name.split('-')[0].lower()
+        rep = video_name.split('-')[1]
+        speed = video_name.split('-')[2]
+
+        cap = cv2.VideoCapture(videoPath)
+        video_length = count_frames(videoPath, override=True) - 1
+
+        # randomly sample frames
+        for i in tqdm(range(sample_number)):
+            scores = []
+            randint = np.random.randint(0, video_length)
+            cap.set(1, randint)
+            ret, frame = cap.read()
+            # if frame.shape[1] != 416:
+            #     frame = cv2.resize(frame, (416, 320), interpolation=cv2.INTER_CUBIC)
+            #     print('RESIZED', camera_name)
+
+            if im_save_directory is not None:
+                save_frame = frame.copy()
+
+                whole_image_thread = Thread(target=whole_image_save,
+                                            args=[save_frame, im_save_directory, randint])
+                whole_image_thread.start()
+
+            if use_blur_detector:
+                gray = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2GRAY)
+
+                blur_map = detectBlur(gray.copy(), downsampling_factor=4, num_scales=4, scale_start=2, num_iterations_RF_filter=3)
+                cv2.imshow(f'{camera_name} | {speed}', frame.copy())
+                cv2.imshow(f'{camera_name} | {speed} MAP', blur_map)
+                cv2.waitKey(0)
+                cv2.destroyAllWindows()
+
+                blur_id = f"{randint}_blur"
+                blur_image_thread = Thread(target=whole_image_save,
+                                            args=[blur_map, im_save_directory, blur_id])
+                blur_image_thread.start()
+
+            # frame = normalize_brightness(frame.copy())
+            for algo_name in blur_scores.keys():
+                if algo_name == "brisque":
+                    score = iqa_obj.score(frame.copy())
+                    blur_scores[algo_name].append(score)
+                    scores.append(score)
+
+                elif algo_name == "fft_blur":
+                    fft_func = getattr(blur, algo_name)
+                    gray = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2GRAY)
+                    score = fft_func(gray, size=10)
+                    blur_scores[algo_name].append(score)
+                    scores.append(score)
+
+
+                else:
+                    blur_func = getattr(blur, algo_name)
+                    score = blur_func(frame.copy())
+                    blur_scores[algo_name].append(score)
+                    scores.append(score)
+
+            if use_brisque and use_fft:
+                data = [video_name, camera_name, rep, speed, randint, scores[0], scores[1], scores[2], scores[3],
+                        scores[4], scores[5], scores[6], scores[7]]
+
+
+            elif use_brisque or use_fft:
+                data = [video_name, camera_name, rep, speed, randint, scores[0], scores[1], scores[2], scores[3],
+                        scores[4], scores[5], scores[6]]
+
+            else:
+                data = [video_name, camera_name, rep, speed, randint, scores[0], scores[1], scores[2], scores[3],
+                        scores[4], scores[5]]
+
+            df2 = pd.DataFrame([data], columns=df_columns)
+
+            if display:
+                display_frame = frame.copy()
+                cv2.imshow(video_name, display_frame)
+                cv2.waitKey(100)
+                cv2.destroyAllWindows()
+
+            df = df.append(df2)
+
+    df.to_csv(os.path.join(csv_save_directory, f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_BLUR_rstate_{RANDOM_STATE}.csv"))
+    time.sleep(2)
 
 
 if __name__ == "__main__":
@@ -446,7 +540,16 @@ if __name__ == "__main__":
     #                       HDFile=hdFile,
     #                       algorithm='exg')
     #
-    # # blur analysis
-    directory = r"videos"
-    save_directory = r'images/bbox'
-    size_analysis(directory=directory, save_directory=save_directory)
+    # blur analysis
+    directory = r"input_video_directory"
+    csv_save_directory = "csv_output_directory"
+    im_save_directory = False
+
+    blur_analysis(directory=directory,
+                  csv_save_directory=csv_save_directory,
+                  sample_number=10,
+                  im_save_directory=im_save_directory,
+                  display=False,
+                  use_brisque=True,
+                  use_blur_detector=True,
+                  use_fft=True)

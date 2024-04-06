@@ -18,19 +18,21 @@ class SensitivitySelector:
         self.buttonList = []
 
         for sensitivityList, GPIOpin in self.switchDict.items():
-            button = Button("BOARD{}".format(GPIOpin))
+            button = Button(f"BOARD{GPIOpin}")
             self.buttonList.append([button, sensitivityList])
 
     def sensitivity_selector(self):
         pass
 
+# used with a physical dial to select the algorithm during initial validation.
+# No longer used in the main greenonbrown.py file
 class Selector:
     def __init__(self, switchDict: dict):
         self.switchDict = switchDict
         self.buttonList = []
 
         for algorithm, GPIOpin in self.switchDict.items():
-            button = Button("BOARD{}".format(GPIOpin))
+            button = Button(f"BOARD{GPIOpin}")
             self.buttonList.append([button, algorithm])
 
     def algorithm_selector(self, algorithm):
@@ -43,9 +45,10 @@ class Selector:
 
         return 'exg', False
 
+# video recording button
 class Recorder:
     def __init__(self, recordGPIO: int):
-        self.recordButton = Button("BOARD{}".format(recordGPIO))
+        self.recordButton = Button(f"BOARD{recordGPIO}")
         self.record = False
         self.saveRecording = False
         self.running = True

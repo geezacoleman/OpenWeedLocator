@@ -1,0 +1,61 @@
+################################################################################
+Notes on greenonbrown.py
+
+Summary completed on 07/02/2024
+Summary based on commit 962e3fb
+################################################################################
+
+Purpose: 
+- Uses the colour thresholding algorithms from algorithms.py to perform weed 
+  detection and labelling.
+- It has only one class:
+  - GreenOnBrown
+
+
+Entrypoint:
+- None. 
+
+
+GreenOnBrown class:
+- Called in owl.py by the hoot method of the Owl class.
+- It has two methods:
+  - __init__
+  - inference
+
+GreenOnBrown class --> __init__ method:
+- Takes the chosen algorithm from algorithms.py as an input.
+- Saves this as an attribute of the GreenOnBrown instance.
+
+GreenOnBrown class --> inference method:
+- Takes a BGR image as an input.
+- Performs colour thresholding using the chosen algorithm. 
+- Creates a kernel/structuring element that will be convolved with the image 
+  during morphological operations to remove noise and isolate objects later.
+- If the image returned by the colour thresholding algorithm is grayscale and 
+  not binary, then a pixel-by-pixel binarisation is performed. 
+  - Pixels with an intensity between exgMin and exgMax are kept.
+  - All other pixels are set to a binary 0 (grayscale 0).
+  - If show_display is enabled, the thresholded image is displayed.
+  - Then an adaptive gaussian binarisation is applied to the thresholded image.
+  - The threshold value is a gaussian-weighted sum of the neighbourhood values 
+    (currently a 31x31 block centred on the pixel being analysed) minus the 
+    constant C (currently set to 2).
+  - Pixels that produce a value greater than zero are set to a binary 1 
+    (grayscale 255), whilst pixels that produce a negative value are set to a 
+    binary 0 (grayscale 0)
+- Once the image is binary, a morphological closing operation is performed. 
+  - This is equivalent to performing an erosion operation followed by an opening
+    operation, which has the effect of closing small areas of white pixels 
+    (noise) whilst leaving large areas of white pixels (objects) largly 
+    unaffected.
+- Then contour detection is performed, which finds the borders of every separate
+  white blob in the binary image, as well as the hierarchy of the contours (one 
+  border might be fully contained by another border like a donut).
+- Them, for each contour:
+  - It checks if the area enclosed by the contour is greater than a minimum 
+    threshold. 
+  - If it is, it computes the smallest bounding box that will contain the 
+    contour, and then draws this bounding box on the image with a label "WEED".
+  - It also saves the box start/end coordinates, and the box's centre.
+- Finally, it returns the contours, the boxes, the box centres, and the labelled
+  image.
