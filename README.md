@@ -4,6 +4,13 @@
 
 Welcome to the OpenWeedLocator (OWL) project, an opensource hardware and software weed detector that uses entirely off-the-shelf componentry, very simple green-detection algorithms (with capacity to upgrade to in-crop detection) and 3D printable parts. OWL integrates weed detection on a Raspberry Pi with a relay control board in a custom designed case so you can attach any 12V solenoid, relay, lightbulb or device for low-cost, simple and open-source site-specific weed control. Projects to date have seen OWL mounted on robots, vehicles and bicycles for spot spraying. For the latest ideas and news, check out the [Discussion](https://github.com/geezacoleman/OpenWeedLocator/discussions) tab.
 
+# Welcome to OpenWeedLocator (OWL)
+Welcome to the OpenWeedLocator (OWL) project, an opensource hardware and software green-on-brown weed detector that uses entirely off-the-shelf componentry, very simple green-detection algorithms and entirely 3D printable parts. OWL integrates weed detection on a Raspberry Pi with a relay control board in a custom designed case so you can attach any 12V solenoid, relay, lightbulb or device for low-cost, simple and opensource site-specific weed control. Projects to date have seen OWL mounted on robots and vehicles for spot spraying! 
+
+On the weed detection front, a range of algorithms have been provided, each with advantages and disadvantages for your use case. They include ExG (excess green 2g - r - b, developed by Woebbecke et al. 1995), a hue, saturation and value (HSV) threshold and a combined ExG + HSV algorithm. These algorithms have all been tested in a wide range of conditions. The article has now been published in [Scientific Reports (open access)](https://www.nature.com/articles/s41598-021-03858-9).
+
+Repository DOI: [![DOI](https://zenodo.org/badge/399194159.svg)](https://zenodo.org/badge/latestdoi/399194159)
+
 Internal electronics       |  Fitted module - vehicle | Fitted module - robot 
 :-------------------------:|:-------------------------: |:-------------------------:
 ![Internal view](https://user-images.githubusercontent.com/51358498/152991433-e3cfa53a-bb8d-4754-81b2-17b9cb9cb1e5.png)  |  ![Fitted module - spot spraying vehicle](https://user-images.githubusercontent.com/51358498/130522810-bb19e6ca-5019-4de4-83cc-858eca358ef8.jpg) | ![Fitted module - robot](https://user-images.githubusercontent.com/51358498/152991300-32003505-6ed2-49ba-9d00-8e3db4cb5db4.png)
@@ -17,8 +24,11 @@ The performance of the OWL from 5 - 30 km/h with different cameras and on broadl
 
 Repository DOI: [![DOI](https://zenodo.org/badge/399194159.svg)](https://zenodo.org/badge/latestdoi/399194159)
 
-### Raspian Operating System Support 
-**Important**: The current software only functions correctly on Raspian Buster (with picamera support). We are working on updating the image to function correctly with Raspian Bookworm for Raspberry Pi 5 and Picamera2 support. This is expected to be released in February 2024. In the meantime, we recommend downloading the existing image and updating it with `update_owl.sh`.
+### NOTICE: Raspian Operating System Support 
+**Important**: The current software only functions correctly on Raspian Buster (with picamera support). We are working on updating the image to function correctly with Raspian Bookworm for Raspberry Pi 5 and Picamera2 support. This is expected to be released in May 2024. In the meantime, we recommend downloading the existing image and updating it with `update_owl.sh`.
+
+### NOTICE: Picamera2
+Raspberry Pi has announced that they would be moving away from the current picamera software, towards the open-source and active [libcamera-based picamera2](https://www.raspberrypi.com/documentation/accessories/camera.html). The picamera2 library is now in [beta](https://github.com/raspberrypi/picamera2). We will be transitioning the OpenWeedLocator to picamera2, given it has much simpler integration of a wider array of cameras.
 
 # Overview
 * [OWL Use Cases](#owl-use-cases)
