@@ -6,6 +6,8 @@ from greenonbrown import GreenOnBrown
 from relay_control import Controller
 from utils.frame_reader import FrameReader
 
+from configparser import ConfigParser
+from pathlib import Path
 from datetime import datetime, timezone
 from imutils.video import FPS
 from utils.video import VideoStream
@@ -28,76 +30,41 @@ def nothing(x):
 
 
 class Owl:
-    def __init__(self,
-                 input_file_or_directory=None,
-                 show_display=False,
-                 focus=False,
-                 recording=False,
-                 nozzleNum=4,
-                 exgMin=30,
-                 exgMax=180,
-                 hueMin=30,
-                 hueMax=92,
-                 brightnessMin=5,
-                 brightnessMax=200,
-                 saturationMin=30,
-                 saturationMax=255,
-                 resolution=(416, 320),
-                 framerate=32,
-                 exp_mode='sports',
-                 awb_mode='auto',
-                 sensor_mode=0,
-                 exp_compensation=-4,
-                 parameters_json=None,
-                 image_loop_time=5):
+    def __init__(self, show_display=False, focus=False, config_file='config/DAY_SENSITIVITY_2.ini'):
+
+        # start by reading the config file
+        self._config_path = Path(__file__).parent / config_file
+        self.config = ConfigParser()
+        self.config.read(self._config_path)
 
         # different detection parameters
         self.show_display = show_display
         self.nozzle_vis = None
-        self.recording = recording
+        self.recording = self.config.getboolean('DataCollection', 'recording')
         self.focus = focus
         if self.focus:
             self.show_display = True
 
-        self.resolution = resolution
-        self.framerate = framerate
+        self.resolution = (self.config.getint('Camera', 'resolution_width'),
+                           self.config.getint('Camera', 'resolution_height'))
+        self.framerate = self.config.getint('Camera', 'framerate')
         self.exp_mode = exp_mode
         self.awb_mode = awb_mode
         self.sensor_mode = sensor_mode
         self.exp_compensation = exp_compensation
 
         # threshold parameters for different algorithms
-        self.exgMin = exgMin
-        self.exgMax = exgMax
-        self.hueMin = hueMin
-        self.hueMax = hueMax
-        self.saturationMin = saturationMin
-        self.saturationMax = saturationMax
-        self.brightnessMin = brightnessMin
-        self.brightnessMax = brightnessMax
+        self.exgMin = self.config.getint('GreenOnBrown', 'exgMin')
+        self.exgMax = self.config.getint('GreenOnBrown', 'exgMax')
+        self.hueMin = self.config.getint('GreenOnBrown', 'hueMin')
+        self.hueMax = self.config.getint('GreenOnBrown', 'hueMax')
+        self.saturationMin = self.config.getint('GreenOnBrown', 'saturationMin')
+        self.saturationMax = self.config.getint('GreenOnBrown', 'saturationMax')
+        self.brightnessMin = self.config.getint('GreenOnBrown', 'brightnessMin')
+        self.brightnessMax = self.config.getint('GreenOnBrown', 'brightnessMax')
 
         self.thresholdDict = {}
-        self.image_loop_time = image_loop_time  # time spent on each image when looping over a directory
-
-        if parameters_json:
-            try:
-                with open(parameters_json) as f:
-                    self.thresholdDict = json.load(f)
-                    self.exgMin = self.thresholdDict['exgMin']
-                    self.exgMax = self.thresholdDict['exgMax']
-                    self.hueMin = self.thresholdDict['hueMin']
-                    self.hueMax = self.thresholdDict['hueMax']
-                    self.saturationMin = self.thresholdDict['saturationMin']
-                    self.saturationMax = self.thresholdDict['saturationMax']
-                    self.brightnessMin = self.thresholdDict['brightnessMin']
-                    self.brightnessMax = self.thresholdDict['brightnessMax']
-                    print('[INFO] Parameters successfully loaded.')
-
-            except FileExistsError:
-                print('[ERROR] Parameters file not found. Continuing with default settings.')
-
-            except KeyError:
-                print('[ERROR] Parameter key not found. Continuing with default settings.')
+        self.image_loop_time = 5  # time spent on each image when looping over a directory
 
         # setup the track bars if show_display is True
         if self.show_display:
@@ -128,11 +95,13 @@ class Owl:
         self.logger = self.controller.logger
 
         # check that the resolution is not so high it will entirely brick/destroy the OWL.
-        total_pixels = resolution[0] * resolution[1]
+        total_pixels = self.resolution[0] * self.resolution[1]
         if total_pixels > (832 * 640):
             # change here if you want to test higher resolutions, but be warned, backup your current image!
             self.resolution = (416, 320)
-            self.logger.log_line(f"[WARNING] Resolution {resolution} selected is dangerously high. Resolution has been reset to default to avoid damaging the OWL",
+            self.logger.log_line(f"[WARNING] Resolution {self.config.getint('Camera', 'resolution_width')}, "
+                                 f"{self.config.getint('Camera', 'resolution_height')} selected is dangerously high. "
+                                 f"Resolution has been reset to default to avoid damaging the OWL",
                                  verbose=True)
 
         # instantiate the recorder if recording is True
@@ -145,13 +114,14 @@ class Owl:
             self.saveRecording = False
 
         # check if test video or videostream from camera
-        if input_file_or_directory:
-            self.cam = FrameReader(path=input_file_or_directory,
+        self.input_file_or_directory = self.config.get
+        if self.input_file_or_directory:
+            self.cam = FrameReader(path=self.input_file_or_directory,
                                    resolution=self.resolution,
                                    loop_time=self.image_loop_time)
             self.frame_width, self.frame_height = self.cam.resolution
 
-            self.logger.log_line(f'[INFO] Using {self.cam.input_type} from {input_file_or_directory}...', verbose=True)
+            self.logger.log_line(f'[INFO] Using {self.cam.input_type} from {self.input_file_or_directory}...', verbose=True)
 
         # if no video, start the camera with the provided parameters
         else:
@@ -166,6 +136,8 @@ class Owl:
                 
                 self.frame_width = self.resolution[0]  #
                 self.frame_height = self.resolution[1]  #
+
+                self.CAMERA_VERSION = self.cam.CAMERA_VERSION
 
                 # save camera settings to the log
                 self.logger.log_line('[INFO] Camera setup complete. Settings: '

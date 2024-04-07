@@ -187,20 +187,20 @@ class PiCameraStream:
         # Wait for the thread to finish
         self.thread.join()
 
-
+import configparser
 # overarching class to determine stream to use
 class VideoStream:
     def __init__(self, src=0, resolution=(416, 320), framerate=32, **kwargs):
-        self._CAMERA_VERSION = PICAMERA_VERSION if PICAMERA_VERSION is not None else 'webcam'
-        print(self._CAMERA_VERSION)
+        self.CAMERA_VERSION = PICAMERA_VERSION if PICAMERA_VERSION is not None else 'webcam'
+        print(self.CAMERA_VERSION)
 
-        if self._CAMERA_VERSION == 'legacy':
+        if self.CAMERA_VERSION == 'legacy':
             self.stream = PiCameraStream(resolution=resolution, framerate=framerate, **kwargs)
 
-        elif self._CAMERA_VERSION == 'picamera2':
+        elif self.CAMERA_VERSION == 'picamera2':
             self.stream = PiCamera2Stream(resolution=resolution, framerate=framerate, **kwargs)
 
-        elif self._CAMERA_VERSION == 'webcam':
+        elif self.CAMERA_VERSION == 'webcam':
             self.stream = WebcamStream(src=src)
             print('Using webcam')
 
