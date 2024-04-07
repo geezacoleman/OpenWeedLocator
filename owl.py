@@ -7,7 +7,8 @@ from relay_control import Controller
 from utils.frame_reader import FrameReader
 
 from datetime import datetime, timezone
-from imutils.video import VideoStream, FPS
+from imutils.video import FPS
+from utils.video import VideoStream
 from queue import Queue
 from time import strftime
 from threading import Thread
@@ -154,15 +155,9 @@ class Owl:
 
         # if no video, start the camera with the provided parameters
         else:
+
             try:
-                from picamera import PiCameraMMALError
-                
-            except ImportError:
-                PiCameraMMALError = None
-            
-            try:
-                self.cam = VideoStream(usePiCamera=True,
-                                       resolution=self.resolution,
+                self.cam = VideoStream(resolution=self.resolution,
                                        framerate=self.framerate,
                                        exposure_mode=self.exp_mode,
                                        awb_mode=self.awb_mode,
@@ -186,17 +181,6 @@ class Owl:
                 self.frame_width = self.cam.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
                 self.frame_height = self.cam.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
                 self.logger.log_line('[INFO] Camera setup complete. Using inbuilt webcam...', verbose=True)
-
-            except PiCameraMMALError as e:
-                self.logger.log_line(f"[CAMERA ERROR] Note, camera is in use by another OWL process.\n"
-                                     f"To resolve this error, follow these steps:\n1. Use <ps -C owl.py> to find the process\n"
-                                     f"2. Run <sudo kill PID_NUM>\n"
-                                     f"This will close the other process using its PID.\n"
-                                     f"Original error message: {str(e)}", verbose=True)
-
-                self.controller.solenoid.beep(duration=0.1, repeats=3)
-                time.sleep(2)
-                sys.exit()
 
             except Exception as e:
                 self.logger.log_line(f"[CRITICAL ERROR] STOPPED OWL AT START: {e}", verbose=True)
@@ -224,7 +208,7 @@ class Owl:
         self.nozzleNum = nozzleNum
 
         # activation region limit - once weed crosses this line, nozzle is activated
-        self.yAct = int(0.2 * self.frame_height)
+        self.yAct = int(0.01 * self.frame_height)
         self.laneWidth = self.frame_width / self.nozzleNum
 
         # calculate lane coords and draw on frame
