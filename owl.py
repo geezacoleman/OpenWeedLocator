@@ -53,7 +53,7 @@ class Owl:
 
         self.resolution = (self.config.getint('Camera', 'resolution_width'),
                            self.config.getint('Camera', 'resolution_height'))
-        self.exp_compensation = self.config.getint('Camera', 'exposure_compensation')
+        self.exp_compensation = self.config.getint('Camera', 'exp_compensation')
 
         # threshold parameters for different algorithms
         self.exgMin = self.config.getint('GreenOnBrown', 'exgMin')
@@ -130,12 +130,11 @@ class Owl:
 
             try:
                 self.cam = VideoStream(resolution=self.resolution,
-                                       exposure_compensation=self.exp_compensation).start()
+                                       exp_compensation=self.exp_compensation)
+                self.cam.start()
 
-                self.frame_width = self.cam.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
-                self.frame_height = self.cam.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
-                print(self.frame_width, self.frame_height)
-                self.CAMERA_VERSION = self.cam.name
+                self.frame_width = self.cam.frame_width
+                self.frame_height = self.cam.frame_height
 
             except ModuleNotFoundError as e:
                 missing_module = str(e).split("'")[-2]
@@ -222,8 +221,8 @@ class Owl:
         self.controller.vis = True
 
         try:
-            actuation_duration = self.config.getint('System', 'actuation_duration')
-            delay = self.config.getint('System', 'delay')
+            actuation_duration = self.config.getfloat('System', 'actuation_duration')
+            delay = self.config.getfloat('System', 'delay')
 
             while True:
                 delay = self.update_delay(delay)
@@ -453,48 +452,15 @@ if __name__ == "__main__":
     # these command line arguments enable people to operate/change some settings from the command line instead of
     # opening up the OWL code each time.
     ap = argparse.ArgumentParser()
-    ap.add_argument('--input', type=str, default=None, help='path to image directory, single image or video file')
     ap.add_argument('--show-display', action='store_true', default=False, help='show display windows')
     ap.add_argument('--focus', action='store_true', default=False, help='add FFT blur to output frame')
-    ap.add_argument('--recording', action='store_true', default=False, help='record video')
-    ap.add_argument('--algorithm', type=str, default='exhsv', choices=['exg', 'nexg', 'exgr', 'maxg', 'exhsv', 'hsv', 'gog'])
-    ap.add_argument('--model-path', type=str, default=None, help='path to trained weed detection .tflite model or directory')
-    ap.add_argument('--conf', type=float, default=0.5, choices=np.arange(0.01, 0.99, 0.01), metavar="2 s.f. Float between 0.01 and 1.00",
-                    help='set the confidence value for a "green-on-green" algorithm between 0.01 and 1.00. Must be a two-digit float.')
-    ap.add_argument('--framerate', type=int, default=40, choices=range(10, 121), metavar="[10-120]",
-                    help='set camera framerate between 10 and 120 FPS. Framerate will depend on sensor mode, though'
-                         ' setting framerate takes precedence over sensor_mode, For example sensor_mode=0 and framerate=120'
-                         ' will reset the sensor_mode to 3.')
-    ap.add_argument('--exp-mode', type=str, default='beach', choices=['off', 'auto', 'nightpreview', 'backlight',
-                                                                      'spotlight', 'sports', 'snow', 'beach',
-                                                                      'verylong', 'fixedfps', 'antishake',
-                                                                      'fireworks'],
-                    help='set exposure mode of camera')
-    ap.add_argument('--awb-mode', type=str, default='auto', choices=['off', 'auto', 'sunlight', 'cloudy', 'shade',
-                                                                     'tungsten', 'fluorescent', 'incandescent',
-                                                                     'flash', 'horizon'],
-                    help='set the auto white balance mode of the camera')
-    ap.add_argument('--sensor-mode', type=int, default=0, choices=[0, 1, 2, 3], metavar="[0 to 3]",
-                    help='set the sensor mode for the camera between 0 and 3. '
-                         'Check Raspberry Pi camera documentation for specifics of each mode')
-    ap.add_argument('--exp-compensation', type=int, default=-4, choices=range(-24, 24), metavar="[-24 to 24]",
-                    help='set the exposure compensation (EV) for the camera between -24 and 24. '
-                         'Raspberry Pi cameras seem to overexpose images preferentially.')
+    ap.add_argument('--input', type=str, default=None, help='path to image directory, single image or video file')
+
     args = ap.parse_args()
 
     owl = Owl(show_display=args.show_display,
-              focus=args.focus)
+              focus=args.focus,
+              input_file_or_directory=args.input)
 
     # start the targeting!
-    owl.hoot(actuation_duration=0.15,
-             delay=0,
-             sample_method=None,  # choose from 'bbox' | 'square' | 'whole'. If sample_method=None, it won't sample anything
-             sampleFreq=30,  # select how often to sample - number of frames to skip.
-             saveDir='images/bbox2',
-             algorithm=args.algorithm,
-             model_path=args.model_path,
-             camera_name='hsv',
-             minArea=10,
-             confidence=args.conf,
-             invert_hue=False  # invert the hue threshold - useful for excluding green to find red/purple stems
-             )
+    owl.hoot()

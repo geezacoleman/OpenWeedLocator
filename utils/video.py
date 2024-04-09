@@ -75,9 +75,11 @@ class PiCamera2Stream:
     def __init__(self, resolution=(416, 320), exp_compensation=-2, **kwargs):
         self.name = 'Picamera2Stream'
         self.size = resolution  # picamera2 uses size instead of resolution, keeping this consistent
+        self.frame_width = resolution[0]
+        self.frame_height = resolution[1]
 
         self.configurations = {
-            "format": 'XRGB8888',
+            "format": 'XBGR8888',
             "size": self.size
         }
 
@@ -138,6 +140,7 @@ class PiCamera2Stream:
 class PiCameraStream:
     def __init__(self, resolution=(320, 240), exp_compensation=-2, **kwargs):
         self.name = 'PiCameraStream'
+
         try:
             self.camera = PiCamera()
 
@@ -146,6 +149,9 @@ class PiCameraStream:
             self.camera.awb_mode = 'auto'
             self.camera.sensor_mode = 0
             self.camera.exposure_compensation = exp_compensation
+
+            self.frame_width = resolution[0]
+            self.frame_height = resolution[1]
 
             # Set optional camera parameters (refer to PiCamera docs)
             for (arg, value) in kwargs.items():
@@ -202,15 +208,23 @@ import configparser
 class VideoStream:
     def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2, **kwargs):
         self.CAMERA_VERSION = PICAMERA_VERSION if PICAMERA_VERSION is not None else 'webcam'
+        self.frame_height = None
+        self.frame_width = None
 
         if self.CAMERA_VERSION == 'legacy':
             self.stream = PiCameraStream(resolution=resolution, exp_compensation=exp_compensation, **kwargs)
+            self.frame_width = self.stream.frame_width
+            self.frame_height = self.stream.frame_height
 
         elif self.CAMERA_VERSION == 'picamera2':
             self.stream = PiCamera2Stream(resolution=resolution, exp_compensation=exp_compensation, **kwargs)
+            self.frame_width = self.stream.frame_width
+            self.frame_height = self.stream.frame_height
 
         elif self.CAMERA_VERSION == 'webcam':
             self.stream = WebcamStream(src=src)
+            self.frame_width = self.stream.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
+            self.frame_height = self.stream.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
         else:
             raise ValueError(f"Unsupported camera version: {self.CAMERA_VERSION}")
