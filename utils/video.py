@@ -72,25 +72,32 @@ class WebcamStream:
 
 
 class PiCamera2Stream:
-    def __init__(self, resolution=(320, 240), framerate=32, **kwargs):
+    def __init__(self, resolution=(416, 320), exp_compensation=-2, **kwargs):
         self.name = 'Picamera2Stream'
         self.size = resolution  # picamera2 uses size instead of resolution, keeping this consistent
-        self.framerate = framerate
 
-        self.config = {
+        self.configurations = {
             "format": 'XRGB8888',
             "size": self.size
         }
+
+        self.controls = {
+            "AeExposureMode": 1,
+            "ExposureValue": exp_compensation
+        }
+
         # Update config with any additional/overridden parameters
-        self.config.update(kwargs)
+        self.controls.update(kwargs)
 
         # Initialize the camera
-        self.picam2 = Picamera2()
+        self.camera = Picamera2()
         try:
-            self.picam2.set_logging(Picamera2.INFO)
-            self.picam2.configure(self.picam2.create_preview_configuration(main=self.config))
-            self.picam2.start()
+            self.config = self.camera.create_preview_configuration(main=self.configurations,
+                                                                   controls=self.controls)
+            self.camera.configure(self.config)
+            self.camera.start()
             time.sleep(1)  # Allow the camera time to warm up
+
         except Exception as e:
             print(f"Failed to initialize PiCamera2: {e}")
             raise
@@ -108,14 +115,14 @@ class PiCamera2Stream:
     def update(self):
         try:
             while not self.stopped.is_set():
-                frame = self.picam2.capture_array("main")
+                frame = self.camera.capture_array("main")
                 if frame is not None:
                     self.frame = frame
                 time.sleep(0.01)  # Slow down loop a little
         except Exception as e:
             print(f"Exception in PiCamera2Stream update loop: {e}")
         finally:
-            self.picam2.stop()  # Ensure camera resources are released properly
+            self.camera.stop()  # Ensure camera resources are released properly
 
     def read(self):
         # return the frame most recently read
@@ -124,18 +131,21 @@ class PiCamera2Stream:
     def stop(self):
         self.stopped.set()
         self.thread.join()
-        self.picam2.stop()
+        self.camera.stop()
         time.sleep(2)  # Allow time for the camera to be released properly
 
 
 class PiCameraStream:
-    def __init__(self, resolution=(320, 240), framerate=32, **kwargs):
+    def __init__(self, resolution=(320, 240), exp_compensation=-2, **kwargs):
         self.name = 'PiCameraStream'
         try:
             self.camera = PiCamera()
 
             self.camera.resolution = resolution
-            self.camera.framerate = framerate
+            self.camera.exposure_mode = 'beach'
+            self.camera.awb_mode = 'auto'
+            self.camera.sensor_mode = 0
+            self.camera.exposure_compensation = exp_compensation
 
             # Set optional camera parameters (refer to PiCamera docs)
             for (arg, value) in kwargs.items():
@@ -190,21 +200,20 @@ class PiCameraStream:
 import configparser
 # overarching class to determine stream to use
 class VideoStream:
-    def __init__(self, src=0, resolution=(416, 320), framerate=32, **kwargs):
+    def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2, **kwargs):
         self.CAMERA_VERSION = PICAMERA_VERSION if PICAMERA_VERSION is not None else 'webcam'
 
         if self.CAMERA_VERSION == 'legacy':
-            self.stream = PiCameraStream(resolution=resolution, framerate=framerate, **kwargs)
+            self.stream = PiCameraStream(resolution=resolution, exp_compensation=exp_compensation, **kwargs)
 
         elif self.CAMERA_VERSION == 'picamera2':
-            self.stream = PiCamera2Stream(resolution=resolution, framerate=framerate, **kwargs)
+            self.stream = PiCamera2Stream(resolution=resolution, exp_compensation=exp_compensation, **kwargs)
 
         elif self.CAMERA_VERSION == 'webcam':
             self.stream = WebcamStream(src=src)
-            print('Using webcam')
 
         else:
-            raise ConnectionError
+            raise ValueError(f"Unsupported camera version: {self.CAMERA_VERSION}")
 
     def start(self):
         # start the threaded video stream

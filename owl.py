@@ -30,12 +30,18 @@ def nothing(x):
 
 
 class Owl:
-    def __init__(self, show_display=False, focus=False, config_file='config/DAY_SENSITIVITY_2.ini'):
+    def __init__(self, show_display=False,
+                 focus=False,
+                 input_file_or_directory=None,
+                 config_file='config/DAY_SENSITIVITY_2.ini'):
 
         # start by reading the config file
         self._config_path = Path(__file__).parent / config_file
         self.config = ConfigParser()
         self.config.read(self._config_path)
+
+        # is the source a directory/file
+        self.input_file_or_directory = input_file_or_directory
 
         # different detection parameters
         self.show_display = show_display
@@ -47,11 +53,7 @@ class Owl:
 
         self.resolution = (self.config.getint('Camera', 'resolution_width'),
                            self.config.getint('Camera', 'resolution_height'))
-        self.framerate = self.config.getint('Camera', 'framerate')
-        self.exp_mode = 'exp_mode'
-        self.awb_mode = 'awb_mode'
-        self.sensor_mode = 'sensor_mode'
-        self.exp_compensation = 'exp_compensation'
+        self.exp_compensation = self.config.getint('Camera', 'exposure_compensation')
 
         # threshold parameters for different algorithms
         self.exgMin = self.config.getint('GreenOnBrown', 'exgMin')
@@ -113,8 +115,8 @@ class Owl:
             self.save_recording = False
 
         # check if test video or videostream from camera
-        self.input_file_or_directory = self.config.get('System','input_file_or_directory')
-        print(self.input_file_or_directory)
+        self.input_file_or_directory = self.config.get('System', 'input_file_or_directory')
+
         if self.input_file_or_directory:
             self.cam = FrameReader(path=self.input_file_or_directory,
                                    resolution=self.resolution,
@@ -128,42 +130,28 @@ class Owl:
 
             try:
                 self.cam = VideoStream(resolution=self.resolution,
-                                       framerate=self.framerate,
-                                       exposure_mode=self.exp_mode,
-                                       awb_mode=self.awb_mode,
-                                       sensor_mode=self.sensor_mode,
                                        exposure_compensation=self.exp_compensation).start()
-                
-                self.frame_width = self.resolution[0]  #
-                self.frame_height = self.resolution[1]  #
 
-                self.CAMERA_VERSION = self.cam.name
-
-                # save camera settings to the log
-                self.logger.log_line('[INFO] Camera setup complete. Settings: '
-                                     f'\nResolution: {self.resolution}'
-                                     f'\nFramerate: {self.framerate}'
-                                     f'\nExposure Mode: {self.exp_mode}'
-                                     f'\nAutoWhiteBalance: {self.awb_mode}'
-                                     f'\nExposure Compensation: {self.exp_compensation}'
-                                     f'\nSensor Mode: {self.sensor_mode}', verbose=True)
-
-            except ModuleNotFoundError as e:
-                self.cam = VideoStream(src=0).start()
                 self.frame_width = self.cam.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
                 self.frame_height = self.cam.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
-                self.logger.log_line('[INFO] Camera setup complete. Using inbuilt webcam...', verbose=True)
+                print(self.frame_width, self.frame_height)
+                self.CAMERA_VERSION = self.cam.name
+
+            except ModuleNotFoundError as e:
+                missing_module = str(e).split("'")[-2]
+                error_message = f"Missing required module: {missing_module}. Please install it and try again."
+
+                raise ModuleNotFoundError(error_message) from None
 
             except Exception as e:
-                self.logger.log_line(f"[CRITICAL ERROR] STOPPED OWL AT START: {e}", verbose=True)
-                
+                error_detail = f"[CRITICAL ERROR] Stopped OWL at start: {e}"
+                self.logger.log_line(error_detail, verbose=True)
                 self.controller.relay.beep(duration=1, repeats=1)
                 time.sleep(2)
-                sys.exit()
 
-        time.sleep(2.0)
-        # set the actuation queue size
-        self.actuation_queue = Queue(maxsize=10)
+                sys.exit(1)
+
+        time.sleep(1.0)
 
         ### Data collection only ###
         # this is where a recording button can be added. Currently set to pin 37
@@ -188,27 +176,21 @@ class Owl:
             laneX = int(i * self.lane_width)
             self.lane_coords[i] = laneX
 
-    def hoot(self,
-             actuation_duration,
-             delay,
-             sample_method=None,
-             sampleFreq=60,
-             saveDir='output',
-             camera_name='cam1',
-             algorithm='exg',
-             model_path='models/',
-             confidence=0.5,
-             minArea=10,
-             log_fps=False,
-             invert_hue=False):
+    def hoot(self):
+        algorithm = self.config.get('System', 'algorithm')
 
+        log_fps = self.config.getboolean('DataCollection', 'log_fps')
 
+        sample_method = self.config.get('DataCollection', 'sample_method')
+        sample_frequency = self.config.getint('DataCollection', 'sample_frequency')
+        save_directory = self.config.get('DataCollection', 'save_directory')
+        camera_name = self.config.get('DataCollection', 'camera_name')
 
         # track FPS and framecount
         frame_count = 0
         if sample_method is not None:
-            if not os.path.exists(saveDir):
-                os.makedirs(saveDir)
+            if not os.path.exists(save_directory):
+                os.makedirs(save_directory)
 
         if log_fps:
             fps = FPS().start()
@@ -216,9 +198,15 @@ class Owl:
         try:
             if algorithm == 'gog':
                 from greenongreen import GreenOnGreen
+                model_path = self.config.get('GreenOnGreen', 'model_path')
+                confidence = self.config.getfloat('GreenOnGreen', 'confidence')
+
                 weed_detector = GreenOnGreen(model_path=model_path)
 
             else:
+                min_detection_area = self.config.getint('GreenOnBrown', 'min_detection_area')
+                invert_hue = self.config.getboolean('GreenOnBrown', 'invert_hue')
+
                 weed_detector = GreenOnBrown(algorithm=algorithm)
 
         except (ModuleNotFoundError, IndexError, FileNotFoundError, ValueError) as e:
@@ -234,6 +222,9 @@ class Owl:
         self.controller.vis = True
 
         try:
+            actuation_duration = self.config.getint('System', 'actuation_duration')
+            delay = self.config.getint('System', 'delay')
+
             while True:
                 delay = self.update_delay(delay)
                 frame = self.cam.read()
@@ -258,13 +249,13 @@ class Owl:
                         break
 
                 if self.record and self.writer is None:
-                    saveDir = os.path.join(saveDir, strftime(f"%Y%m%d-{camera_name}-{algorithm}"))
-                    if not os.path.exists(saveDir):
-                        os.makedirs(saveDir)
+                    save_directory = os.path.join(save_directory, strftime(f"%Y%m%d-{camera_name}-{algorithm}"))
+                    if not os.path.exists(save_directory):
+                        os.makedirs(save_directory)
 
-                    self.baseName = os.path.join(saveDir, strftime(f"%Y%m%d-%H%M%S-{camera_name}-{algorithm}"))
-                    video_name = self.baseName + '.avi'
-                    self.logger.new_video_logfile(name=self.baseName + '.txt')
+                    self.base_name = os.path.join(save_directory, strftime(f"%Y%m%d-%H%M%S-{camera_name}-{algorithm}"))
+                    video_name = self.base_name + '.avi'
+                    self.logger.new_video_logfile(name=self.base_name + '.txt')
                     self.writer = cv2.VideoWriter(video_name, self.fourcc, 30, (frame.shape[1], frame.shape[0]), True)
 
                 # retrieve the trackbar positions for thresholds
@@ -299,7 +290,7 @@ class Owl:
                                                                                    brightnessMax=self.brightnessMax,
                                                                                    show_display=self.show_display,
                                                                                    algorithm=algorithm,
-                                                                                   min_detection_area=minArea,
+                                                                                   min_detection_area=min_detection_area,
                                                                                    invert_hue=invert_hue,
                                                                                    label='WEED')
 
@@ -307,28 +298,28 @@ class Owl:
                 # record sample images if required of weeds detected. sampleFreq specifies how often
                 if sample_method is not None:
                     # only record every sampleFreq number of frames. If sampleFreq = 60, this will activate every 60th frame
-                    if frame_count % sampleFreq == 0:
+                    if frame_count % sample_frequency == 0:
                         save_frame = frame.copy()
 
                         if sample_method == 'whole':
                             whole_image_thread = Thread(target=whole_image_save,
-                                                        args=[save_frame, saveDir, frame_count])
+                                                        args=[save_frame, save_directory, frame_count])
                             whole_image_thread.start()
 
                         elif sample_method == 'bbox':
                             sample_thread = Thread(target=bounding_box_image_sample,
-                                                   args=[save_frame, boxes, saveDir, frame_count])
+                                                   args=[save_frame, boxes, save_directory, frame_count])
                             sample_thread.start()
 
                         elif sample_method == 'square':
                             sample_thread = Thread(target=square_image_sample,
-                                                   args=[save_frame, weed_centres, saveDir, frame_count, 200])
+                                                   args=[save_frame, weed_centres, save_directory, frame_count, 200])
                             sample_thread.start()
 
                         else:
                             # if nothing/incorrect specified - sample the whole image
                             whole_image_thread = Thread(target=whole_image_save,
-                                                        args=[image_out, saveDir, frame_count])
+                                                        args=[image_out, save_directory, frame_count])
                             whole_image_thread.start()
 
 
@@ -375,7 +366,7 @@ class Owl:
                         fps = FPS().start()
 
                     self.writer = None
-                    self.logger.log_line_video(f"[INFO] {self.baseName} stopped.", verbose=True)
+                    self.logger.log_line_video(f"[INFO] {self.base_name} stopped.", verbose=True)
 
                 k = cv2.waitKey(1) & 0xFF
                 if k == ord('s'):
@@ -426,6 +417,9 @@ class Owl:
     def update_delay(self, delay=0):
         # if GPS added, could use it here to return a delay variable based on speed.
         return delay
+
+    def save_parameters(self):
+        pass
 
     def _handle_exceptions(self, e, algorithm):
         # handle exceptions cleanly
