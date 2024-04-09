@@ -8,7 +8,7 @@ try:
     from picamera import PiCamera
     PICAMERA_VERSION = 'legacy'
 
-except ImportError:
+except Exception as e:
     PICAMERA_VERSION = None
 
 try:
@@ -16,7 +16,7 @@ try:
     from libcamera import Transform
     PICAMERA_VERSION = 'picamera2'
 
-except ImportError:
+except Exception as e:
     PICAMERA_VERSION = None
 
 # class to support webcams
