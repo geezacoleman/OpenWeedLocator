@@ -192,7 +192,6 @@ import configparser
 class VideoStream:
     def __init__(self, src=0, resolution=(416, 320), framerate=32, **kwargs):
         self.CAMERA_VERSION = PICAMERA_VERSION if PICAMERA_VERSION is not None else 'webcam'
-        print(self.CAMERA_VERSION)
 
         if self.CAMERA_VERSION == 'legacy':
             self.stream = PiCameraStream(resolution=resolution, framerate=framerate, **kwargs)

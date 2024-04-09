@@ -39,7 +39,7 @@ class Owl:
 
         # different detection parameters
         self.show_display = show_display
-        self.nozzle_vis = None
+        self.relay_vis = None
         self.recording = self.config.getboolean('DataCollection', 'recording')
         self.focus = focus
         if self.focus:
@@ -48,10 +48,10 @@ class Owl:
         self.resolution = (self.config.getint('Camera', 'resolution_width'),
                            self.config.getint('Camera', 'resolution_height'))
         self.framerate = self.config.getint('Camera', 'framerate')
-        self.exp_mode = exp_mode
-        self.awb_mode = awb_mode
-        self.sensor_mode = sensor_mode
-        self.exp_compensation = exp_compensation
+        self.exp_mode = 'exp_mode'
+        self.awb_mode = 'awb_mode'
+        self.sensor_mode = 'sensor_mode'
+        self.exp_compensation = 'exp_compensation'
 
         # threshold parameters for different algorithms
         self.exgMin = self.config.getint('GreenOnBrown', 'exgMin')
@@ -63,7 +63,7 @@ class Owl:
         self.brightnessMin = self.config.getint('GreenOnBrown', 'brightnessMin')
         self.brightnessMax = self.config.getint('GreenOnBrown', 'brightnessMax')
 
-        self.thresholdDict = {}
+        self.threshold_dict = {}
         self.image_loop_time = 5  # time spent on each image when looping over a directory
 
         # setup the track bars if show_display is True
@@ -80,16 +80,15 @@ class Owl:
             cv2.createTrackbar("Bright-Min", self.window_name, self.brightnessMin, 255, nothing)
             cv2.createTrackbar("Bright-Max", self.window_name, self.brightnessMax, 255, nothing)
 
-        # nozzleDict maps the reference nozzle number to a boardpin on the embedded device
-        self.nozzleDict = {
-            0: 13,
-            1: 15,
-            2: 16,
-            3: 18
-        }
+        # Relay Dict maps the reference relay number to a boardpin on the embedded device
+        self.relay_dict = {}
 
-        # instantiate the nozzle controller - successful start should beep the buzzer
-        self.controller = Controller(nozzleDict=self.nozzleDict)
+        # use the [Relays] section to build the dictionary
+        for key, value in self.config['Relays'].items():
+            self.relay_dict[int(key)] = int(value)
+
+        # instantiate the relay controller - successful start should beep the buzzer
+        self.controller = Controller(relay_dict=self.relay_dict)
 
         # instantiate the logger
         self.logger = self.controller.logger
@@ -111,10 +110,11 @@ class Owl:
 
         else:
             self.record = False
-            self.saveRecording = False
+            self.save_recording = False
 
         # check if test video or videostream from camera
-        self.input_file_or_directory = self.config.get
+        self.input_file_or_directory = self.config.get('System','input_file_or_directory')
+        print(self.input_file_or_directory)
         if self.input_file_or_directory:
             self.cam = FrameReader(path=self.input_file_or_directory,
                                    resolution=self.resolution,
@@ -137,7 +137,7 @@ class Owl:
                 self.frame_width = self.resolution[0]  #
                 self.frame_height = self.resolution[1]  #
 
-                self.CAMERA_VERSION = self.cam.CAMERA_VERSION
+                self.CAMERA_VERSION = self.cam.name
 
                 # save camera settings to the log
                 self.logger.log_line('[INFO] Camera setup complete. Settings: '
@@ -157,41 +157,41 @@ class Owl:
             except Exception as e:
                 self.logger.log_line(f"[CRITICAL ERROR] STOPPED OWL AT START: {e}", verbose=True)
                 
-                self.controller.solenoid.beep(duration=1, repeats=1)
+                self.controller.relay.beep(duration=1, repeats=1)
                 time.sleep(2)
                 sys.exit()
 
         time.sleep(2.0)
-        # set the sprayqueue size
-        self.sprayQueue = Queue(maxsize=10)
+        # set the actuation queue size
+        self.actuation_queue = Queue(maxsize=10)
 
         ### Data collection only ###
         # this is where a recording button can be added. Currently set to pin 37
         if self.recording:
-            self.recorderButton = Recorder(recordGPIO=37)
+            self.recorder_button = Recorder(recordGPIO=37)
         ############################
 
         # sensitivity and weed size to be added
         self.sensitivity = None
-        self.laneCoords = {}
+        self.lane_coords = {}
 
-        # add the total number of nozzles. This can be changed easily, but the nozzleDict and physical relays would need
+        # add the total number of relays being controlled. This can be changed easily, but the relay_dict and physical relays would need
         # to be updated too. Fairly straightforward, so an opportunity for more precise application
-        self.nozzleNum = nozzleNum
+        self.relay_num = self.config.getint('System', 'relay_num')
 
-        # activation region limit - once weed crosses this line, nozzle is activated
+        # activation region limit - once weed crosses this line, relay is activated
         self.yAct = int(0.01 * self.frame_height)
-        self.laneWidth = self.frame_width / self.nozzleNum
+        self.lane_width = self.frame_width / self.relay_num
 
         # calculate lane coords and draw on frame
-        for i in range(self.nozzleNum):
-            laneX = int(i * self.laneWidth)
-            self.laneCoords[i] = laneX
+        for i in range(self.relay_num):
+            laneX = int(i * self.lane_width)
+            self.lane_coords[i] = laneX
 
     def hoot(self,
-             sprayDur,
+             actuation_duration,
              delay,
-             sampleMethod=None,
+             sample_method=None,
              sampleFreq=60,
              saveDir='output',
              camera_name='cam1',
@@ -202,9 +202,11 @@ class Owl:
              log_fps=False,
              invert_hue=False):
 
+
+
         # track FPS and framecount
-        frameCount = 0
-        if sampleMethod is not None:
+        frame_count = 0
+        if sample_method is not None:
             if not os.path.exists(saveDir):
                 os.makedirs(saveDir)
 
@@ -227,8 +229,8 @@ class Owl:
                 f"\n[ALGORITHM ERROR] Unrecognised error while starting algorithm: {algorithm}.\nError message: {e}", verbose=True)
             sys.exit()
 
-        self.nozzle_vis = self.controller.nozzle_vis
-        self.nozzle_vis.setup()
+        self.relay_vis = self.controller.relay_vis
+        self.relay_vis.setup()
         self.controller.vis = True
 
         try:
@@ -241,8 +243,8 @@ class Owl:
                     blurriness = fft_blur(grey, size=30)
 
                 if self.recording:
-                    self.record = self.recorderButton.record
-                    self.saveRecording = self.recorderButton.saveRecording
+                    self.record = self.recorder_button.record
+                    self.save_recording = self.recorder_button.save_recording
 
                 if frame is None:
                     if log_fps:
@@ -261,9 +263,9 @@ class Owl:
                         os.makedirs(saveDir)
 
                     self.baseName = os.path.join(saveDir, strftime(f"%Y%m%d-%H%M%S-{camera_name}-{algorithm}"))
-                    videoName = self.baseName + '.avi'
+                    video_name = self.baseName + '.avi'
                     self.logger.new_video_logfile(name=self.baseName + '.txt')
-                    self.writer = cv2.VideoWriter(videoName, self.fourcc, 30, (frame.shape[1], frame.shape[0]), True)
+                    self.writer = cv2.VideoWriter(video_name, self.fourcc, 30, (frame.shape[1], frame.shape[0]), True)
 
                 # retrieve the trackbar positions for thresholds
                 if self.show_display:
@@ -282,89 +284,91 @@ class Owl:
 
                 # pass image, thresholds to green_on_brown function
                 if algorithm == 'gog':
-                    cnts, boxes, weedCentres, imageOut = weed_detector.inference(frame.copy(),
-                                                                                 confidence=confidence,
-                                                                                 filter_id=63)
+                    cnts, boxes, weed_centres, image_out = weed_detector.inference(frame.copy(),
+                                                                                   confidence=confidence,
+                                                                                   filter_id=63)
                 else:
-                    cnts, boxes, weedCentres, imageOut = weed_detector.inference(frame.copy(), exgMin=self.exgMin,
-                                                                                 exgMax=self.exgMax,
-                                                                                 hueMin=self.hueMin,
-                                                                                 hueMax=self.hueMax,
-                                                                                 saturationMin=self.saturationMin,
-                                                                                 saturationMax=self.saturationMax,
-                                                                                 brightnessMin=self.brightnessMin,
-                                                                                 brightnessMax=self.brightnessMax,
-                                                                                 show_display=self.show_display,
-                                                                                 algorithm=algorithm,
-                                                                                 minArea=minArea,
-                                                                                 invert_hue=invert_hue)
+                    cnts, boxes, weed_centres, image_out = weed_detector.inference(frame.copy(),
+                                                                                   exgMin=self.exgMin,
+                                                                                   exgMax=self.exgMax,
+                                                                                   hueMin=self.hueMin,
+                                                                                   hueMax=self.hueMax,
+                                                                                   saturationMin=self.saturationMin,
+                                                                                   saturationMax=self.saturationMax,
+                                                                                   brightnessMin=self.brightnessMin,
+                                                                                   brightnessMax=self.brightnessMax,
+                                                                                   show_display=self.show_display,
+                                                                                   algorithm=algorithm,
+                                                                                   min_detection_area=minArea,
+                                                                                   invert_hue=invert_hue,
+                                                                                   label='WEED')
 
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often
-                if sampleMethod is not None:
+                if sample_method is not None:
                     # only record every sampleFreq number of frames. If sampleFreq = 60, this will activate every 60th frame
-                    if frameCount % sampleFreq == 0:
-                        saveFrame = frame.copy()
+                    if frame_count % sampleFreq == 0:
+                        save_frame = frame.copy()
 
-                        if sampleMethod == 'whole':
+                        if sample_method == 'whole':
                             whole_image_thread = Thread(target=whole_image_save,
-                                                        args=[saveFrame, saveDir, frameCount])
+                                                        args=[save_frame, saveDir, frame_count])
                             whole_image_thread.start()
 
-                        elif sampleMethod == 'bbox':
+                        elif sample_method == 'bbox':
                             sample_thread = Thread(target=bounding_box_image_sample,
-                                                   args=[saveFrame, boxes, saveDir, frameCount])
+                                                   args=[save_frame, boxes, saveDir, frame_count])
                             sample_thread.start()
 
-                        elif sampleMethod == 'square':
+                        elif sample_method == 'square':
                             sample_thread = Thread(target=square_image_sample,
-                                                   args=[saveFrame, weedCentres, saveDir, frameCount, 200])
+                                                   args=[save_frame, weed_centres, saveDir, frame_count, 200])
                             sample_thread.start()
 
                         else:
                             # if nothing/incorrect specified - sample the whole image
                             whole_image_thread = Thread(target=whole_image_save,
-                                                        args=[imageOut, saveDir, frameCount])
+                                                        args=[image_out, saveDir, frame_count])
                             whole_image_thread.start()
 
 
-                    frameCount += 1
+                    frame_count += 1
                 # ########################
 
                 # loop over the ID/weed centres from contours
-                for ID, centre in enumerate(weedCentres):
-                    # if they are in activation region the spray them
+                for ID, centre in enumerate(weed_centres):
+                    # if they are in activation region then actuate
                     if centre[1] > self.yAct:
-                        sprayTime = time.time()
-                        for i in range(self.nozzleNum):
+                        actuation_time = time.time()
+                        for i in range(self.relay_num):
                             # determine which lane needs to be activated
-                            if int(self.laneCoords[i]) <= centre[0] < int(self.laneCoords[i] + self.laneWidth):
-                                # log a spray job with the controller using the nozzle, delay, timestamp and spray duration
+                            if int(self.lane_coords[i]) <= centre[0] < int(self.lane_coords[i] + self.lane_width):
+                                # log a weed control job with the controller using the relay, delay, timestamp and actuation duration
                                 # if GPS is used/speed control, delay can be updated automatically based on forward speed
-                                self.controller.receive(nozzle=i, delay=delay, timeStamp=sprayTime, duration=sprayDur)
+                                self.controller.receive(relay=i, delay=delay, time_stamp=actuation_time, duration=actuation_duration)
 
                 # update the framerate counter
                 if log_fps:
                     fps.update()
 
                 if self.show_display:
-                    cv2.putText(imageOut, f'OWL-gorithm: {algorithm}', (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
+                    cv2.putText(image_out, f'OWL-gorithm: {algorithm}', (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
                                 (80, 80, 255), 1)
-                    cv2.putText(imageOut, f'Press "S" to save {algorithm} thresholds to file.',
-                                (20, int(imageOut.shape[1 ] *0.72)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 80, 255), 1)
+                    cv2.putText(image_out, f'Press "S" to save {algorithm} thresholds to file.',
+                                (20, int(image_out.shape[1 ] *0.72)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 80, 255), 1)
                     if self.focus:
-                        cv2.putText(imageOut, f'Blurriness: {blurriness:.2f}', (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                        cv2.putText(image_out, f'Blurriness: {blurriness:.2f}', (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 1,
                                     (80, 80, 255), 1)
 
-                    cv2.imshow("Detection Output", imutils.resize(imageOut, width=600))
+                    cv2.imshow("Detection Output", imutils.resize(image_out, width=600))
 
-                if self.record and not self.saveRecording:
+                if self.record and not self.save_recording:
                     self.writer.write(frame)
 
-                if self.saveRecording and not self.record:
+                if self.save_recording and not self.record:
                     self.writer.release()
-                    self.controller.solenoid.beep(duration=0.1)
-                    self.recorderButton.saveRecording = False
+                    self.controller.relay.beep(duration=0.1)
+                    self.recorder_button.save_recording = False
                     if log_fps:
                         fps.stop()
                         self.logger.log_line_video(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
@@ -382,7 +386,7 @@ class Owl:
                     if log_fps:
                         fps.stop()
                         self.logger.log_line_video(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
-                    self.controller.nozzle_vis.close()
+                    self.controller.relay_vis.close()
                     self.logger.log_line("[INFO] Stopped.", verbose=True)
                     self.stop()
                     break
@@ -391,24 +395,24 @@ class Owl:
             if log_fps:
                 fps.stop()
                 self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
-            self.controller.nozzle_vis.close()
+            self.controller.relay_vis.close()
             self.logger.log_line("[INFO] Stopped.", verbose=True)
             self.stop()
 
         except Exception as e:
             print(e)
-            self.controller.solenoid.beep(duration=0.5, repeats=5)
+            self.controller.relay.beep(duration=0.5, repeats=5)
             self.logger.log_line(f"[CRITICAL ERROR] STOPPED: {e}")
 
     def stop(self):
         self.controller.running = False
-        self.controller.solenoid.all_off()
-        self.controller.solenoid.beep(duration=0.1)
-        self.controller.solenoid.beep(duration=0.1)
+        self.controller.relay.all_off()
+        self.controller.relay.beep(duration=0.1)
+        self.controller.relay.beep(duration=0.1)
         self.cam.stop()
         if self.record:
             self.writer.release()
-            self.recorderButton.running = False
+            self.recorder_button.running = False
 
         if self.show_display:
             cv2.destroyAllWindows()
@@ -446,23 +450,8 @@ class Owl:
         full_message = f"\n[{error_type}] while starting algorithm: {algorithm}.\nError message: {error_message}{detailed_message}"
 
         self.logger.log_line(full_message, verbose=True)
-        self.controller.solenoid.beep(duration=0.25, repeats=4)
+        self.controller.relay.beep(duration=0.25, repeats=4)
         sys.exit()
-
-    def save_parameters(self):
-        self.thresholdDict['exgMin'] = cv2.getTrackbarPos("ExG-Min", self.window_name)
-        self.thresholdDict['exgMax'] = cv2.getTrackbarPos("ExG-Max", self.window_name)
-        self.thresholdDict['hueMin'] = cv2.getTrackbarPos("Hue-Min", self.window_name)
-        self.thresholdDict['hueMax'] = cv2.getTrackbarPos("Hue-Max", self.window_name)
-        self.thresholdDict['saturationMin'] = cv2.getTrackbarPos("Sat-Min", self.window_name)
-        self.thresholdDict['saturationMax'] = cv2.getTrackbarPos("Sat-Max", self.window_name)
-        self.thresholdDict['brightnessMin'] = cv2.getTrackbarPos("Bright-Min", self.window_name)
-        self.thresholdDict['brightnessMax'] = cv2.getTrackbarPos("Bright-Max", self.window_name)
-
-        datetime.now(timezone.utc).strftime("%Y%m%d")
-        json_name = datetime.now(timezone.utc).strftime("%Y%m%d%H%M") + '-owl-parameters.json'
-        with open(json_name, 'w') as f:
-            json.dump(self.thresholdDict, f)
 
 
 # business end of things
@@ -499,32 +488,13 @@ if __name__ == "__main__":
                          'Raspberry Pi cameras seem to overexpose images preferentially.')
     args = ap.parse_args()
 
-    owl = Owl(input_file_or_directory=args.input,
-              show_display=args.show_display,
-              focus=args.focus,
-              recording=args.recording,
-              exgMin=25,
-              exgMax=200,
-              hueMin=39,
-              hueMax=83,
-              saturationMin=50,
-              saturationMax=220,
-              brightnessMin=60,
-              brightnessMax=190,
-              resolution=(416, 320),
-              nozzleNum=4,
-              framerate=args.framerate,
-              exp_mode=args.exp_mode,
-              exp_compensation=args.exp_compensation,
-              awb_mode=args.awb_mode,
-              sensor_mode=args.sensor_mode,
-              parameters_json=None,
-              image_loop_time=5)
+    owl = Owl(show_display=args.show_display,
+              focus=args.focus)
 
     # start the targeting!
-    owl.hoot(sprayDur=0.15,
+    owl.hoot(actuation_duration=0.15,
              delay=0,
-             sampleMethod=None,  # choose from 'bbox' | 'square' | 'whole'. If sampleMethod=None, it won't sample anything
+             sample_method=None,  # choose from 'bbox' | 'square' | 'whole'. If sample_method=None, it won't sample anything
              sampleFreq=30,  # select how often to sample - number of frames to skip.
              saveDir='images/bbox2',
              algorithm=args.algorithm,

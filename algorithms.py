@@ -23,12 +23,12 @@ def exg(image):
     # cv2.imshow('green', green.astype('uint8'))
     # cv2.imshow('red', red.astype('uint8'))
 
-    imgOut = 2 * green - red - blue
-    imgOut = np.clip(imgOut, 0, 255)
-    imgOut = imgOut.astype('uint8')
+    image_out = 2 * green - red - blue
+    image_out = np.clip(image_out, 0, 255)
+    image_out = image_out.astype('uint8')
 
     # cv2.imshow('ExG', imgOut)
-    return imgOut
+    return image_out
 
 def maxg(image):
     '''
@@ -42,11 +42,11 @@ def maxg(image):
     green = image[:, :, 1].astype(np.float32)
     red = image[:, :, 2].astype(np.float32)
 
-    imgOut = 24 * green - 19 * red - 2 * blue
-    imgOut = (imgOut / np.amax(imgOut)) * 255 # scale image between 0 - 255
-    imgOut = imgOut.astype('uint8')
+    image_out = 24 * green - 19 * red - 2 * blue
+    image_out = (image_out / np.amax(image_out)) * 255 # scale image between 0 - 255
+    image_out = image_out.astype('uint8')
 
-    return imgOut
+    return image_out
 
 def exg_standardised(image):
     '''
@@ -57,21 +57,21 @@ def exg_standardised(image):
     blue = image[:, :, 0].astype(np.float32)
     green = image[:, :, 1].astype(np.float32)
     red = image[:, :, 2].astype(np.float32)
-    chanSum = red + green + blue
-    chanSum = np.where(chanSum == 0, 1, chanSum)
+    channel_sum = red + green + blue
+    channel_sum = np.where(channel_sum == 0, 1, channel_sum)
 
-    b = blue / chanSum
-    g = green / chanSum
-    r = red / chanSum
+    b = blue / channel_sum
+    g = green / channel_sum
+    r = red / channel_sum
 
-    imgOut = 255 * (2 * g - r - b)
-    imgOut = np.where(imgOut < 0, 0, imgOut)
-    imgOut = np.where(imgOut > 255, 255, imgOut)
+    image_out = 255 * (2 * g - r - b)
+    image_out = np.where(image_out < 0, 0, image_out)
+    image_out = np.where(image_out > 255, 255, image_out)
 
-    imgOut = imgOut.astype('uint8')
+    image_out = image_out.astype('uint8')
     # cv2.imshow('ExG Standardised', imgOut)
 
-    return imgOut
+    return image_out
 
 def exg_standardised_hue(image,
                          hueMin=30,
@@ -93,32 +93,33 @@ def exg_standardised_hue(image,
     :param invert_hue: inverts the hue threshold to exclude anything within the thresholds
     :return: returns a grayscale image
     '''
+
     blue = image[:, :, 0].astype(np.float32)
     green = image[:, :, 1].astype(np.float32)
     red = image[:, :, 2].astype(np.float32)
 
-    chanSum = red + green + blue
-    chanSum = np.where(chanSum == 0, 1, chanSum)
+    channel_sum = red + green + blue
+    channel_sum = np.where(channel_sum == 0, 1, channel_sum)
 
-    b = blue / chanSum
-    g = green / chanSum
-    r = red / chanSum
+    b = blue / channel_sum
+    g = green / channel_sum
+    r = red / channel_sum
 
-    imgOut = 255 * (2 * g - r - b)
-    imgOut = np.where(imgOut < 0, 0, imgOut)
-    imgOut = np.where(imgOut > 255, 255, imgOut)
+    image_out = 255 * (2 * g - r - b)
+    image_out = np.where(image_out < 0, 0, image_out)
+    image_out = np.where(image_out > 255, 255, image_out)
 
-    imgOut = imgOut.astype('uint8')
+    image_out = image_out.astype('uint8')
 
-    hsvThresh, _ = hsv(image,
+    hsv_thresh, _ = hsv(image,
                        hueMin=hueMin, hueMax=hueMax,
                        brightnessMin=brightnessMin, brightnessMax=brightnessMax,
                        saturationMin=saturationMin, saturationMax=saturationMax,
                        invert_hue=invert_hue)
-    imgOut = hsvThresh & imgOut
+    image_out = hsv_thresh & image_out
     # cv2.imshow('exhu', imgOut)
 
-    return imgOut
+    return image_out
 
 def exgr(image):
     '''
@@ -129,13 +130,13 @@ def exgr(image):
     green = image[:, :, 1].astype(np.float32)
     red = image[:, :, 2].astype(np.float32)
 
-    exgImg = exg(image)
-    imgOut = exgImg - (1.4 * red - green)
+    exg_image = exg(image)
+    image_out = exg_image - (1.4 * red - green)
 
-    imgOut = np.clip(imgOut, 0, 255)
-    imgOut = imgOut.astype('uint8')
+    image_out = np.clip(image_out, 0, 255)
+    image_out = image_out.astype('uint8')
 
-    return imgOut
+    return image_out
 
 def hsv(image,
         hueMin=30,
@@ -162,21 +163,21 @@ def hsv(image,
     sat = image[:, :, 1]
     val = image[:, :, 2]
 
-    hueThresh = cv2.inRange(hue, hueMin, hueMax)
-    satThresh = cv2.inRange(sat, saturationMin, saturationMax)
-    valThresh = cv2.inRange(val, brightnessMin, brightnessMax)
+    hue_thresh = cv2.inRange(hue, hueMin, hueMax)
+    sat_thresh = cv2.inRange(sat, saturationMin, saturationMax)
+    val_thresh = cv2.inRange(val, brightnessMin, brightnessMax)
 
     # allow users to select purple/red colour ranges by excluding green
     if invert_hue:
-        hueThresh = cv2.bitwise_not(hueThresh)
+        hue_thresh = cv2.bitwise_not(hue_thresh)
 
     # cv2.imshow('hue', hueThresh)
     # cv2.imshow('sat', satThresh)
     # cv2.imshow('val', valThresh)
 
-    outThresh = satThresh & valThresh & hueThresh
+    out_thresh = sat_thresh & val_thresh & hue_thresh
     # cv2.imshow('HSV Out', outThresh)
-    return outThresh, True
+    return out_thresh, True
 
 # for NIR images only
 def gndvi(image):
@@ -188,11 +189,11 @@ def gndvi(image):
     green = image[:, :, 1].astype(np.float32)
     NIR = image[:, :, 2].astype(np.float32)
 
-    imgOut = (NIR - green) / (NIR + green)
-    imgOut = cv2.normalize(imgOut, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-    imgOut = imgOut.astype('uint8')
-    cv2.imshow('gndvi', imgOut)
-    return imgOut
+    image_out = (NIR - green) / (NIR + green)
+    image_out = cv2.normalize(image_out, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+    image_out = image_out.astype('uint8')
+    cv2.imshow('gndvi', image_out)
+    return image_out
 
 
 # Other vegetation indices are listed here, but have NOT been tested.
@@ -201,24 +202,24 @@ def veg(image):
     green = image[:, :, 1].astype(np.float32)
     red = image[:, :, 2].astype(np.float32)
 
-    imgOut = green / ((red ** 0.667) * (blue ** 0.333))
-    imgOut = cv2.normalize(imgOut, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-    imgOut = np.clip(imgOut, 0, 255)
-    imgOut = imgOut.astype('uint8')
+    image_out = green / ((red ** 0.667) * (blue ** 0.333))
+    image_out = cv2.normalize(image_out, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+    image_out = np.clip(image_out, 0, 255)
+    image_out = image_out.astype('uint8')
 
-    return imgOut
+    return image_out
 
 def cive(image):
     blue = image[:, :, 0].astype(np.float32)
     green = image[:, :, 1].astype(np.float32)
     red = image[:, :, 2].astype(np.float32)
 
-    imgOut = 0.441 * red - 0.881 * green + 0.385 * blue + 18.78745
-    #imgOut = cv2.normalize(imgOut, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-    imgOut = np.clip(imgOut, 0, 255)
-    imgOut = imgOut.astype('uint8')
+    image_out = 0.441 * red - 0.881 * green + 0.385 * blue + 18.78745
+    #image_out = cv2.normalize(imgOut, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+    image_out = np.clip(image_out, 0, 255)
+    image_out = image_out.astype('uint8')
 
-    return imgOut
+    return image_out
 
 def clahe_sat_val(image):
     image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
