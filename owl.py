@@ -418,7 +418,28 @@ class Owl:
         return delay
 
     def save_parameters(self):
-        pass
+        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        new_config_filename = f"{timestamp}_{self._config_path.name}"
+        new_config_path = self._config_path.parent / new_config_filename
+
+        # Update the 'GreenOnBrown' section with current attribute values
+        if 'GreenOnBrown' not in self.config.sections():
+            self.config.add_section('GreenOnBrown')
+
+        self.config.set('GreenOnBrown', 'exgMin', str(self.exgMin))
+        self.config.set('GreenOnBrown', 'exgMax', str(self.exgMax))
+        self.config.set('GreenOnBrown', 'hueMin', str(self.hueMin))
+        self.config.set('GreenOnBrown', 'hueMax', str(self.hueMax))
+        self.config.set('GreenOnBrown', 'saturationMin', str(self.saturationMin))
+        self.config.set('GreenOnBrown', 'saturationMax', str(self.saturationMax))
+        self.config.set('GreenOnBrown', 'brightnessMin', str(self.brightnessMin))
+        self.config.set('GreenOnBrown', 'brightnessMax', str(self.brightnessMax))
+
+        # Write the updated configuration to the new file with a timestamped filename
+        with open(new_config_path, 'w') as configfile:
+            self.config.write(configfile)
+
+        print(f"Configuration saved to {new_config_path}")
 
     def _handle_exceptions(self, e, algorithm):
         # handle exceptions cleanly
