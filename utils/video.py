@@ -1,5 +1,6 @@
 import cv2
 import time
+import warnings
 from threading import Thread, Event
 
 # determine availability of picamera versions
@@ -13,7 +14,7 @@ except Exception as e:
 
 try:
     from picamera2 import Picamera2
-    from libcamera import Transform
+    import libcamera
     PICAMERA_VERSION = 'picamera2'
 
 except Exception as e:
@@ -24,6 +25,9 @@ class WebcamStream:
     def __init__(self, src=0):
         self.name = "WebcamStream"
         self.stream = cv2.VideoCapture(src)
+
+        self.frame_width = self.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
+        self.frame_height = self.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
         # Check if the stream opened successfully
         if not self.stream.isOpened():
@@ -72,14 +76,14 @@ class WebcamStream:
 
 
 class PiCamera2Stream:
-    def __init__(self, resolution=(416, 320), exp_compensation=-2, **kwargs):
+    def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2, **kwargs):
         self.name = 'Picamera2Stream'
         self.size = resolution  # picamera2 uses size instead of resolution, keeping this consistent
-        self.frame_width = resolution[0]
-        self.frame_height = resolution[1]
+        self.frame_width = None
+        self.frame_height = None
 
         self.configurations = {
-            "format": 'XBGR8888',
+            "format": 'BGR888',
             "size": self.size
         }
 
@@ -90,19 +94,29 @@ class PiCamera2Stream:
 
         # Update config with any additional/overridden parameters
         self.controls.update(kwargs)
+        Picamera2.global_camera_info()
 
         # Initialize the camera
-        self.camera = Picamera2()
+        self.camera = Picamera2(src)
         try:
             self.config = self.camera.create_preview_configuration(main=self.configurations,
                                                                    controls=self.controls)
             self.camera.configure(self.config)
             self.camera.start()
-            time.sleep(1)  # Allow the camera time to warm up
+
+            self.frame_width = self.camera.preview_configuration.main.size[0]
+            self.frame_height = self.camera.preview_configuration.main.size[1]
+
+            time.sleep(2)  # Allow the camera time to warm up
 
         except Exception as e:
             print(f"Failed to initialize PiCamera2: {e}")
             raise
+
+        if self.frame_width != resolution[0] or self.frame_height != resolution[1]:
+            message = (f"The actual frame size ({self.frame_width}x{self.frame_height}) "
+                       f"differs from the expected resolution ({resolution[0]}x{resolution[1]}).")
+            warnings.warn(message, RuntimeWarning)
 
         self.frame = None
         self.stopped = Event()
@@ -138,8 +152,10 @@ class PiCamera2Stream:
 
 
 class PiCameraStream:
-    def __init__(self, resolution=(320, 240), exp_compensation=-2, **kwargs):
+    def __init__(self, resolution=(416, 320), exp_compensation=-2, **kwargs):
         self.name = 'PiCameraStream'
+        self.frame_width = None
+        self.frame_height = None
 
         try:
             self.camera = PiCamera()
@@ -150,8 +166,13 @@ class PiCameraStream:
             self.camera.sensor_mode = 0
             self.camera.exposure_compensation = exp_compensation
 
-            self.frame_width = resolution[0]
-            self.frame_height = resolution[1]
+            self.frame_width = self.camera.resolution[0]
+            self.frame_height = self.camera.resolution[1]
+
+            if self.frame_width != resolution[0] or self.frame_height != resolution[1]:
+                message = (f"The actual frame size ({self.frame_width}x{self.frame_height}) "
+                           f"differs from the expected resolution ({resolution[0]}x{resolution[1]}).")
+                warnings.warn(message, RuntimeWarning)
 
             # Set optional camera parameters (refer to PiCamera docs)
             for (arg, value) in kwargs.items():
@@ -213,21 +234,18 @@ class VideoStream:
 
         if self.CAMERA_VERSION == 'legacy':
             self.stream = PiCameraStream(resolution=resolution, exp_compensation=exp_compensation, **kwargs)
-            self.frame_width = self.stream.frame_width
-            self.frame_height = self.stream.frame_height
 
         elif self.CAMERA_VERSION == 'picamera2':
             self.stream = PiCamera2Stream(resolution=resolution, exp_compensation=exp_compensation, **kwargs)
-            self.frame_width = self.stream.frame_width
-            self.frame_height = self.stream.frame_height
 
         elif self.CAMERA_VERSION == 'webcam':
             self.stream = WebcamStream(src=src)
-            self.frame_width = self.stream.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
-            self.frame_height = self.stream.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
         else:
             raise ValueError(f"Unsupported camera version: {self.CAMERA_VERSION}")
+
+        self.frame_width = self.stream.frame_width
+        self.frame_height = self.stream.frame_height
 
     def start(self):
         # start the threaded video stream
