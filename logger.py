@@ -1,6 +1,6 @@
-import sqlite3
-import threading
-import queue
+import logging
+from logging.handlers import QueueHandler, QueueListener
+from queue import Queue
 import os
 from datetime import datetime, timezone
 from time import strftime
@@ -8,48 +8,59 @@ from time import strftime
 class AsyncDBLogger:
     def __init__(self, db_path):
         self.db_path = db_path
-        self.log_queue = queue.Queue()
-        self.running = True
-        self.thread = threading.Thread(target=self._process_log_queue)
-        self.thread.start()
-        self._setup_db()
+        self.setup_logger()
 
-    def _setup_db(self):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS logs (
-                    id INTEGER PRIMARY KEY,
-                    timestamp TIMESTAMP,
-                    message TEXT
-                )
-            """)
-            conn.commit()
+    def setup_logger(self):
+        # Create loggers for detections and system messages
+        self.detection_logger = logging.getLogger("detection")
+        self.system_logger = logging.getLogger("system")
 
-    def _process_log_queue(self):
-        while self.running or not self.log_queue.empty():
-            try:
-                log_entry = self.log_queue.get(timeout=1)
-                self._insert_log(log_entry)
-                self.log_queue.task_done()
-            except queue.Empty:
-                continue
+        # Set the logging level
+        self.detection_logger.setLevel(logging.INFO)
+        self.system_logger.setLevel(logging.INFO)
 
-    def _insert_log(self, log_entry):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO logs (timestamp, message)
-                VALUES (?, ?)
-            """, log_entry)
-            conn.commit()
+        # Create queues and queue handlers for asynchronous logging
+        detection_queue = Queue(-1)  # No limit on queue size
+        system_queue = Queue(-1)
 
-    def log(self, timestamp, message):
-        self.log_queue.put((timestamp, message))
+        detection_queue_handler = QueueHandler(detection_queue)
+        system_queue_handler = QueueHandler(system_queue)
+
+        # Add queue handlers to loggers
+        self.detection_logger.addHandler(detection_queue_handler)
+        self.system_logger.addHandler(system_queue_handler)
+
+        # Define log file paths
+        detection_log_path = os.path.join(self.db_path, "detections.log")
+        system_log_path = os.path.join(self.db_path, "system.log")
+
+        # Create file handlers
+        detection_file_handler = logging.FileHandler(detection_log_path)
+        system_file_handler = logging.FileHandler(system_log_path)
+
+        # Optional: define and set a formatter if you want a specific log format
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        detection_file_handler.setFormatter(formatter)
+        system_file_handler.setFormatter(formatter)
+
+        # Create and start QueueListeners for each logger
+        self.detection_listener = QueueListener(detection_queue, detection_file_handler)
+        self.system_listener = QueueListener(system_queue, system_file_handler)
+        self.detection_listener.start()
+        self.system_listener.start()
+
+    def log_detection(self, message):
+        self.detection_logger.info(message)
+
+    def log_system(self, message):
+        self.system_logger.info(message)
 
     def stop(self):
-        self.running = False
-        self.thread.join()
+        # Stop the QueueListeners to flush the queues and ensure all logs are written
+        self.detection_listener.stop()
+        self.system_listener.stop()
+
+
 
 class Logger:
     def __init__(self, db_name, saveDir):
