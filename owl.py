@@ -8,17 +8,14 @@ from utils.frame_reader import FrameReader
 
 from configparser import ConfigParser
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime
 from imutils.video import FPS
 from utils.video import VideoStream
-from queue import Queue
 from time import strftime
 from threading import Thread
 
-import numpy as np
 import argparse
 import imutils
-import json
 import time
 import sys
 import cv2

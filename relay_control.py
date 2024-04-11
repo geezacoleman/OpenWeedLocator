@@ -6,15 +6,26 @@ import time
 import os
 
 import platform
+import warnings
 # check if the system is being tested on a Windows or Linux x86 64 bit machine
-if platform.system() == "Windows":
+if 'rpi' in platform.platform():
+    testing = False
+    from gpiozero import Buzzer, OutputDevice
+
+elif platform.system() == "Windows":
+    warning_message = "[WARNING] The system is running on a Windows platform. GPIO disabled. Test mode active."
+    warnings.warn(warning_message, RuntimeWarning)
     testing = True
+    testing = True
+
+elif 'aarch' in platform.platform():
+    testing = False
+    from gpiozero import Buzzer, OutputDevice
+
 else:
-    if '64' in platform.machine():
-        testing = True
-    else:
-        from gpiozero import Buzzer, OutputDevice
-        testing = False
+    warning_message = "[WARNING] The system is not running on a recognized platform. GPIO disabled. Test mode active."
+    warnings.warn(warning_message, RuntimeWarning)
+    testing = True
 
 # two test classes to run the analysis on a desktop computer if a "win32" platform is detected
 class TestRelay:
