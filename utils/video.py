@@ -104,8 +104,8 @@ class PiCamera2Stream:
             self.camera.configure(self.config)
             self.camera.start()
 
-            self.frame_width = self.camera.preview_configuration.main.size[0]
-            self.frame_height = self.camera.preview_configuration.main.size[1]
+            self.frame_width = self.camera.camera_configuration()['main']['size'][0]
+            self.frame_height = self.camera.camera_configuration()['main']['size'][1]
 
             time.sleep(2)  # Allow the camera time to warm up
 
