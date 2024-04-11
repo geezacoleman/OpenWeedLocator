@@ -236,7 +236,7 @@ class VideoStream:
             self.stream = PiCameraStream(resolution=resolution, exp_compensation=exp_compensation, **kwargs)
 
         elif self.CAMERA_VERSION == 'picamera2':
-            self.stream = PiCamera2Stream(resolution=resolution, exp_compensation=exp_compensation, **kwargs)
+            self.stream = PiCamera2Stream(src=src, resolution=resolution, exp_compensation=exp_compensation, **kwargs)
 
         elif self.CAMERA_VERSION == 'webcam':
             self.stream = WebcamStream(src=src)
