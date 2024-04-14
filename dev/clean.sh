@@ -1,7 +1,7 @@
-cd /home/pi
+cd /home/owl
 
 echo "[INFO] Removing history files"
-sudo rm -rvf {/root,/home/pi}/{.bash_history,.viminfo,.lesshst,.ssh/known_hosts}
+sudo rm -rvf {/root,/home/owl}/{.bash_history,.viminfo,.lesshst,.ssh/known_hosts}
 
 echo "[INFO] Emptying /storage"
 sudo rm -rvf /storage/*

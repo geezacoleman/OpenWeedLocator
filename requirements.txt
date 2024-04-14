@@ -5,6 +5,5 @@ imutils
 gpiozero
 pandas
 RPi.GPIO
-picamera
 tqdm
 blessed

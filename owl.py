@@ -1,4 +1,4 @@
-#!/home/pi/.virtualenvs/owl/bin/python3
+#!/usr/bin/env python
 from button_inputs import Recorder
 from image_sampler import bounding_box_image_sample, square_image_sample, whole_image_save
 from utils.blur_algorithms import fft_blur
