@@ -2,6 +2,20 @@
 <img src="https://user-images.githubusercontent.com/51358498/152991504-005a1daa-2900-4f48-8bec-d163d6336ed2.png" width="400">
 </p>
 
+🚧🏗 Branch under construction 🏗🚧
+
+##### Done
+
+1. Clean up codebase
+2. Add picamera2 support
+
+##### TODO:
+
+1. Update README.md with complete instructions
+2. Update start on boot
+
+While owl.py is ready to run, the README.md file and supporting owl_boot.sh files are incomplete.
+
 # OpenWeedLocator
 
 Welcome to the OpenWeedLocator (OWL) project, an opensource hardware and software weed detector that uses
