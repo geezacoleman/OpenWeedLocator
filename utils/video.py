@@ -82,32 +82,54 @@ class PiCamera2Stream:
         self.frame_width = None
         self.frame_height = None
 
+        # set the picamera2 config and controls. Refer to picamera2 documentation for full explanations:
+        #
         self.configurations = {
-            "format": 'BGR888',
+            # for those checking closely, using RGB888 may seem incorrect, however libcamera means a BGR format. Check
+            # https://github.com/raspberrypi/picamera2/issues/848 for full explanation.
+            "format": 'RGB888',
             "size": self.size
         }
 
         self.controls = {
             "AeExposureMode": 1,
+            "AwbMode": libcamera.controls.AwbModeEnum.Daylight,
             "ExposureValue": exp_compensation
         }
 
         # Update config with any additional/overridden parameters
         self.controls.update(kwargs)
-        Picamera2.global_camera_info()
 
         # Initialize the camera
         self.camera = Picamera2(src)
+        self.camera_model = self.camera.camera_properties['Model']
+
+        if self.camera_model == 'imx296':
+            print('[INFO] Using IMX296 Global Shutter Camera')
+
+        elif self.camera_model == 'imx477':
+            print('[INFO] Using IMX477 HQ Camera')
+
+        elif self.camera_model == 'imx708':
+            print('[INFO] Using Raspberry Pi Camera Module 3. Setting focal point at 1.2 m...')
+            self.controls['AfMode'] = libcamera.controls.AfModeEnum.Manual
+            self.controls['LensPosition'] = 1.2
+
+        else:
+            print('[INFO] Unrecognised camera module, continuing with default settings.')
+
         try:
             self.config = self.camera.create_preview_configuration(main=self.configurations,
                                                                    controls=self.controls)
             self.camera.configure(self.config)
             self.camera.start()
 
+            # set dimensions directly from the video feed
             self.frame_width = self.camera.camera_configuration()['main']['size'][0]
             self.frame_height = self.camera.camera_configuration()['main']['size'][1]
 
-            time.sleep(2)  # Allow the camera time to warm up
+            # allow the camera time to warm up
+            time.sleep(2)
 
         except Exception as e:
             print(f"Failed to initialize PiCamera2: {e}")
@@ -181,7 +203,8 @@ class PiCameraStream:
             # Initialize the stream
             self.rawCapture = PiRGBArray(self.camera, size=resolution)
             self.stream = self.camera.capture_continuous(self.rawCapture,
-                format="bgr", use_video_port=True)
+                                                         format="bgr",
+                                                         use_video_port=True)
 
         except Exception as e:
             print(f"Failed to initialize PiCamera: {e}")
@@ -224,8 +247,8 @@ class PiCameraStream:
         # Wait for the thread to finish
         self.thread.join()
 
-import configparser
-# overarching class to determine stream to use
+
+# overarching class to determine which stream to use
 class VideoStream:
     def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2, **kwargs):
         self.CAMERA_VERSION = PICAMERA_VERSION if PICAMERA_VERSION is not None else 'webcam'
@@ -244,6 +267,7 @@ class VideoStream:
         else:
             raise ValueError(f"Unsupported camera version: {self.CAMERA_VERSION}")
 
+        # set the image dimensions directly from the frame streamed
         self.frame_width = self.stream.frame_width
         self.frame_height = self.stream.frame_height
 

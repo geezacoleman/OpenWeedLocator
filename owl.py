@@ -1,9 +1,9 @@
 #!/usr/bin/env python
-from button_inputs import Recorder
-from image_sampler import bounding_box_image_sample, square_image_sample, whole_image_save
+from utils.button_inputs import Recorder
+from utils.image_sampler import bounding_box_image_sample, square_image_sample, whole_image_save
 from utils.blur_algorithms import fft_blur
-from greenonbrown import GreenOnBrown
-from relay_control import Controller
+from utils.greenonbrown import GreenOnBrown
+from utils.relay_control import Controller
 from utils.frame_reader import FrameReader
 
 from configparser import ConfigParser
@@ -193,7 +193,7 @@ class Owl:
 
         try:
             if algorithm == 'gog':
-                from greenongreen import GreenOnGreen
+                from utils.greenongreen import GreenOnGreen
                 model_path = self.config.get('GreenOnGreen', 'model_path')
                 confidence = self.config.getfloat('GreenOnGreen', 'confidence')
 
@@ -213,9 +213,10 @@ class Owl:
                 f"\n[ALGORITHM ERROR] Unrecognised error while starting algorithm: {algorithm}.\nError message: {e}", verbose=True)
             sys.exit()
 
-        self.relay_vis = self.controller.relay_vis
-        self.relay_vis.setup()
-        self.controller.vis = True
+        if self.show_display:
+            self.relay_vis = self.controller.relay_vis
+            self.relay_vis.setup()
+            self.controller.vis = True
 
         try:
             actuation_duration = self.config.getfloat('System', 'actuation_duration')
@@ -373,7 +374,8 @@ class Owl:
                     if log_fps:
                         fps.stop()
                         self.logger.log_line_video(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
-                    self.controller.relay_vis.close()
+                    if self.show_display:
+                        self.controller.relay_vis.close()
                     self.logger.log_line("[INFO] Stopped.", verbose=True)
                     self.stop()
                     break
@@ -382,7 +384,8 @@ class Owl:
             if log_fps:
                 fps.stop()
                 self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
-            self.controller.relay_vis.close()
+            if self.show_display:
+                self.controller.relay_vis.close()
             self.logger.log_line("[INFO] Stopped.", verbose=True)
             self.stop()
 
@@ -476,7 +479,9 @@ if __name__ == "__main__":
 
     args = ap.parse_args()
 
-    owl = Owl(show_display=args.show_display,
+    # this is where you can change the config file default
+    owl = Owl(config_file='config/DAY_SENSITIVITY_2.ini',
+              show_display=args.show_display,
               focus=args.focus,
               input_file_or_directory=args.input)
 

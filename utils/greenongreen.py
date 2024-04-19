@@ -5,9 +5,8 @@ from pycoral.utils.dataset import read_label_file
 from pycoral.utils.edgetpu import make_interpreter
 from pycoral.utils.edgetpu import run_inference
 from pathlib import Path
-from glob import glob
+
 import cv2
-import os
 
 
 class GreenOnGreen:

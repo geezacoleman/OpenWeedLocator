@@ -557,8 +557,8 @@ most major updates. So to update the OWL software, just run the follow these ste
 3. Once the Terminal window is open, make sure you are working in the `owl` virtual environment by running:
 
 ```
-pi@raspberrypi:~ $ workon owl
-(owl) pi@raspberrypi:~ $
+owl@raspberrypi:~ $ workon owl
+(owl) owl@raspberrypi:~ $
 ```
 
 Notice that (owl) now appears before the line in the Terminal window. This indicates you are in the `owl` virtual
@@ -568,14 +568,14 @@ spot.
 4. Once you are in the `owl` environment, enter these commands on each new line:
 
 ```
-(owl) pi@raspberrypi:~ $ cd ~
-(owl) pi@raspberrypi:~ $ mv owl owl-old      # this renames the old 'owl' folder to 'owl-old'
-(owl) pi@raspberrypi:~ $ git clone https://github.com/geezacoleman/OpenWeedLocator        # download the new software
-(owl) pi@raspberrypi:~ $ mv OpenWeedLocator owl      # rename the download to 'owl'
-(owl) pi@raspberrypi:~ $ cd ~/owl
-(owl) pi@raspberrypi:~/owl $ pip install -r requirements.txt                # installs the necessary software into the (owl) environment 
-(owl) pi@raspberrypi:~/owl $ chmod a+x owl.py                  # changes owl.py to be executable
-(owl) pi@raspberrypi:~/owl $ chmod a+x owl_boot.sh                     # changes owl_boot.sh to be executable
+(owl) owl@raspberrypi:~ $ cd ~
+(owl) owl@raspberrypi:~ $ mv owl owl-old      # this renames the old 'owl' folder to 'owl-old'
+(owl) owl@raspberrypi:~ $ git clone https://github.com/geezacoleman/OpenWeedLocator        # download the new software
+(owl) owl@raspberrypi:~ $ mv OpenWeedLocator owl      # rename the download to 'owl'
+(owl) owl@raspberrypi:~ $ cd ~/owl
+(owl) owl@raspberrypi:~/owl $ pip install -r requirements.txt                # installs the necessary software into the (owl) environment 
+(owl) owl@raspberrypi:~/owl $ chmod a+x owl.py                  # changes owl.py to be executable
+(owl) owl@raspberrypi:~/owl $ chmod a+x owl_boot.sh                     # changes owl_boot.sh to be executable
 ```
 
 Once this is complete your software will be up to date and you can move on to focusing the camera.
@@ -588,8 +588,8 @@ algorithm determines how sharp an image is, so the higher the value the better. 
 focusing as easy as possible. Simply run:
 
  ```
-(owl) pi@raspberrypi:~ $ cd ~/owl
-(owl) pi@raspberrypi:~/owl $ bash focus_owl.sh 
+(owl) owl@raspberrypi:~ $ cd ~/owl
+(owl) owl@raspberrypi:~/owl $ bash focus_owl.sh 
  ```
 
 This will automate all the steps below. If this doesn't work, follow the steps below. If you would like to focus the OWL
@@ -605,13 +605,13 @@ With the older versions of the software, you need to stop all `owl.py` or `green
 you can restart the software with the video feed viewable on the screen. Enter the following into the terminal:
 
 ```
-(owl) pi@raspberrypi:~ $ ps -C owl.py # or ps -C greenonbrown.py if you still have the older version.
+(owl) owl@raspberrypi:~ $ ps -C owl.py # or ps -C greenonbrown.py if you still have the older version.
 ```
 
 After pressing ENTER, you should receive the following output:
 
 ```
-(owl) pi@raspberrypi:~ $ ps -C owl.py
+(owl) owl@raspberrypi:~ $ ps -C owl.py
 PID TTY              TIME CMD
 515 ?            00:00:00 owl.py
 ```
@@ -627,7 +627,7 @@ running in the background, skip the stop program step below, and move straight t
 If a PID appears, you'll need to stop it operating. To stop the program, enter the following command:
 
 ```
-(owl) pi@raspberrypi:~ $ sudo kill enter_your_PID_number_here
+(owl) owl@raspberrypi:~ $ sudo kill enter_your_PID_number_here
 ```
 
 The program should now be stopped
@@ -636,7 +636,7 @@ Now you'll need to launch `owl.py` manually with the video feed visible. To do t
 following commands:
 
 ```
-(owl) pi@raspberrypi:~ $ ~/owl/./owl.py --show-display
+(owl) owl@raspberrypi:~ $ ~/owl/./owl.py --show-display
 ```
 
 This will bring up a video feed you can use to visualise the OWL detector and also use it to focus the camera. Once
@@ -650,7 +650,7 @@ connected earlier blinks correctly the GPIO UART needs to be enabled.
 Open up a terminal console by pressing `Ctrl + T`. Type:
 
 ```
-(owl) pi@owl :-$ sudo nano /boot/config.txt
+(owl) owl@raspberrypi :-$ sudo nano /boot/config.txt
 ```
 
 This will open up the config.txt file. Scroll down to the bottom by holding the down arrow key and add the following
@@ -681,9 +681,9 @@ but `headless=False` the Raspberry Pi will not boot correctly and the OWL softwa
 To run the software from the command line (assuming it is not currently running), follow these steps:
 
 ```
-pi@raspberrypi:~ $ workon owl
-(owl) pi@raspberrypi:~ $ cd owl 
-(owl) pi@raspberrypi:~ /owl $ ./greenonbrown.py  
+owl@raspberrypi:~ $ workon owl
+(owl) owl@raspberrypi:~ $ cd owl 
+(owl) owl@raspberrypi:~ /owl $ ./greenonbrown.py  
 ```
 
 **BUG ALERT** There is a known bug with this version where the script will not run if you are running it outside of
@@ -731,14 +731,13 @@ and choose a password.
 | ![Raspberry Pi Imager](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/a86a6358-3a8c-4f40-94df-9eeba9c17e4d) | ![Imager](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/5f0756e0-52f5-4eb4-8e38-e3ee323cc468) |
 
 #### Step 1b - Setting up the OWL environment
-Once the Raspian OS has been flashed to the SD Card (may take 5 - 10 mins), remove the SD card and insert it into the
+Once the Raspian OS has been flashed to the SD Card (may take 5 - 10 minutes), remove the SD card and insert it into the
 Raspberry Pi. Connect the screen, keyboard and mouse and then power up the Pi. 
 
 ##### First boot
-On the first boot you may be asked to set
-country, timezone, keyboard, connect to wifi and look for updates among other things. If you haven't already set the 
-username, set it to 'owl' and choose a password. Uninstall the unused browser - this will save space on the Pi. Finally,
-you will be asked to restart the pi.
+On the first boot you may be asked to set country, timezone, keyboard, connect to wifi and look for updates among other
+things. If you haven't already set the username, set it to 'owl' and choose a password. Uninstall the unused browser - 
+this will save space on the Pi. Finally, you will be asked to restart the pi.
 
 ##### Opening terminal
 After the restart, open up Terminal. You can press CTRL + ALT + T, or click the icon in the top left with the `>_` 
@@ -746,11 +745,11 @@ symbol. The instructions that follow are a blend of those available from
 [PyImageSearch](https://pyimagesearch.com/2019/09/16/install-opencv-4-on-raspberry-pi-4-and-raspbian-buster/) 
 and [QEngineering](https://qengineering.eu/bookworm.html)
 
-**IMPORTANT:** You must name the device `owl` when asked if you didn't set it during the flashing process. 
+**NOTE:** We recommend naming the device `owl` when asked if you didn't set it during the flashing process. 
 
 ##### Free up space
 The Raspberry Pi comes pre-installed with a range of software. To free up space it can be removed from the OWL. 
-Depending on your install, these may or may not be present. At the command line (it should look like `owl@owl:~ $`), 
+Depending on your install, these may or may not be present. At the command line (it should look like `owl@raspberrypi:~ $`), 
 run the following:
 ```commandline
 $ sudo apt-get purge wolfram-engine
@@ -791,27 +790,27 @@ To make the `owl` environment, run the following:
 ```commandline
 $ mkvirtualenv --system-site-packages -p python owl
 ```
-The command line should now look like `(owl) owl@owl:~ $`. The (owl) at the start of the line means you're currently within
-that virtual environment. To turn it off you can run `deactivate` and to turn it own `workon owl`.
+The command line should now look like `(owl) owl@raspberrypi:~ $`. The '(owl)' at the start of the line means you're currently within
+that virtual environment. To turn it off you can run `deactivate` and to turn it run `workon owl`.
 
-IMPORTANT: The next steps must be run within the `owl` virtual environment. We're installing packages specific to the OWL.
+**IMPORTANT**: The next steps must be run within the `owl` virtual environment. We're installing packages specific to the OWL.
 
 ### Step 2 - Installing packages
 We now need to install the Python libraries that let the OWL work. The most import is OpenCV, which we'll do first before
 downloading the OWL repository and installing the remainder from the `requirements.txt` file.
 
 ```commandline
-owl@owl:~ $ workon owl
-(owl) owl@owl:~ $ pip3 install opencv-contrib-python
+owl@raspberrypi:~ $ workon owl
+(owl) owl@raspberrypi:~ $ pip3 install opencv-contrib-python
 ```
 This should have successfully installed OpenCV into the `owl` virtual environment. You can double check by quickly starting a
 Python session at the command line.
 ```commandline
-(owl) owl@owl:~ $ python
+(owl) owl@raspberrypi:~ $ python
 >>> import cv2
 >>> import picamera2
 >>> exit()
-(owl) owl@owl:~ $
+(owl) owl@raspberrypi:~ $
 ```
 If both of these complete without error, then you've successfully set up the virtual environment and installed OpenCV.
 
@@ -826,10 +825,10 @@ Now you should have:
 The next step is to download the entire OpenWeedLocator repository into your *home* directory on the Raspberry Pi.
 
 ```commandline
-(owl) owl@owl:~ $ cd ~
-(owl) owl@owl:~ $ git clone https://github.com/geezacoleman/OpenWeedLocator owl
+(owl) owl@raspberrypi:~ $ cd ~
+(owl) owl@raspberrypi:~ $ git clone https://github.com/geezacoleman/OpenWeedLocator owl
 ```
-This will download the repository into a folder called `owl`. Double check it is there by typing `(owl) owl@owl:~ $ ls` 
+This will download the repository into a folder called `owl`. Double check it is there by typing `(owl) owl@raspberrypi:~ $ ls` 
 and reading through the results, alternatively open up the Home folder using a mouse. If that was successful, you can 
 now move on to Step 4.
 
@@ -849,21 +848,20 @@ each and every module in the requirements.txt file has been installed correctly.
 * threading, collections, queue, time, os (though these are included as standard Python modules).
 
 **IMPORTANT**: Before continuing make sure you are in the `owl` virtual environment. Check that `(owl)` appears at the start
-of each command line, e.g. `(owl) owl@owl:~ $`. Run `workon owl` if you are unsure. If you are not in the `owl`
+of each command line, e.g. `(owl) owl@raspberrypi:~ $`. Run `workon owl` if you are unsure. If you are not in the `owl`
 environment, you will run into errors when starting `owl.py`.
 
 To install all the requirements.txt, simply run:
 
 ```commandline
-(owl) owl@owl:~ $ cd ~/owl
-(owl) owl@owl:~/owl $ pip install -r requirements.txt
+(owl) owl@raspberrypi:~ $ cd ~/owl
+(owl) owl@raspberrypi:~/owl $ pip install -r requirements.txt
 ```
 Now to double-check this has worked, we can open up another Python session and try importing the packages.
 
 ```commandline
-(owl) owl@owl :~ $ python
+(owl) owl@raspberrypi :~ $ python
 ```
-
 Python should start up an interactive session; type each of these in and make sure you don't get any errors.
 
 ```commandline
@@ -872,30 +870,27 @@ Python should start up an interactive session; type each of these in and make su
 >>> import gpiozero
 >>> import pandas
 ```
-
 Version numbers can be checked with:
 
 ```commandline
 >>> print(package_name_here.__version__) ## this is a generic example - add the package where it says package_name_here
 >>> print(cv2.__version__)
+>>> exit()
 ```
-
 If any errors appear, you'll need to go back and check that the modules above have (1) been installed into the owl
 virtual environment, (2) that Python was started in the owl environment, and/or (3) they all installed correctly. Once
 that is complete, exit Python and continue with the installation process.
 
-```
->>> exit()
-```
-
 ### Step 5 - starting OWL on boot
 
-Now that these dependencies have been installed into the owl virtual environment, it's time to make sure it runs on
-startup. The first step is to make the Python file `owl.py` and the boot file `owl_boot.sh` executable.
+Now that these dependencies have been installed into the owl virtual environment, it's time to make sure the software 
+runs on startup. The first step is to make both the Python file `owl.py` and the boot file `owl_boot.sh` executable 
+and then move the `owl_boot.sh` into the `/usr/local/bin` directory.
 
 ```commandline
-(owl) owl@owl:~/owl $ chmod a+x owl.py
-(owl) owl@owl:~/owl $ chmod a+x owl_boot.sh
+(owl) owl@raspberrypi:~/owl $ chmod a+x owl.py
+(owl) owl@raspberrypi:~/owl $ chmod a+x owl_boot.sh
+(owl) owl@raspberrypi:~/owl $ sudo mv owl_boot.sh ~/usr/local/bin/owl_boot.sh
 ```
 
 After they have been made executable, the `owl.py` needs to be launched on startup so each time the Raspberry Pi is
@@ -921,7 +916,7 @@ environment so outputs are logged. Finally, we change directory `cd` into the ow
 To add this to the list of cron jobs, you'll need to edit it as a root user:
 
 ```
-(owl) owl@owl:~/owl $ sudo crontab -e
+(owl) owl@raspberrypi:~/owl $ sudo crontab -e
 ```
 
 Select `1. /bin/nano editor`, which should bring up the crontab file. At the base of the file add this text:
@@ -936,7 +931,7 @@ and finally press Enter to agree to save and exit.
 Finally you just need to make `owl_boot.sh` executable so it can be run on startup:
 
 ```
-(owl) pi@raspberrypi:~ $ chmod a+x ~/owl/owl_boot.sh
+(owl) owl@raspberrypi:~ $ chmod a+x ~/owl/owl_boot.sh
 ```
 
 If you get stuck, [this guide](https://www.makeuseof.com/how-to-run-a-raspberry-pi-program-script-at-startup/)
@@ -951,8 +946,8 @@ algorithm determines how sharp an image is, so the higher the value the better. 
 focusing as easy as possible. Simply run:
 
  ```
-(owl) pi@raspberrypi:~ $ cd ~/owl
-(owl) pi@raspberrypi:~/owl $ bash focus_owl.sh 
+(owl) owl@raspberrypi:~ $ cd ~/owl
+(owl) owl@raspberrypi:~/owl $ bash focus_owl.sh 
  ```
 
 This will automate all the steps below. If this doesn't work, follow the steps below. If you would like to focus the OWL
@@ -968,13 +963,13 @@ With the older versions of the software, you need to stop all `owl.py` or `green
 you can restart the software with the video feed viewable on the screen. Enter the following into the terminal:
 
 ```
-(owl) pi@raspberrypi:~ $ ps -C owl.py # or ps -C greenonbrown.py if you still have the older version.
+(owl) owl@raspberrypi:~ $ ps -C owl.py # or ps -C greenonbrown.py if you still have the older version.
 ```
 
 After pressing ENTER, you should receive the following output:
 
 ```
-(owl) pi@raspberrypi:~ $ ps -C owl.py
+(owl) owl@raspberrypi:~ $ ps -C owl.py
 PID TTY              TIME CMD
 515 ?            00:00:00 owl.py
 ```
@@ -990,7 +985,7 @@ running in the background, skip the stop program step below, and move straight t
 If a PID appears, you'll need to stop it operating. To stop the program, enter the following command:
 
 ```
-(owl) pi@raspberrypi:~ $ sudo kill enter_your_PID_number_here
+(owl) owl@raspberrypi:~ $ sudo kill enter_your_PID_number_here
 ```
 
 The program should now be stopped
@@ -999,7 +994,7 @@ Now you'll need to launch `owl.py` manually with the video feed visible. To do t
 following commands:
 
 ```
-(owl) pi@raspberrypi:~ $ ~/owl/./owl.py --show-display
+(owl) owl@raspberrypi:~ $ ~/owl/./owl.py --show-display
 ```
 
 This will bring up a video feed you can use to visualise the OWL detector and also use it to focus the camera. Once
@@ -1026,9 +1021,112 @@ The optional real time clock module can be set up by following the [detailed ins
 </details>
 
 ## Changing detection settings
+<details>
+<summary>Instructions for changing detection settings</summary>
+<br>
+Changing detection settings is now easier with using a specific config file. 
+
+You can use command line flags to toggle display, data source and setting focus. Use the `config.ini` file in the 
+config folder to set other parameters as described below.
+
+The default config file is `DAY_SENSITIVITY_2.ini` (details provided below). If you change any settings here, make sure
+to save the file before restarting `owl.py`. 
+
+### Creating your own config files
+Feel free to create your own config files to meet your specific conditions. In `owl.py` just update the path to the
+config file. Follow the same layout and format as the default.
+
+```python
+owl = Owl(config_file='config/ENTER_YOUR_CONFIG_FILE_HERE.ini')
+
+```
+
+```ini
+[System]
+algorithm = exhsv
+# operate on a
+input_file_or_directory =
+relay_num = 4
+actuation_duration = 0.15
+delay = 0
+
+[Visualisation]
+show_display = False
+focus = False
+image_loop_time = 5
+
+[Camera]
+resolution_width = 416
+resolution_height = 320
+exp_compensation = -2
+
+[GreenOnGreen]
+# parameters related to green-on-green detection
+model_path = models
+confidence = 0.5
+class_filter_id = None
+
+[GreenOnBrown]
+# parameters related to green-on-brown detection
+exgMin = 25
+exgMax = 200
+hueMin = 39
+hueMax = 83
+saturationMin = 50
+saturationMax = 220
+brightnessMin = 60
+brightnessMax = 190
+min_detection_area = 10
+invert_hue = False
+
+[DataCollection]
+# all data collection related parameters
+# image collection, sample method include: 'bbox' | 'square' | 'whole'. Set sample_method=None
+sample_method = None
+sample_frequency = 60
+save_directory = output
+# enable video recording
+recording = False
+log_fps = False
+camera_name = cam1
+
+[Relays]
+# defines the relay ID (left) that matches to a boardpin (right) on the Pi.
+# Only change if you rewire/change the relay connections.
+0 = 13
+1 = 15
+2 = 16
+3 = 18
+```
+
+**Parameter**  | **Options** | **Description** 
+:-------------: | :-------------: | :-------------: 
+**Owl()** | | All options when the sprayer class is instantiated
+`exgMin`|Any integer between 0 and 255| Provides the minimum threshold value for the exg algorithm. Usually leave between 10 (very sensitive) and 25 (not sensitive)
+`exgMax`|Any integer between 0 and 255| Provides a maximum threshold for the exg algorithm. Leave above 180. 
+`hueMin`|Any integer between 0 and 128| Provides a minimum threshold for the hue channel when using hsv or exhsv algorithms. Typically between 28 and 45. Increase to reduce sensitivity.
+`hueMax`|Any integer between 0 and 128| Provides a maximum threshold for the hue (colour hue) channel when using hsv or exhsv algorithms. Typically between 80 and 95. Decrease to reduce sensitivity.
+`saturationMin`|Any integer between 0 and 255| Provides a minimum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 4 and 20. Increase to reduce sensitivity.
+`saturationMax`|Any integer between 0 and 255| Provides a maximum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 200 and 250. Decrease to reduce sensitivity.
+`brightnessMin`|Any integer between 0 and 255| Provides a minimum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 10 and 60. Increase to reduce sensitivity particularly if false positives in shadows.
+`brightnessMax`|Any integer between 0 and 255| Provides a maximum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 190 and 250. Decrease to reduce sensitivity particularly if false positives in bright sun.
+`resolution`|Tuple of (w, h) resolution| Changes output resolution from camera. Increasing rapidly decreased framerate but improves detection of small weeds.
+**hoot()** | | All options when the sprayer.start() function is called
+`sprayDur`|Any float (decimal)|Changes the length of time for which the relay is activated.|
+`sampleMethod`|Choose from None, 'bbox', 'square', 'whole' | If sampleMethod=None, sampling is deactivated. Do not leave on for long periods or SD card will fill up and stop working.|
+`sampleFreq` | Any positive integer | Changes how often (after how many frames) image sampling will occur. If sampleFreq=60, images will be sampled every 60 frames. |
+`saveDir` | Path to save directory | Set where you want the images saved. If you insert a USB and would like to save images to it, put the path for that here. |
+`algorithm`|Any of: `gog`,`exg`,`exgr`,`exgs`,`exhu`,`hsv`| Changes the selected algorithm. Most sensitive: 'exg', least sensitive/most precise (least false positives): 'exgr', 'exhu', 'hsv'. `gog` will activate a provided Green-on-Green detection algorithm, a .tflite model in the models folder. Ensure you have connected and installed a Google Coral using the procedure [here](#green-on-green). |
+`selectorEnabled`|`True` or `False`| Enables algorithm selection based on a rotary switch. Only enable if switch is connected.|
+`cameraName` | Any string | Changes the save name if recording videos of the camera. Ignore - only used if recording data.|
+`minArea`| Any integer  | Changes the minimum size of the detection. Leave low for more sensitivity of small weeds and increase to reduce false positives.|
+
+ </details>
+
+## Legacy changing detection settings
 
 <details>
-<summary>Instructions to change detection settings</summary>
+<summary>Legacy instructions to change detection settings</summary>
 <br>
 If you're interested in changing settings there are now two ways to do this:
 1. Using command line flags
@@ -1041,7 +1139,7 @@ to open up the code and make changes directly. OWL now supports the use of flags
 description of all flags available type:
 
 ```
-(owl) pi@raspberrypi:~ $./owl.py --help
+(owl) owl@raspberrypi:~ $./owl.py --help
 usage: owl.py [-h] [--input] [--show-display] [--focus] [--recording] [--algorithm {exg,nexg,exgr,maxg,exhsv,hsv}] [--framerate [10-120]]
                        [--exposure-mode {off,auto,nightpreview,backlight,spotlight,sports,snow,beach,verylong,fixedfps,antishake,fireworks}]
                        [--awb-mode {off,auto,sunlight,cloudy,shade,tungsten,fluorescent,incandescent,flash,horizon}] [--sensor-mode [0-3]]
@@ -1335,18 +1433,18 @@ in `/home/owl/` and either delete or rename that folder. Remember if you've made
 parameters/code, write them down. Then open up a Terminal window (Ctrl + T) and follow these steps:
 
 **IMPORTANT**: Before continuing make sure you are in the `owl` virtual environment. Check that `(owl)` appears at the
-start of each command line, e.g. `(owl) pi@raspberrypi:~ $`. Run `workon owl` if you are unsure. If you are not in
+start of each command line, e.g. `(owl) owl@raspberrypi:~ $`. Run `workon owl` if you are unsure. If you are not in
 the `owl` environment, you will run into errors when starting `owl.py`.
 
 ```
-(owl) pi@raspberrypi:~ $ cd ~
-(owl) pi@raspberrypi:~ $ mv owl owl-old      # this renames the old 'owl' folder to 'owl-old'
-(owl) pi@raspberrypi:~ $ git clone https://github.com/geezacoleman/OpenWeedLocator        # download the new software
-(owl) pi@raspberrypi:~ $ mv OpenWeedLocator owl      # rename the download to 'owl'
-(owl) pi@raspberrypi:~ $ cd ~/owl
-(owl) pi@raspberrypi:~/owl $ pip install -r requirements.txt
-(owl) pi@raspberrypi:~/owl $ chmod a+x owl.py
-(owl) pi@raspberrypi:~/owl $ chmod a+x owl_boot.sh
+(owl) owl@raspberrypi:~ $ cd ~
+(owl) owl@raspberrypi:~ $ mv owl owl-old      # this renames the old 'owl' folder to 'owl-old'
+(owl) owl@raspberrypi:~ $ git clone https://github.com/geezacoleman/OpenWeedLocator        # download the new software
+(owl) owl@raspberrypi:~ $ mv OpenWeedLocator owl      # rename the download to 'owl'
+(owl) owl@raspberrypi:~ $ cd ~/owl
+(owl) owl@raspberrypi:~/owl $ pip install -r requirements.txt
+(owl) owl@raspberrypi:~/owl $ chmod a+x owl.py
+(owl) owl@raspberrypi:~/owl $ chmod a+x owl_boot.sh
 ```
 
 And that's it! You're good to go with the latest software.
