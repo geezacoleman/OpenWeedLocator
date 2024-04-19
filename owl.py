@@ -63,7 +63,8 @@ class Owl:
         self.brightnessMax = self.config.getint('GreenOnBrown', 'brightnessMax')
 
         self.threshold_dict = {}
-        self.image_loop_time = 5  # time spent on each image when looping over a directory
+        # time spent on each image when looping over a directory
+        self.image_loop_time = self.config.getint('Visualisation', 'image_loop_time')
 
         # setup the track bars if show_display is True
         if self.show_display:
@@ -112,7 +113,14 @@ class Owl:
             self.save_recording = False
 
         # check if test video or videostream from camera
-        self.input_file_or_directory = self.config.get('System', 'input_file_or_directory')
+        # is the source a directory/file
+        if len(self.config.get('System', 'input_file_or_directory')) > 0:
+            self.input_file_or_directory = self.config.get('System', 'input_file_or_directory')
+
+        self.input_file_or_directory = input_file_or_directory
+
+        if len(self.config.get('System', 'input_file_or_directory')) > 0 and input_file_or_directory is not None:
+            print('[WARNING] two paths to image/videos provided. Defaulting to the command line flag.')
 
         if self.input_file_or_directory:
             self.cam = FrameReader(path=self.input_file_or_directory,

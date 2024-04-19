@@ -898,13 +898,15 @@ that is complete, exit Python and continue with the installation process.
 ### Step 5 - starting OWL on boot
 
 Now that these dependencies have been installed into the owl virtual environment, it's time to make sure the software 
-runs on startup. The first step is to make both the Python file `owl.py` and the boot file `owl_boot.sh` executable 
-and then move the `owl_boot.sh` into the `/usr/local/bin` directory.
+runs on startup. The first step is to make both the Python file `owl.py` and the boot files `owl_boot.sh` and `owl_boot_wrapper.sh`
+executable. Then move both `owl_boot.sh` and `owl_boot_wrapper.sh` into the `/usr/local/bin` directory.
 
 ```commandline
 (owl) owl@raspberrypi:~/owl $ chmod a+x owl.py
 (owl) owl@raspberrypi:~/owl $ chmod a+x owl_boot.sh
-(owl) owl@raspberrypi:~/owl $ sudo mv owl_boot.sh ~/usr/local/bin/owl_boot.sh
+(owl) owl@raspberrypi:~/owl $ chmod a+x owl_boot_wrapper.sh
+(owl) owl@raspberrypi:~/owl $ sudo mv owl_boot.sh /usr/local/bin/owl_boot.sh
+(owl) owl@raspberrypi:~/owl $ sudo mv owl_boot_wrapper.sh /usr/local/bin/owl_boot.sh
 ```
 
 After they have been made executable, the `owl.py` needs to be launched on startup so each time the Raspberry Pi is
@@ -914,18 +916,26 @@ fairly straightforward. It's what's known as a [bash script](https://ryanstutori
 contains commands we would normally enter on the command line in Terminal.
 
 This is the `owl_boot.sh` file:
-```
+```commandline
 #!/bin/bash
 
-source /home/owl/.bashrc
-workon owl
-lxterminal
-cd /home/owl/owl
-./owl.py
+# automatically determine the home directory, to avoid issues with username
+source $HOME/.bashrc
+
+# activate the 'owl' virtual environment
+source $HOME/.virtualenvs/owl/bin/activate
+
+# change directory to the owl folder
+cd $HOME/owl
+
+# run owl.py in the background and save the log output
+LOG_DATE=$(date -u +"%Y-%m-%dT%H-%M-%SZ")
+./owl.py > $HOME_DIR/owl/logs/owl_$LOG_DATE.log 2>&1 &
 ```
 
-In the file, the first two commands launch our `owl` virtual environment, then `lxterminal` creates a virtual terminal
-environment so outputs are logged. Finally, we change directory `cd` into the owl folder and run the python program.
+In the file, the first two commands launch our `owl` virtual environment, then we change directory `cd` into the owl 
+folder and run the python program. The `owl_boot_wrapper.sh` file figures out which user is running the file, and then
+uses that user to run `owl_boot.sh`. This makes the system more resilient to changes in Pi username.
 
 To add this to the list of cron jobs, you'll need to edit it as a root user:
 
@@ -936,23 +946,18 @@ To add this to the list of cron jobs, you'll need to edit it as a root user:
 Select `1. /bin/nano editor`, which should bring up the crontab file. At the base of the file add this text:
 
 ```
-@reboot /home/owl/owl/owl_boot.sh
+@reboot /usr/local/bin/owl_boot_wrapper.sh > /home/launch.log 2>&1 
 ```
 
 Once you've added that line, you'll just need to save the file and exit. In the nano editor just press Ctrl + X, then Y
 and finally press Enter to agree to save and exit.
 
-Finally you just need to make `owl_boot.sh` executable so it can be run on startup:
-
-```
-(owl) owl@raspberrypi:~ $ chmod a+x ~/owl/owl_boot.sh
-```
-
-If you get stuck, [this guide](https://www.makeuseof.com/how-to-run-a-raspberry-pi-program-script-at-startup/)
-or [this guide](https://www.tomshardware.com/how-to/run-script-at-boot-raspberry-pi) both have a bit more detail on cron
-and some other methods too.
+If you get stuck, [this guide](https://www.makeuseof.com/how-to-run-a-raspberry-pi-program-script-at-startup/) or [this guide](https://www.tomshardware.com/how-to/run-script-at-boot-raspberry-pi) both have a bit more detail on cron and some other methods too.
 
 ### Step 6 - focusing the camera
+
+**NOTE**: *Cameras with automatic focus such as the Raspberry Pi Camera Module 3 will be automatically focused to 1.2m 
+distance. The following guide is useful for the HQ and Global Shutter cameras which require manual focusing.*
 
 The final step in the process is to make sure the camera is correctly focused for the mounting height. With the latest
 software, when you run `owl.py --focus` a sharpness (i.e. least blurry) estimation is provided on the video feed. The
@@ -1046,19 +1051,40 @@ config folder to set other parameters as described below.
 The default config file is `DAY_SENSITIVITY_2.ini` (details provided below). If you change any settings here, make sure
 to save the file before restarting `owl.py`. 
 
+### Command line flags
+Command line flags are let you specify options on the command line within the Terminal window. It means you don't have
+to open up the code and make changes directly. OWL now supports the use of flags for some parameters. To read a
+description of all flags available type `--help`:
+
+```commandline
+usage: owl.py [-h] [--input] [--show-display] [--focus]
+  --input               path to image directory, single image or video file
+  --show-display        show display windows
+  --focus               focus the camera
+```
+
+
 ### Creating your own config files
 Feel free to create your own config files to meet your specific conditions. In `owl.py` just update the path to the
 config file. Follow the same layout and format as the default.
 
+To open `owl.py`, you'll need to open it and not execute the file. 
+
+Navigate to the `owl` directory  | Open the `owl.py` file
+:-------------------------:|:-------------------------:
+![owl_dir](https://user-images.githubusercontent.com/51358498/221152779-46c78fe2-92e6-4e65-9ebd-234ae02c33f6.png) | ![open_greenonbrown_py](https://user-images.githubusercontent.com/51358498/221153072-922d9ed6-8120-4c2d-9bd2-a999030b4723.png)
+
+Then scroll down to the very bottom until you find the line below. Update the `config_file=` path to your own config file path.
+
 ```python
 owl = Owl(config_file='config/ENTER_YOUR_CONFIG_FILE_HERE.ini')
-
 ```
 
+These are the various system, data collection and detection settings that can be changed. They are defined further below.
 ```ini
 [System]
 algorithm = exhsv
-# operate on a
+# operate on a directory, single image or video
 input_file_or_directory =
 relay_num = 4
 actuation_duration = 0.15
@@ -1113,27 +1139,45 @@ camera_name = cam1
 3 = 18
 ```
 
-**Parameter**  | **Options** | **Description** 
-:-------------: | :-------------: | :-------------: 
-**Owl()** | | All options when the sprayer class is instantiated
-`exgMin`|Any integer between 0 and 255| Provides the minimum threshold value for the exg algorithm. Usually leave between 10 (very sensitive) and 25 (not sensitive)
-`exgMax`|Any integer between 0 and 255| Provides a maximum threshold for the exg algorithm. Leave above 180. 
-`hueMin`|Any integer between 0 and 128| Provides a minimum threshold for the hue channel when using hsv or exhsv algorithms. Typically between 28 and 45. Increase to reduce sensitivity.
-`hueMax`|Any integer between 0 and 128| Provides a maximum threshold for the hue (colour hue) channel when using hsv or exhsv algorithms. Typically between 80 and 95. Decrease to reduce sensitivity.
-`saturationMin`|Any integer between 0 and 255| Provides a minimum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 4 and 20. Increase to reduce sensitivity.
-`saturationMax`|Any integer between 0 and 255| Provides a maximum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 200 and 250. Decrease to reduce sensitivity.
-`brightnessMin`|Any integer between 0 and 255| Provides a minimum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 10 and 60. Increase to reduce sensitivity particularly if false positives in shadows.
-`brightnessMax`|Any integer between 0 and 255| Provides a maximum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 190 and 250. Decrease to reduce sensitivity particularly if false positives in bright sun.
-`resolution`|Tuple of (w, h) resolution| Changes output resolution from camera. Increasing rapidly decreased framerate but improves detection of small weeds.
-**hoot()** | | All options when the sprayer.start() function is called
-`sprayDur`|Any float (decimal)|Changes the length of time for which the relay is activated.|
-`sampleMethod`|Choose from None, 'bbox', 'square', 'whole' | If sampleMethod=None, sampling is deactivated. Do not leave on for long periods or SD card will fill up and stop working.|
-`sampleFreq` | Any positive integer | Changes how often (after how many frames) image sampling will occur. If sampleFreq=60, images will be sampled every 60 frames. |
-`saveDir` | Path to save directory | Set where you want the images saved. If you insert a USB and would like to save images to it, put the path for that here. |
-`algorithm`|Any of: `gog`,`exg`,`exgr`,`exgs`,`exhu`,`hsv`| Changes the selected algorithm. Most sensitive: 'exg', least sensitive/most precise (least false positives): 'exgr', 'exhu', 'hsv'. `gog` will activate a provided Green-on-Green detection algorithm, a .tflite model in the models folder. Ensure you have connected and installed a Google Coral using the procedure [here](#green-on-green). |
-`selectorEnabled`|`True` or `False`| Enables algorithm selection based on a rotary switch. Only enable if switch is connected.|
-`cameraName` | Any string | Changes the save name if recording videos of the camera. Ignore - only used if recording data.|
-`minArea`| Any integer  | Changes the minimum size of the detection. Leave low for more sensitivity of small weeds and increase to reduce false positives.|
+### Parameter definitions
+
+**Parameter**  |                  **Options**                   |                                                                                                                                                                 **Description**                                                                                                                                                                  
+:-------------: |:----------------------------------------------:|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: 
+**System**  |                                                | 
+`algorithm`| Any of: `gog`,`exg`,`exgr`,`exgs`,`exhu`,`hsv` | Changes the selected algorithm. Most sensitive: 'exg', least sensitive/most precise (least false positives): 'exgr', 'exhu', 'hsv'. `gog` will activate a provided Green-on-Green detection algorithm, a .tflite model in the models folder. Ensure you have connected and installed a Google Coral using the procedure [here](#green-on-green). |
+`actuation_duration`|              Any float (decimal)               |                                                                                                                                           Changes the length of time for which the relay is activated.                                                                                                                                           |
+`input_file_or_directory`|  path to a image, video or directory of media  |                                                                                                                            Will iterate over each image at a default 5 FPS, or over a directory of images or videos.                                                                                                                             
+`relay_num`  |                    integer                     |                                         Change the number of activation 'lanes' and therefore the number of relays activated. Set to 1 for a single relay. If <4, then the first boardpins will be used by default. More than four will require additional hardware and changes to the [Relays] mapping.                                         
+`delay`|                   Any float                    |                                                                                                                                              Delay between detection and actuation. Defaults to 0.                                                                                                                                               
+**Visualisation**  |                                                | 
+`image_loop_time`|                    Integer                     |                                                                                                              How long (ms) to wait on each image when looping over the same image if a single image file or directory is provided.                                                                                                               
+**Camera**  |                                                | 
+`resolution_width` |                    Integer                     |
+`resolution_height`|                    Integer                     |
+`exp_compensation`  |            Integer between -8 and 8            |                                                                                                      Change the target exposure setting for the exposure algorithm. Defaults to -2, preferencing darker settings for faster shutter speeds.                                                                                                      
+**GreenOnGreen**  |                                                |
+`model_path` |                      Path                      |                                                                                                                                                             A path to the model file                                                                                                                                                             
+`confidence` |                                                |                                                                                                                                       The cutoff confidence value for a detection. Defaults to 0.5 or 50%.                                                                                                                                       
+`class_filter_id` |                    Integer                     |                                                                                      Which classes to filter and target. For example, using a out-the-box COCO model, you may want to only detect a specific class. Enter that specific class integer here.                                                                                      
+**GreenOnBrown**  |                                                | 
+`exgMin`|         Any integer between 0 and 255          |                                                                                                           Provides the minimum threshold value for the exg algorithm. Usually leave between 10 (very sensitive) and 25 (not sensitive)                                                                                                           
+`exgMax`|         Any integer between 0 and 255          |                                                                                                                                       Provides a maximum threshold for the exg algorithm. Leave above 180.                                                                                                                                       
+`hueMin`|         Any integer between 0 and 128          |                                                                                                Provides a minimum threshold for the hue channel when using hsv or exhsv algorithms. Typically between 28 and 45. Increase to reduce sensitivity.                                                                                                 
+`hueMax`|         Any integer between 0 and 128          |                                                                                          Provides a maximum threshold for the hue (colour hue) channel when using hsv or exhsv algorithms. Typically between 80 and 95. Decrease to reduce sensitivity.                                                                                          
+`saturationMin`|         Any integer between 0 and 255          |                                                                                    Provides a minimum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 4 and 20. Increase to reduce sensitivity.                                                                                    
+`saturationMax`|         Any integer between 0 and 255          |                                                                                  Provides a maximum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 200 and 250. Decrease to reduce sensitivity.                                                                                   
+`brightnessMin`|         Any integer between 0 and 255          |                                                                   Provides a minimum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 10 and 60. Increase to reduce sensitivity particularly if false positives in shadows.                                                                    
+`brightnessMax`|         Any integer between 0 and 255          |                                                                 Provides a maximum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 190 and 250. Decrease to reduce sensitivity particularly if false positives in bright sun.                                                                 
+`min_detection_area`  |                    Integer                     |                                                                                                                                                   The minimum area for which to detect a weed.                                                                                                                                                   
+`invert_hue`  |                    Boolean                     |                                                                                                                 True/False, inverts the detected hue from everything within the thresholds to everything outside the thresholds.                                                                                                                 
+**DataCollection**  |                                                | 
+`sample_method`|  Choose from None, 'bbox', 'square', 'whole'   |                                                                                                            If sample_method=None, sampling is deactivated. Do not leave on for long periods or SD card will fill up and stop working.                                                                                                            |
+`sample_frequency` |              Any positive integer              |                                                                                                          Changes how often (after how many frames) image sampling will occur. If sampleFreq=60, images will be sampled every 60 frames.                                                                                                          |
+`save_directory` |             Path to save directory             |                                                                                                            Set where you want the images saved. If you insert a USB and would like to save images to it, put the path for that here.                                                                                                             |
+`recording` |                    Boolean                     |                                                                                                                                                   True/False - turn video recording on or off.                                                                                                                                                   |
+`log_fps` |                    Boolean                     |                                                                                                                                                               Save FPS to a file.                                                                                                                                                                |
+`camera_name` |                   Any string                   |                                                                                                                          Changes the save name if recording videos of the camera. Ignore - only used if recording data.                                                                                                                          |
+**Relays**  |             Integer/GPIO Boardpin              |                                                                                                                                               Maps a relay number to a boardpin on the GPIO header                                                                                                                                               
 
  </details>
 
@@ -1142,9 +1186,8 @@ camera_name = cam1
 <details>
 <summary>Legacy instructions to change detection settings</summary>
 <br>
-If you're interested in changing settings there are now two ways to do this:
-1. Using command line flags
-2. Opening the owl.py file and changing threshold values
+Prior to the `config.ini` file, all settings were controlled using command line flags. These have been replaced, however
+are listed below for reference.
 
 ### Command line flags
 
@@ -1174,9 +1217,6 @@ optional arguments:
   --sensor-mode [0-3]   set the sensor mode for the camera between 0 and 3. Check Raspberry Pi camera documentation for specifics of each mode
   --exp-compensation [-24 to 24]
                         set the exposure compensation (EV) for the camera between -24 and 24. Raspberry Pi cameras seem to overexpose images preferentially.
-
-
-
 ```
 
 Flag | Usage | Description

@@ -1,14 +1,13 @@
 #!/bin/bash
 
-# automatically determine the home directory, to avoid issues with usernam
-HOME_DIR=$(getent passwd $USER | cut -d: -f6)
-source $HOME_DIR/.bashrc
+# automatically determine the home directory, to avoid issues with username
+source $HOME/.bashrc
 
 # activate the 'owl' virtual environment
-source $HOME_DIR/.virtualenvs/owl/bin/activate
+source $HOME/.virtualenvs/owl/bin/activate
 
 # change directory to the owl folder
-cd $HOME_DIR/owl
+cd $HOME/owl
 
 # run owl.py in the background and save the log output
 LOG_DATE=$(date -u +"%Y-%m-%dT%H-%M-%SZ")

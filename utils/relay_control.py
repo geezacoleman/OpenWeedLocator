@@ -1,4 +1,4 @@
-from logger import Logger
+from utils.logger import Logger
 from threading import Thread, Condition
 from utils.cli_vis import RelayVis
 import collections
