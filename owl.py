@@ -302,6 +302,11 @@ class Owl:
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often
                 if sample_method is not None:
+                    if log_fps and frame_count % 1000 == 0:
+                        fps.stop()
+                        self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
+                        fps = FPS().start()
+
                     # only record every sampleFreq number of frames. If sampleFreq = 60, this will activate every 60th frame
                     if frame_count % sample_frequency == 0:
                         save_frame = frame.copy()
@@ -328,7 +333,13 @@ class Owl:
                             whole_image_thread.start()
 
 
-                    frame_count += 1
+                frame_count += 1
+
+                if log_fps and frame_count % 1000 == 0:
+                    fps.stop()
+                    self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
+                    fps = FPS().start()
+
                 # ########################
 
                 # loop over the ID/weed centres from contours
@@ -367,7 +378,7 @@ class Owl:
                     self.recorder_button.save_recording = False
                     if log_fps:
                         fps.stop()
-                        self.logger.log_line_video(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
+                        self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
                         fps = FPS().start()
 
                     self.writer = None

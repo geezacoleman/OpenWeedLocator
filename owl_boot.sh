@@ -11,4 +11,4 @@ cd $HOME/owl
 
 # run owl.py in the background and save the log output
 LOG_DATE=$(date -u +"%Y-%m-%dT%H-%M-%SZ")
-./owl.py > $HOME_DIR/owl/logs/owl_$LOG_DATE.log 2>&1 &
+./owl.py > $HOME/owl/logs/owl_$LOG_DATE.log 2>&1 &

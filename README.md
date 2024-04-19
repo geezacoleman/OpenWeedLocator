@@ -781,7 +781,7 @@ file.
 
 ```commandline
 $ sudo apt-get update && sudo apt-get upgrade
-$ echo # virtualenv and virtualenvwraper
+$ echo # virtualenv and virtualenvwraper >> ~/.bashrc
 # add the following line to the bashrc file
 $ echo "export VIRTUALENVWRAPPER_PYTHON=/usr/bin/python" >> ~/.bashrc
 # reload the profile
@@ -906,7 +906,7 @@ executable. Then move both `owl_boot.sh` and `owl_boot_wrapper.sh` into the `/us
 (owl) owl@raspberrypi:~/owl $ chmod a+x owl_boot.sh
 (owl) owl@raspberrypi:~/owl $ chmod a+x owl_boot_wrapper.sh
 (owl) owl@raspberrypi:~/owl $ sudo mv owl_boot.sh /usr/local/bin/owl_boot.sh
-(owl) owl@raspberrypi:~/owl $ sudo mv owl_boot_wrapper.sh /usr/local/bin/owl_boot.sh
+(owl) owl@raspberrypi:~/owl $ sudo mv owl_boot_wrapper.sh /usr/local/bin/owl_boot_wrapper.sh
 ```
 
 After they have been made executable, the `owl.py` needs to be launched on startup so each time the Raspberry Pi is
@@ -953,6 +953,8 @@ Once you've added that line, you'll just need to save the file and exit. In the 
 and finally press Enter to agree to save and exit.
 
 If you get stuck, [this guide](https://www.makeuseof.com/how-to-run-a-raspberry-pi-program-script-at-startup/) or [this guide](https://www.tomshardware.com/how-to/run-script-at-boot-raspberry-pi) both have a bit more detail on cron and some other methods too.
+
+Now you'll just need to reboot the system.
 
 ### Step 6 - focusing the camera
 
