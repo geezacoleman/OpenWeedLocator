@@ -3,7 +3,7 @@ from utils.button_inputs import Recorder
 from utils.image_sampler import bounding_box_image_sample, square_image_sample, whole_image_save
 from utils.blur_algorithms import fft_blur
 from utils.greenonbrown import GreenOnBrown
-from utils.relay_control import Controller, LEDIndicator
+from utils.relay_control import Controller, StatusIndicator
 from utils.frame_reader import FrameReader
 
 from configparser import ConfigParser
@@ -169,7 +169,7 @@ class Owl:
             self.save_directory = self.config.get('DataCollection', 'save_directory')
             self.camera_name = self.config.get('DataCollection', 'camera_name')
 
-            self.indicators = LEDIndicator(save_directory=self.save_directory)
+            self.indicators = StatusIndicator(save_directory=self.save_directory)
             self.indicators.setup_success()
             self.indicators.start_storage_indicator()
         ############################
@@ -193,16 +193,32 @@ class Owl:
 
     def hoot(self):
         algorithm = self.config.get('System', 'algorithm')
-
         log_fps = self.config.getboolean('DataCollection', 'log_fps')
 
         # track FPS and framecount
         frame_count = 0
         if self.sample_method is not None:
-            today_dir = datetime.now().strftime('%Y%m%d')
-            full_path = os.path.join(self.save_directory, today_dir)
-            if not os.path.exists(full_path):
-                os.makedirs(full_path)
+            today_save_path = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
+            try:
+                if not os.path.exists(today_save_path):
+                    os.makedirs(today_save_path)
+
+            except PermissionError:
+                try:
+                    username = os.listdir('/media/')[0]
+                    usb_drives = os.listdir(os.path.join('media', username))
+                    self.save_directory = os.path.join('media', username, usb_drives[0])
+                    today_save_path = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
+
+                    if not os.path.exists(today_save_path):
+                        os.makedirs(today_save_path)
+
+                except Exception as e:
+                    self.logger.log_line(
+                        f"\n[USB ERROR] Permission error.\nError message: {e}", verbose=True)
+                    self.indicators.alert_flash()
+                    time.sleep(5)
+                    sys.exit()
 
         if log_fps:
             fps = FPS().start()
@@ -262,11 +278,11 @@ class Owl:
                         break
 
                 if self.record and self.writer is None:
-                    save_directory = os.path.join(save_directory, strftime(f"%Y%m%d-{self.camera_name}-{algorithm}"))
-                    if not os.path.exists(save_directory):
-                        os.makedirs(save_directory)
+                    video_save_directory = os.path.join(self.save_directory, strftime(f"%Y%m%d-{self.camera_name}-{algorithm}"))
+                    if not os.path.exists(video_save_directory):
+                        os.makedirs(video_save_directory)
 
-                    self.base_name = os.path.join(save_directory, strftime(f"%Y%m%d-%H%M%S-{self.camera_name}-{algorithm}"))
+                    self.base_name = os.path.join(video_save_directory, strftime(f"%Y%m%d-%H%M%S-{self.camera_name}-{algorithm}"))
                     video_name = self.base_name + '.avi'
                     self.logger.new_video_logfile(name=self.base_name + '.txt')
                     self.writer = cv2.VideoWriter(video_name, self.fourcc, 30, (frame.shape[1], frame.shape[0]), True)
@@ -310,7 +326,7 @@ class Owl:
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often
                 if self.sample_method is not None:
-                    if log_fps and frame_count % 1000 == 0:
+                    if log_fps and frame_count % 900 == 0:
                         fps.stop()
                         self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
                         fps = FPS().start()
@@ -341,10 +357,12 @@ class Owl:
                                                         args=[image_out, self.save_directory, frame_count])
                             whole_image_thread.start()
 
+                    if self.indicators.DRIVE_FULL:
+                        self.sample_method = None
 
-                frame_count += 1
+                frame_count = frame_count + 1 if frame_count < 900 else 0
 
-                if log_fps and frame_count % 1000 == 0:
+                if log_fps and frame_count % 900 == 0:
                     fps.stop()
                     self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
                     fps = FPS().start()

@@ -59,11 +59,12 @@ class TestLED:
                 print(f'BLINK {self.pin}')
 
 
-class LEDIndicator:
+class StatusIndicator:
     def __init__(self, save_directory, record_led_boardpin='BOARD38', storage_led_boardpin='BOARD40', testing=False):
         self.save_directory = save_directory
         self.storage_used = None
-        self.storage_free = None
+        self.storage_total = None
+        self.DRIVE_FULL = False
 
         if not testing:
             self.record_LED = LED(pin=record_led_boardpin)
@@ -89,19 +90,37 @@ class LEDIndicator:
             self.update()
             time.sleep(10.5)
 
+            if self.DRIVE_FULL:
+                break
+
     def update(self):
-        _, self.storage_used, self.storage_free = shutil.disk_usage(self.save_directory)
-        percent_full = (self.storage_used / (self.storage_used + self.storage_free))
+        try:
+            self.storage_total, self.storage_used, _ = shutil.disk_usage(self.save_directory)
+
+        except FileNotFoundError:
+            pass
+
+        percent_full = (self.storage_used / (self.storage_total))
 
         on_time = 0.1 + 10 * percent_full
         off_time = 10 - on_time
 
-        if percent_full >= 0.95:
+        if percent_full >= 0.99:
+            self.DRIVE_FULL = True
+            self.storage_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
+            self.record_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
+
+        elif percent_full >= 0.95:
             on_time = 10
             off_time = 0
+            self.storage_LED.blink(on_time=on_time, off_time=off_time, n=None, background=True)
 
-        self.storage_LED.blink(on_time=on_time, off_time=off_time, n=None, background=True)
+        else:
+            self.storage_LED.blink(on_time=on_time, off_time=off_time, n=None, background=True)
 
+    def alert_flash(self):
+        self.storage_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
+        self.record_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
 
 # control class for the relay board
 class RelayControl:
