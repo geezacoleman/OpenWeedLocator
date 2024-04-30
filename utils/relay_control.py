@@ -10,7 +10,7 @@ import warnings
 # check if the system is being tested on a Windows or Linux x86 64 bit machine
 if 'rpi' in platform.platform():
     testing = False
-    from gpiozero import Buzzer, OutputDevice
+    from gpiozero import Buzzer, OutputDevice, LED
 
 elif platform.system() == "Windows":
     warning_message = "[WARNING] The system is running on a Windows platform. GPIO disabled. Test mode active."
@@ -20,7 +20,7 @@ elif platform.system() == "Windows":
 
 elif 'aarch' in platform.platform():
     testing = False
-    from gpiozero import Buzzer, OutputDevice
+    from gpiozero import Buzzer, OutputDevice, LED
 
 else:
     warning_message = "[WARNING] The system is not running on a recognized platform. GPIO disabled. Test mode active."
@@ -47,6 +47,15 @@ class TestBuzzer:
             if verbose:
                 print('BEEP')
 
+class TestLED:
+    def __init__(self, pin):
+        self.pin = pin
+    def blink(self, on_time, off_time, n=1, verbose=False):
+        for i in range(n):
+            if verbose:
+                print(f'BLINK {self.pin}')
+
+
 # control class for the relay board
 class RelayControl:
     def __init__(self, relay_dict):
@@ -54,8 +63,16 @@ class RelayControl:
         self.relay_dict = relay_dict
         self.on = False
 
+        # used to toggle activation of GPIO pins for LEDs
+        self.field_data_recording = False
+
         if not self.testing:
             self.buzzer = Buzzer(pin='BOARD7')
+
+            if self.field_data_recording:
+                self.record_led = LED(pin='BOARD38')
+                self.storage_led = LED(pin='BOARD40')
+
             for relay, board_pin in self.relay_dict.items():
                 self.relay_dict[relay] = OutputDevice(pin=f'BOARD{board_pin}')
 
@@ -80,6 +97,18 @@ class RelayControl:
 
     def beep(self, duration=0.2, repeats=2):
         self.buzzer.beep(on_time=duration, off_time=(duration / 2), n=repeats)
+
+    def storage_indicator(self, used, free):
+        percent_full = used / free
+
+        on_time = 0.1 + 0.8 * percent_full
+        off_time = 10 - 9 * percent_full
+
+        if percent_full >= 0.95:
+            on_time = 0.95
+            off_time = 0.05
+
+        self.storage_led.blink(on_time=on_time, off_time=off_time, n=None, background=True)
 
     def all_on(self):
         for relay in self.relay_dict.keys():

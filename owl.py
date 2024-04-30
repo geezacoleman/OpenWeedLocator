@@ -15,6 +15,7 @@ from time import strftime
 from threading import Thread
 
 import argparse
+import shutil
 import imutils
 import time
 import sys
@@ -193,6 +194,10 @@ class Owl:
         # track FPS and framecount
         frame_count = 0
         if sample_method is not None:
+            self.controller.relay.field_data_recording = True
+            record_LED = self.controller.relay.record_LED()
+            storage_LED = self.controller.relay.storage_LED()
+
             if not os.path.exists(save_directory):
                 os.makedirs(save_directory)
 
@@ -302,6 +307,9 @@ class Owl:
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often
                 if sample_method is not None:
+                    storage_size, storage_used, storage_free = shutil.disk_usage(save_directory)
+                    storage_LED.storage_status(used=storage_used, free=storage_free)
+
                     if log_fps and frame_count % 1000 == 0:
                         fps.stop()
                         self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
@@ -310,6 +318,7 @@ class Owl:
                     # only record every sampleFreq number of frames. If sampleFreq = 60, this will activate every 60th frame
                     if frame_count % sample_frequency == 0:
                         save_frame = frame.copy()
+                        record_LED.blink(on_time=0.1, n=1)
 
                         if sample_method == 'whole':
                             whole_image_thread = Thread(target=whole_image_save,
