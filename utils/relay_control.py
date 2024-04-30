@@ -63,15 +63,14 @@ class RelayControl:
         self.relay_dict = relay_dict
         self.on = False
 
+        self.record_LED = None
+        self.storage_LED = None
+
         # used to toggle activation of GPIO pins for LEDs
         self.field_data_recording = False
 
         if not self.testing:
             self.buzzer = Buzzer(pin='BOARD7')
-
-            if self.field_data_recording:
-                self.record_led = LED(pin='BOARD38')
-                self.storage_led = LED(pin='BOARD40')
 
             for relay, board_pin in self.relay_dict.items():
                 self.relay_dict[relay] = OutputDevice(pin=f'BOARD{board_pin}')
@@ -80,6 +79,13 @@ class RelayControl:
             self.buzzer = TestBuzzer()
             for relay, board_pin in self.relay_dict.items():
                 self.relay_dict[relay] = TestRelay(board_pin)
+
+    def setup_led(self, record_led_boardpin='BOARD38', storage_led_boardpin='BOARD40'):
+        self.record_LED = LED(pin=record_led_boardpin)
+        self.storage_LED = LED(pin=storage_led_boardpin)
+
+        self.storage_LED.blink(on_time=0.1, off_time=0.2, n=3)
+        self.record_LED.blink(on_time=0.1, off_time=0.2, n=3)
 
     def relay_on(self, relay_number, verbose=True):
         relay = self.relay_dict[relay_number]

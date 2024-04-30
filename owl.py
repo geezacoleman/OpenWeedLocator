@@ -194,7 +194,8 @@ class Owl:
         # track FPS and framecount
         frame_count = 0
         if sample_method is not None:
-            self.controller.relay.field_data_recording = True
+            self.controller.relay.setup_led()
+
             record_LED = self.controller.relay.record_LED()
             storage_LED = self.controller.relay.storage_LED()
 
