@@ -3,7 +3,7 @@ from utils.button_inputs import Recorder
 from utils.image_sampler import bounding_box_image_sample, square_image_sample, whole_image_save
 from utils.blur_algorithms import fft_blur
 from utils.greenonbrown import GreenOnBrown
-from utils.relay_control import Controller
+from utils.relay_control import Controller, LEDIndicator
 from utils.frame_reader import FrameReader
 
 from configparser import ConfigParser
@@ -162,6 +162,16 @@ class Owl:
         # this is where a recording button can be added. Currently set to pin 37
         if self.recording:
             self.recorder_button = Recorder(recordGPIO=37)
+
+        self.sample_method = self.config.get('DataCollection', 'sample_method')
+        if self.sample_method is not None:
+            self.sample_frequency = self.config.getint('DataCollection', 'sample_frequency')
+            self.save_directory = self.config.get('DataCollection', 'save_directory')
+            self.camera_name = self.config.get('DataCollection', 'camera_name')
+
+            self.indicators = LEDIndicator(save_directory=self.save_directory)
+            self.indicators.setup_success()
+            self.indicators.start_storage_indicator()
         ############################
 
         # sensitivity and weed size to be added
@@ -186,21 +196,13 @@ class Owl:
 
         log_fps = self.config.getboolean('DataCollection', 'log_fps')
 
-        sample_method = self.config.get('DataCollection', 'sample_method')
-        sample_frequency = self.config.getint('DataCollection', 'sample_frequency')
-        save_directory = self.config.get('DataCollection', 'save_directory')
-        camera_name = self.config.get('DataCollection', 'camera_name')
-
         # track FPS and framecount
         frame_count = 0
-        if sample_method is not None:
-            self.controller.relay.setup_led()
-
-            record_LED = self.controller.relay.record_LED()
-            storage_LED = self.controller.relay.storage_LED()
-
-            if not os.path.exists(save_directory):
-                os.makedirs(save_directory)
+        if self.sample_method is not None:
+            today_dir = datetime.now().strftime('%Y%m%d')
+            full_path = os.path.join(self.save_directory, today_dir)
+            if not os.path.exists(full_path):
+                os.makedirs(full_path)
 
         if log_fps:
             fps = FPS().start()
@@ -260,11 +262,11 @@ class Owl:
                         break
 
                 if self.record and self.writer is None:
-                    save_directory = os.path.join(save_directory, strftime(f"%Y%m%d-{camera_name}-{algorithm}"))
+                    save_directory = os.path.join(save_directory, strftime(f"%Y%m%d-{self.camera_name}-{algorithm}"))
                     if not os.path.exists(save_directory):
                         os.makedirs(save_directory)
 
-                    self.base_name = os.path.join(save_directory, strftime(f"%Y%m%d-%H%M%S-{camera_name}-{algorithm}"))
+                    self.base_name = os.path.join(save_directory, strftime(f"%Y%m%d-%H%M%S-{self.camera_name}-{algorithm}"))
                     video_name = self.base_name + '.avi'
                     self.logger.new_video_logfile(name=self.base_name + '.txt')
                     self.writer = cv2.VideoWriter(video_name, self.fourcc, 30, (frame.shape[1], frame.shape[0]), True)
@@ -307,39 +309,36 @@ class Owl:
 
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often
-                if sample_method is not None:
-                    storage_size, storage_used, storage_free = shutil.disk_usage(save_directory)
-                    storage_LED.storage_status(used=storage_used, free=storage_free)
-
+                if self.sample_method is not None:
                     if log_fps and frame_count % 1000 == 0:
                         fps.stop()
                         self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
                         fps = FPS().start()
 
                     # only record every sampleFreq number of frames. If sampleFreq = 60, this will activate every 60th frame
-                    if frame_count % sample_frequency == 0:
+                    if frame_count % self.sample_frequency == 0:
                         save_frame = frame.copy()
-                        record_LED.blink(on_time=0.1, n=1)
+                        self.indicators.image_write_indicator()
 
-                        if sample_method == 'whole':
+                        if self.sample_method == 'whole':
                             whole_image_thread = Thread(target=whole_image_save,
-                                                        args=[save_frame, save_directory, frame_count])
+                                                        args=[save_frame, self.save_directory, frame_count])
                             whole_image_thread.start()
 
-                        elif sample_method == 'bbox':
+                        elif self.sample_method == 'bbox':
                             sample_thread = Thread(target=bounding_box_image_sample,
-                                                   args=[save_frame, boxes, save_directory, frame_count])
+                                                   args=[save_frame, boxes, self.save_directory, frame_count])
                             sample_thread.start()
 
-                        elif sample_method == 'square':
+                        elif self.sample_method == 'square':
                             sample_thread = Thread(target=square_image_sample,
-                                                   args=[save_frame, weed_centres, save_directory, frame_count, 200])
+                                                   args=[save_frame, weed_centres, self.save_directory, frame_count, 200])
                             sample_thread.start()
 
                         else:
                             # if nothing/incorrect specified - sample the whole image
                             whole_image_thread = Thread(target=whole_image_save,
-                                                        args=[image_out, save_directory, frame_count])
+                                                        args=[image_out, self.save_directory, frame_count])
                             whole_image_thread.start()
 
 

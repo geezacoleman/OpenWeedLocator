@@ -1,7 +1,9 @@
 from utils.logger import Logger
 from threading import Thread, Condition
 from utils.cli_vis import RelayVis
+from threading import Thread
 import collections
+import shutil
 import time
 import os
 
@@ -50,10 +52,55 @@ class TestBuzzer:
 class TestLED:
     def __init__(self, pin):
         self.pin = pin
-    def blink(self, on_time, off_time, n=1, verbose=False):
+
+    def blink(self, on_time=0.1, off_time=0.1, n=None, verbose=False, background=True):
         for i in range(n):
             if verbose:
                 print(f'BLINK {self.pin}')
+
+
+class LEDIndicator:
+    def __init__(self, save_directory, record_led_boardpin='BOARD38', storage_led_boardpin='BOARD40', testing=False):
+        self.save_directory = save_directory
+        self.storage_used = None
+        self.storage_free = None
+
+        if not testing:
+            self.record_LED = LED(pin=record_led_boardpin)
+            self.storage_LED = LED(pin=storage_led_boardpin)
+        else:
+            # Assume TestLED is a mock or similar class for testing
+            self.record_LED = TestLED(pin=record_led_boardpin)
+            self.storage_LED = TestLED(pin=storage_led_boardpin)
+
+    def setup_success(self):
+        self.storage_LED.blink(on_time=0.1, off_time=0.2, n=3)
+        self.record_LED.blink(on_time=0.1, off_time=0.2, n=3)
+
+    def image_write_indicator(self):
+        self.record_LED.blink(on_time=0.1, n=1, background=True)
+
+    def start_storage_indicator(self):
+        thread = Thread(target=self.run_update)
+        thread.start()
+
+    def run_update(self):
+        while True:
+            self.update()
+            time.sleep(10.5)
+
+    def update(self):
+        _, self.storage_used, self.storage_free = shutil.disk_usage(self.save_directory)
+        percent_full = (self.storage_used / (self.storage_used + self.storage_free))
+
+        on_time = 0.1 + 10 * percent_full
+        off_time = 10 - on_time
+
+        if percent_full >= 0.95:
+            on_time = 10
+            off_time = 0
+
+        self.storage_LED.blink(on_time=on_time, off_time=off_time, n=None, background=True)
 
 
 # control class for the relay board
@@ -62,9 +109,6 @@ class RelayControl:
         self.testing = True if testing else False
         self.relay_dict = relay_dict
         self.on = False
-
-        self.record_LED = None
-        self.storage_LED = None
 
         # used to toggle activation of GPIO pins for LEDs
         self.field_data_recording = False
@@ -79,13 +123,6 @@ class RelayControl:
             self.buzzer = TestBuzzer()
             for relay, board_pin in self.relay_dict.items():
                 self.relay_dict[relay] = TestRelay(board_pin)
-
-    def setup_led(self, record_led_boardpin='BOARD38', storage_led_boardpin='BOARD40'):
-        self.record_LED = LED(pin=record_led_boardpin)
-        self.storage_LED = LED(pin=storage_led_boardpin)
-
-        self.storage_LED.blink(on_time=0.1, off_time=0.2, n=3)
-        self.record_LED.blink(on_time=0.1, off_time=0.2, n=3)
 
     def relay_on(self, relay_number, verbose=True):
         relay = self.relay_dict[relay_number]
@@ -103,18 +140,6 @@ class RelayControl:
 
     def beep(self, duration=0.2, repeats=2):
         self.buzzer.beep(on_time=duration, off_time=(duration / 2), n=repeats)
-
-    def storage_indicator(self, used, free):
-        percent_full = used / free
-
-        on_time = 0.1 + 0.8 * percent_full
-        off_time = 10 - 9 * percent_full
-
-        if percent_full >= 0.95:
-            on_time = 0.95
-            off_time = 0.05
-
-        self.storage_led.blink(on_time=on_time, off_time=off_time, n=None, background=True)
 
     def all_on(self):
         for relay in self.relay_dict.keys():
