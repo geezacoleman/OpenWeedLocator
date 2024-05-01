@@ -1,7 +1,6 @@
 from utils.logger import Logger
-from threading import Thread, Condition
+from threading import Thread, Event, Condition
 from utils.cli_vis import RelayVis
-from threading import Thread
 import collections
 import shutil
 import time
@@ -53,24 +52,34 @@ class TestLED:
     def __init__(self, pin):
         self.pin = pin
 
-    def blink(self, on_time=0.1, off_time=0.1, n=None, verbose=False, background=True):
+    def blink(self, on_time=0.1, off_time=0.1, n=1, verbose=False, background=True):
+        if n is None:
+            n = 1
+
         for i in range(n):
             if verbose:
                 print(f'BLINK {self.pin}')
 
+    def off(self):
+        print(f'LED {self.pin} OFF')
+
 
 class StatusIndicator:
-    def __init__(self, save_directory, record_led_boardpin='BOARD38', storage_led_boardpin='BOARD40', testing=False):
+    def __init__(self, save_directory, record_led_boardpin='BOARD38', storage_led_boardpin='BOARD40'):
+        self.testing = True if testing else False
         self.save_directory = save_directory
         self.storage_used = None
         self.storage_total = None
+        self.update_event = Event()
+        self.running = True
+        self.thread = None
         self.DRIVE_FULL = False
 
         if not testing:
             self.record_LED = LED(pin=record_led_boardpin)
             self.storage_LED = LED(pin=storage_led_boardpin)
+
         else:
-            # Assume TestLED is a mock or similar class for testing
             self.record_LED = TestLED(pin=record_led_boardpin)
             self.storage_LED = TestLED(pin=storage_led_boardpin)
 
@@ -82,23 +91,17 @@ class StatusIndicator:
         self.record_LED.blink(on_time=0.1, n=1, background=True)
 
     def start_storage_indicator(self):
-        thread = Thread(target=self.run_update)
-        thread.start()
+        self.thread = Thread(target=self.run_update)
+        self.thread.start()
 
     def run_update(self):
-        while True:
+        while self.running:
             self.update()
-            time.sleep(10.5)
-
-            if self.DRIVE_FULL:
-                break
+            self.update_event.wait(10.5)
+            self.update_event.clear()
 
     def update(self):
-        try:
-            self.storage_total, self.storage_used, _ = shutil.disk_usage(self.save_directory)
-
-        except FileNotFoundError:
-            pass
+        self.storage_total, self.storage_used, _ = shutil.disk_usage(self.save_directory)
 
         percent_full = (self.storage_used / (self.storage_total))
 
@@ -121,6 +124,16 @@ class StatusIndicator:
     def alert_flash(self):
         self.storage_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
         self.record_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
+
+    def stop(self):
+        self.update_event.set()
+
+        self.running = False
+        self.storage_LED.off()
+        self.record_LED.off()
+
+        self.thread.join()
+
 
 # control class for the relay board
 class RelayControl:

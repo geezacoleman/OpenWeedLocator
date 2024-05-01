@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 from utils.button_inputs import Recorder
-from utils.image_sampler import bounding_box_image_sample, square_image_sample, whole_image_save
+from utils.image_sampler import ImageRecorder
 from utils.blur_algorithms import fft_blur
 from utils.greenonbrown import GreenOnBrown
 from utils.relay_control import Controller, StatusIndicator
@@ -172,6 +172,31 @@ class Owl:
             self.indicators = StatusIndicator(save_directory=self.save_directory)
             self.indicators.setup_success()
             self.indicators.start_storage_indicator()
+
+            self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
+            try:
+                if not os.path.exists(self.save_subdirectory):
+                    os.makedirs(self.save_subdirectory)
+
+            except PermissionError:
+                try:
+                    username = os.listdir('/media/')[0]
+                    usb_drives = os.listdir(os.path.join('/media', username))
+                    self.save_directory = os.path.join('/media', username, usb_drives[0])
+                    self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
+
+                    if not os.path.exists(self.save_subdirectory):
+                        os.makedirs(self.save_subdirectory)
+
+                except Exception as e:
+                    self.logger.log_line(
+                        f"\n[USB ERROR] Permission error.\nError message: {e}", verbose=True)
+                    self.indicators.alert_flash()
+                    time.sleep(5)
+                    sys.exit()
+
+            self.image_recorder = ImageRecorder(save_directory=self.save_subdirectory, mode=self.sample_method)
+
         ############################
 
         # sensitivity and weed size to be added
@@ -197,28 +222,6 @@ class Owl:
 
         # track FPS and framecount
         frame_count = 0
-        if self.sample_method is not None:
-            today_save_path = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
-            try:
-                if not os.path.exists(today_save_path):
-                    os.makedirs(today_save_path)
-
-            except PermissionError:
-                try:
-                    username = os.listdir('/media/')[0]
-                    usb_drives = os.listdir(os.path.join('media', username))
-                    self.save_directory = os.path.join('media', username, usb_drives[0])
-                    today_save_path = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
-
-                    if not os.path.exists(today_save_path):
-                        os.makedirs(today_save_path)
-
-                except Exception as e:
-                    self.logger.log_line(
-                        f"\n[USB ERROR] Permission error.\nError message: {e}", verbose=True)
-                    self.indicators.alert_flash()
-                    time.sleep(5)
-                    sys.exit()
 
         if log_fps:
             fps = FPS().start()
@@ -337,28 +340,15 @@ class Owl:
                         self.indicators.image_write_indicator()
 
                         if self.sample_method == 'whole':
-                            whole_image_thread = Thread(target=whole_image_save,
-                                                        args=[save_frame, self.save_directory, frame_count])
-                            whole_image_thread.start()
-
-                        elif self.sample_method == 'bbox':
-                            sample_thread = Thread(target=bounding_box_image_sample,
-                                                   args=[save_frame, boxes, self.save_directory, frame_count])
-                            sample_thread.start()
-
-                        elif self.sample_method == 'square':
-                            sample_thread = Thread(target=square_image_sample,
-                                                   args=[save_frame, weed_centres, self.save_directory, frame_count, 200])
-                            sample_thread.start()
+                            self.image_recorder.add_frame(frame=save_frame, frame_id=frame_count, boxes=None, centres=None)
 
                         else:
-                            # if nothing/incorrect specified - sample the whole image
-                            whole_image_thread = Thread(target=whole_image_save,
-                                                        args=[image_out, self.save_directory, frame_count])
-                            whole_image_thread.start()
+                            self.image_recorder.add_frame(frame=save_frame, frame_id=frame_count, boxes=boxes,
+                                                          centres=weed_centres)
 
                     if self.indicators.DRIVE_FULL:
                         self.sample_method = None
+                        self.image_recorder.stop()
 
                 frame_count = frame_count + 1 if frame_count < 900 else 0
 
@@ -422,6 +412,7 @@ class Owl:
                         self.logger.log_line_video(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
                     if self.show_display:
                         self.controller.relay_vis.close()
+
                     self.logger.log_line("[INFO] Stopped.", verbose=True)
                     self.stop()
                     break
@@ -446,6 +437,11 @@ class Owl:
         self.controller.relay.beep(duration=0.1)
         self.controller.relay.beep(duration=0.1)
         self.cam.stop()
+
+        if self.sample_method is not None:
+            self.indicators.stop()
+            self.image_recorder.stop()
+
         if self.record:
             self.writer.release()
             self.recorder_button.running = False
