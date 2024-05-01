@@ -1,6 +1,7 @@
 from utils.logger import Logger
 from threading import Thread, Event, Condition
 from utils.cli_vis import RelayVis
+from datetime import datetime
 import collections
 import shutil
 import time
@@ -68,6 +69,7 @@ class StatusIndicator:
     def __init__(self, save_directory, record_led_boardpin='BOARD38', storage_led_boardpin='BOARD40'):
         self.testing = True if testing else False
         self.save_directory = save_directory
+        self.save_subdirectory = None
         self.storage_used = None
         self.storage_total = None
         self.update_event = Event()
@@ -83,9 +85,37 @@ class StatusIndicator:
             self.record_LED = TestLED(pin=record_led_boardpin)
             self.storage_LED = TestLED(pin=storage_led_boardpin)
 
+    def setup_directories(self):
+        self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
+
+        try:
+            if not os.path.exists(self.save_subdirectory):
+                os.makedirs(self.save_subdirectory)
+
+            self.setup_success()
+            return self.save_subdirectory
+
+        except PermissionError:
+            try:
+                username = os.listdir('/media/')[0]
+                usb_drives = os.listdir(os.path.join('/media', username))
+                self.save_directory = os.path.join('/media', username, usb_drives[0])
+                self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
+
+                if not os.path.exists(self.save_subdirectory):
+                    os.makedirs(self.save_subdirectory)
+
+                self.setup_success()
+                return self.save_subdirectory
+
+            except Exception as e:
+                self.logger.log_line(
+                    f"\n[USB ERROR] Permission error.\nError message: {e}", verbose=True)
+
     def setup_success(self):
         self.storage_LED.blink(on_time=0.1, off_time=0.2, n=3)
         self.record_LED.blink(on_time=0.1, off_time=0.2, n=3)
+
 
     def image_write_indicator(self):
         self.record_LED.blink(on_time=0.1, n=1, background=True)

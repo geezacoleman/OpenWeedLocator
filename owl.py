@@ -170,30 +170,8 @@ class Owl:
             self.camera_name = self.config.get('DataCollection', 'camera_name')
 
             self.indicators = StatusIndicator(save_directory=self.save_directory)
-            self.indicators.setup_success()
+            self.save_subdirectory = self.indicators.setup_directories()
             self.indicators.start_storage_indicator()
-
-            self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
-            try:
-                if not os.path.exists(self.save_subdirectory):
-                    os.makedirs(self.save_subdirectory)
-
-            except PermissionError:
-                try:
-                    username = os.listdir('/media/')[0]
-                    usb_drives = os.listdir(os.path.join('/media', username))
-                    self.save_directory = os.path.join('/media', username, usb_drives[0])
-                    self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
-
-                    if not os.path.exists(self.save_subdirectory):
-                        os.makedirs(self.save_subdirectory)
-
-                except Exception as e:
-                    self.logger.log_line(
-                        f"\n[USB ERROR] Permission error.\nError message: {e}", verbose=True)
-                    self.indicators.alert_flash()
-                    time.sleep(5)
-                    sys.exit()
 
             self.image_recorder = ImageRecorder(save_directory=self.save_subdirectory, mode=self.sample_method)
 
@@ -427,9 +405,8 @@ class Owl:
             self.stop()
 
         except Exception as e:
-            print(e)
-            self.controller.relay.beep(duration=0.5, repeats=5)
-            self.logger.log_line(f"[CRITICAL ERROR] STOPPED: {e}")
+            self.logger.log_line(f"[CRITICAL ERROR] STOPPED: {e}", verbose=True)
+            self.stop()
 
     def stop(self):
         self.controller.running = False

@@ -8,7 +8,7 @@ from multiprocessing import Process, Queue
 from multiprocessing.queues import Empty
 
 class ImageRecorder:
-    def __init__(self, save_directory, mode='whole', max_queue=100, new_process_threshold=80, max_processes=3):
+    def __init__(self, save_directory, mode='whole', max_queue=200, new_process_threshold=90, max_processes=4):
         self.save_directory = save_directory
         self.mode = mode
         self.queue = Queue(maxsize=max_queue)
@@ -84,7 +84,8 @@ class ImageRecorder:
         if not self.queue.full():
             self.queue.put((frame, frame_id, boxes, centres))
         else:
-            print("[INFO] Queue is full, spinning up new process.")
+            print("[INFO] Queue is full, spinning up new process. Frame skipped.")
+
         if self.queue.qsize() > self.new_process_threshold and len(self.processes) < self.max_processes:
             self.start_new_process()
 
