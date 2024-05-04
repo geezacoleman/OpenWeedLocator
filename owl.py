@@ -41,8 +41,12 @@ class Owl:
         # is the source a directory/file
         self.input_file_or_directory = input_file_or_directory
 
-        # different detection parameters
+        # visualise the detections with video feed
         self.show_display = show_display
+
+        # WARNING: option disable detection for data collection
+        self.disable_detection = False
+
         self.relay_vis = None
         self.recording = self.config.getboolean('DataCollection', 'recording')
         self.focus = focus
@@ -164,7 +168,9 @@ class Owl:
             self.recorder_button = Recorder(recordGPIO=37)
 
         self.sample_method = self.config.get('DataCollection', 'sample_method')
+
         if self.sample_method is not None:
+            self.disable_detection = self.config.getboolean('DataCollection', 'disable_detection')
             self.sample_frequency = self.config.getint('DataCollection', 'sample_frequency')
             self.save_directory = self.config.get('DataCollection', 'save_directory')
             self.camera_name = self.config.get('DataCollection', 'camera_name')
@@ -204,27 +210,28 @@ class Owl:
         if log_fps:
             fps = FPS().start()
 
-        try:
-            if algorithm == 'gog':
-                from utils.greenongreen import GreenOnGreen
-                model_path = self.config.get('GreenOnGreen', 'model_path')
-                confidence = self.config.getfloat('GreenOnGreen', 'confidence')
+        if not self.disable_detection:
+            try:
+                if algorithm == 'gog':
+                    from utils.greenongreen import GreenOnGreen
+                    model_path = self.config.get('GreenOnGreen', 'model_path')
+                    confidence = self.config.getfloat('GreenOnGreen', 'confidence')
 
-                weed_detector = GreenOnGreen(model_path=model_path)
+                    weed_detector = GreenOnGreen(model_path=model_path)
 
-            else:
-                min_detection_area = self.config.getint('GreenOnBrown', 'min_detection_area')
-                invert_hue = self.config.getboolean('GreenOnBrown', 'invert_hue')
+                else:
+                    min_detection_area = self.config.getint('GreenOnBrown', 'min_detection_area')
+                    invert_hue = self.config.getboolean('GreenOnBrown', 'invert_hue')
 
-                weed_detector = GreenOnBrown(algorithm=algorithm)
+                    weed_detector = GreenOnBrown(algorithm=algorithm)
 
-        except (ModuleNotFoundError, IndexError, FileNotFoundError, ValueError) as e:
-            self._handle_exceptions(e, algorithm)
+            except (ModuleNotFoundError, IndexError, FileNotFoundError, ValueError) as e:
+                self._handle_exceptions(e, algorithm)
 
-        except Exception as e:
-            self.logger.log_line(
-                f"\n[ALGORITHM ERROR] Unrecognised error while starting algorithm: {algorithm}.\nError message: {e}", verbose=True)
-            sys.exit()
+            except Exception as e:
+                self.logger.log_line(
+                    f"\n[ALGORITHM ERROR] Unrecognised error while starting algorithm: {algorithm}.\nError message: {e}", verbose=True)
+                sys.exit()
 
         if self.show_display:
             self.relay_vis = self.controller.relay_vis
@@ -284,25 +291,26 @@ class Owl:
                     self.update(exgMin=self.exgMin, exgMax=self.exgMax)  # add in update values here
 
                 # pass image, thresholds to green_on_brown function
-                if algorithm == 'gog':
-                    cnts, boxes, weed_centres, image_out = weed_detector.inference(frame.copy(),
-                                                                                   confidence=confidence,
-                                                                                   filter_id=63)
-                else:
-                    cnts, boxes, weed_centres, image_out = weed_detector.inference(frame.copy(),
-                                                                                   exgMin=self.exgMin,
-                                                                                   exgMax=self.exgMax,
-                                                                                   hueMin=self.hueMin,
-                                                                                   hueMax=self.hueMax,
-                                                                                   saturationMin=self.saturationMin,
-                                                                                   saturationMax=self.saturationMax,
-                                                                                   brightnessMin=self.brightnessMin,
-                                                                                   brightnessMax=self.brightnessMax,
-                                                                                   show_display=self.show_display,
-                                                                                   algorithm=algorithm,
-                                                                                   min_detection_area=min_detection_area,
-                                                                                   invert_hue=invert_hue,
-                                                                                   label='WEED')
+                if not self.disable_detection:
+                    if algorithm == 'gog':
+                        cnts, boxes, weed_centres, image_out = weed_detector.inference(frame.copy(),
+                                                                                       confidence=confidence,
+                                                                                       filter_id=63)
+                    else:
+                        cnts, boxes, weed_centres, image_out = weed_detector.inference(frame.copy(),
+                                                                                       exgMin=self.exgMin,
+                                                                                       exgMax=self.exgMax,
+                                                                                       hueMin=self.hueMin,
+                                                                                       hueMax=self.hueMax,
+                                                                                       saturationMin=self.saturationMin,
+                                                                                       saturationMax=self.saturationMax,
+                                                                                       brightnessMin=self.brightnessMin,
+                                                                                       brightnessMax=self.brightnessMax,
+                                                                                       show_display=self.show_display,
+                                                                                       algorithm=algorithm,
+                                                                                       min_detection_area=min_detection_area,
+                                                                                       invert_hue=invert_hue,
+                                                                                       label='WEED')
 
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often
@@ -320,9 +328,11 @@ class Owl:
                         if self.sample_method == 'whole':
                             self.image_recorder.add_frame(frame=save_frame, frame_id=frame_count, boxes=None, centres=None)
 
-                        else:
+                        elif self.sample_method != 'whole' and not self.disable_detection:
                             self.image_recorder.add_frame(frame=save_frame, frame_id=frame_count, boxes=boxes,
                                                           centres=weed_centres)
+                        else:
+                            self.image_recorder.add_frame(frame=save_frame, frame_id=frame_count, boxes=None, centres=None)
 
                     if self.indicators.DRIVE_FULL:
                         self.sample_method = None

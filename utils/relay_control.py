@@ -61,6 +61,9 @@ class TestLED:
             if verbose:
                 print(f'BLINK {self.pin}')
 
+    def on(self):
+        print(f'LED {self.pin} ON')
+
     def off(self):
         print(f'LED {self.pin} OFF')
 
@@ -73,8 +76,10 @@ class StatusIndicator:
         self.storage_used = None
         self.storage_total = None
         self.update_event = Event()
+
         self.running = True
         self.thread = None
+
         self.DRIVE_FULL = False
 
         if not testing:
@@ -89,33 +94,40 @@ class StatusIndicator:
         self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
 
         try:
-            if not os.path.exists(self.save_subdirectory):
-                os.makedirs(self.save_subdirectory)
+            if os.path.ismount(self.save_directory):
+                if not os.path.exists(self.save_subdirectory):
+                    os.makedirs(self.save_subdirectory)
 
             self.setup_success()
-            return self.save_subdirectory
 
         except PermissionError:
             try:
                 username = os.listdir('/media/')[0]
                 usb_drives = os.listdir(os.path.join('/media', username))
-                self.save_directory = os.path.join('/media', username, usb_drives[0])
-                self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
+                for drive in usb_drives:
+                    try:
+                        self.save_directory = os.path.join('/media', username, drive)
+                        self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
 
-                if not os.path.exists(self.save_subdirectory):
-                    os.makedirs(self.save_subdirectory)
+                        if os.path.ismount(self.save_directory):
+                            if not os.path.exists(self.save_subdirectory):
+                                os.makedirs(self.save_subdirectory)
+                        print(f'[SUCCESS] Tried {drive}. Connected')
+                        self.setup_success()
 
-                self.setup_success()
-                return self.save_subdirectory
+                        return self.save_subdirectory
+
+                    except PermissionError:
+                        print(f'[ERROR] Tried {drive}. Failed')
 
             except Exception as e:
-                self.logger.log_line(
-                    f"\n[USB ERROR] Permission error.\nError message: {e}", verbose=True)
+                print(f"\n[USB ERROR] Permission error.\nError message: {e}")
+
+        return self.save_subdirectory
 
     def setup_success(self):
         self.storage_LED.blink(on_time=0.1, off_time=0.2, n=3)
         self.record_LED.blink(on_time=0.1, off_time=0.2, n=3)
-
 
     def image_write_indicator(self):
         self.record_LED.blink(on_time=0.1, n=1, background=True)
@@ -135,21 +147,25 @@ class StatusIndicator:
 
         percent_full = (self.storage_used / (self.storage_total))
 
-        on_time = 0.1 + 10 * percent_full
-        off_time = 10 - on_time
-
-        if percent_full >= 0.99:
+        if percent_full >= 0.90:
             self.DRIVE_FULL = True
-            self.storage_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
-            self.record_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
+            self.storage_LED.on()
+            self.record_LED.off()
 
-        elif percent_full >= 0.95:
-            on_time = 10
-            off_time = 0
-            self.storage_LED.blink(on_time=on_time, off_time=off_time, n=None, background=True)
+        elif percent_full >= 0.85:
+            self.storage_LED.blink(on_time=0.2, off_time=0.2, n=None, background=True)
+
+        elif percent_full >= 0.80:
+            self.storage_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
+
+        elif percent_full >= 0.75:
+            self.storage_LED.blink(on_time=0.5, off_time=1.5, n=None, background=True)
+
+        elif percent_full >= 0.5:
+            self.storage_LED.blink(on_time=0.5, off_time=3.0, n=None, background=True)
 
         else:
-            self.storage_LED.blink(on_time=on_time, off_time=off_time, n=None, background=True)
+            self.storage_LED.blink(on_time=0.5, off_time=4.5, n=None, background=True)
 
     def alert_flash(self):
         self.storage_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)

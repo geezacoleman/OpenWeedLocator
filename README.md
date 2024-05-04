@@ -1609,9 +1609,10 @@ every other unit. Follow these instructions here. ADD INSTRUCTIONS
 
 All versions of OWL can be found here. Only major changes will be recorded as separate disk images for use.
 
-Version | File
-:-------------------------:|:-------------------------:
-v1.0.0-owl.img | https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0
+|     Version     |                                  File                                  |       Raspbian       |
+|:---------------:|:----------------------------------------------------------------------:|:--------------------:|
+| v1.0.0-owl.img  | [Download](https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0) |  Buster (picamera)   |
+| v2.0.0-owl.img  |                              [Download]()                              | Bookworm (picamera2) |
 
 </details>
 
