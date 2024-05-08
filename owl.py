@@ -104,8 +104,7 @@ class Owl:
             # change here if you want to test higher resolutions, but be warned, backup your current image!
             self.resolution = (416, 320)
             self.logger.log_line(f"[WARNING] Resolution {self.config.getint('Camera', 'resolution_width')}, "
-                                 f"{self.config.getint('Camera', 'resolution_height')} selected is dangerously high. "
-                                 f"Resolution has been reset to default to avoid damaging the OWL",
+                                 f"{self.config.getint('Camera', 'resolution_height')} selected is dangerously high. ",
                                  verbose=True)
 
         # instantiate the recorder if recording is True
@@ -167,9 +166,10 @@ class Owl:
         if self.recording:
             self.recorder_button = Recorder(recordGPIO=37)
 
-        self.sample_method = self.config.get('DataCollection', 'sample_method')
+        self.sample_images = self.config.getboolean('DataCollection', 'sample_images')
 
-        if self.sample_method is not None:
+        if self.sample_images:
+            self.sample_method = self.config.get('DataCollection', 'sample_method')
             self.disable_detection = self.config.getboolean('DataCollection', 'disable_detection')
             self.sample_frequency = self.config.getint('DataCollection', 'sample_frequency')
             self.save_directory = self.config.get('DataCollection', 'save_directory')
@@ -314,7 +314,7 @@ class Owl:
 
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often
-                if self.sample_method is not None:
+                if self.sample_images:
                     if log_fps and frame_count % 900 == 0:
                         fps.stop()
                         self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
@@ -335,7 +335,7 @@ class Owl:
                             self.image_recorder.add_frame(frame=save_frame, frame_id=frame_count, boxes=None, centres=None)
 
                     if self.indicators.DRIVE_FULL:
-                        self.sample_method = None
+                        self.sample_images = False
                         self.image_recorder.stop()
 
                 frame_count = frame_count + 1 if frame_count < 900 else 0
@@ -425,7 +425,7 @@ class Owl:
         self.controller.relay.beep(duration=0.1)
         self.cam.stop()
 
-        if self.sample_method is not None:
+        if self.sample_images:
             self.indicators.stop()
             self.image_recorder.stop()
 
@@ -468,7 +468,7 @@ class Owl:
         with open(new_config_path, 'w') as configfile:
             self.config.write(configfile)
 
-        print(f"Configuration saved to {new_config_path}")
+        print(f"[INFO] Configuration saved to {new_config_path}")
 
     def _handle_exceptions(self, e, algorithm):
         # handle exceptions cleanly

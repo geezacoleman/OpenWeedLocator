@@ -145,10 +145,9 @@ to ensure improved performance without compromising on the original simplicity o
    * extruded aluminium enclosure
    * 3D printed enclosure
 
-| Original OWL | Compact OWL |
-|--------------|-------------|
-|              |             |
-|              |             |
+| Original OWL | Compact OWL - Extruded Aluminium Enclosure                                                                            | Compact OWL - 3D Printed Enclosure                                                                                    |
+|--------------|-----------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+|        ![Finished OWL - small](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/accae1b1-b00d-40f9-ab95-743b732df2a0)      | ![3D Printed OWL](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/a9771aa2-355d-40db-ac15-f6da037b63ed) | ![Extruded OWL](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/d153db2d-624b-427e-832e-599a3a841623) |
 
 All 3D models and hardware assembly guides are provided in subsequent sections. The quantities of each item below are for 
 one OWL detection unit for each respective design.
@@ -281,13 +280,13 @@ Separate guides are provided for the Original OWL assembly and the Compact OWL.
 <summary> Original OWL - Hardware Assembly</summary>
 <br>
 
-## Original OWL - Hardware Assembly
-
-All components listed above are relatively "plug and play" with minimal soldering or complex electronics required.
+**NOTE:** All components listed above are relatively "plug and play" with minimal soldering or complex electronics required.
 Follow these instructions carefully and triple check your connections before powering anything on to avoid losing
 the [magic smoke](https://en.wikipedia.org/wiki/Magic_smoke) and potentially a few hundred dollars. Never make changes
 to the wiring on the detection unit while it is connected to 12V and always remain within the safe operating voltages of
 any component.
+
+## Original OWL - Hardware Assembly
 
 A [video guide](https://www.youtube.com/watch?v=vZqNKogzz8k) is available for the Original OWL assembly.
 
@@ -418,9 +417,9 @@ Attach the Raspberry Pi to the 3D printed mount using 2.5 mm standoffs. Install 
 Connect to micro USB power from the voltage regulator, using a micro USB to USB-C adaptor. Alternatively, the Raspberry
 Pi can be powered over the GPIO, however, this has not yet been implemented.
 
-Raspberry Pi mount | Raspberry Pi in OWL base
-:-------------: | :-------------: 
-![RPimount](https://media.github.sydney.edu.au/user/5402/files/263dcf00-cf6a-11eb-9781-1c2d79c9b96d) | ![1T7A9540](https://user-images.githubusercontent.com/40649348/156697656-df60257b-773a-425c-9c56-33f6e48013b5.jpeg)
+|                                          Raspberry Pi mount                                          |                                              Raspberry Pi in OWL base                                               |
+|:----------------------------------------------------------------------------------------------------:|:-------------------------------------------------------------------------------------------------------------------:|
+| ![RPimount](https://media.github.sydney.edu.au/user/5402/files/263dcf00-cf6a-11eb-9781-1c2d79c9b96d) | ![1T7A9540](https://user-images.githubusercontent.com/40649348/156697656-df60257b-773a-425c-9c56-33f6e48013b5.jpeg) |
 
 ### Step 7 - connecting GPIO pins
 
@@ -431,17 +430,17 @@ The GPIO pins on the Raspberry Pi are not clearly labelled, so use this guide to
 pins as incorrect wiring can shortcircuit/damage your Pi.
 ![image](https://user-images.githubusercontent.com/51358498/152514046-37d5bcf5-348b-4e39-8810-c877acfed852.png)
 
-RPi GPIO pin | Relay header pin
-:-------------: | :-------------: 
-13 | IN1
-14 | COM
-15 | IN2
-16 | IN3
-18 | IN4
+| RPi GPIO pin | Relay header pin |
+|:------------:|:----------------:|
+|      13      |       IN1        |
+|      14      |       COM        |
+|      15      |       IN2        |
+|      16      |       IN3        |
+|      18      |       IN4        |
 
-Raspberry Pi GPIO pins | Relay control board header pins
-:-------------: | :-------------: 
-![GPIOtorelay](https://media.github.sydney.edu.au/user/5402/files/6adb7000-d027-11eb-81b9-5fecfe0c2c4e) | ![relayheaderpins](https://media.github.sydney.edu.au/user/5402/files/2bf8ea80-d026-11eb-8c5c-685563db7691)
+|                                         Raspberry Pi GPIO pins                                          |                                       Relay control board header pins                                       |
+|:-------------------------------------------------------------------------------------------------------:|:-----------------------------------------------------------------------------------------------------------:|
+| ![GPIOtorelay](https://media.github.sydney.edu.au/user/5402/files/6adb7000-d027-11eb-81b9-5fecfe0c2c4e) | ![relayheaderpins](https://media.github.sydney.edu.au/user/5402/files/2bf8ea80-d026-11eb-8c5c-685563db7691) |
 
 ![1T7A9541](https://user-images.githubusercontent.com/40649348/156697725-9a99ba10-b79c-4963-ab15-b07bb95c7d3a.jpeg)
 
@@ -519,17 +518,224 @@ Mounting hardware | Cover nuts | Completed OWL unit
 <summary> Compact OWL - Hardware Assembly</summary>
 <br>
 
-One major benefit of the Compact OWL is that no soldering is required. The OWL driver board makes
+One major benefit of the Compact OWL (with the OWL driver board) is that no soldering is required. The design removes 
+much of the wiring, improving ease of assembly and reliability. If you choose a Raspberry Pi Relay HAT instead of the 
+OWL driver board, you'll just need to add a voltage regulator and solder that in to provide the 5V @ 5A required for 
+the Raspberry Pi 5 or up to 3A required for the older models.
+
+There are two options for the enclosure. The 3D printed enclosure and the official OWL extruded aluminium enclosure. Both share
+a 3D printed tray and the same components. The 3D printed version allows you to make a start without needing to buy bespoke
+components if you have access to a 3D printer.
+
+The 3D model files for the printed enclosure can be downloaded [here]().
+
+The Official OWL Enclosure will be available for purchase through the OWL store soon.
+
+| Compact OWL - Extruded Aluminium Enclosure                                                                            | Compact OWL - 3D Printed Enclosure                                                                                    |
+|-----------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| ![3D Printed OWL](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/a9771aa2-355d-40db-ac15-f6da037b63ed) | ![Extruded OWL](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/d153db2d-624b-427e-832e-599a3a841623) |
+
+**NOTE**: The 3D printed version requires the additional purchase of:
+1. [1.6mm](https://au.rs-online.com/web/p/o-ring-cords/1591478) and [3mm](https://au.rs-online.com/web/p/o-ring-cords/1591490) nitrile rubber o-ring cord
+2. [M2, M3 and M4 threaded inserts](https://www.amazon.com.au/WEZCHUGHAOL-Threaded-Embedment-Printing-Components/dp/B0CN39ZSC2/ref=sr_1_21_sspa?crid=2R258Z1R9XYJQ&dib=eyJ2IjoiMSJ9.YV_8e4yZB5Up2sxjc6yADA7Nnr7U_kpewviCOxQiUAiT6HPGv5rLlXY1PVeDUBAfmO5LAuekzE8VmOU_0V6pDgL1lOmLjEqU8cGrC2bBxPeu3bDe1ZAScHdT6FLAoWi8i-J9F7nz0hj0S_zyow4N92_ZBdySI1CdG651qgCoF7hC5Av5xYcZBqJ41agRh0WjTmNiIGDV9LRODEPy9hAwFm7tM8XzQpL7jXGtycJNoqOVEEck64araKnzphdkqWC0wKWFVRQOyTKw7LM3TBAsXJPsq83qrBvGJ0vNIgayg2Y.gVKTvrTwcC1PdIZc9g_UckOD3B8z063oPKo9M3o9-Sg&dib_tag=se&keywords=embedded+nuts+threaded&qid=1715135215&sprefix=embedded+nuts+threadd%2Caps%2C385&sr=8-21-spons&sp_csd=d2lkZ2V0TmFtZT1zcF9tdGY&psc=1) + M2, M3 and M4 hex head screws
+3. [K&F Concept 37 mm UV lens filter](https://www.amazon.com.au/Concept-18-Layer-Protection-Nanotech-Ultra-Slim/dp/B07NYPCPD5/ref=sr_1_4_sspa?crid=7B57R6GYCCC3&dib=eyJ2IjoiMSJ9.WLMO784g_HVvxPY8RxBi3DdjOJlAw_RRc543yR2qlin4vGGdFusrTxn-OxNr4IQHY_EKtKFwLx9ti6e-ALuUeVuEPGkmCZS7yYe_uisRUN6iDpCOagXAL06Q0aOmh6lWsjS1evk7QMSITdwViuI32n7Ow8KUD6r4Lwm8aun0tsPdBgr3D5Mzo02aGihHL0BmXnmzfR2qbmxQlxaYH-v-IKB2FeQFeMQWt8vFQSe__lSOo3g9ZlSra5mTliSksZh7TLDxBywpR6vOkLD8b1Lxf7ZO__iZLLj9-fmmRJeWQ38.RnnA1gpAajKrN8o4tZgGclc3GRE1tvm50y234Ah4mVE&dib_tag=se&keywords=37mm%2Buv%2Blens%2Bfilter&qid=1715135313&sprefix=37%2Bmm%2BUV%2Bl%2Caps%2C316&sr=8-4-spons&sp_csd=d2lkZ2V0TmFtZT1zcF9hdGY&th=1)
 
 ### Step 1 - enclosure, camera and mounts
+The internal tray is the same for both the extruded aluminium or 3D printed enclosures. The 3D printed tray suits the
+Raspberry Pi HQ Camera and the Global Shutter Camera. A separate mount is available for the Camera Module 3. Details are
+provided below.
 
-### Step 2 - connecting the HAT
+Mount the camera to the front of the tray using M2.5 standoffs. The Global Shutter camera requires slightly longer
+standoffs to get past the plastic backing cover. Run the ribbon cable over the top of the tray (as pictured)
 
-### Step 2a - connecting the voltage converter
+| Internal tray                                                                                                                 | Mounting the camera                                                                                                           | Mounting the camera                                                                                                           |
+|-------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
+| ![20240502_125849_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/ba347b54-3e51-402a-a9c6-91eb178ac642) | ![20240502_125728_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/7298fc98-96b9-4bf0-8a27-7d74a925298f) | ![20240502_125716_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/730ef3dc-40b8-403a-8045-7b8600478413) |
 
-### Step 3 - wiring the connectors
+Once the camera is secured, mount the Raspberry Pi using 4 x M2.5 x 5mm long standoffs. To secure the Pi, use 4 x 15mm 
+standoffs. These will be used to mount the HAT.
+
+| Raspberry Pi 4B mounted on tray                                                                                               |
+|-------------------------------------------------------------------------------------------------------------------------------|
+| ![20240502_125635_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/6605aeaf-174b-4120-beeb-ad40ec189f3f) |
+
+#### 3D printed enclosure
+The 37 mm UV lens filter is installed on the faceplate with 8 M2 heat-set threaded inserts and M2 hex head screws. Add
+the 1.6mm nitrile rubber o-ring cord to the internal channel on the lens mount. Firmly press the 37 mm UV lens filter into the 
+channel on the faceplate.
+
+Tighten down the 8 M2 screws in a cross pattern (similar to how a car tyre is installed), to avoid cracking the 3D printed
+mount.
+
+| Faceplate                                                                                                                     | Lens mount                                                                                                              | Lens fitted with o-ring                                                                                                     |
+|-------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
+| ![faceplate_clean_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/43e4d33f-5649-48d7-bdcd-cb4fe766fbe0) | ![lens_cover_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/e32c8b5a-5c4f-4b3d-8206-9665de723f81) | ![faceplate_lens](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/e355db9b-1bdb-4009-afe2-2a6f7ce35461) |
+
+The 3D printed enclosure also supports the mounting of the Camera Module 3 with an extra 3D printed part. Using M2 threaded 
+inserts in the faceplate, mount the plate with approx. 5mm long M2 standoffs. Route the camera ribbon cable over the top.
+
+| Camera mounted on backplate                                                                                                   | Faceplate with standoffs and backplate                                                                                        | Assembled                                                                                                                     |
+|-------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
+| ![20240507_095647_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/13deaca2-0e49-4296-a52f-d3de9e280630) | ![20240507_095748_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/828289af-f351-4be2-90f9-46fa3341ffbb) | ![20240507_100004_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/d1852882-f98a-4a28-8431-22f9bcb09bd1) |
+
+
+### Step 2 - connecting the Official OWL HAT
+The OWL Hat simply fits over the GPIO pins and is mounted using the 4 x 15 mm standoffs installed in the previous step.
+Secure the HAT with 4 x 2.5mm screws and tighten down.
+
+PWM or GPIO control is selected with four jumper pins (in blue below). 
+
+| Fitted Official OWL HAT                                                                                                  | OWL Hat jumpers                                                                                                               | GPIO pin assignment                                                                                                           |
+|--------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
+| ![mounted owl hat](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/d080805a-507f-4d9a-a363-25124c52c101) | ![20240502_123112_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/ad1e522f-316b-4bc3-90c7-4415e5608205) | ![20240502_123121_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/8a567873-0c5e-4c46-ba97-c6dbc0a2d352) |
+
+The default option is for GPIO control as pictured. By default the OWL HAT is wired as shown above:
+
+```ini
+[Relays]
+# defines the relay ID (left) that matches to a boardpin (right) on the Pi.
+# Only change if you rewire/change the relay connections.
+0 = 13
+1 = 15
+2 = 16
+3 = 18
+```
+The final jumper pin `Pi Power Supply Enable` connects the Raspberry Pi to the 5V provided by the HAT. Only connect this jumper once you want the 
+Pi to start.
+
+#### Step 2a - connecting a generic relay HAT
+
+Instead of the Official OWL HAT, a relay control HAT (such as [this from PiHut](https://core-electronics.com.au/pirelay-v2-relay-board-for-raspberry-pi-1.html?))
+can be used, with some minor changes to the OWL software. There are many different relay HATs available, so check which
+is most suitable for your purposes. Be sure to choose one with accessible GPIO pins.
+
+Fit the HAT as recommended by the manufacturer, similar to the below images (source: The PiHut).
+
+| HAT | Installed HAT |
+|-----|---------------|
+| ![image](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/bf16cf89-0955-4822-8a8a-c3bd7c295c7f)   |    ![image](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/4c0987a7-936f-4338-ac72-6ee352bc2636)           |
+
+In its default configuration, this specific relay HAT assigns GPIO boardpins 29, 31, 33, and 35 to relays 4 - 1
+respectively. This differs to the default OWL configuration, so the `[Relays]` section of the config file would need to
+be updated. Using this board as the example:
+
+```ini
+[Relays]
+# defines the relay ID (left) that matches to a boardpin (right) on the Pi.
+# Only change if you rewire/change the relay connections.
+0 = 35
+1 = 33
+2 = 31
+3 = 29
+```
+ However, if you use another relay HAT check the assignment/configuration of relays to boardpins. For reference, use this
+ GPIO guide to help.
+
+<p align="center">
+<img src="https://user-images.githubusercontent.com/51358498/152514046-37d5bcf5-348b-4e39-8810-c877acfed852.png" width="400">
+</p>
+
+#### Step 2b - connecting the voltage regulator
+Without the OWL HAT, 5V power to Pi needs to be supplied separately. We recommend the [Pololu 5V 5.5A step down voltage
+regulator](https://core-electronics.com.au/pololu-5v-5-5a-step-down-voltage-regulator-d36v50f5.html), however, 
+there are many options available.
+
+Solder wires to the input and output of the voltage regulator. Using WAGO connector blocks, connect the input to the 12V
+from the Amphenol connector. Mount the regulator to the underside of the internal tray using M2 standoffs.
+
+<p align="center">
+<img src="https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/b939e26f-1785-4d4e-8476-ec5721526724" width="400">
+</p>
+
+##### Raspberry Pi 3B+ or 4B
+The earlier models of the Raspberry Pi consumer less power (3A @ 5V) than the Raspberry Pi 5 and can be powered over single 5V and GND
+pins on the GPIO. Use high quality connectors here or consider soldering directly to the GPIO pins on the HAT. A good
+connection without risk of coming loose, is critical.
+
+You'll need to solder to pins 2 (5V) and 6 (GND) on the relay HAT. More details provided 
+[here](https://thepihut.com/blogs/raspberry-pi-tutorials/how-do-i-power-my-raspberry-pi) from The PiHut (image source).
+
+<p align="center">
+<img src="https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/c8eeacde-0e6c-4de2-8120-a343cdcbc756" width="400">
+</p>
+
+##### Raspberry Pi 5
+The Raspberry Pi 5 consumes up to 5A @ 5V, so it's suggested to use 2 x 5V and 2 x GND pins on the Raspberry Pi.
+Some good information on the topic is provided [here](https://forums.raspberrypi.com/viewtopic.php?t=367896).
+
+Using the two 5V outputs from the voltage regulator, solder one +5V wire to pin 2 and another to pin 4 on the GPIO on 
+the HAT relay. Similarly, connect two GND wires from the voltage regulator output to pins 30 and 34. Ensure there is a 
+good solder connection, without any short circuits to neighbouring pins.
+
+### Step 3 - wiring the connector and HAT
+Begin by wiring the [Amphenol EcoMate Aquarius receptacle](https://au.mouser.com/ProductDetail/Amphenol-SINE-Systems/FLS710N3W3S03?qs=ulEaXIWI0c8tWp%252BkBCr3Ag%3D%3D). The connector has 3 x 16 guage connections rated to 13A and 3 x 20 
+guage rated up to 7.5A (machined) or 5A (stamped). Use the appropriate crimp connections for the 16 and 20 guage connections. 
+
+<p align="center">
+<img src="https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/e6ae15b0-cec5-4295-aa66-dbe5f731cc4b" height="300">
+</p>
+
+Connections are labeled A - F on the receptacle and should be made in the following order:
+
+1. +12V (red) - A
+2. GND (black) - E
+3. relay 1 (blue) - B
+4. relay 2 (green) - C
+5. relay 3 (orange) - D
+6. relay 4 (white) - F
+
+Now, add the common ground between all relays and the GND (black) wire using a WAGO 3-way block. Finally, connect the wires 
+from the back of the connector to each relay, using the above list as a guide. The finished result should appear similar
+to the images below. Add heat shrink at the end of each wire for neater and more reliable connections.
+
+| Connector with wires                                                                                                          | Completed HAT                                                                                                                    | Completed HAT mounted on the Pi                                                                                               |   |
+|-------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|---|
+| ![20240507_160726_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/e225496d-f08b-4304-8239-bcee196a5524) | ![20240502_125612_crop2](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/3cbdee80-0113-43e2-b733-a063c8ac9c0b) | ![20240502_123303_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/a936d05b-0415-4277-99f1-dc1fed14669a) |   |
+
+**OPTIONAL** Mount a 5V buzzer inside the OWL base using double-sided mounting tape and connect the 5 V and ground wires 
+to Raspberry Pi GPIO pins 7 and 9, respectively. The buzzer is useful for identifying when the OWL has started successfully.
+It isn't essential to operation.
 
 ### Step 4 - inserting the tray and closing the device
+**NOTE**: For software installation, you'll need access to the Raspberry Pi display, and USB ports. We recommend you
+set up the software prior to completing the build and inserting the tray. Alternatively, flash the SD card with one of 
+the provided owl disk images.
+
+To improve the resistance to dust and water ingression on the 3D printed version, you'll need to add a 3mm nitrile rubber 
+o-ring around the face- and backplates of the enclosure.
+
+| Faceplate with o-ring                                                                                                    | Backplate with o-ring                                                                                                  |
+|--------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------|
+| ![frontplate_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/512e020e-0482-4542-a3a4-25ea811a988d) | ![backplate_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/879c68b3-d379-44b0-8254-3137922bfb5c) |
+
+Fix the faceplate to the enclosure with the 4 x M4 screws. The 3D printed enclosure will need 4 x M4 threaded inserts set
+into the plastic on the back and front of the enclosure body. Carefully push the tray into the enclosure, making sure
+wires are not caught up on the side.
+
+<p align="center">
+<img src="https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/33d25d25-844a-49e7-a1b6-4addc39d03fa" width="400">
+</p>
+
+For the single Amphenol EcoMate Aquarius receptacle, push it through the backplate and tighten down. Fix the backplate
+to the enclosure.
+
+| Front | Back |
+|-------|------|
+|    ![fron_enclosure](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/c5d8c4d7-21d0-4987-9691-cd9a8615b65a)   |  ![enclosure_back](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/4ddf0538-265e-4e6b-aebd-040336d1562b)    |
+
+
+There is a choice of three different backplates, depending on your hardware requirements. They include:
+1. 1 x hole for the Amphenol EcoMate Aquarius
+2. 2 x holes for the Amphenol EcoMate Aquarius and Adafruit waterproof RJ45 (ethernet) connector
+3. 1 x 16mm hole for a 16mm cable gland.
+
+If you would prefer a different arrangement, just get in touch or raise an issue and we can sort it out for you!
+
+| Backplate options (aluminium)                                                                                                 | Backplate options (3D printed)                                                                                               |
+|-------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------|
+| ![20240502_122757_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/07ff7316-0af2-413c-b7ff-a94f678fe8e6) | ![20240503_123813_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/189d9ad1-7734-429e-9ce5-f1c4fdb74ef5) |
+
+And you're all done! Congratulations on building your OWL.
 
 </details>
 
@@ -537,7 +743,7 @@ One major benefit of the Compact OWL is that no soldering is required. The OWL d
 <summary> Connecting Solenoids for Spot Spraying</summary>
 <br>
 
-### Step Additional - connecting 12V solenoids
+### Optional Step - connecting 12V solenoids
 
 Once you have completed the setup, you now have the opportunity to wire up your own solenoids for spot spraying,
 targeted tillage, spot flaming or any other targeted weed control you can dream up. To do this, wire the GND wire of
@@ -563,7 +769,7 @@ computing'. While the Raspberry Pi is arguably one of the most widely used and w
 different options out there. Each has their strengths and weaknesses and may or may not be good fits with the OWL. We've
 providing a summary of some SBCs below, but this isn't an exhaustive list.
 
-Currently, only Raspberry Pi 4 and 3B+ work with the OWL and have been tested in full. Early tests (alpha) have been
+Currently, only Raspberry Pi 5, 4 and 3B+ work with the OWL and have been tested in full. Early tests (alpha) have been
 made with the LibreComputer LePotato. We will update the 'Works with OWL' column as more boards are tested in the
 community.
 
@@ -571,17 +777,21 @@ community.
 <summary> A summary of possible single board computers (SBCs) to use with the OWL</summary>
 <br>
 
-| Name | CPU | RAM | CSI | USB | GPU | Pros | Cons | Dimensions | OWL? | Image |
-|----------|-----------|-----|---------------|-----------|-----|------|------|------------|-------------------|-------------------|
-| [Raspberry Pi 4B](https://www.raspberrypi.com/products/raspberry-pi-4-model-b/specifications/) | Broadcom BCM2711, quad-core Cortex-A72 | 1-8GB | 2 | 2x3.0, 2x2.0 | VideoCore VI | Large community, affordable | Limited GPU performance, no eMMC storage | 88 x 58 x 19.5mm | :heavy_check_mark: | [OWL v1.0.0](https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0) |
-| [Raspberry Pi 3B+](https://www.raspberrypi.com/products/raspberry-pi-3-model-b-plus/) | Broadcom BCM2837B0, quad-core Cortex-A53 | 1GB | 1 | 4x2.0 | VideoCore IV | Large community, affordable | Limited GPU performance, no eMMC storage | 85 x 56 x 17mm | :heavy_check_mark: | [OWL v1.0.0](https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0) |
-| [Raspberry Pi CM4](https://www.raspberrypi.com/products/compute-module-4/?variant=raspberry-pi-cm4001000) | Broadcom BCM2711 quad-core Cortex-A72 | 1-8GB | 0 | 0 | VideoCore IV | Integration into custom carrier boards, EMMC | Needs carrier board | 55 x 40 x 4.7mm | - | - |
-| [Libre Computer LePotato](https://libre.computer/products/aml-s905x-cc/) | Amlogic S905X | 1/2GB | 0 | 4x2.0 | Mali-450 @ 750MHz | Affordable | Limited community support, no onboard Wi-Fi | 85 x 56mm | :warning: alpha ([full report here](https://github.com/geezacoleman/OpenWeedLocator/discussions/70)) | TBA |
-| [Libre Computer Renegade](https://libre.computer/products/roc-rk3328-cc/) | Rockchip RK3328, 4 Core Cortex-A53 | 1-4GB | 0 | 1x3.0, 2x2.0 | Mali-450 @ 500MHz  | 4K HDR support | Limited community support, no onboard Wi-Fi | 85 x 56mm | - | - |
-| [Libre Computer Renegade Elite](https://libre.computer/products/roc-rk3399-pc/) | Rockchip RK3399, 2 Core Cortex-A72 + 4 Core Cortex-A53 | 4GB | 2 | 4x3.0 | 4 Core Mali-T860 | PCIe, highest performance Libre Computer | Higher cost compared to other options | 128 x 64mm | - | - |
-| [Rock Pi 4B](https://rockpi.org/rockpi4) | Rockchip RK3399, 2 Core Cortex-A72 + 4 Core Cortex-A53 | 4GB | 1 | 2x2.0 2x3.0 | 4 Core Mali-T860 | PCIe, M.2 slot | Limited community support, no onboard Wi-Fi | 85 x 54mm | - | - |
-| [ODROID-XU4](https://wiki.odroid.com/odroid-xu4/odroid-xu4) | Samsung Exynos5422 ARM Cortex-A15 Quad 2Ghz and Cortex-A7 Octa | 2GB | 0 | 2x3.0, 1x2.0 | Mali-T628 MP6 | eMMC module support | Higher cost compared to Raspberry Pi options | 83 x 58 x 20mm | - | - |
-| [NVIDIA Jetson Nano](https://developer.nvidia.com/embedded/jetson-nano-developer-kit) |  4 Core ARM Cortex-A57 | 2/4GB | 2 | 4x3.0 | 128-core Maxwell | Powerful GPU, CSI camera | Higher cost compared to Raspberry Pi options | 100 x 79 x 30.2mm | - | - |
+| Name                                                                                                      | CPU                                                            | RAM   | MIPI | USB          | GPU               | Pros                                                                                                         | Cons                                         | Dimensions        | OWL?                                                                                                 | Image                                                                    |
+|-----------------------------------------------------------------------------------------------------------|----------------------------------------------------------------|-------|------|--------------|-------------------|--------------------------------------------------------------------------------------------------------------|----------------------------------------------|-------------------|------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------|
+| [Raspberry Pi 5](https://datasheets.raspberrypi.com/rpi5/raspberry-pi-5-product-brief.pdf)                | Broadcom BCM2712, quad-core 64-bit ARM Cortex-A76              | 1-8GB | 2    | 2x3.0, 2x2.0 | VideoCore VII     | Large community, affordable, PCIe 2.0 lane for externals (including Google Coral and solid state harddrives) | Limited GPU performance, no eMMC storage     | 88 x 58 x 19.5mm  | :heavy_check_mark:                                                                                   | Manual install only (disk image coming soon)                             |
+| [Raspberry Pi 4B](https://www.raspberrypi.com/products/raspberry-pi-4-model-b/specifications/)            | Broadcom BCM2711, quad-core Cortex-A72                         | 1-8GB | 2    | 2x3.0, 2x2.0 | VideoCore VI      | Large community, affordable                                                                                  | Limited GPU performance, no eMMC storage     | 88 x 58 x 19.5mm  | :heavy_check_mark:                                                                                   | [OWL v1.0.0](https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0) |
+| [Raspberry Pi 3B+](https://www.raspberrypi.com/products/raspberry-pi-3-model-b-plus/)                     | Broadcom BCM2837B0, quad-core Cortex-A53                       | 1GB   | 1    | 4x2.0        | VideoCore IV      | Large community, affordable                                                                                  | Limited GPU performance, no eMMC storage     | 85 x 56 x 17mm    | :heavy_check_mark:                                                                                   | [OWL v1.0.0](https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0) |
+| [Raspberry Pi CM4](https://www.raspberrypi.com/products/compute-module-4/?variant=raspberry-pi-cm4001000) | Broadcom BCM2711 quad-core Cortex-A72                          | 1-8GB | 0    | 0            | VideoCore IV      | Integration into custom carrier boards, EMMC                                                                 | Needs carrier board                          | 55 x 40 x 4.7mm   | -                                                                                                    | -                                                                        |
+| [Libre Computer LePotato](https://libre.computer/products/aml-s905x-cc/)                                  | Amlogic S905X                                                  | 1/2GB | 0    | 4x2.0        | Mali-450 @ 750MHz | Affordable                                                                                                   | Limited community support, no onboard Wi-Fi  | 85 x 56mm         | :warning: alpha ([full report here](https://github.com/geezacoleman/OpenWeedLocator/discussions/70)) | TBA                                                                      |
+| [Libre Computer Renegade](https://libre.computer/products/roc-rk3328-cc/)                                 | Rockchip RK3328, 4 Core Cortex-A53                             | 1-4GB | 0    | 1x3.0, 2x2.0 | Mali-450 @ 500MHz | 4K HDR support                                                                                               | Limited community support, no onboard Wi-Fi  | 85 x 56mm         | -                                                                                                    | -                                                                        |
+| [Libre Computer Renegade Elite](https://libre.computer/products/roc-rk3399-pc/)                           | Rockchip RK3399, 2 Core Cortex-A72 + 4 Core Cortex-A53         | 4GB   | 2    | 4x3.0        | 4 Core Mali-T860  | PCIe, highest performance Libre Computer                                                                     | Higher cost compared to other options        | 128 x 64mm        | -                                                                                                    | -                                                                        |
+| [Rock Pi 4B](https://rockpi.org/rockpi4)                                                                  | Rockchip RK3399, 2 Core Cortex-A72 + 4 Core Cortex-A53         | 4GB   | 1    | 2x2.0 2x3.0  | 4 Core Mali-T860  | PCIe, M.2 slot                                                                                               | Limited community support, no onboard Wi-Fi  | 85 x 54mm         | -                                                                                                    | -                                                                        |
+| [ODROID-XU4](https://wiki.odroid.com/odroid-xu4/odroid-xu4)                                               | Samsung Exynos5422 ARM Cortex-A15 Quad 2Ghz and Cortex-A7 Octa | 2GB   | 0    | 2x3.0, 1x2.0 | Mali-T628 MP6     | eMMC module support                                                                                          | Higher cost compared to Raspberry Pi options | 83 x 58 x 20mm    | -                                                                                                    | -                                                                        |
+| [NVIDIA Jetson Nano](https://developer.nvidia.com/embedded/jetson-nano-developer-kit)                     | 4 Core ARM Cortex-A57                                          | 2/4GB | 2    | 4x3.0        | 128-core Maxwell  | Powerful GPU, CSI camera                                                                                     | Higher cost compared to Raspberry Pi options | 100 x 79 x 30.2mm | -                                                                                                    | -                                                                        |
+
+Only the Raspberry Pi 5 is currently capable of operating on larger image sizes. Frame rates of up to 120 FPS were recorded at the
+default 416 x 320 resolution. We recommend increasing resolution to 640 x 480 for the Raspberry Pi 5.
 
 Want to help fill in this table? Find one of the untested platforms and give the OWL a go!
 
@@ -602,10 +812,15 @@ For the first, all you'll need to do is download the disk image file (vX.X.X-owl
 SD card. The second method is more in depth, but takes you through the entire process from beginning to end. If you're
 looking to learn about how everything works, take some time to work through this process.
 
-**NOTE** In the major update on 17/03/2023 running of the OWL changed from using `greenonbrown.py` to `owl.py`. This
+**NOTE**: 08/05/2024 - OWL transitioned from `picamera` to `picamera2` support. The v1.0.0 disk image below (Buster) does not
+support `picamera2` and will not work on the Raspberry Pi 5 nor with the recent camera releases. We strongly recommend
+using the most up to date version of Raspbian with the latest OWL software.
+
+**NOTE**: 17/03/2023 - running of the OWL changed from using `greenonbrown.py` to `owl.py`. This
 ensures better cross compatibility with GoG algorithms. It improves the modularity of the system.
 
 ## Quick Method
+**IMPORTANT**: v1.0.0-owl.img DOES NOT WORK WITH RASPBERRY PI 5.
 
 For this method you'll need access to:
 
@@ -799,9 +1014,9 @@ the `owl` directory. If you enocunter this error, `cd` into the `owl` directory 
 </details>  
 
 ## Detailed Method
-*Suitable for the Raspberry Pi 5 and Bookworm Raspberry Pi OS.*
+**IMPORTANT**: *Suitable for the Raspberry Pi 5 and Bookworm Raspberry Pi OS.*
 
-This setup approach may take a little longer (about 1 hour total) than the quick method, but you'll be much better
+This setup approach may take a little longer (aproximately 1 hour total) than the quick method, but you'll be much better
 trained in the ways of OWL and more prepared for any problem solving, upgrades or changes in the future. You'll also
 download and use the latest software that hasn't been saved in the .img file yet. In the process you'll learn about
 Python environments, install Python packages and set it all up to run on startup. To get this working you'll need access
@@ -956,7 +1171,7 @@ each and every module in the requirements.txt file has been installed correctly.
 * RPi.GPIO
 * tqdm
 * blessed (for command line visualisation)
-* threading, collections, queue, time, os (though these are included as standard Python modules).
+* threading, multiprocessing, collections, queue, time, os (though these are included as standard Python modules).
 
 **IMPORTANT**: Before continuing make sure you are in the `owl` virtual environment. Check that `(owl)` appears at the start
 of each command line, e.g. `(owl) owl@raspberrypi:~ $`. Run `workon owl` if you are unsure. If you are not in the `owl`
@@ -1124,9 +1339,10 @@ The moment of truth. Shut the Raspberry Pi down and unplug the power. This is wh
 and all the GPIO pins/power in the OWL unit if they have been disconnected. Once everything is connected again (double
 check the camera cable is inserted or this won't work), reconnect the power and wait for a beep!
 
-If you hear a beep, grab something green and move it under the camera. If the relays start clicking and lights come on,
-congratulations, you've successfully set the OWL up! If not, check the troubleshooting chart below and see if you can
-get it fixed.
+If you hear a beep, grab something green and move it under the camera. If the relays start clicking (the Official OWL 
+HAT uses transistors and will not click - look for the lights) and lights come on, congratulations, you've successfully 
+set the OWL up! If not, check the troubleshooting chart below and see if you can get it fixed. Raise an issue and get in touch
+if you're not sure how to proceed.
 
 **NOTE** The unit does not perform well under office/artificial lighting. The thresholds have been set for outdoor
 conditions.
@@ -1221,9 +1437,12 @@ invert_hue = False
 [DataCollection]
 # all data collection related parameters
 # image collection, sample method include: 'bbox' | 'square' | 'whole'. Set sample_method=None
-sample_method = None
-sample_frequency = 60
+sample_images = False
+sample_method = whole
+sample_frequency = 30
 save_directory = output
+# set to True to disable weed detection for data collection only
+disable_detection = False
 # enable video recording
 recording = False
 log_fps = False
@@ -1240,43 +1459,45 @@ camera_name = cam1
 
 ### Parameter definitions
 
-**Parameter**  |                  **Options**                   |                                                                                                                                                                 **Description**                                                                                                                                                                  
-:-------------: |:----------------------------------------------:|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: 
-**System**  |                                                | 
-`algorithm`| Any of: `gog`,`exg`,`exgr`,`exgs`,`exhu`,`hsv` | Changes the selected algorithm. Most sensitive: 'exg', least sensitive/most precise (least false positives): 'exgr', 'exhu', 'hsv'. `gog` will activate a provided Green-on-Green detection algorithm, a .tflite model in the models folder. Ensure you have connected and installed a Google Coral using the procedure [here](#green-on-green). |
-`actuation_duration`|              Any float (decimal)               |                                                                                                                                           Changes the length of time for which the relay is activated.                                                                                                                                           |
-`input_file_or_directory`|  path to a image, video or directory of media  |                                                                                                                            Will iterate over each image at a default 5 FPS, or over a directory of images or videos.                                                                                                                             
-`relay_num`  |                    integer                     |                                         Change the number of activation 'lanes' and therefore the number of relays activated. Set to 1 for a single relay. If <4, then the first boardpins will be used by default. More than four will require additional hardware and changes to the [Relays] mapping.                                         
-`delay`|                   Any float                    |                                                                                                                                              Delay between detection and actuation. Defaults to 0.                                                                                                                                               
-**Visualisation**  |                                                | 
-`image_loop_time`|                    Integer                     |                                                                                                              How long (ms) to wait on each image when looping over the same image if a single image file or directory is provided.                                                                                                               
-**Camera**  |                                                | 
-`resolution_width` |                    Integer                     |
-`resolution_height`|                    Integer                     |
-`exp_compensation`  |            Integer between -8 and 8            |                                                                                                      Change the target exposure setting for the exposure algorithm. Defaults to -2, preferencing darker settings for faster shutter speeds.                                                                                                      
-**GreenOnGreen**  |                                                |
-`model_path` |                      Path                      |                                                                                                                                                             A path to the model file                                                                                                                                                             
-`confidence` |                                                |                                                                                                                                       The cutoff confidence value for a detection. Defaults to 0.5 or 50%.                                                                                                                                       
-`class_filter_id` |                    Integer                     |                                                                                      Which classes to filter and target. For example, using a out-the-box COCO model, you may want to only detect a specific class. Enter that specific class integer here.                                                                                      
-**GreenOnBrown**  |                                                | 
-`exgMin`|         Any integer between 0 and 255          |                                                                                                           Provides the minimum threshold value for the exg algorithm. Usually leave between 10 (very sensitive) and 25 (not sensitive)                                                                                                           
-`exgMax`|         Any integer between 0 and 255          |                                                                                                                                       Provides a maximum threshold for the exg algorithm. Leave above 180.                                                                                                                                       
-`hueMin`|         Any integer between 0 and 128          |                                                                                                Provides a minimum threshold for the hue channel when using hsv or exhsv algorithms. Typically between 28 and 45. Increase to reduce sensitivity.                                                                                                 
-`hueMax`|         Any integer between 0 and 128          |                                                                                          Provides a maximum threshold for the hue (colour hue) channel when using hsv or exhsv algorithms. Typically between 80 and 95. Decrease to reduce sensitivity.                                                                                          
-`saturationMin`|         Any integer between 0 and 255          |                                                                                    Provides a minimum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 4 and 20. Increase to reduce sensitivity.                                                                                    
-`saturationMax`|         Any integer between 0 and 255          |                                                                                  Provides a maximum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 200 and 250. Decrease to reduce sensitivity.                                                                                   
-`brightnessMin`|         Any integer between 0 and 255          |                                                                   Provides a minimum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 10 and 60. Increase to reduce sensitivity particularly if false positives in shadows.                                                                    
-`brightnessMax`|         Any integer between 0 and 255          |                                                                 Provides a maximum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 190 and 250. Decrease to reduce sensitivity particularly if false positives in bright sun.                                                                 
-`min_detection_area`  |                    Integer                     |                                                                                                                                                   The minimum area for which to detect a weed.                                                                                                                                                   
-`invert_hue`  |                    Boolean                     |                                                                                                                 True/False, inverts the detected hue from everything within the thresholds to everything outside the thresholds.                                                                                                                 
-**DataCollection**  |                                                | 
-`sample_method`|  Choose from None, 'bbox', 'square', 'whole'   |                                                                                                            If sample_method=None, sampling is deactivated. Do not leave on for long periods or SD card will fill up and stop working.                                                                                                            |
-`sample_frequency` |              Any positive integer              |                                                                                                          Changes how often (after how many frames) image sampling will occur. If sampleFreq=60, images will be sampled every 60 frames.                                                                                                          |
-`save_directory` |             Path to save directory             |                                                                                                            Set where you want the images saved. If you insert a USB and would like to save images to it, put the path for that here.                                                                                                             |
-`recording` |                    Boolean                     |                                                                                                                                                   True/False - turn video recording on or off.                                                                                                                                                   |
-`log_fps` |                    Boolean                     |                                                                                                                                                               Save FPS to a file.                                                                                                                                                                |
-`camera_name` |                   Any string                   |                                                                                                                          Changes the save name if recording videos of the camera. Ignore - only used if recording data.                                                                                                                          |
-**Relays**  |             Integer/GPIO Boardpin              |                                                                                                                                               Maps a relay number to a boardpin on the GPIO header                                                                                                                                               
+|       **Parameter**       |                  **Options**                   |                                                                                                                                                                 **Description**                                                                                                                                                                  |
+|:-------------------------:|:----------------------------------------------:|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|
+|        **System**         |                                                |                                                                                                                                                                                                                                                                                                                                                  |
+|        `algorithm`        | Any of: `gog`,`exg`,`exgr`,`exgs`,`exhu`,`hsv` | Changes the selected algorithm. Most sensitive: 'exg', least sensitive/most precise (least false positives): 'exgr', 'exhu', 'hsv'. `gog` will activate a provided Green-on-Green detection algorithm, a .tflite model in the models folder. Ensure you have connected and installed a Google Coral using the procedure [here](#green-on-green). |
+|   `actuation_duration`    |              Any float (decimal)               |                                                                                                                                           Changes the length of time for which the relay is activated.                                                                                                                                           |
+| `input_file_or_directory` |  path to a image, video or directory of media  |                                                                                                                            Will iterate over each image at a default 5 FPS, or over a directory of images or videos.                                                                                                                             |
+|        `relay_num`        |                    integer                     |                                         Change the number of activation 'lanes' and therefore the number of relays activated. Set to 1 for a single relay. If <4, then the first boardpins will be used by default. More than four will require additional hardware and changes to the [Relays] mapping.                                         |
+|          `delay`          |                   Any float                    |                                                                                                                                              Delay between detection and actuation. Defaults to 0.                                                                                                                                               |
+|     **Visualisation**     |                                                |                                                                                                                                                                                                                                                                                                                                                  |
+|     `image_loop_time`     |                    Integer                     |                                                                                                              How long (ms) to wait on each image when looping over the same image if a single image file or directory is provided.                                                                                                               |
+|        **Camera**         |                                                |                                                                                                                                                                                                                                                                                                                                                  |
+|    `resolution_width`     |                    Integer                     |                                                                                                                                                                                                                                                                                                                                                  |
+|    `resolution_height`    |                    Integer                     |                                                                                                                                                                                                                                                                                                                                                  |
+|    `exp_compensation`     |            Integer between -8 and 8            |                                                                                                      Change the target exposure setting for the exposure algorithm. Defaults to -2, preferencing darker settings for faster shutter speeds.                                                                                                      |
+|     **GreenOnGreen**      |                                                |                                                                                                                                                                                                                                                                                                                                                  |
+|       `model_path`        |                      Path                      |                                                                                                                                                             A path to the model file                                                                                                                                                             |
+|       `confidence`        |                                                |                                                                                                                                       The cutoff confidence value for a detection. Defaults to 0.5 or 50%.                                                                                                                                       |
+|     `class_filter_id`     |                    Integer                     |                                                                                      Which classes to filter and target. For example, using a out-the-box COCO model, you may want to only detect a specific class. Enter that specific class integer here.                                                                                      |
+|     **GreenOnBrown**      |                                                |                                                                                                                                                                                                                                                                                                                                                  |
+|         `exgMin`          |         Any integer between 0 and 255          |                                                                                                           Provides the minimum threshold value for the exg algorithm. Usually leave between 10 (very sensitive) and 25 (not sensitive)                                                                                                           |
+|         `exgMax`          |         Any integer between 0 and 255          |                                                                                                                                       Provides a maximum threshold for the exg algorithm. Leave above 180.                                                                                                                                       |
+|         `hueMin`          |         Any integer between 0 and 128          |                                                                                                Provides a minimum threshold for the hue channel when using hsv or exhsv algorithms. Typically between 28 and 45. Increase to reduce sensitivity.                                                                                                 |
+|         `hueMax`          |         Any integer between 0 and 128          |                                                                                          Provides a maximum threshold for the hue (colour hue) channel when using hsv or exhsv algorithms. Typically between 80 and 95. Decrease to reduce sensitivity.                                                                                          |
+|      `saturationMin`      |         Any integer between 0 and 255          |                                                                                    Provides a minimum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 4 and 20. Increase to reduce sensitivity.                                                                                    |
+|      `saturationMax`      |         Any integer between 0 and 255          |                                                                                  Provides a maximum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 200 and 250. Decrease to reduce sensitivity.                                                                                   |
+|      `brightnessMin`      |         Any integer between 0 and 255          |                                                                   Provides a minimum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 10 and 60. Increase to reduce sensitivity particularly if false positives in shadows.                                                                    |
+|      `brightnessMax`      |         Any integer between 0 and 255          |                                                                 Provides a maximum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 190 and 250. Decrease to reduce sensitivity particularly if false positives in bright sun.                                                                 |
+|   `min_detection_area`    |                    Integer                     |                                                                                                                                                   The minimum area for which to detect a weed.                                                                                                                                                   |
+|       `invert_hue`        |                    Boolean                     |                                                                                                                 True/False, inverts the detected hue from everything within the thresholds to everything outside the thresholds.                                                                                                                 |
+|    **DataCollection**     |                                                |                                                                                                                                                                                                                                                                                                                                                  |
+|      `sample_images`      |             Boolean: True or False             |                                                                                                                      Enables or disables image data collection. Defaults to False. Set to True to start collecting images.                                                                                                                       |
+|      `sample_method`      |     Choose from 'bbox', 'square', 'whole'      |                                                                                                            If sample_method=None, sampling is deactivated. Do not leave on for long periods or SD card will fill up and stop working.                                                                                                            |
+|    `sample_frequency`     |              Any positive integer              |                                                                                                          Changes how often (after how many frames) image sampling will occur. If sampleFreq=60, images will be sampled every 60 frames.                                                                                                          |
+|    `disable_detection`    |             Boolean: True or False             |                                                                                  Disable detection when running data collection. This will reduce the workload on the Pi and increase frame rate. Useful if using the OWL for dedicated image data collection.                                                                                   |
+|     `save_directory`      |             Path to save directory             |                                                                                                            Set where you want the images saved. If you insert a USB and would like to save images to it, put the path for that here.                                                                                                             |
+|        `recording`        |             Boolean: True or False             |                                                                                                                                                   True/False - turn video recording on or off.                                                                                                                                                   |
+|         `log_fps`         |             Boolean: True or False             |                                                                                                                                                               Save FPS to a file.                                                                                                                                                                |
+|       `camera_name`       |                   Any string                   |                                                                                                                          Changes the save name if recording videos of the camera. Ignore - only used if recording data.                                                                                                                          |
+|        **Relays**         |             Integer/GPIO Boardpin              |                                                                                                                                               Maps a relay number to a boardpin on the GPIO header                                                                                                                                               |
 
  </details>
 
@@ -1538,31 +1759,65 @@ were missed. Faster shutter speed would help improve this performance.
 <details>
 <summary>3D printing instructions and files</summary>
 <br>
-There are seven total items that need printing for the complete OWL unit. All items with links to the STL files are listed below. There are two options for OWL base:
+
+## Original OWL
+There are seven total items that need printing for the Original OWL unit. All items with links to the STL files are 
+listed below. There are two options for Original OWL base:
 
 1. Single connector (Bulgin) panel mount
     - Pros: of this method are easy/quick attach/detach from whatever you have connected, more water resistant.
     - Cons: more connections to make, more expensive
 2. Cable gland
     - Pros: fewer connections to make, cheaper, faster to build.
-    - Cons: more difficult to remove, more water resistant.
+    - Cons: more difficult to remove, less water resistant.
 
-We also provide a link to the [3D models on Tinkercad](https://www.tinkercad.com/things/fhfUCsPEn5q), an online and free
+We also provide a link to the [3D models on TinkerCAD](https://www.tinkercad.com/things/fhfUCsPEn5q), an online and free
 3D modelling software package, allowing for further customisation to cater for individual user needs.
 
-Description |  Image (click for link)
-:-------------------------:|:-------------------------:
-OWL base, onto which all components are mounted. The unit can be fitted using the M6 bolt holes on the rear panel. |  [![screenshot](https://user-images.githubusercontent.com/51358498/166176068-989cc69b-43c1-48ef-942d-b273fc2f4d98.png)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Enclosure%20-%20single%20connector.stl)
-OPTIONAL: OWL base with cable glands instead of single Bulgin connector. |  [![screenshot](https://user-images.githubusercontent.com/51358498/166175980-e1fcc526-c835-4ea1-88b5-d28a1ab747b7.png)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Enclosure%20-%20cable%20gland.stl)
-OWL cover, slides over the base and is fitted with 4 x M3 bolts/nuts. Provides basic splash protection. |  [![OWL Cover](https://user-images.githubusercontent.com/51358498/132754464-8bfe62aa-4487-42ea-a507-71e0b4a4d1a2.png)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Tall%20enclosure%20cover.stl)
-OWL base port cover, covers the cable port on the rear panel. |  [![OWL base port cover](https://media.github.sydney.edu.au/user/3859/files/12b7f000-cb87-11eb-980b-564e7b4324f6)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Tall%20enclosure%20plug.stl)
-Raspberry Pi mount, fixes to the Raspberry Pi for easy attachment to OWL base. |  [![Raspberry Pi mount](https://media.github.sydney.edu.au/user/3859/files/5d396c80-cb87-11eb-948c-d60efe433ac8)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Raspberry%20Pi%20mount.stl)
-Raspberry Pi Camera mount, fixes to the HQ or V2 Camera for simple attachment to the base. |  [![Screenshot 2022-03-04 180036](https://user-images.githubusercontent.com/40649348/156715282-bea91301-ac6d-4421-b071-4a4304eb02b0.png)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Camera%20mount.stl)
-Relay board mount, fixes to the relay board for simple attachment to the base. |  [![Relay board mount](https://media.github.sydney.edu.au/user/5402/files/d421aa00-d04c-11eb-9191-bcad7b51c1a4)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Relay%20control%20board%20mount.stl)
-Voltage regulator mount, fixes to the voltage regulator and onto the relay board for simple attachment to the base. |  [![Voltage regulator mount](https://media.github.sydney.edu.au/user/5402/files/8147f280-d04c-11eb-89ec-4af125a8f232)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Voltage%20regulator%20mount.stl)
 
-All .stl files for the 3D printed components of this build are available in the 3D Models directory. Ideally supports
-should be used for the base, and were tested at 0.2mm layer heights with 15% infill on a Prusa MK3S.
+## Compact OWL
+The Compact OWL has fewer parts to print than the Original OWL and is both more durable and water resistant. A complete
+unit requires printing of only 5 parts.
+
+All 3D model files are availabe on to edit and download on [TinkerCAD](https://www.tinkercad.com/things/id1FMJrWtJp-compact-owl). 
+The 3D printing .stl files are provided under the 3D Models and through the links in the table below.
+
+The backplate comes in three options:
+1. Amphenol EcoMate Aquarius receptacle only
+2. Amphenol EcoMate Aquarius receptacle + Adafruit RJ45 waterproof ethernet connector
+3. 16mm cable gland only
+
+Pick one of these backplates when printing.
+
+|                                                     Description                                                     |                                                                                                               Image (click for link)                                                                                                                |
+|:-------------------------------------------------------------------------------------------------------------------:|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|
+|                                                   **Compact OWL**                                                   |                                                                                                                                                                                                                                                     |
+|                                    Enclosure body: houses all components on tray                                    |                                                                 [![image](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/dc5d4a38-3a76-42b6-bb2b-96e6cae29a8e)]()                                                                  |
+|        Frontplate: covers the front of the enclosure. Incorporates a 37 mm lens cover to seal the enclosure.        |                                                                                                                        [![image](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/54113656-8688-4c58-a6b6-dfd3b35736b9)]()                                                                                                                         |
+|                       Lens mount: Securely mounts the 37 mm UV lens filter to the frontplate.                       |                                                                                                                        [![image](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/b5c9e4a7-5bd9-4c22-8d42-8134f0f96f6f)]()                                                                                                                         |
+|                                 Backplate: 1 x Amphenol EcoMate Aquarius Connection                                 |                                                                 [![image](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/a80eb501-f681-4298-a6e1-2fb1595a859a)]()                                                                  |
+|                Backplate: 1 x Amphenol EcoMate Aquarius Connection, 1 x Adafruit Ethernet Connector                 |                                                                 [![image](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/4424e47e-f92c-4db2-b20f-26daec9babe0)]()                                                                  |
+|                                           Backplate: 1 x 16mm Cable Gland                                           |                                                                 [![image](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/1f318499-fe28-4b97-9e7f-57c53fac8173)]()                                                                  |
+|               Tray: Mounts all required hardware and fits into the enclosure body on the second rail.               |                                                                 [![image](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/d5efe9f1-4d7a-4464-accf-c9ae3b2140c8)]()                                                                  |
+|                                 OPTIONAL: Camera Module 3/V2 Camera mounting plate                                  |                                                                 [![image](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/38baf7e4-b05a-48e7-958e-9e8374bc8990)]()                                                                  |
+|                                                  **Original OWL**                                                   |                                                                                                                                                                                                                                                     |
+| OWL base, onto which all components are mounted. The unit can be fitted using the M6 bolt holes on the rear panel.  | [![screenshot](https://user-images.githubusercontent.com/51358498/166176068-989cc69b-43c1-48ef-942d-b273fc2f4d98.png)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Enclosure%20-%20single%20connector.stl) |
+|                      OPTIONAL: OWL base with cable glands instead of single Bulgin connector.                       |   [![screenshot](https://user-images.githubusercontent.com/51358498/166175980-e1fcc526-c835-4ea1-88b5-d28a1ab747b7.png)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Enclosure%20-%20cable%20gland.stl)    |
+|       OWL cover, slides over the base and is fitted with 4 x M3 bolts/nuts. Provides basic splash protection.       |      [![OWL Cover](https://user-images.githubusercontent.com/51358498/132754464-8bfe62aa-4487-42ea-a507-71e0b4a4d1a2.png)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Tall%20enclosure%20cover.stl)       |
+|                            OWL base port cover, covers the cable port on the rear panel.                            |         [![OWL base port cover](https://media.github.sydney.edu.au/user/3859/files/12b7f000-cb87-11eb-980b-564e7b4324f6)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Tall%20enclosure%20plug.stl)         |
+|                   Raspberry Pi mount, fixes to the Raspberry Pi for easy attachment to OWL base.                    |          [![Raspberry Pi mount](https://media.github.sydney.edu.au/user/3859/files/5d396c80-cb87-11eb-948c-d60efe433ac8)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Raspberry%20Pi%20mount.stl)          |
+|             Raspberry Pi Camera mount, fixes to the HQ or V2 Camera for simple attachment to the base.              |  [![Screenshot 2022-03-04 180036](https://user-images.githubusercontent.com/40649348/156715282-bea91301-ac6d-4421-b071-4a4304eb02b0.png)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Camera%20mount.stl)  |
+|                   Relay board mount, fixes to the relay board for simple attachment to the base.                    |      [![Relay board mount](https://media.github.sydney.edu.au/user/5402/files/d421aa00-d04c-11eb-9191-bcad7b51c1a4)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Relay%20control%20board%20mount.stl)      |
+| Voltage regulator mount, fixes to the voltage regulator and onto the relay board for simple attachment to the base. |     [![Voltage regulator mount](https://media.github.sydney.edu.au/user/5402/files/8147f280-d04c-11eb-89ec-4af125a8f232)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Voltage%20regulator%20mount.stl)     |
+
+All .stl files for the 3D printed components of this build are available in the 3D Models directory. 
+
+### Compact OWL
+Supports are not required but do improve print quality. All parts were printed with a Bambu Labs P1S at 0.16mm layer height
+at 25% infill.
+
+### Original OWL
+Ideally supports should be used for the base, and were tested at 0.2mm layer heights with 25% infill on a Prusa MK3S.
 
 **Update 02/05/2022**
 
@@ -1631,11 +1886,11 @@ contact us so we can improve the software, hardware and guide.
 recommend updating to the latest software by following the procedure detailed in the [Updating OWL](#updating-owl)
 section above.
 
-                           Symptom                           | Explanation | Possible solution
-:-----------------------------------------------------------:|:-------------------------:|:-------------------------:
-       Raspberry Pi won't start (no green/red lights)        | No power getting to the computer | Check the power source, and all downstream components. Such as Bulgin panel/plug connections fuse connections and fuse, connections to Wago 2-way block, voltage regulator connections, cable into the Raspberry Pi.
-   Raspberry Pi starts (green light flashing) but no beep    | OWL software has not started | This is likely a configuration/camera connection error with many possible causes. To get more information, boot the Raspberry Pi with a screen connected, open up a Terminal window (Ctrl + T) and type `~/owl/./owl.py`. This will run the program. Check any errors that emerge.
- Beep heard, but no relays activating when tested with green | Relays are not receiving (1) 12V power, (2) a signal from the Pi, (3) the Pi is not sending a signal | Check all your connections with a multimeter if necessary for the presence of 12V. Make sure everything is connected as per the wiring diagram. If you're confident there are no connection issues, open up a Terminal window (Ctrl + T) and type `~/owl/./owl.py`. This will run the program. Check any errors that emerge.
+|                           Symptom                           |                                             Explanation                                              |                                                                                                                                                     Possible solution                                                                                                                                                        |
+|:-----------------------------------------------------------:|:----------------------------------------------------------------------------------------------------:|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|
+|   Raspberry Pi won't start (no green/red lights)            |                                  No power getting to the computer                                    |                                                     Check the power source, and all downstream components. Such as Bulgin panel/plug connections fuse connections and fuse, connections to Wago 2-way block, voltage regulator connections, cable into the Raspberry Pi.                                                     |
+|   Raspberry Pi starts (green light flashing) but no beep    |                                     OWL software has not started                                     |                      This is likely a configuration/camera connection error with many possible causes. To get more information, boot the Raspberry Pi with a screen connected, open up a Terminal window (Ctrl + T) and type `~/owl/./owl.py`. This will run the program. Check any errors that emerge.                      |
+| Beep heard, but no relays activating when tested with green | Relays are not receiving (1) 12V power, (2) a signal from the Pi, (3) the Pi is not sending a signal | Check all your connections with a multimeter if necessary for the presence of 12V. Make sure everything is connected as per the wiring diagram. If you're confident there are no connection issues, open up a Terminal window (Ctrl + T) and type `~/owl/./owl.py`. This will run the program. Check any errors that emerge. |
 
 </details>
 
