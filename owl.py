@@ -12,10 +12,8 @@ from datetime import datetime
 from imutils.video import FPS
 from utils.video import VideoStream
 from time import strftime
-from threading import Thread
 
 import argparse
-import shutil
 import imutils
 import time
 import sys
@@ -172,11 +170,12 @@ class Owl:
             self.sample_method = self.config.get('DataCollection', 'sample_method')
             self.disable_detection = self.config.getboolean('DataCollection', 'disable_detection')
             self.sample_frequency = self.config.getint('DataCollection', 'sample_frequency')
+            self.enable_device_save = self.config.getboolean('DataCollection', 'enable_device_save')
             self.save_directory = self.config.get('DataCollection', 'save_directory')
             self.camera_name = self.config.get('DataCollection', 'camera_name')
 
             self.indicators = StatusIndicator(save_directory=self.save_directory)
-            self.save_subdirectory = self.indicators.setup_directories()
+            self.save_subdirectory = self.indicators.setup_directories(enable_device_save=self.enable_device_save)
             self.indicators.start_storage_indicator()
 
             self.image_recorder = ImageRecorder(save_directory=self.save_subdirectory, mode=self.sample_method)
@@ -231,7 +230,7 @@ class Owl:
             except Exception as e:
                 self.logger.log_line(
                     f"\n[ALGORITHM ERROR] Unrecognised error while starting algorithm: {algorithm}.\nError message: {e}", verbose=True)
-                sys.exit()
+                self.stop()
 
         if self.show_display:
             self.relay_vis = self.controller.relay_vis
@@ -267,8 +266,7 @@ class Owl:
 
                 if self.record and self.writer is None:
                     video_save_directory = os.path.join(self.save_directory, strftime(f"%Y%m%d-{self.camera_name}-{algorithm}"))
-                    if not os.path.exists(video_save_directory):
-                        os.makedirs(video_save_directory)
+                    os.makedirs(video_save_directory, exist_ok=True)
 
                     self.base_name = os.path.join(video_save_directory, strftime(f"%Y%m%d-%H%M%S-{self.camera_name}-{algorithm}"))
                     video_name = self.base_name + '.avi'

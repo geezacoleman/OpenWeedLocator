@@ -1,3 +1,5 @@
+import sys
+
 from utils.logger import Logger
 from threading import Thread, Event, Condition
 from utils.cli_vis import RelayVis
@@ -90,13 +92,20 @@ class StatusIndicator:
             self.record_LED = TestLED(pin=record_led_boardpin)
             self.storage_LED = TestLED(pin=storage_led_boardpin)
 
-    def setup_directories(self):
+    def setup_directories(self, enable_device_save=False):
         self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
 
         try:
             if os.path.ismount(self.save_directory):
-                if not os.path.exists(self.save_subdirectory):
-                    os.makedirs(self.save_subdirectory)
+                os.makedirs(self.save_subdirectory, exist_ok=True)
+
+            elif enable_device_save:
+                os.makedirs(self.save_subdirectory, exist_ok=True)
+
+            else:
+                print('[ERROR] No save directory enabled.')
+                sys.exit(1)
+
 
             self.setup_success()
 
@@ -110,8 +119,7 @@ class StatusIndicator:
                         self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
 
                         if os.path.ismount(self.save_directory):
-                            if not os.path.exists(self.save_subdirectory):
-                                os.makedirs(self.save_subdirectory)
+                            os.makedirs(self.save_subdirectory, exist_ok=True)
                         print(f'[SUCCESS] Tried {drive}. Connected')
                         self.setup_success()
 
