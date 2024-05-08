@@ -12,6 +12,15 @@ device for low-cost, simple and open-source site-specific weed control. Projects
 vehicles and bicycles for spot spraying. For the latest ideas and news, check out the [Discussion](https://github.com/geezacoleman/OpenWeedLocator/discussions) tab.
 
 ### News
+**08-05-2024** - Check out the latest Compact OWL enclosures!
+
+|                                           | Front                                                                                                                    | Back                                                                                                                    |
+|-------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------|
+| Official OWL extruded aluminium enclosure | ![front_enclosure](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/c5d8c4d7-21d0-4987-9691-cd9a8615b65a) | ![enclosure_back](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/4ddf0538-265e-4e6b-aebd-040336d1562b) |
+| 3D printable enclosure                    |  ![20240502_214051_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/beb40fca-723d-4f2b-9555-46bc0587cd8d)                                                                                                                        |        ![3d-printed_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/aa4898ff-5481-4d89-98ba-656302ac70b1)                                                                                                                 |
+
+Find all the 3D printable files [here](#3d-printing).
+
 **13-04-2024** - OpenWeedLocator now supports Raspberry Pi 5 and picamera2! Improvements include:
 * support for both picamera and picamera2
 * implementation of a `config/config.ini` approach to setting detection parameters
@@ -21,9 +30,11 @@ vehicles and bicycles for spot spraying. For the latest ideas and news, check ou
 * simplifies assembly
 * more robust and improved performance
 
-Internal electronics       |  Fitted module - vehicle | Fitted module - robot 
-:-------------------------:|:-------------------------: |:-------------------------:
-![Internal view](https://user-images.githubusercontent.com/51358498/152991433-e3cfa53a-bb8d-4754-81b2-17b9cb9cb1e5.png)  |  ![Fitted module - spot spraying vehicle](https://user-images.githubusercontent.com/51358498/130522810-bb19e6ca-5019-4de4-83cc-858eca358ef8.jpg) | ![Fitted module - robot](https://user-images.githubusercontent.com/51358498/152991300-32003505-6ed2-49ba-9d00-8e3db4cb5db4.png)
+### OWLs in Action
+
+|                                                             Fitted module - vehicle                                                             |                                                      Fitted module - robot                                                      |
+|:-----------------------------------------------------------------------------------------------------------------------------------------------:|:-------------------------------------------------------------------------------------------------------------------------------:|
+| ![Fitted module - spot spraying vehicle](https://user-images.githubusercontent.com/51358498/130522810-bb19e6ca-5019-4de4-83cc-858eca358ef8.jpg) | ![Fitted module - robot](https://user-images.githubusercontent.com/51358498/152991300-32003505-6ed2-49ba-9d00-8e3db4cb5db4.png) |
 
 ### Official Publications
 
@@ -1774,7 +1785,27 @@ listed below. There are two options for Original OWL base:
 We also provide a link to the [3D models on TinkerCAD](https://www.tinkercad.com/things/fhfUCsPEn5q), an online and free
 3D modelling software package, allowing for further customisation to cater for individual user needs.
 
+|                                                     Description                                                     |                                                                                                               Image (click for link)                                                                                                                |
+|:-------------------------------------------------------------------------------------------------------------------:|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|
+|                                                  **Original OWL**                                                   |                                                                                                                                                                                                                                                     |
+| OWL base, onto which all components are mounted. The unit can be fitted using the M6 bolt holes on the rear panel.  | [![screenshot](https://user-images.githubusercontent.com/51358498/166176068-989cc69b-43c1-48ef-942d-b273fc2f4d98.png)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Enclosure%20-%20single%20connector.stl) |
+|                      OPTIONAL: OWL base with cable glands instead of single Bulgin connector.                       |   [![screenshot](https://user-images.githubusercontent.com/51358498/166175980-e1fcc526-c835-4ea1-88b5-d28a1ab747b7.png)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Enclosure%20-%20cable%20gland.stl)    |
+|       OWL cover, slides over the base and is fitted with 4 x M3 bolts/nuts. Provides basic splash protection.       |      [![OWL Cover](https://user-images.githubusercontent.com/51358498/132754464-8bfe62aa-4487-42ea-a507-71e0b4a4d1a2.png)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Tall%20enclosure%20cover.stl)       |
+|                            OWL base port cover, covers the cable port on the rear panel.                            |         [![OWL base port cover](https://media.github.sydney.edu.au/user/3859/files/12b7f000-cb87-11eb-980b-564e7b4324f6)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Tall%20enclosure%20plug.stl)         |
+|                   Raspberry Pi mount, fixes to the Raspberry Pi for easy attachment to OWL base.                    |          [![Raspberry Pi mount](https://media.github.sydney.edu.au/user/3859/files/5d396c80-cb87-11eb-948c-d60efe433ac8)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Raspberry%20Pi%20mount.stl)          |
+|             Raspberry Pi Camera mount, fixes to the HQ or V2 Camera for simple attachment to the base.              |  [![Screenshot 2022-03-04 180036](https://user-images.githubusercontent.com/40649348/156715282-bea91301-ac6d-4421-b071-4a4304eb02b0.png)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Camera%20mount.stl)  |
+|                   Relay board mount, fixes to the relay board for simple attachment to the base.                    |      [![Relay board mount](https://media.github.sydney.edu.au/user/5402/files/d421aa00-d04c-11eb-9191-bcad7b51c1a4)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Relay%20control%20board%20mount.stl)      |
+| Voltage regulator mount, fixes to the voltage regulator and onto the relay board for simple attachment to the base. |     [![Voltage regulator mount](https://media.github.sydney.edu.au/user/5402/files/8147f280-d04c-11eb-89ec-4af125a8f232)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Voltage%20regulator%20mount.stl)     |
 
+Ideally supports should be used for the base, and were tested at 0.2mm layer heights with 25% infill on a Prusa MK3S.
+
+**Update 02/05/2022**
+
+* improved camera mounts
+* space for 40mm lens cover
+* more compact design
+* version tracking
+* 
 ## Compact OWL
 The Compact OWL has fewer parts to print than the Original OWL and is both more durable and water resistant. A complete
 unit requires printing of only 5 parts.
@@ -1800,31 +1831,10 @@ Pick one of these backplates when printing.
 |                                           Backplate: 1 x 16mm Cable Gland                                           |                                                                 [![image](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/1f318499-fe28-4b97-9e7f-57c53fac8173)]()                                                                  |
 |               Tray: Mounts all required hardware and fits into the enclosure body on the second rail.               |                                                                 [![image](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/d5efe9f1-4d7a-4464-accf-c9ae3b2140c8)]()                                                                  |
 |                                 OPTIONAL: Camera Module 3/V2 Camera mounting plate                                  |                                                                 [![image](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/38baf7e4-b05a-48e7-958e-9e8374bc8990)]()                                                                  |
-|                                                  **Original OWL**                                                   |                                                                                                                                                                                                                                                     |
-| OWL base, onto which all components are mounted. The unit can be fitted using the M6 bolt holes on the rear panel.  | [![screenshot](https://user-images.githubusercontent.com/51358498/166176068-989cc69b-43c1-48ef-942d-b273fc2f4d98.png)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Enclosure%20-%20single%20connector.stl) |
-|                      OPTIONAL: OWL base with cable glands instead of single Bulgin connector.                       |   [![screenshot](https://user-images.githubusercontent.com/51358498/166175980-e1fcc526-c835-4ea1-88b5-d28a1ab747b7.png)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Enclosure%20-%20cable%20gland.stl)    |
-|       OWL cover, slides over the base and is fitted with 4 x M3 bolts/nuts. Provides basic splash protection.       |      [![OWL Cover](https://user-images.githubusercontent.com/51358498/132754464-8bfe62aa-4487-42ea-a507-71e0b4a4d1a2.png)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Tall%20enclosure%20cover.stl)       |
-|                            OWL base port cover, covers the cable port on the rear panel.                            |         [![OWL base port cover](https://media.github.sydney.edu.au/user/3859/files/12b7f000-cb87-11eb-980b-564e7b4324f6)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Tall%20enclosure%20plug.stl)         |
-|                   Raspberry Pi mount, fixes to the Raspberry Pi for easy attachment to OWL base.                    |          [![Raspberry Pi mount](https://media.github.sydney.edu.au/user/3859/files/5d396c80-cb87-11eb-948c-d60efe433ac8)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Raspberry%20Pi%20mount.stl)          |
-|             Raspberry Pi Camera mount, fixes to the HQ or V2 Camera for simple attachment to the base.              |  [![Screenshot 2022-03-04 180036](https://user-images.githubusercontent.com/40649348/156715282-bea91301-ac6d-4421-b071-4a4304eb02b0.png)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Camera%20mount.stl)  |
-|                   Relay board mount, fixes to the relay board for simple attachment to the base.                    |      [![Relay board mount](https://media.github.sydney.edu.au/user/5402/files/d421aa00-d04c-11eb-9191-bcad7b51c1a4)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Relay%20control%20board%20mount.stl)      |
-| Voltage regulator mount, fixes to the voltage regulator and onto the relay board for simple attachment to the base. |     [![Voltage regulator mount](https://media.github.sydney.edu.au/user/5402/files/8147f280-d04c-11eb-89ec-4af125a8f232)](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Voltage%20regulator%20mount.stl)     |
 
-All .stl files for the 3D printed components of this build are available in the 3D Models directory. 
-
-### Compact OWL
+All .stl files for the 3D printed components of this build are available in the 3D Models directory.
 Supports are not required but do improve print quality. All parts were printed with a Bambu Labs P1S at 0.16mm layer height
 at 25% infill.
-
-### Original OWL
-Ideally supports should be used for the base, and were tested at 0.2mm layer heights with 25% infill on a Prusa MK3S.
-
-**Update 02/05/2022**
-
-* improved camera mounts
-* space for 40mm lens cover
-* more compact design
-* version tracking
 
 </details>
 
