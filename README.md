@@ -680,6 +680,13 @@ Using the two 5V outputs from the voltage regulator, solder one +5V wire to pin 
 the HAT relay. Similarly, connect two GND wires from the voltage regulator output to pins 30 and 34. Ensure there is a 
 good solder connection, without any short circuits to neighbouring pins.
 
+The images below are from a Raspberry Pi 5, however, the setup is the same for the 4B and 3B+ models just with one 5V/GND
+wire.
+
+| HAT installation - GPIO                                                                                                      | HAT installation - soldering the 2 x 5V, 2x GND                                                                           | HAT Installation - voltage regulator                                                                                              |
+|---------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------|
+| ![relay_hat_1_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/dc678435-e59a-44ae-a2d8-4eab43c7797c) | ![relay_hat_2_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/a87a34c6-148e-41c7-b092-e429aa5cb3fd) | ![relay_hat_3_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/e3bb13fa-26f3-42d6-ac21-3862ccfcd701) |
+
 ### Step 3 - wiring the connector and HAT
 Begin by wiring the [Amphenol EcoMate Aquarius receptacle](https://au.mouser.com/ProductDetail/Amphenol-SINE-Systems/FLS710N3W3S03?qs=ulEaXIWI0c8tWp%252BkBCr3Ag%3D%3D). The connector has 3 x 16 guage connections rated to 13A and 3 x 20 
 guage rated up to 7.5A (machined) or 5A (stamped). Use the appropriate crimp connections for the 16 and 20 guage connections. 
