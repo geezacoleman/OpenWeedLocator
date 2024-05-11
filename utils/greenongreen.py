@@ -1,13 +1,12 @@
-#!/home/pi/.virtualenvs/owl/bin/python3
+#!/usr/bin/env python
 from pycoral.adapters.common import input_size
 from pycoral.adapters.detect import get_objects
 from pycoral.utils.dataset import read_label_file
 from pycoral.utils.edgetpu import make_interpreter
 from pycoral.utils.edgetpu import run_inference
 from pathlib import Path
-from glob import glob
+
 import cv2
-import os
 
 
 class GreenOnGreen:
@@ -56,7 +55,7 @@ class GreenOnGreen:
 
         height, width, channels = image.shape
         scale_x, scale_y = width / self.inference_size[0], height / self.inference_size[1]
-        self.weedCenters = []
+        self.weed_centers = []
         self.boxes = []
 
         for det_object in self.objects:
@@ -73,7 +72,7 @@ class GreenOnGreen:
                 # compute box center
                 centerX = int(startX + (boxW / 2))
                 centerY = int(startY + (boxH / 2))
-                self.weedCenters.append([centerX, centerY])
+                self.weed_centers.append([centerX, centerY])
 
                 percent = int(100 * det_object.score)
                 label = f'{percent}% {self.labels.get(det_object.id, det_object.id)}'
@@ -83,7 +82,7 @@ class GreenOnGreen:
             else:
                 pass
         # print(self.weedCenters)
-        return None, self.boxes, self.weedCenters, image
+        return None, self.boxes, self.weed_centers, image
 
 
 

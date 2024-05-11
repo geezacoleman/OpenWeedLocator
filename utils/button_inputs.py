@@ -48,28 +48,28 @@ class Selector:
 # video recording button
 class Recorder:
     def __init__(self, recordGPIO: int):
-        self.recordButton = Button(f"BOARD{recordGPIO}")
+        self.record_button = Button(f"BOARD{recordGPIO}")
         self.record = False
-        self.saveRecording = False
+        self.save_recording = False
         self.running = True
         self.led = LED(pin='BOARD38')
 
-        self.recordButton.when_pressed = self.start_recording
-        self.recordButton.when_released = self.stop_recording
+        self.record_button.when_pressed = self.start_recording
+        self.record_button.when_released = self.stop_recording
 
     def button_check(self):
         while self.running:
-            self.recordButton.when_pressed = self.start_recording
-            self.recordButton.when_released = self.stop_recording
+            self.record_button.when_pressed = self.start_recording
+            self.record_button.when_released = self.stop_recording
             time.sleep(1)
 
     def start_recording(self):
         self.record = True
-        self.saveRecording = False
+        self.save_recording = False
         self.led.on()
 
     def stop_recording(self):
-        self.saveRecording = True
+        self.save_recording = True
         self.record = False
         self.led.off()
 

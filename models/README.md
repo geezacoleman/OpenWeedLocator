@@ -7,20 +7,20 @@ In addition to the other software installation to get the OpenWeedLocator runnin
 ### Step 1
 Assuming you have cloned the OpenWeedLocator repository and renamed it to `owl`, navigate to the `models` directory on the Raspberry Pi with:
 
-`pi@raspberrypi:~ $ cd ~/owl/models`
+`owl@raspberrypi:~ $ cd ~/owl/models`
 
 ### Step 2
 Now run the installation file. This will install the `pycoral` library and other important packages to run the Coral. For full instructions on the installation process, we recommend reading  the Google Coral [documentation](https://coral.ai/docs/accelerator/get-started/).
 
 During the installation, you will be asked to confirm performance options and connect the Google Coral USB to the USB3.0 ports (blue). 
 
-`pi@raspberrypi:~ $ chmod +x install_coral.sh && ./install_coral.sh`.
+`owl@raspberrypi:~ $ chmod +x install_coral.sh && ./install_coral.sh`.
 
 If you run into errors during the `pycoral` library installation, try running 
 
 ```
-pi@raspberrypi:~ $ workon owl
-(owl) pi@raspberrypi:~/owl/models$ pip install pycoral
+owl@raspberrypi:~ $ workon owl
+(owl) owl@raspberrypi:~/owl/models$ pip install pycoral
 ```
 
 ### Step 3
@@ -28,7 +28,7 @@ The final step is to test the installation.
 
 Open up a Python terminal by running:
 ```
-(owl) pi@raspberrypi:~/owl/models$ python
+(owl) owl@raspberrypi:~/owl/models$ python
 ```
 
 Now try running:
@@ -49,7 +49,7 @@ To test if the installation has worked, the recommended option is to download a 
 
 While still in the `models` directory, run this command to download the appropriate model:
 ```
-(owl) pi@raspberrypi:~/owl/models$ wget https://raw.githubusercontent.com/google-coral/test_data/master/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite
+(owl) owl@raspberrypi:~/owl/models$ wget https://raw.githubusercontent.com/google-coral/test_data/master/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite
 ```
 
 Now change back to the `owl` directory and try running `owl.py` and specifying `gog` for the algorithm. If you don't specify a path to the `.tflite` model file, it will automatically select the first model in the directory when sorted alphabetically.
@@ -57,8 +57,8 @@ Now change back to the `owl` directory and try running `owl.py` and specifying `
 **NOTE** If you are testing this inside, the camera settings will likely be too dark (and the image will appear entirely black) so you may also need to specify the `--exp-compensation 4` and `--exp-mode auto`. 
 
 ```
-(owl) pi@raspberrypi:~/owl/models$ cd ..
-(owl) pi@raspberrypi:~/owl$python owl.py --show-display --algorithm gog
+(owl) owl@raspberrypi:~/owl/models$ cd ..
+(owl) owl@raspberrypi:~/owl$python owl.py --show-display --algorithm gog
 ```
 
 If this runs correctly, a video feed just like the previous green-on-brown approach should appear with a red box around an 'object', which in this case has been filtered to only detect 'potted plants'. If you would like to detect any of the other COCO categories, simply change the `filter_id=63` to a different category. The full list is [available here](https://tech.amikelive.com/node-718/what-object-categories-labels-are-in-coco-dataset/).

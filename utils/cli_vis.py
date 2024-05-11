@@ -31,7 +31,7 @@ except ModuleNotFoundError:
     Terminal = BasicTerminal
 
 
-class NozzleVis:
+class RelayVis:
     def __init__(self, relays=4):
         self.term = Terminal()
         self.relays = relays
@@ -69,7 +69,7 @@ class NozzleVis:
         print("\n", end='\n')
 
 if __name__ == "__main__":
-    box_drawer = NozzleVis(relays=4)
+    box_drawer = RelayVis(relays=4)
 
     for i in range(0, 100):
         relay = np.random.randint(0, 4)
