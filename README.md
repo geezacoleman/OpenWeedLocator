@@ -19,7 +19,8 @@ vehicles and bicycles for spot spraying. For the latest ideas and news, check ou
 | Official OWL extruded aluminium enclosure | ![front_enclosure](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/c5d8c4d7-21d0-4987-9691-cd9a8615b65a) | ![enclosure_back](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/4ddf0538-265e-4e6b-aebd-040336d1562b) |
 | 3D printable enclosure                    |  ![20240502_214051_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/beb40fca-723d-4f2b-9555-46bc0587cd8d)                                                                                                                        |        ![3d-printed_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/aa4898ff-5481-4d89-98ba-656302ac70b1)                                                                                                                 |
 
-Find all the 3D printable files [here](#3d-printing).
+Find all the 3D printable files [on the OWL repository](#3d-printing) or download them from 
+[Printables](https://www.printables.com/model/875853-raspberry-pi-rugged-imaging-enclosure).
 
 **13-04-2024** - OpenWeedLocator now supports Raspberry Pi 5 and picamera2! Improvements include:
 * support for both picamera and picamera2
@@ -558,6 +559,14 @@ The internal tray is the same for both the extruded aluminium or 3D printed encl
 Raspberry Pi HQ Camera and the Global Shutter Camera. A separate mount is available for the Camera Module 3. Details are
 provided below.
 
+Begin camera installation by removing the adapter ring and fitting the lens. The camera will not focus with this 
+ring.
+
+| Global Shutter camera with adapter ring atached                                                                                 | Adapter ring removed                                                                                                    |
+|---------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------|
+| ![camera_adapter_removal](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/8bd43460-e3de-4978-9eb7-641602024ab9) | ![camera_install](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/f3972dbc-c41a-4d86-83a4-ea237f0fa267) |
+
+
 Mount the camera to the front of the tray using M2.5 standoffs. The Global Shutter camera requires slightly longer
 standoffs to get past the plastic backing cover. Run the ribbon cable over the top of the tray (as pictured)
 
@@ -704,17 +713,26 @@ Connections are labeled A - F on the receptacle and should be made in the follow
 5. relay 3 (orange) - D
 6. relay 4 (white) - F
 
-Now, add the common ground between all relays and the GND (black) wire using a WAGO 3-way block. Finally, connect the wires 
-from the back of the connector to each relay, using the above list as a guide. The finished result should appear similar
-to the images below. Add heat shrink at the end of each wire for neater and more reliable connections.
+Unlike the relay HATs and relay board in the Original OWL, the common ground for the OWL driver board is routed through 
+the board itself, reducing the wiring required. Connect the wires from the back of the connector to each relay, 
+using the above list as a guide. The finished result should appear similar to the images below. Add heat shrink at 
+the end of each wire for neater and more reliable connections.
 
-| Connector with wires                                                                                                          | Completed HAT                                                                                                                    | Completed HAT mounted on the Pi                                                                                               |   |
-|-------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|---|
-| ![20240507_160726_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/e225496d-f08b-4304-8239-bcee196a5524) | ![20240502_125612_crop2](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/3cbdee80-0113-43e2-b733-a063c8ac9c0b) | ![20240502_123303_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/a936d05b-0415-4277-99f1-dc1fed14669a) |   |
+| Connector with wires                                                                                                          | Completed HAT                                                                                                                     | Completed HAT mounted on the Pi                                                                                        |
+|-------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------|
+| ![20240507_160726_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/e225496d-f08b-4304-8239-bcee196a5524) | ![owl_driver_board_install](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/8735a833-f157-456a-a6cd-3dd037ed6e5d) | ![finished_tray](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/50ea79c5-ee7c-4e95-9a46-5f57d773de1b) |
 
-**OPTIONAL** Mount a 5V buzzer inside the OWL base using double-sided mounting tape and connect the 5 V and ground wires 
+**OPTIONAL** Add a 5V buzzer inside the OWL by mounting it to the corner of the HAT with a screw. Connect the 5 V and ground wires 
 to Raspberry Pi GPIO pins 7 and 9, respectively. The buzzer is useful for identifying when the OWL has started successfully.
 It isn't essential to operation.
+
+**OPTIONAL** Add Kapton tape to the camera cable and internal wiring. Kapton tape is a god insulator and resistant to high
+temperatures, improving the robustness of the device.
+
+| Tray with Kapton tape                                                                                                         |
+|-------------------------------------------------------------------------------------------------------------------------------|
+| ![finished_tray_kapton](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/3c206482-1d8a-4a78-9963-11f1e4401bf7) |
+
 
 ### Step 4 - inserting the tray and closing the device
 **NOTE**: For software installation, you'll need access to the Raspberry Pi display, and USB ports. We recommend you
@@ -724,24 +742,24 @@ the provided owl disk images.
 To improve the resistance to dust and water ingression on the 3D printed version, you'll need to add a 3mm nitrile rubber 
 o-ring around the face- and backplates of the enclosure.
 
-| Faceplate with o-ring                                                                                                    | Backplate with o-ring                                                                                                  |
-|--------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------|
+| Faceplate with o-ring                                                                                                    | Backplate with o-ring                                                                                                   |
+|--------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------|
 | ![frontplate_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/512e020e-0482-4542-a3a4-25ea811a988d) | ![backplate_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/879c68b3-d379-44b0-8254-3137922bfb5c) |
 
 Fix the faceplate to the enclosure with the 4 x M4 screws. The 3D printed enclosure will need 4 x M4 threaded inserts set
-into the plastic on the back and front of the enclosure body. Carefully push the tray into the enclosure, making sure
-wires are not caught up on the side.
+into the plastic on the back and front of the enclosure body. Carefully push the tray into the enclosure on the second row,
+making sure wires are not caught up on the side.
 
 <p align="center">
-<img src="https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/33d25d25-844a-49e7-a1b6-4addc39d03fa" width="400">
+<img src="https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/ddf1d660-feac-4e7c-b4d5-f3a36d464192" width="400">
 </p>
 
 For the single Amphenol EcoMate Aquarius receptacle, push it through the backplate and tighten down. Fix the backplate
 to the enclosure.
 
-| Front | Back |
-|-------|------|
-|    ![fron_enclosure](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/c5d8c4d7-21d0-4987-9691-cd9a8615b65a)   |  ![enclosure_back](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/4ddf0538-265e-4e6b-aebd-040336d1562b)    |
+| Front                                                                                                                   | Back                                                                                                                    |
+|-------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------|
+| ![fron_enclosure](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/c5d8c4d7-21d0-4987-9691-cd9a8615b65a) | ![enclosure_back](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/4ddf0538-265e-4e6b-aebd-040336d1562b) |
 
 
 There is a choice of three different backplates, depending on your hardware requirements. They include:
@@ -751,8 +769,8 @@ There is a choice of three different backplates, depending on your hardware requ
 
 If you would prefer a different arrangement, just get in touch or raise an issue and we can sort it out for you!
 
-| Backplate options (aluminium)                                                                                                 | Backplate options (3D printed)                                                                                               |
-|-------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------|
+| Backplate options (aluminium)                                                                                                 | Backplate options (3D printed)                                                                                                |
+|-------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
 | ![20240502_122757_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/07ff7316-0af2-413c-b7ff-a94f678fe8e6) | ![20240503_123813_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/189d9ad1-7734-429e-9ce5-f1c4fdb74ef5) |
 
 And you're all done! Congratulations on building your OWL.
@@ -1831,7 +1849,7 @@ Ideally supports should be used for the base, and were tested at 0.2mm layer hei
 The Compact OWL has fewer parts to print than the Original OWL and is both more durable and water resistant. A complete
 unit requires printing of only 5 parts.
 
-All 3D model files are availabe on to edit and download on [TinkerCAD](https://www.tinkercad.com/things/id1FMJrWtJp-compact-owl). 
+All 3D model files are availabe on to edit and download on [TinkerCAD](https://www.tinkercad.com/things/id1FMJrWtJp-compact-owl) or [Printables](https://www.printables.com/model/875853-raspberry-pi-rugged-imaging-enclosure). 
 The 3D printing .stl files are provided under the 3D Models and through the links in the table below.
 
 The backplate comes in three options:
