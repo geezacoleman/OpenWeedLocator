@@ -33,9 +33,9 @@ Find all the 3D printable files [on the OWL repository](#3d-printing) or downloa
 
 ### OWLs in Action
 
-|                                                             Fitted module - vehicle                                                             |                                                      Fitted module - robot                                                      |
-|:-----------------------------------------------------------------------------------------------------------------------------------------------:|:-------------------------------------------------------------------------------------------------------------------------------:|
-| ![Fitted module - spot spraying vehicle](https://user-images.githubusercontent.com/51358498/130522810-bb19e6ca-5019-4de4-83cc-858eca358ef8.jpg) | ![Fitted module - robot](https://user-images.githubusercontent.com/51358498/152991300-32003505-6ed2-49ba-9d00-8e3db4cb5db4.png) |
+|                                                                OWL on a vehicle                                                                 |                                            OWL on the AgroIntelli Robotti                                             | OWL on the Agerris Digital Farmhand | OWL on a bicycle |
+|:-----------------------------------------------------------------------------------------------------------------------------------------------:|:---------------------------------------------------------------------------------------------------------------------:|-------------------------------------|------------------|
+| ![Fitted module - spot spraying vehicle](https://user-images.githubusercontent.com/51358498/130522810-bb19e6ca-5019-4de4-83cc-858eca358ef8.jpg) | ![robotti_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/99df0188-a850-4753-ac48-ab743c46d563) |                   ![OWL - on robot agerris](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/9cb73514-dffc-4c53-969e-c1c816610f1b)                  |          ![bike_owl_cropped](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/17ad4ead-429e-4384-9e74-b050a536897f)        |
 
 ### Official Publications
 
