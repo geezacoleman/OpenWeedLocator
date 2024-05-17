@@ -14,6 +14,7 @@ except Exception as e:
 
 try:
     from picamera2 import Picamera2
+    from libcamera import Transform
     import libcamera
     PICAMERA_VERSION = 'picamera2'
 
@@ -120,6 +121,7 @@ class PiCamera2Stream:
 
         try:
             self.config = self.camera.create_preview_configuration(main=self.configurations,
+                                                                   transform=Transform(hflip=True, vflip=True),
                                                                    controls=self.controls)
             self.camera.configure(self.config)
             self.camera.start()

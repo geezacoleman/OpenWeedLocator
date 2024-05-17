@@ -103,9 +103,7 @@ class StatusIndicator:
                 os.makedirs(self.save_subdirectory, exist_ok=True)
 
             else:
-                print('[ERROR] No save directory enabled.')
-                sys.exit(1)
-
+                os.makedirs(self.save_subdirectory, exist_ok=True)
 
             self.setup_success()
 
