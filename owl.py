@@ -343,12 +343,10 @@ class Owl:
                     self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
                     fps = FPS().start()
 
-                #########################
+                # ########################
                 # Precompute the integer lane coordinates for reuse
-                lane_coords_int = [int(coord) for coord in self.lane_coords]
-                lane_width = self.lane_width
+                lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
 
-                # loop over the ID/weed centres from contours
                 for centre in weed_centres:
                     if centre[1] > self.yAct:
                         actuation_time = time.time()
@@ -356,12 +354,10 @@ class Owl:
 
                         for i in range(self.relay_num):
                             lane_start = lane_coords_int[i]
-                            lane_end = lane_start + lane_width
+                            lane_end = lane_start + self.lane_width
 
                             if lane_start <= centre_x < lane_end:
-                                self.controller.receive(relay=i, delay=delay, time_stamp=actuation_time,
-                                                        duration=actuation_duration)
-                                break  # Exit the inner loop once the correct lane is found
+                                self.controller.receive(relay=i, delay=delay, time_stamp=actuation_time, duration=actuation_duration)
 
                 # update the framerate counter
                 if log_fps:
