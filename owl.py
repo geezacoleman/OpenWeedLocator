@@ -344,17 +344,19 @@ class Owl:
                     fps = FPS().start()
 
                 # ########################
+                # Precompute the integer lane coordinates for reuse
+                lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
 
-                # loop over the ID/weed centres from contours
-                for ID, centre in enumerate(weed_centres):
-                    # if they are in activation region then actuate
+                for centre in weed_centres:
                     if centre[1] > self.yAct:
                         actuation_time = time.time()
+                        centre_x = centre[0]
+
                         for i in range(self.relay_num):
-                            # determine which lane needs to be activated
-                            if int(self.lane_coords[i]) <= centre[0] < int(self.lane_coords[i] + self.lane_width):
-                                # log a weed control job with the controller using the relay, delay, timestamp and actuation duration
-                                # if GPS is used/speed control, delay can be updated automatically based on forward speed
+                            lane_start = lane_coords_int[i]
+                            lane_end = lane_start + self.lane_width
+
+                            if lane_start <= centre_x < lane_end:
                                 self.controller.receive(relay=i, delay=delay, time_stamp=actuation_time, duration=actuation_duration)
 
                 # update the framerate counter
