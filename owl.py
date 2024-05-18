@@ -330,11 +330,6 @@ class Owl:
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often
                 if self.sample_images:
-                    if log_fps and frame_count % 900 == 0:
-                        fps.stop()
-                        self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
-                        fps = FPS().start()
-
                     # only record every sampleFreq number of frames. If sample_frequency = 60, this will activate every 60th frame
                     if frame_count % self.sample_frequency == 0:
                         self.indicators.image_write_indicator()
@@ -364,6 +359,9 @@ class Owl:
                     fps.update()
 
                 if self.show_display:
+                    if self.disable_detection:
+                        image_out = frame.copy()
+
                     cv2.putText(image_out, f'OWL-gorithm: {algorithm}', (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
                                 (80, 80, 255), 1)
                     cv2.putText(image_out, f'Press "S" to save {algorithm} thresholds to file.',
