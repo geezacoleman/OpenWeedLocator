@@ -210,6 +210,7 @@ class Owl:
     def hoot(self):
         algorithm = self.config.get('System', 'algorithm')
         log_fps = self.config.getboolean('DataCollection', 'log_fps')
+        self.disable_detection = not self.detection_state
 
         # track FPS and framecount
         frame_count = 0
@@ -217,28 +218,27 @@ class Owl:
         if log_fps:
             fps = FPS().start()
 
-        if not self.disable_detection:
-            try:
-                if algorithm == 'gog':
-                    from utils.greenongreen import GreenOnGreen
-                    model_path = self.config.get('GreenOnGreen', 'model_path')
-                    confidence = self.config.getfloat('GreenOnGreen', 'confidence')
+        try:
+            if algorithm == 'gog':
+                from utils.greenongreen import GreenOnGreen
+                model_path = self.config.get('GreenOnGreen', 'model_path')
+                confidence = self.config.getfloat('GreenOnGreen', 'confidence')
 
-                    weed_detector = GreenOnGreen(model_path=model_path)
+                weed_detector = GreenOnGreen(model_path=model_path)
 
-                else:
-                    min_detection_area = self.config.getint('GreenOnBrown', 'min_detection_area')
-                    invert_hue = self.config.getboolean('GreenOnBrown', 'invert_hue')
+            else:
+                min_detection_area = self.config.getint('GreenOnBrown', 'min_detection_area')
+                invert_hue = self.config.getboolean('GreenOnBrown', 'invert_hue')
 
-                    weed_detector = GreenOnBrown(algorithm=algorithm)
+                weed_detector = GreenOnBrown(algorithm=algorithm)
 
-            except (ModuleNotFoundError, IndexError, FileNotFoundError, ValueError) as e:
-                self._handle_exceptions(e, algorithm)
+        except (ModuleNotFoundError, IndexError, FileNotFoundError, ValueError) as e:
+            self._handle_exceptions(e, algorithm)
 
-            except Exception as e:
-                self.logger.log_line(
-                    f"\n[ALGORITHM ERROR] Unrecognised error while starting algorithm: {algorithm}.\nError message: {e}", verbose=True)
-                self.stop()
+        except Exception as e:
+            self.logger.log_line(
+                f"\n[ALGORITHM ERROR] Unrecognised error while starting algorithm: {algorithm}.\nError message: {e}", verbose=True)
+            self.stop()
 
         if self.show_display:
             self.relay_vis = self.controller.relay_vis

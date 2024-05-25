@@ -1,16 +1,25 @@
 import time
 import platform
-
+import warnings
 # check if the system is being tested on a Windows or Linux x86 64 bit machine
-if platform.system() == "Windows":
-    testing = True
-else:
-    if '64' in platform.machine():
-        testing = True
-    else:
-        from gpiozero import Button, LED
-        testing = False
+if 'rpi' in platform.platform():
+    testing = False
+    from gpiozero import Button, LED
 
+elif platform.system() == "Windows":
+    warning_message = "[WARNING] The system is running on a Windows platform. GPIO disabled. Test mode active."
+    warnings.warn(warning_message, RuntimeWarning)
+    testing = True
+    testing = True
+
+elif 'aarch' in platform.platform():
+    testing = False
+    from gpiozero import Button, LED
+
+else:
+    warning_message = "[WARNING] The system is not running on a recognized platform. GPIO disabled. Test mode active."
+    warnings.warn(warning_message, RuntimeWarning)
+    testing = True
 class BasicController:
     def __init__(self, detection_state, stop_flag, board_pin='BOARD37', bounce_time=1.0):
         self.switch = Button(board_pin, bounce_time=bounce_time)
@@ -18,11 +27,21 @@ class BasicController:
         self.detection_state = detection_state
         self.stop_flag = stop_flag
 
-        self.switch.when_pressed = self.toggle_detection
+        self.switch.when_pressed = self.enable_detection
+        self.switch.when_released = self.disable_detection
 
-    def toggle_detection(self):
+        if self.switch.is_pressed:
+            self.enable_detection()
+        else:
+            self.disable_detection()
+
+    def enable_detection(self):
         with self.detection_state.get_lock():
-            self.detection_state.value = not self.detection_state.value
+            self.detection_state.value = True
+
+    def disable_detection(self):
+        with self.detection_state.get_lock():
+            self.detection_state.value = False
 
     def run(self):
         while not self.stop_flag.value:
