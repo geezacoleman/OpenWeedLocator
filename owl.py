@@ -242,7 +242,6 @@ class Owl:
             delay = self.config.getfloat('System', 'delay')
 
             while True:
-                delay = self.update_delay(delay)
                 frame = self.cam.read()
 
                 if self.focus:
@@ -291,11 +290,11 @@ class Owl:
                 # pass image, thresholds to green_on_brown function
                 if not self.disable_detection:
                     if algorithm == 'gog':
-                        cnts, boxes, weed_centres, image_out = weed_detector.inference(frame.copy(),
+                        cnts, boxes, weed_centres, image_out = weed_detector.inference(frame,
                                                                                        confidence=confidence,
                                                                                        filter_id=63)
                     else:
-                        cnts, boxes, weed_centres, image_out = weed_detector.inference(frame.copy(),
+                        cnts, boxes, weed_centres, image_out = weed_detector.inference(frame,
                                                                                        exgMin=self.exgMin,
                                                                                        exgMax=self.exgMax,
                                                                                        hueMin=self.hueMin,
@@ -310,60 +309,59 @@ class Owl:
                                                                                        invert_hue=invert_hue,
                                                                                        label='WEED')
 
+                    # Precompute the integer lane coordinates for reuse
+                    lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
+
+                    # loop over the weed centres
+                    for centre in weed_centres:
+                        if centre[1] > self.yAct:
+                            actuation_time = time.time()
+                            centre_x = centre[0]
+
+                            for i in range(self.relay_num):
+                                lane_start = lane_coords_int[i]
+                                lane_end = lane_start + self.lane_width
+
+                                if lane_start <= centre_x < lane_end:
+                                    self.controller.receive(relay=i, delay=delay,
+                                                            time_stamp=actuation_time,
+                                                            duration=actuation_duration)
+
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often
                 if self.sample_images:
-                    if log_fps and frame_count % 900 == 0:
-                        fps.stop()
-                        self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
-                        fps = FPS().start()
-
-                    # only record every sampleFreq number of frames. If sampleFreq = 60, this will activate every 60th frame
+                    # only record every sampleFreq number of frames. If sample_frequency = 60, this will activate every 60th frame
                     if frame_count % self.sample_frequency == 0:
-                        save_frame = frame.copy()
                         self.indicators.image_write_indicator()
 
                         if self.sample_method == 'whole':
-                            self.image_recorder.add_frame(frame=save_frame, frame_id=frame_count, boxes=None, centres=None)
+                            self.image_recorder.add_frame(frame=frame, frame_id=frame_count, boxes=None, centres=None)
 
                         elif self.sample_method != 'whole' and not self.disable_detection:
-                            self.image_recorder.add_frame(frame=save_frame, frame_id=frame_count, boxes=boxes,
+                            self.image_recorder.add_frame(frame=frame, frame_id=frame_count, boxes=boxes,
                                                           centres=weed_centres)
                         else:
-                            self.image_recorder.add_frame(frame=save_frame, frame_id=frame_count, boxes=None, centres=None)
+                            self.image_recorder.add_frame(frame=frame, frame_id=frame_count, boxes=None, centres=None)
 
                     if self.indicators.DRIVE_FULL:
                         self.sample_images = False
                         self.image_recorder.stop()
 
-                frame_count = frame_count + 1 if frame_count < 900 else 0
+                frame_count = frame_count + 1 if frame_count < 900 else 1
 
                 if log_fps and frame_count % 900 == 0:
                     fps.stop()
                     self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
                     fps = FPS().start()
 
-                # ########################
-                # Precompute the integer lane coordinates for reuse
-                lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
-
-                for centre in weed_centres:
-                    if centre[1] > self.yAct:
-                        actuation_time = time.time()
-                        centre_x = centre[0]
-
-                        for i in range(self.relay_num):
-                            lane_start = lane_coords_int[i]
-                            lane_end = lane_start + self.lane_width
-
-                            if lane_start <= centre_x < lane_end:
-                                self.controller.receive(relay=i, delay=delay, time_stamp=actuation_time, duration=actuation_duration)
-
                 # update the framerate counter
                 if log_fps:
                     fps.update()
 
                 if self.show_display:
+                    if self.disable_detection:
+                        image_out = frame.copy()
+
                     cv2.putText(image_out, f'OWL-gorithm: {algorithm}', (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
                                 (80, 80, 255), 1)
                     cv2.putText(image_out, f'Press "S" to save {algorithm} thresholds to file.',

@@ -1,7 +1,7 @@
 import cv2
 import time
 import warnings
-from threading import Thread, Event
+from threading import Thread, Event, Condition, Lock
 
 # determine availability of picamera versions
 try:
@@ -82,9 +82,15 @@ class PiCamera2Stream:
         self.size = resolution  # picamera2 uses size instead of resolution, keeping this consistent
         self.frame_width = None
         self.frame_height = None
+        self.frame = None
+        self.frame_available = False
+
+        self.stopped = Event()
+        self.condition = Condition()
+        self.lock = Lock()
 
         # set the picamera2 config and controls. Refer to picamera2 documentation for full explanations:
-        #
+
         self.configurations = {
             # for those checking closely, using RGB888 may seem incorrect, however libcamera means a BGR format. Check
             # https://github.com/raspberrypi/picamera2/issues/848 for full explanation.
@@ -122,6 +128,7 @@ class PiCamera2Stream:
         try:
             self.config = self.camera.create_preview_configuration(main=self.configurations,
                                                                    transform=Transform(hflip=True, vflip=True),
+                                                                   queue=False,
                                                                    controls=self.controls)
             self.camera.configure(self.config)
             self.camera.start()
@@ -142,9 +149,6 @@ class PiCamera2Stream:
                        f"differs from the expected resolution ({resolution[0]}x{resolution[1]}).")
             warnings.warn(message, RuntimeWarning)
 
-        self.frame = None
-        self.stopped = Event()
-
     def start(self):
         # Start the thread to update frames
         self.thread = Thread(target=self.update, name=self.name, args=())
@@ -157,8 +161,13 @@ class PiCamera2Stream:
             while not self.stopped.is_set():
                 frame = self.camera.capture_array("main")
                 if frame is not None:
-                    self.frame = frame
-                time.sleep(0.01)  # Slow down loop a little
+                    with self.lock:
+                        self.frame = frame
+                        self.frame_available = True
+
+                    with self.condition:
+                        self.condition.notify_all()
+
         except Exception as e:
             print(f"Exception in PiCamera2Stream update loop: {e}")
         finally:
@@ -166,7 +175,13 @@ class PiCamera2Stream:
 
     def read(self):
         # return the frame most recently read
-        return self.frame
+        with self.condition:
+            while not self.frame_available:
+                self.condition.wait()
+
+            while self.lock:
+                self.frame_available = False
+                return self.frame
 
     def stop(self):
         self.stopped.set()
