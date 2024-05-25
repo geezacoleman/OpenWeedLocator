@@ -1,11 +1,12 @@
 #!/usr/bin/env python
-from utils.button_inputs import Recorder
+from utils.button_inputs import Recorder, BasicController
 from utils.image_sampler import ImageRecorder
 from utils.blur_algorithms import fft_blur
 from utils.greenonbrown import GreenOnBrown
 from utils.relay_control import Controller, StatusIndicator
 from utils.frame_reader import FrameReader
 
+from multiprocessing import Value, Process
 from configparser import ConfigParser
 from pathlib import Path
 from datetime import datetime
@@ -44,6 +45,13 @@ class Owl:
 
         # WARNING: option disable detection for data collection
         self.disable_detection = False
+
+        # initialise controller buttons and async management
+        self.detection_state = Value('b', False)
+        self.stop_flag = Value('b', False)
+        self.basic_controller = BasicController(self.detection_state, self.stop_flag, board_pin='BOARD36')
+        self.basic_controller_process = Process(target=self.basic_controller.run)
+        self.basic_controller_process.start()
 
         self.relay_vis = None
         self.recording = self.config.getboolean('DataCollection', 'recording')
@@ -242,6 +250,8 @@ class Owl:
             delay = self.config.getfloat('System', 'delay')
 
             while True:
+                self.disable_detection = not self.detection_state.value
+                print(self.disable_detection)
                 frame = self.cam.read()
 
                 if self.focus:
@@ -421,6 +431,10 @@ class Owl:
         self.controller.relay.all_off()
         self.controller.relay.beep(duration=0.1)
         self.controller.relay.beep(duration=0.1)
+
+        self.basic_controller.stop()
+        self.basic_controller_process.join()
+
         self.cam.stop()
 
         if self.sample_images:
