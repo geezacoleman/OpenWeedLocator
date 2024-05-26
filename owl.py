@@ -1,9 +1,9 @@
 #!/usr/bin/env python
-from utils.button_inputs import Recorder, BasicController
+from utils.button_inputs import BasicController
 from utils.image_sampler import ImageRecorder
 from utils.blur_algorithms import fft_blur
 from utils.greenonbrown import GreenOnBrown
-from utils.relay_control import Controller, StatusIndicator
+from utils.relay_control import RelayController, StatusIndicator
 from utils.frame_reader import FrameReader
 
 from multiprocessing import Value, Process
@@ -47,14 +47,17 @@ class Owl:
         self.disable_detection = False
 
         # initialise controller buttons and async management
-        self.detection_state = Value('b', False)
-        self.stop_flag = Value('b', False)
-        self.basic_controller = BasicController(self.detection_state, self.stop_flag, board_pin='BOARD36')
-        self.basic_controller_process = Process(target=self.basic_controller.run)
-        self.basic_controller_process.start()
+        self.enable_controller = self.config.getboolean('Controller', 'enable_controller')
+
+        if self.enable_controller:
+            self.detection_state = Value('b', False)
+            self.stop_flag = Value('b', False)
+            self.basic_controller = BasicController(self.detection_state, self.stop_flag, board_pin='BOARD36')
+            self.basic_controller_process = Process(target=self.basic_controller.run)
+            self.basic_controller_process.start()
 
         self.relay_vis = None
-        self.recording = self.config.getboolean('DataCollection', 'recording')
+
         self.focus = focus
         if self.focus:
             self.show_display = True
@@ -99,10 +102,10 @@ class Owl:
             self.relay_dict[int(key)] = int(value)
 
         # instantiate the relay controller - successful start should beep the buzzer
-        self.controller = Controller(relay_dict=self.relay_dict)
+        self.relay_controller = RelayController(relay_dict=self.relay_dict)
 
         # instantiate the logger
-        self.logger = self.controller.logger
+        self.logger = self.relay_controller.logger
 
         # check that the resolution is not so high it will entirely brick/destroy the OWL.
         total_pixels = self.resolution[0] * self.resolution[1]
@@ -112,15 +115,6 @@ class Owl:
             self.logger.log_line(f"[WARNING] Resolution {self.config.getint('Camera', 'resolution_width')}, "
                                  f"{self.config.getint('Camera', 'resolution_height')} selected is dangerously high. ",
                                  verbose=True)
-
-        # instantiate the recorder if recording is True
-        if self.recording:
-            self.fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-            self.writer = None
-
-        else:
-            self.record = False
-            self.save_recording = False
 
         # check if test video or videostream from camera
         # is the source a directory/file
@@ -160,7 +154,7 @@ class Owl:
             except Exception as e:
                 error_detail = f"[CRITICAL ERROR] Stopped OWL at start: {e}"
                 self.logger.log_line(error_detail, verbose=True)
-                self.controller.relay.beep(duration=1, repeats=1)
+                self.relay_controller.relay.beep(duration=1, repeats=1)
                 time.sleep(2)
 
                 sys.exit(1)
@@ -168,10 +162,6 @@ class Owl:
         time.sleep(1.0)
 
         ### Data collection only ###
-        # this is where a recording button can be added. Currently set to pin 37
-        if self.recording:
-            self.recorder_button = Recorder(recordGPIO=37)
-
         self.sample_images = self.config.getboolean('DataCollection', 'sample_images')
 
         if self.sample_images:
@@ -241,26 +231,23 @@ class Owl:
             self.stop()
 
         if self.show_display:
-            self.relay_vis = self.controller.relay_vis
+            self.relay_vis = self.relay_controller.relay_vis
             self.relay_vis.setup()
-            self.controller.vis = True
+            self.relay_controller.vis = True
 
         try:
             actuation_duration = self.config.getfloat('System', 'actuation_duration')
             delay = self.config.getfloat('System', 'delay')
 
             while True:
-                self.disable_detection = not self.detection_state.value
-                print(self.disable_detection)
+                if self.enable_controller:
+                    self.disable_detection = not self.detection_state.value
+
                 frame = self.cam.read()
 
                 if self.focus:
                     grey = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2GRAY)
                     blurriness = fft_blur(grey, size=30)
-
-                if self.recording:
-                    self.record = self.recorder_button.record
-                    self.save_recording = self.recorder_button.save_recording
 
                 if frame is None:
                     if log_fps:
@@ -272,15 +259,6 @@ class Owl:
                         print("[INFO] Frame is None. Stopped.")
                         self.stop()
                         break
-
-                if self.record and self.writer is None:
-                    video_save_directory = os.path.join(self.save_directory, strftime(f"%Y%m%d-{self.camera_name}-{algorithm}"))
-                    os.makedirs(video_save_directory, exist_ok=True)
-
-                    self.base_name = os.path.join(video_save_directory, strftime(f"%Y%m%d-%H%M%S-{self.camera_name}-{algorithm}"))
-                    video_name = self.base_name + '.avi'
-                    self.logger.new_video_logfile(name=self.base_name + '.txt')
-                    self.writer = cv2.VideoWriter(video_name, self.fourcc, 30, (frame.shape[1], frame.shape[0]), True)
 
                 # retrieve the trackbar positions for thresholds
                 if self.show_display:
@@ -333,9 +311,9 @@ class Owl:
                                 lane_end = lane_start + self.lane_width
 
                                 if lane_start <= centre_x < lane_end:
-                                    self.controller.receive(relay=i, delay=delay,
-                                                            time_stamp=actuation_time,
-                                                            duration=actuation_duration)
+                                    self.relay_controller.receive(relay=i, delay=delay,
+                                                                  time_stamp=actuation_time,
+                                                                  duration=actuation_duration)
 
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often
@@ -382,21 +360,6 @@ class Owl:
 
                     cv2.imshow("Detection Output", imutils.resize(image_out, width=600))
 
-                if self.record and not self.save_recording:
-                    self.writer.write(frame)
-
-                if self.save_recording and not self.record:
-                    self.writer.release()
-                    self.controller.relay.beep(duration=0.1)
-                    self.recorder_button.save_recording = False
-                    if log_fps:
-                        fps.stop()
-                        self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
-                        fps = FPS().start()
-
-                    self.writer = None
-                    self.logger.log_line_video(f"[INFO] {self.base_name} stopped.", verbose=True)
-
                 k = cv2.waitKey(1) & 0xFF
                 if k == ord('s'):
                     self.save_parameters()
@@ -405,9 +368,9 @@ class Owl:
                 if k == 27:
                     if log_fps:
                         fps.stop()
-                        self.logger.log_line_video(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
+                        self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
                     if self.show_display:
-                        self.controller.relay_vis.close()
+                        self.relay_controller.relay_vis.close()
 
                     self.logger.log_line("[INFO] Stopped.", verbose=True)
                     self.stop()
@@ -418,7 +381,7 @@ class Owl:
                 fps.stop()
                 self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
             if self.show_display:
-                self.controller.relay_vis.close()
+                self.relay_controller.relay_vis.close()
             self.logger.log_line("[INFO] Stopped.", verbose=True)
             self.stop()
 
@@ -427,23 +390,20 @@ class Owl:
             self.stop()
 
     def stop(self):
-        self.controller.running = False
-        self.controller.relay.all_off()
-        self.controller.relay.beep(duration=0.1)
-        self.controller.relay.beep(duration=0.1)
-
-        self.basic_controller.stop()
-        self.basic_controller_process.join()
+        self.relay_controller.running = False
+        self.relay_controller.relay.all_off()
+        self.relay_controller.relay.beep(duration=0.1)
+        self.relay_controller.relay.beep(duration=0.1)
 
         self.cam.stop()
+
+        if self.enable_controller:
+            self.basic_controller.stop()
+            self.basic_controller_process.join()
 
         if self.sample_images:
             self.indicators.stop()
             self.image_recorder.stop()
-
-        if self.record:
-            self.writer.release()
-            self.recorder_button.running = False
 
         if self.show_display:
             cv2.destroyAllWindows()
@@ -505,7 +465,7 @@ class Owl:
         full_message = f"\n[{error_type}] while starting algorithm: {algorithm}.\nError message: {error_message}{detailed_message}"
 
         self.logger.log_line(full_message, verbose=True)
-        self.controller.relay.beep(duration=0.25, repeats=4)
+        self.relay_controller.relay.beep(duration=0.25, repeats=4)
         sys.exit()
 
 

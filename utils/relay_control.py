@@ -245,7 +245,7 @@ class RelayControl:
 
 # this class does the hard work of receiving detection 'jobs' and queuing them to be actuated. It only turns a nozzle on
 # if the sprayDur has not elapsed or if the nozzle isn't already on.
-class Controller:
+class RelayController:
     def __init__(self, relay_dict, vis=False):
         self.relay_dict = relay_dict
         self.vis = vis
