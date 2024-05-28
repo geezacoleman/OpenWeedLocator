@@ -85,7 +85,7 @@ These will be updated as major changes are made. All older versions will be reta
 
 **Current**
 
-* [2023-03-31 - Download OWL manual](docs/20230331_owl_readme.pdf)
+* [2024-05-28 - Download OWL manual](docs/20240528_owl_readme.pdf)
 
 [View all versions](docs)
 
