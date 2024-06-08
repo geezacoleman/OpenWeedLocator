@@ -48,11 +48,19 @@ class Owl:
 
         # initialise controller buttons and async management
         self.enable_controller = self.config.getboolean('Controller', 'enable_controller')
+        self.switch_purpose = self.config.get('Controller', 'switch_purpose')
+        self.switch_pin = self.config.getint('Controller', 'switch_pin')
 
         if self.enable_controller:
             self.detection_state = Value('b', False)
+            self.sample_state = Value('b', False)
             self.stop_flag = Value('b', False)
-            self.basic_controller = BasicController(self.detection_state, self.stop_flag, board_pin='BOARD36')
+            self.basic_controller = BasicController(detection_state=self.detection_state,
+                                                    sample_state=self.sample_state,
+                                                    stop_flag=self.stop_flag,
+                                                    board_pin=f'BOARD{self.switch_pin}',
+                                                    switch_purpose=self.switch_purpose)
+
             self.basic_controller_process = Process(target=self.basic_controller.run)
             self.basic_controller_process.start()
 
@@ -243,6 +251,7 @@ class Owl:
             while True:
                 if self.enable_controller:
                     self.disable_detection = not self.detection_state.value
+                    self.sample_images = self.sample_state.value
 
                 frame = self.cam.read()
 
