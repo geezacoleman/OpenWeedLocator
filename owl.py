@@ -200,7 +200,8 @@ class Owl:
     def hoot(self):
         algorithm = self.config.get('System', 'algorithm')
         log_fps = self.config.getboolean('DataCollection', 'log_fps')
-        self.disable_detection = not self.detection_state
+        if self.enable_controller:
+            self.disable_detection = not self.detection_state
 
         # track FPS and framecount
         frame_count = 0
