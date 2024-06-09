@@ -293,9 +293,6 @@ class RelayController:
             input_queue.append(input_queue_message)
             input_condition.notify()
 
-        line = f"nozzle: {relay} | time: {time_stamp} | location {location} | delay: {delay} | duration: {duration}"
-        self.logger.log_line(line, verbose=False)
-
     def consumer(self, relay):
         """
         Takes only one parameter - nozzle, which enables the selection of the deque, condition from the dictionaries.
@@ -309,6 +306,7 @@ class RelayController:
         input_condition.acquire()
         relay_on = False
         relay_queue = self.relay_queue_dict[relay]
+
         while self.running:
             while relay_queue:
                 job = relay_queue.popleft()
@@ -319,17 +317,21 @@ class RelayController:
                 if not relay_on:
                     time.sleep(job[2]) # add in the delay variable
                     self.relay.relay_on(relay, verbose=False)
+
                     if self.vis:
                         self.relay_vis.update(relay=relay, status=True)
+
                     relay_on = True
+
                 try:
                     time.sleep(onDur)
-                    self.logger.log_line(f'[INFO] onDur {onDur} for nozzle {relay} received.')
 
                 except ValueError:
                     time.sleep(0)
                     self.logger.log_line(f'[ERROR] negative onDur {onDur} for nozzle {relay} received. Turning on for 0 seconds.')
+
                 input_condition.acquire()
+
             if len(relay_queue) == 0:
                 self.relay.relay_off(relay, verbose=False)
                 if self.vis:

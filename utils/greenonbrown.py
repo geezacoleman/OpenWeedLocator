@@ -68,11 +68,14 @@ class GreenOnBrown:
                 self.weed_centres.append([centerX, centerY])
 
         if show_display:
+            image_out = image.copy()
             for box in self.boxes:
                 startX, startY, boxW, boxH = box
                 endX = startX + boxW
                 endY = startY + boxH
-                cv2.putText(image, label, (startX, startY + 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
-                cv2.rectangle(image, (int(startX), int(startY)), (endX, endY), (0, 0, 255), 2)
+                cv2.putText(image_out, label, (startX, startY + 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
+                cv2.rectangle(image_out, (int(startX), int(startY)), (endX, endY), (0, 0, 255), 2)
+
+            return contours, self.boxes, self.weed_centres, image_out
 
         return contours, self.boxes, self.weed_centres, image
