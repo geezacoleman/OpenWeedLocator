@@ -1,15 +1,87 @@
 import time
-
 import platform
+import warnings
 # check if the system is being tested on a Windows or Linux x86 64 bit machine
-if platform.system() == "Windows":
+if 'rpi' in platform.platform():
+    testing = False
+    from gpiozero import Button, LED
+
+elif platform.system() == "Windows":
+    warning_message = "[WARNING] The system is running on a Windows platform. GPIO disabled. Test mode active."
+    warnings.warn(warning_message, RuntimeWarning)
     testing = True
+    testing = True
+
+elif 'aarch' in platform.platform():
+    testing = False
+    from gpiozero import Button, LED
+
 else:
-    if '64' in platform.machine():
-        testing = True
-    else:
-        from gpiozero import Button, LED
-        testing = False
+    warning_message = "[WARNING] The system is not running on a recognized platform. GPIO disabled. Test mode active."
+    warnings.warn(warning_message, RuntimeWarning)
+    testing = True
+
+
+class BasicController:
+    def __init__(self, detection_state, sample_state, stop_flag, switch_purpose='detection', board_pin='BOARD37',
+                 bounce_time=1.0):
+        self.switch = Button(board_pin, bounce_time=bounce_time)
+        self.switch_purpose = switch_purpose
+
+        self.detection_state = detection_state
+        self.sample_state = sample_state
+
+        self.stop_flag = stop_flag
+
+        if self.switch_purpose == 'detection':
+            self.switch.when_pressed = self.enable_detection
+            self.switch.when_released = self.disable_detection
+        elif self.switch_purpose == 'recording':
+            self.switch.when_pressed = self.enable_recording
+            self.switch.when_released = self.disable_recording
+        else:
+            raise ValueError("Invalid switch purpose. Use 'detection' or 'recording'.")
+
+        if self.switch.is_pressed:
+            self.enable_current_purpose()
+        else:
+            self.disable_current_purpose()
+
+    def enable_detection(self):
+        with self.detection_state.get_lock():
+            self.detection_state.value = True
+
+    def disable_detection(self):
+        with self.detection_state.get_lock():
+            self.detection_state.value = False
+
+    def enable_recording(self):
+        with self.sample_state.get_lock():
+            self.sample_state.value = True
+
+    def disable_recording(self):
+        with self.sample_state.get_lock():
+            self.sample_state.value = False
+
+    def enable_current_purpose(self):
+        if self.switch_purpose == 'detection':
+            self.enable_detection()
+        elif self.switch_purpose == 'recording':
+            self.enable_recording()
+
+    def disable_current_purpose(self):
+        if self.switch_purpose == 'detection':
+            self.disable_detection()
+        elif self.switch_purpose == 'recording':
+            self.disable_recording()
+
+    def run(self):
+        while not self.stop_flag.value:
+            time.sleep(0.1)  # sleep to reduce CPU usage
+
+    def stop(self):
+        with self.stop_flag.get_lock():
+            self.stop_flag.value = True
 
 
 class SensitivitySelector:
