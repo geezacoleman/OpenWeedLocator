@@ -1,9 +1,10 @@
 import sys
 
-from utils.logger import Logger
-from threading import Thread, Event, Condition
-from utils.cli_vis import RelayVis
-from datetime import datetime
+from utils.log_manager import Logger
+from threading import Thread, Event, Condition, Lock
+from utils.visualisation_manager import RelayVis
+from utils.directory_manager import DirectoryManager
+
 import collections
 import shutil
 import time
@@ -11,6 +12,7 @@ import os
 
 import platform
 import warnings
+
 # check if the system is being tested on a Windows or Linux x86 64 bit machine
 if 'rpi' in platform.platform():
     testing = False
@@ -55,7 +57,7 @@ class TestLED:
     def __init__(self, pin):
         self.pin = pin
 
-    def blink(self, on_time=0.1, off_time=0.1, n=1, verbose=False, background=True):
+    def blink(self, on_time=0.1, off_time=0.1, n=1, verbose=True, background=True):
         if n is None:
             n = 1
 
@@ -71,120 +73,120 @@ class TestLED:
 
 
 class StatusIndicator:
-    def __init__(self, save_directory, record_led_boardpin='BOARD38', storage_led_boardpin='BOARD40'):
-        self.testing = True if testing else False
+    def __init__(self, save_directory, status_led='BOARD38'):
+        self.testing = testing
+
+        self.directory_manager = DirectoryManager(save_directory)
         self.save_directory = save_directory
         self.save_subdirectory = None
         self.storage_used = None
         self.storage_total = None
-        self.update_event = Event()
 
-        self.running = True
-        self.thread = None
+        self.storage_event = Event()
+        self.error_event = Event()
+        self.image_save_event = Event()
+        self.stop_event = Event()
+
+        self.lock = Lock()
 
         self.DRIVE_FULL = False
 
         if not testing:
-            self.record_LED = LED(pin=record_led_boardpin)
-            self.storage_LED = LED(pin=storage_led_boardpin)
-
+            self.status_LED = LED(status_led)
         else:
-            self.record_LED = TestLED(pin=record_led_boardpin)
-            self.storage_LED = TestLED(pin=storage_led_boardpin)
+            self.status_LED = TestLED(status_led)
 
-    def setup_directories(self, enable_device_save=False):
-        self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
+        self.storage_thread = Thread(target=self.run_storage_update)
+        self.error_thread = Thread(target=self.error_indicator)
+        self.image_save_thread = Thread(target=self.image_save_indicator)
 
-        try:
-            if os.path.ismount(self.save_directory):
-                os.makedirs(self.save_subdirectory, exist_ok=True)
+        self.storage_thread.start()
+        self.error_thread.start()
+        self.image_save_thread.start()
 
-            elif enable_device_save:
-                os.makedirs(self.save_subdirectory, exist_ok=True)
-
+    def setup_directories(self, enable_local_save=False):
+        self.save_subdirectory = self.directory_manager.setup_directories(enable_local_save)
+        if self.save_subdirectory:
+            if self.directory_manager.test_save_file():
+                self.setup_success()
             else:
-                os.makedirs(self.save_subdirectory, exist_ok=True)
-
-            self.setup_success()
-
-        except PermissionError:
-            try:
-                username = os.listdir('/media/')[0]
-                usb_drives = os.listdir(os.path.join('/media', username))
-                for drive in usb_drives:
-                    try:
-                        self.save_directory = os.path.join('/media', username, drive)
-                        self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
-
-                        if os.path.ismount(self.save_directory):
-                            os.makedirs(self.save_subdirectory, exist_ok=True)
-                        print(f'[SUCCESS] Tried {drive}. Connected')
-                        self.setup_success()
-
-                        return self.save_subdirectory
-
-                    except PermissionError:
-                        print(f'[ERROR] Tried {drive}. Failed')
-
-            except Exception as e:
-                print(f"\n[USB ERROR] Permission error.\nError message: {e}")
-
-        return self.save_subdirectory
+                self.alert_flash()
+        else:
+            self.alert_flash()
+            print("[ERROR] Failed to setup directories.")
+            raise SystemError
 
     def setup_success(self):
-        self.storage_LED.blink(on_time=0.1, off_time=0.2, n=3)
-        self.record_LED.blink(on_time=0.1, off_time=0.2, n=3)
+        with self.lock:
+            self.status_LED.blink(on_time=0.1, off_time=0.2, n=3)
 
-    def image_write_indicator(self):
-        self.record_LED.blink(on_time=0.1, n=1, background=True)
+    def image_save_blink(self):
+        with self.lock:
+            self.image_save_event.set()
+
+    def image_save_indicator(self):
+        while not self.stop_event.is_set():
+            with self.lock:
+                if not self.error_event.is_set() and self.image_save_event.is_set():
+                    self.status_LED.blink(on_time=0.1, n=1)
 
     def start_storage_indicator(self):
-        self.thread = Thread(target=self.run_update)
-        self.thread.start()
+        self.storage_event.set()
 
-    def run_update(self):
-        while self.running:
-            self.update()
-            self.update_event.wait(10.5)
-            self.update_event.clear()
+    def run_storage_update(self):
+        while not self.stop_event.is_set():
+            self.storage_event.wait()
+            if not self.error_event.is_set():
+                self.storage_update()
+            self.storage_event.clear()
+            time.sleep(20)
 
-    def update(self):
-        self.storage_total, self.storage_used, _ = shutil.disk_usage(self.save_directory)
+    def storage_update(self):
+        try:
+            self.storage_total, self.storage_used, _ = shutil.disk_usage(self.save_directory)
+        except FileNotFoundError:
+            self.alert_flash()
+            self.stop()
+            sys.exit(1)
 
-        percent_full = (self.storage_used / (self.storage_total))
+        percent_full = (self.storage_used / self.storage_total)
 
-        if percent_full >= 0.90:
-            self.DRIVE_FULL = True
-            self.storage_LED.on()
-            self.record_LED.off()
+        with self.lock:
+            if not self.error_event.is_set():
+                if percent_full >= 0.90:
+                    self.DRIVE_FULL = True
+                    self.status_LED.on()
+                elif percent_full >= 0.85:
+                    self.status_LED.blink(on_time=0.2, off_time=0.2, n=10, background=True)
+                elif percent_full >= 0.80:
+                    self.status_LED.blink(on_time=0.5, off_time=0.5, n=10, background=True)
+                elif percent_full >= 0.75:
+                    self.status_LED.blink(on_time=0.5, off_time=1.5, n=10, background=True)
+                elif percent_full >= 0.5:
+                    self.status_LED.blink(on_time=0.5, off_time=3.0, n=10, background=True)
+                else:
+                    self.status_LED.blink(on_time=0.5, off_time=4.5, n=10, background=True)
 
-        elif percent_full >= 0.85:
-            self.storage_LED.blink(on_time=0.2, off_time=0.2, n=None, background=True)
-
-        elif percent_full >= 0.80:
-            self.storage_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
-
-        elif percent_full >= 0.75:
-            self.storage_LED.blink(on_time=0.5, off_time=1.5, n=None, background=True)
-
-        elif percent_full >= 0.5:
-            self.storage_LED.blink(on_time=0.5, off_time=3.0, n=None, background=True)
-
-        else:
-            self.storage_LED.blink(on_time=0.5, off_time=4.5, n=None, background=True)
+    def error_indicator(self):
+        while not self.stop_event.is_set():
+            self.error_event.wait()
+            with self.lock:
+                if self.error_event.is_set():
+                    self.status_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
+                    self.error_event.clear()
 
     def alert_flash(self):
-        self.storage_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
-        self.record_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
+        self.error_event.set()
 
     def stop(self):
-        self.update_event.set()
-
-        self.running = False
-        self.storage_LED.off()
-        self.record_LED.off()
-
-        self.thread.join()
+        self.stop_event.set()
+        self.storage_event.set()
+        self.error_event.set()
+        with self.lock:
+            self.status_LED.off()
+        self.storage_thread.join()
+        self.error_thread.join()
+        self.image_save_thread.join()
 
 
 # control class for the relay board

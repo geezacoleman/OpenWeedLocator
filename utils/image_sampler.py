@@ -1,3 +1,5 @@
+import sys
+
 import cv2
 import os
 import numpy as np
@@ -43,12 +45,17 @@ class ImageRecorder:
 
     def process_frame(self, frame, frame_id, boxes, centres):
         timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H%M%S.%f')[:-3] + 'Z'
-        if self.mode == 'whole':
-            self.save_frame(frame, frame_id, timestamp)
-        elif self.mode == 'bbox':
-            self.save_bboxes(frame, frame_id, boxes, timestamp)
-        elif self.mode == 'square':
-            self.save_squares(frame, frame_id, centres, timestamp)
+        try:
+            if self.mode == 'whole':
+                self.save_frame(frame, frame_id, timestamp)
+            elif self.mode == 'bbox':
+                self.save_bboxes(frame, frame_id, boxes, timestamp)
+            elif self.mode == 'square':
+                self.save_squares(frame, frame_id, centres, timestamp)
+
+        except TypeError:
+            self.stop()
+            sys.exit(1)
 
     def save_frame(self, frame, frame_id, timestamp):
         filename = f"{timestamp}_frame_{frame_id}.png"

@@ -1,10 +1,10 @@
 #!/usr/bin/env python
-from utils.button_inputs import BasicController
+from utils.input_manager import BasicController
 from utils.image_sampler import ImageRecorder
-from utils.blur_algorithms import fft_blur
+from utils.algorithms import fft_blur
 from utils.greenonbrown import GreenOnBrown
-from utils.relay_control import RelayController, StatusIndicator
-from utils.frame_reader import FrameReader
+from utils.output_manager import RelayController, StatusIndicator
+from utils.media_manager import FrameReader
 
 from multiprocessing import Value, Process
 from configparser import ConfigParser
@@ -19,8 +19,6 @@ import imutils
 import time
 import sys
 import cv2
-import os
-
 
 def nothing(x):
     pass
@@ -88,7 +86,7 @@ class Owl:
         # time spent on each image when looping over a directory
         self.image_loop_time = self.config.getint('Visualisation', 'image_loop_time')
 
-        # setup the track bars if show_display is True
+        # set up the track bars if show_display is True
         if self.show_display:
             # create trackbars for the threshold calculation
             self.window_name = "Adjust Detection Thresholds"
@@ -144,7 +142,6 @@ class Owl:
 
         # if no video, start the camera with the provided parameters
         else:
-
             try:
                 self.cam = VideoStream(resolution=self.resolution,
                                        exp_compensation=self.exp_compensation)
@@ -176,16 +173,26 @@ class Owl:
             self.sample_method = self.config.get('DataCollection', 'sample_method')
             self.disable_detection = self.config.getboolean('DataCollection', 'disable_detection')
             self.sample_frequency = self.config.getint('DataCollection', 'sample_frequency')
-            self.enable_device_save = self.config.getboolean('DataCollection', 'enable_device_save')
+            self.enable_local_save = self.config.getboolean('DataCollection', 'enable_local_save')
             self.save_directory = self.config.get('DataCollection', 'save_directory')
             self.camera_name = self.config.get('DataCollection', 'camera_name')
 
-            self.indicators = StatusIndicator(save_directory=self.save_directory)
-            self.save_subdirectory = self.indicators.setup_directories(enable_device_save=self.enable_device_save)
-            self.indicators.start_storage_indicator()
+            try:
+                self.indicators = StatusIndicator(save_directory=self.save_directory)
+                self.save_subdirectory = self.indicators.setup_directories(enable_local_save=self.enable_local_save)
 
-            self.image_recorder = ImageRecorder(save_directory=self.save_subdirectory, mode=self.sample_method)
+                self.indicators.start_storage_indicator()
 
+                self.image_recorder = ImageRecorder(save_directory=self.save_subdirectory, mode=self.sample_method)
+
+            except Exception as e:
+                print(e)
+                print('hello')
+                self.indicators.stop()
+                print('doot')
+                self.image_recorder.stop()
+                print('here')
+                sys.exit(1)
         ############################
 
         # sensitivity and weed size to be added
@@ -331,7 +338,7 @@ class Owl:
                 if self.sample_images:
                     # only record every sampleFreq number of frames. If sample_frequency = 60, this will activate every 60th frame
                     if frame_count % self.sample_frequency == 0:
-                        self.indicators.image_write_indicator()
+                        self.indicators.image_save_blink()
 
                         if self.sample_method == 'whole':
                             self.image_recorder.add_frame(frame=frame, frame_id=frame_count, boxes=None, centres=None)
