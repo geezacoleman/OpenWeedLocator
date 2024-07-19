@@ -100,7 +100,7 @@ echo "[INFO] Setting owl-background.png as the desktop background..."
 pcmanfm --set-wallpaper ~/owl/images/owl-background.png
 check_status "Setting desktop background"
 
-echo "[INFO] OWL setup complete. Do you want to reboot now? (y/n)"
+echo "[INFO] OWL setup complete."
 read -p "Start OWL focusing? (y/n): " choice
 case "$choice" in
   y|Y ) echo "[INFO] Starting focusing..."; ./owl.py --focus;;
