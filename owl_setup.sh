@@ -97,13 +97,19 @@ echo "[INFO] Adding boot script to cron..."
 check_status "Adding boot script to cron"
 
 echo "[INFO] Setting owl-background.png as the desktop background..."
-pcmanfm --set-wallpaper=~/owl/images/owl-background.png
+pcmanfm --set-wallpaper ~/owl/images/owl-background.png
 check_status "Setting desktop background"
 
 echo "[INFO] OWL setup complete. Do you want to reboot now? (y/n)"
-read -p "Reboot now? (y/n): " choice
+read -p "Start OWL focusing? (y/n): " choice
 case "$choice" in
-  y|Y ) echo "[INFO] Rebooting now..."; sudo reboot;;
-  n|N ) echo "[INFO] Reboot skipped. Please reboot manually later to complete OWL setup.";;
+  y|Y ) echo "[INFO] Starting focusing..."; ./owl.py --focus;;
+  n|N ) echo "[INFO] Focusing skipped. Run './owl.py --focus' to focus the OWL at a later point";;
+  * ) echo "[ERROR] Invalid input. Please enter y or n.";;
+esac
+read -p "Launch OWL software? (y/n): " choice
+case "$choice" in
+  y|Y ) echo "[INFO] Launching OWL..."; ./owl.py --show-display;;
+  n|N ) echo "[INFO] Skipped. Run './owl.py --show-display' to launch the OWL at a later point";;
   * ) echo "[ERROR] Invalid input. Please enter y or n.";;
 esac
