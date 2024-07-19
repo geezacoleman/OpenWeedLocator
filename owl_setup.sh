@@ -1,7 +1,5 @@
 #!/bin/bash
 
-set -e  # Exit immediately if a command exits with a non-zero status
-
 # Function to check the exit status of the last executed command
 check_status() {
   if [ $? -ne 0 ]; then
@@ -15,11 +13,7 @@ check_status() {
 # Free up space
 echo "[INFO] Freeing up space by removing unnecessary packages..."
 sudo apt-get purge -y wolfram-engine
-check_status "Removing wolfram-engine"
-
 sudo apt-get purge -y libreoffice*
-check_status "Removing libreoffice"
-
 sudo apt-get clean
 check_status "Cleaning up"
 
@@ -54,16 +48,23 @@ echo "source /usr/share/virtualenvwrapper/virtualenvwrapper.sh" >> ~/.bashrc
 source /usr/share/virtualenvwrapper/virtualenvwrapper.sh
 check_status "Updating .bashrc for virtualenvwrapper"
 
+sleep 1s
+
 # Create the owl virtual environment
 echo "[INFO] Creating the 'owl' virtual environment..."
 mkvirtualenv --system-site-packages -p python3 owl
 check_status "Creating virtual environment 'owl'"
 
+sleep 1s
+
 # Install OpenCV in the owl virtual environment
 echo "[INFO] Installing OpenCV in the 'owl' virtual environment..."
-source source $HOME/.virtualenvs/owl/bin/activate
+source $HOME/.virtualenvs/owl/bin/activate
+sleep 1s
 pip3 install opencv-contrib-python
 check_status "Installing OpenCV"
+
+sleep 1s
 
 # Install the OWL Python dependencies
 echo "[INFO] Installing the OWL Python dependencies..."
