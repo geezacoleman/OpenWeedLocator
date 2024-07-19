@@ -51,7 +51,7 @@ check_status "Installing python3-virtualenvwrapper"
 
 echo "export WORKON_HOME=$HOME/.virtualenvs" >> ~/.bashrc
 echo "source /usr/share/virtualenvwrapper/virtualenvwrapper.sh" >> ~/.bashrc
-source ~/.bashrc
+source /usr/share/virtualenvwrapper/virtualenvwrapper.sh
 check_status "Updating .bashrc for virtualenvwrapper"
 
 # Create the owl virtual environment
@@ -61,15 +61,9 @@ check_status "Creating virtual environment 'owl'"
 
 # Install OpenCV in the owl virtual environment
 echo "[INFO] Installing OpenCV in the 'owl' virtual environment..."
-workon owl
+source source $HOME/.virtualenvs/owl/bin/activate
 pip3 install opencv-contrib-python
 check_status "Installing OpenCV"
-
-# Download the owl repository
-echo "[INFO] Downloading the OWL repository..."
-cd ~
-git clone https://github.com/geezacoleman/OpenWeedLocator owl
-check_status "Cloning OWL repository"
 
 # Install the OWL Python dependencies
 echo "[INFO] Installing the OWL Python dependencies..."
