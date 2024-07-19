@@ -189,46 +189,46 @@ The original OWL lays out all components in a flat design. It makes the connecti
 clear. It's a great educational tool to learn the parts required for a weed detection system and has served in the field 
 as a functional weed detection system for a number of years.
 
-| **Component**                                                         | **Quantity**      | **Link**                                                                                                                                                                                                                                                                                                                                                                                                          |
-|-----------------------------------------------------------------------|-------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Enclosure**                                                         |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Main Case (single Bulgin connector)                                   | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Enclosure%20-%20single%20connector.stl)                                                                                                                                                                                                                                                                           |
-| *Main Case (cable glands)*                                            | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Enclosure%20-%20cable%20gland.stl)                                                                                                                                                                                                                                                                                |
-| Main Cover                                                            | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Enclosure%20-%20cover.stl)                                                                                                                                                                                                                                                                                        |
-| Raspberry Pi Mount                                                    | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Raspberry%20Pi%20mount.stl)                                                                                                                                                                                                                                                                                       |
-| Relay Control Board Mount                                             | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Relay%20control%20board%20mount.stl)                                                                                                                                                                                                                                                                              |
-| Voltage Regulator Mount                                               | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Voltage%20regulator%20mount.stl)                                                                                                                                                                                                                                                                                  |
-| Camera Mount                                                          | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Camera%20mount.stl)                                                                                                                                                                                                                                                                                               |
-| Enclosure Plug                                                        | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Enclosure%20plug.stl)                                                                                                                                                                                                                                                                                             |
-| **Computing**                                                         |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Raspberry Pi 5 4GB (or Pi 4 or 3B+)                                   | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-5-model-b-4gb.html)                                                                                                                                                                                                                                                                                                                                           |
-| *Green-on-Green ONLY - Google Coral USB Accelerator                   | 1                 | [Link](https://coral.ai/products/accelerator)                                                                                                                                                                                                                                                                                                                                                                     |
-| 64GB SD Card (min. 16 GB)                                             | 1                 | [Link](https://core-electronics.com.au/extreme-sd-microsd-memory-card-64gb-class-10-adapter-included.html)                                                                                                                                                                                                                                                                                                        |
-| **Camera** (choose one)                                               |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| RECOMMENDED: Raspberry Pi Global Shutter Camera                       | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-global-shutter-camera.html)                                                                                                                                                                                                                                                                                                                                   |
-| CCTV 6mm Wide Angle Lens                                              | 1 (GS or HQ only) | [Link](https://core-electronics.com.au/raspberry-pi-6mm-wide-angle-lens.html)                                                                                                                                                                                                                                                                                                                                     |
-| SUPPORTED: Raspberry Pi 12MP HQ Camera                                | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-hq-camera.html)                                                                                                                                                                                                                                                                                                                                               |
-| SUPPORTED: Raspberry Pi Camera Module 3                               | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-camera-3.html)                                                                                                                                                                                                                                                                                                                                                |
-| SUPPORTED: Raspberry Pi V2 Camera (NOT RECOMMENDED)                   | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-camera-board-v2-8-megapixels-38552.html)                                                                                                                                                                                                                                                                                                                      |
-| NOTE: If you use the RPi 5, make sure you have the right camera cable | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-camera-fpc-adapter-cable-200mm.html)                                                                                                                                                                                                                                                                                                                          |
-| **Power**                                                             |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 5V 5A Step Down Voltage Regulator                                     | 1                 | [Link](https://core-electronics.com.au/pololu-5v-5a-step-down-voltage-regulator-d24v50f5.html)                                                                                                                                                                                                                                                                                                                    |
-| 4 Channel, 12V Relay Control Board                                    | 1                 | [Link](https://www.jaycar.com.au/arduino-compatible-4-channel-12v-relay-module/p/XC4440?gclid=Cj0KCQjwvYSEBhDjARIsAJMn0ljQf_l5tRY0D4UyDRlaNBFV6-XAj_UGQzC029d-wiwoCyD6Rzy7x2MaAinhEALw_wcB)                                                                                                                                                                                                                       |
-| M205 Panel Mount Fuse Holder                                          | 1                 | [Link](https://www.jaycar.com.au/round-10a-240v-m205-panel-mount-fuse-holder/p/SZ2028?pos=17&queryId=11c21fd77c75a11725bd0f093a0fc862&sort=relevance)                                                                                                                                                                                                                                                             |
-| Jumper Wire                                                           | 1                 | [Link](https://core-electronics.com.au/solderless-breadboard-jumper-cable-wires-female-female-40-pieces.html)                                                                                                                                                                                                                                                                                                     |
-| WAGO 2-way Terminal Block                                             | 2                 | [Link](https://au.rs-online.com/web/p/splice-connectors/8837544/)                                                                                                                                                                                                                                                                                                                                                 |
-| Bulgin Connector - Panel Mount                                        | 1                 | [Link](https://au.rs-online.com/web/p/industrial-circular-connectors/8068625/)                                                                                                                                                                                                                                                                                                                                    |
-| Bulgin Connector - Plug                                               | 1                 | [Link](https://au.rs-online.com/web/p/industrial-circular-connectors/8068565/)                                                                                                                                                                                                                                                                                                                                    |
-| Micro USB to USB-C adaptor                                            | 1                 | [Link](https://core-electronics.com.au/usb-micro-b-to-usb-c-adapter-black.html)                                                                                                                                                                                                                                                                                                                                   |
-| Micro USB Cable                                                       | 1                 | [Link](https://core-electronics.com.au/micro-usb-cable.html)                                                                                                                                                                                                                                                                                                                                                      |
-| **Miscellaneous**                                                     |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 12V Chrome LED                                                        | 2                 | [Link](https://www.jaycar.com.au/12v-mini-chrome-bezel-red/p/SL2644)                                                                                                                                                                                                                                                                                                                                              |
-| 3 - 16V Piezo Buzzer                                                  | 1                 | [Link](https://www.jaycar.com.au/mini-piezo-buzzer-3-16v/p/AB3462?pos=8&queryId=404751ef55b1d6b8adef8b031d16576f&sort=relevance)                                                                                                                                                                                                                                                                                  |
-| Brass Standoffs - M2/3/4                                              | Kit               | [Link](https://www.amazon.com/Hilitchi-360pcs-Female-Standoff-Assortment/dp/B013ZWM1F6/ref=sr_1_5?dchild=1&keywords=standoff+kit&qid=1623697572&sr=8-5)                                                                                                                                                                                                                                                           |
-| M3 Bolts/Nuts                                                         | 4 each or Kit     | [Link](https://www.amazon.com/DYWISHKEY-Pieces-Stainless-Socket-Assortment/dp/B07VNDFYNQ/ref=sr_1_4?crid=2X7QROKBF9F4D&dchild=1&keywords=m3+hex+bolt&qid=1623697718&sprefix=M3+hex%2Caps%2C193&sr=8-4)                                                                                                                                                                                                            |
-| Wire - 20AWG (red/black/green/blue/yellow/white)                      | 1 roll each       | [Link](https://www.amazon.com/Electronics-different-Insulated-Temperature-Resistance/dp/B07G2GLKMP/ref=sr_1_1_sspa?dchild=1&keywords=20+awg+wire&qid=1623697639&sr=8-1-spons&psc=1&spLa=ZW5jcnlwdGVkUXVhbGlmaWVyPUEyMUNVM1BBQUNKSFNBJmVuY3J5cHRlZElkPUEwNjQ4MTQ5M0dRTE9ZR0MzUFE5VyZlbmNyeXB0ZWRBZElkPUExMDMwNTIwODM5OVVBOTFNRjdSJndpZGdldE5hbWU9c3BfYXRmJmFjdGlvbj1jbGlja1JlZGlyZWN0JmRvTm90TG9nQ2xpY2s9dHJ1ZQ==) |
-| *Optional*                                                            |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Real-time clock module                                                | 1                 | [Link](https://core-electronics.com.au/adafruit-pirtc-pcf8523-real-time-clock-for-raspberry-pi.html)                                                                                                                                                                                                                                                                                                              |
+| **Component**                                                                 | **Quantity**      | **Link**                                                                                                                                                                                                                                                                                                                                                                                                          |
+|-------------------------------------------------------------------------------|-------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Enclosure**                                                                 |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Main Case (single Bulgin connector)                                           | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Enclosure%20-%20single%20connector.stl)                                                                                                                                                                                                                                                                           |
+| *Main Case (cable glands)*                                                    | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Enclosure%20-%20cable%20gland.stl)                                                                                                                                                                                                                                                                                |
+| Main Cover                                                                    | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Enclosure%20-%20cover.stl)                                                                                                                                                                                                                                                                                        |
+| Raspberry Pi Mount                                                            | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Raspberry%20Pi%20mount.stl)                                                                                                                                                                                                                                                                                       |
+| Relay Control Board Mount                                                     | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Relay%20control%20board%20mount.stl)                                                                                                                                                                                                                                                                              |
+| Voltage Regulator Mount                                                       | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Voltage%20regulator%20mount.stl)                                                                                                                                                                                                                                                                                  |
+| Camera Mount                                                                  | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Camera%20mount.stl)                                                                                                                                                                                                                                                                                               |
+| Enclosure Plug                                                                | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Original%20OWL/Enclosure%20plug.stl)                                                                                                                                                                                                                                                                                             |
+| **Computing**                                                                 |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Raspberry Pi 5 4GB (or Pi 4 or 3B+)                                           | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-5-model-b-4gb.html)                                                                                                                                                                                                                                                                                                                                           |
+| *Green-on-Green ONLY - Google Coral USB Accelerator                           | 1                 | [Link](https://coral.ai/products/accelerator)                                                                                                                                                                                                                                                                                                                                                                     |
+| 64GB SD Card (min. 16 GB)                                                     | 1                 | [Link](https://core-electronics.com.au/extreme-sd-microsd-memory-card-64gb-class-10-adapter-included.html)                                                                                                                                                                                                                                                                                                        |
+| **Camera** (choose one)                                                       |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| RECOMMENDED: Raspberry Pi Global Shutter Camera                               | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-global-shutter-camera.html)                                                                                                                                                                                                                                                                                                                                   |
+| CCTV 6mm Wide Angle Lens                                                      | 1 (GS or HQ only) | [Link](https://core-electronics.com.au/raspberry-pi-6mm-wide-angle-lens.html)                                                                                                                                                                                                                                                                                                                                     |
+| SUPPORTED: Raspberry Pi 12MP HQ Camera                                        | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-hq-camera.html)                                                                                                                                                                                                                                                                                                                                               |
+| SUPPORTED: Raspberry Pi Camera Module 3                                       | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-camera-3.html)                                                                                                                                                                                                                                                                                                                                                |
+| SUPPORTED: Raspberry Pi V2 Camera (NOT RECOMMENDED)                           | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-camera-board-v2-8-megapixels-38552.html)                                                                                                                                                                                                                                                                                                                      |
+| ⚠️NOTE⚠️ If you use the RPi 5, make sure you have the right camera cable | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-camera-fpc-adapter-cable-200mm.html)                                                                                                                                                                                                                                                                                                                          |
+| **Power**                                                                     |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 5V 5A Step Down Voltage Regulator                                             | 1                 | [Link](https://core-electronics.com.au/pololu-5v-5a-step-down-voltage-regulator-d24v50f5.html)                                                                                                                                                                                                                                                                                                                    |
+| 4 Channel, 12V Relay Control Board                                            | 1                 | [Link](https://www.jaycar.com.au/arduino-compatible-4-channel-12v-relay-module/p/XC4440?gclid=Cj0KCQjwvYSEBhDjARIsAJMn0ljQf_l5tRY0D4UyDRlaNBFV6-XAj_UGQzC029d-wiwoCyD6Rzy7x2MaAinhEALw_wcB)                                                                                                                                                                                                                       |
+| M205 Panel Mount Fuse Holder                                                  | 1                 | [Link](https://www.jaycar.com.au/round-10a-240v-m205-panel-mount-fuse-holder/p/SZ2028?pos=17&queryId=11c21fd77c75a11725bd0f093a0fc862&sort=relevance)                                                                                                                                                                                                                                                             |
+| Jumper Wire                                                                   | 1                 | [Link](https://core-electronics.com.au/solderless-breadboard-jumper-cable-wires-female-female-40-pieces.html)                                                                                                                                                                                                                                                                                                     |
+| WAGO 2-way Terminal Block                                                     | 2                 | [Link](https://au.rs-online.com/web/p/splice-connectors/8837544/)                                                                                                                                                                                                                                                                                                                                                 |
+| Bulgin Connector - Panel Mount                                                | 1                 | [Link](https://au.rs-online.com/web/p/industrial-circular-connectors/8068625/)                                                                                                                                                                                                                                                                                                                                    |
+| Bulgin Connector - Plug                                                       | 1                 | [Link](https://au.rs-online.com/web/p/industrial-circular-connectors/8068565/)                                                                                                                                                                                                                                                                                                                                    |
+| Micro USB to USB-C adaptor                                                    | 1                 | [Link](https://core-electronics.com.au/usb-micro-b-to-usb-c-adapter-black.html)                                                                                                                                                                                                                                                                                                                                   |
+| Micro USB Cable                                                               | 1                 | [Link](https://core-electronics.com.au/micro-usb-cable.html)                                                                                                                                                                                                                                                                                                                                                      |
+| **Miscellaneous**                                                             |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 12V Chrome LED                                                                | 2                 | [Link](https://www.jaycar.com.au/12v-mini-chrome-bezel-red/p/SL2644)                                                                                                                                                                                                                                                                                                                                              |
+| 3 - 16V Piezo Buzzer                                                          | 1                 | [Link](https://www.jaycar.com.au/mini-piezo-buzzer-3-16v/p/AB3462?pos=8&queryId=404751ef55b1d6b8adef8b031d16576f&sort=relevance)                                                                                                                                                                                                                                                                                  |
+| Brass Standoffs - M2/3/4                                                      | Kit               | [Link](https://www.amazon.com/Hilitchi-360pcs-Female-Standoff-Assortment/dp/B013ZWM1F6/ref=sr_1_5?dchild=1&keywords=standoff+kit&qid=1623697572&sr=8-5)                                                                                                                                                                                                                                                           |
+| M3 Bolts/Nuts                                                                 | 4 each or Kit     | [Link](https://www.amazon.com/DYWISHKEY-Pieces-Stainless-Socket-Assortment/dp/B07VNDFYNQ/ref=sr_1_4?crid=2X7QROKBF9F4D&dchild=1&keywords=m3+hex+bolt&qid=1623697718&sprefix=M3+hex%2Caps%2C193&sr=8-4)                                                                                                                                                                                                            |
+| Wire - 20AWG (red/black/green/blue/yellow/white)                              | 1 roll each       | [Link](https://www.amazon.com/Electronics-different-Insulated-Temperature-Resistance/dp/B07G2GLKMP/ref=sr_1_1_sspa?dchild=1&keywords=20+awg+wire&qid=1623697639&sr=8-1-spons&psc=1&spLa=ZW5jcnlwdGVkUXVhbGlmaWVyPUEyMUNVM1BBQUNKSFNBJmVuY3J5cHRlZElkPUEwNjQ4MTQ5M0dRTE9ZR0MzUFE5VyZlbmNyeXB0ZWRBZElkPUExMDMwNTIwODM5OVVBOTFNRjdSJndpZGdldE5hbWU9c3BfYXRmJmFjdGlvbj1jbGlja1JlZGlyZWN0JmRvTm90TG9nQ2xpY2s9dHJ1ZQ==) |
+| *Optional*                                                                    |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Real-time clock module                                                        | 1                 | [Link](https://core-electronics.com.au/adafruit-pirtc-pcf8523-real-time-clock-for-raspberry-pi.html)                                                                                                                                                                                                                                                                                                              |
 
 </details>
 
@@ -242,42 +242,42 @@ improved water and dust resistance, plus ease of assembly and longevity. This de
 
 The parts list is substantially reduced:
 
-| **Component**                                                         | **Quantity**      | **Link**                                                                                                                                                                                                                                                                                                                                                                                                          |
-|-----------------------------------------------------------------------|-------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Enclosure**                                                         |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| **OFFICIAL OWL ENCLOSURE** - aluminium                                | 1                 | TBD                                                                                                                                                                                                                                                                                                                                                                                                               |
-| Extrusion - 3D printed                                                | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Compact%20OWL/Main%20Body.stl)                                                                                                                                                                                                                                                                                                   |
-| Front plate                                                           | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Compact%20OWL/Frontplate.stl)                                                                                                                                                                                                                                                                                                    |
-| Tray                                                                  | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/picamera2/3D%20Models/Compact%20OWL/Tray.stl)                                                                                                                                                                                                                                                                                                     |
-| Back plate - Amphenol, Adafruit RJ45                                  | 1*                | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Compact%20OWL/Backplate%20-%20Receptacle%20and%20Ethernet.stl)                                                                                                                                                                                                                                                                   |
-| Back plate - Amphenol only                                            | 1*                | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Compact%20OWL/Backplate%20-%20Receptacle%20Only.stl)                                                                                                                                                                                                                                                                             |
-| Back plate - 16 mm cable gland                                        | 1*                | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Compact%20OWL/Backplate%20-%20Gland.stl)                                                                                                                                                                                                                                                                                         |
-| Lens mount                                                            | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Compact%20OWL/Lens%20Mount.stl)                                                                                                                                                                                                                                                                                                  |
-| Camera mount                                                          | 1*                | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/picamera2/3D%20Models/Compact%20OWL/Camera%20Mount.stl)                                                                                                                                                                                                                                                                                           |
-| **Computing**                                                         |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Raspberry Pi 5 4GB (or Pi 4 or 3B+)                                   | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-5-model-b-4gb.html)                                                                                                                                                                                                                                                                                                                                           |
-| *Green-on-Green ONLY - Google Coral USB Accelerator                   | 1                 | [Link](https://coral.ai/products/accelerator)                                                                                                                                                                                                                                                                                                                                                                     |
-| 64GB SD Card (min. 16 GB)                                             | 1                 | [Link](https://core-electronics.com.au/extreme-sd-microsd-memory-card-64gb-class-10-adapter-included.html)                                                                                                                                                                                                                                                                                                        |
-| **Camera** (choose one)                                               |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| RECOMMENDED: Raspberry Pi Global Shutter Camera                       | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-global-shutter-camera.html)                                                                                                                                                                                                                                                                                                                                   |
-| CCTV 6mm Wide Angle Lens                                              | 1 (GS or HQ only) | [Link](https://core-electronics.com.au/raspberry-pi-6mm-wide-angle-lens.html)                                                                                                                                                                                                                                                                                                                                     |
-| SUPPORTED: Raspberry Pi 12MP HQ Camera                                | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-hq-camera.html)                                                                                                                                                                                                                                                                                                                                               |
-| SUPPORTED: Raspberry Pi Camera Module 3                               | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-camera-3.html)                                                                                                                                                                                                                                                                                                                                                |
-| SUPPORTED: Raspberry Pi V2 Camera (NOT RECOMMENDED)                   | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-camera-board-v2-8-megapixels-38552.html)                                                                                                                                                                                                                                                                                                                      |
-| NOTE: If you use the RPi 5, make sure you have the right camera cable | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-camera-fpc-adapter-cable-200mm.html)                                                                                                                                                                                                                                                                                                                          |
+| **Component**                                                        | **Quantity**      | **Link**                                                                                                                                                                                                                                                                                                                                                                                                          |
+|----------------------------------------------------------------------|-------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Enclosure**                                                        |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **OFFICIAL OWL ENCLOSURE** - aluminium                               | 1                 | TBD                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Extrusion - 3D printed                                               | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Compact%20OWL/Main%20Body.stl)                                                                                                                                                                                                                                                                                                   |
+| Front plate                                                          | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Compact%20OWL/Frontplate.stl)                                                                                                                                                                                                                                                                                                    |
+| Tray                                                                 | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/picamera2/3D%20Models/Compact%20OWL/Tray.stl)                                                                                                                                                                                                                                                                                                     |
+| Back plate - Amphenol, Adafruit RJ45                                 | 1*                | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Compact%20OWL/Backplate%20-%20Receptacle%20and%20Ethernet.stl)                                                                                                                                                                                                                                                                   |
+| Back plate - Amphenol only                                           | 1*                | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Compact%20OWL/Backplate%20-%20Receptacle%20Only.stl)                                                                                                                                                                                                                                                                             |
+| Back plate - 16 mm cable gland                                       | 1*                | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Compact%20OWL/Backplate%20-%20Gland.stl)                                                                                                                                                                                                                                                                                         |
+| Lens mount                                                           | 1                 | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/main/3D%20Models/Compact%20OWL/Lens%20Mount.stl)                                                                                                                                                                                                                                                                                                  |
+| Camera mount                                                         | 1*                | [STL File](https://github.com/geezacoleman/OpenWeedLocator/blob/picamera2/3D%20Models/Compact%20OWL/Camera%20Mount.stl)                                                                                                                                                                                                                                                                                           |
+| **Computing**                                                        |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Raspberry Pi 5 4GB (or Pi 4 or 3B+)                                  | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-5-model-b-4gb.html)                                                                                                                                                                                                                                                                                                                                           |
+| *Green-on-Green ONLY - Google Coral USB Accelerator                  | 1                 | [Link](https://coral.ai/products/accelerator)                                                                                                                                                                                                                                                                                                                                                                     |
+| 64GB SD Card (min. 16 GB)                                            | 1                 | [Link](https://core-electronics.com.au/extreme-sd-microsd-memory-card-64gb-class-10-adapter-included.html)                                                                                                                                                                                                                                                                                                        |
+| **Camera** (choose one)                                              |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| RECOMMENDED: Raspberry Pi Global Shutter Camera                      | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-global-shutter-camera.html)                                                                                                                                                                                                                                                                                                                                   |
+| CCTV 6mm Wide Angle Lens                                             | 1 (GS or HQ only) | [Link](https://core-electronics.com.au/raspberry-pi-6mm-wide-angle-lens.html)                                                                                                                                                                                                                                                                                                                                     |
+| SUPPORTED: Raspberry Pi 12MP HQ Camera                               | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-hq-camera.html)                                                                                                                                                                                                                                                                                                                                               |
+| SUPPORTED: Raspberry Pi Camera Module 3                              | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-camera-3.html)                                                                                                                                                                                                                                                                                                                                                |
+| SUPPORTED: Raspberry Pi V2 Camera (NOT RECOMMENDED)                  | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-camera-board-v2-8-megapixels-38552.html)                                                                                                                                                                                                                                                                                                                      |
+| ⚠️NOTE⚠️ If you use the RPi 5, make sure you have the right camera cable | 1                 | [Link](https://core-electronics.com.au/raspberry-pi-camera-fpc-adapter-cable-200mm.html)                                                                                                                                                                                                                                                                                                                          |
 | **Power Management** * items only needed in place of OWL driver board | 1                 |                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| **OFFICIAL OWL DRIVER BOARD** (incl. power mgmt, relay control)       | 1                 | TBD                                                                                                                                                                                                                                                                                                                                                                                                               |
-| * 5V 5A Step Down Voltage Regulator                                   | 1                 | [Link](https://core-electronics.com.au/pololu-5v-5a-step-down-voltage-regulator-d24v50f5.html)                                                                                                                                                                                                                                                                                                                    |
-| * 4 Channel, Relay Control Board HAT                                  | 1                 | [Link](https://core-electronics.com.au/pirelay-v2-relay-board-for-raspberry-pi-1.html?gad_source=1&gclid=Cj0KCQjw_qexBhCoARIsAFgBlev42xD_VLsmZHCLmIPB-NCCMRCGtKRPbH7WV2ddw4oucobn-XOUpLkaArl5EALw_wcB)                                                                                                                                                                                                            |
-| * Jumper Wire                                                         | 1                 | [Link](https://core-electronics.com.au/solderless-breadboard-jumper-cable-wires-female-female-40-pieces.html)                                                                                                                                                                                                                                                                                                     |
-| Amphenol Fathomlock Connector - 6 pin connector (FLS6BS10N3W3P03)     | 1                 | [Link](https://au.mouser.com/ProductDetail/Amphenol-SINE-Systems/FLS6BS10N3W3P03?qs=ulEaXIWI0c%2FMtNeYzYmViA%3D%3D)                                                                                                                                                                                                                                                                                               |
-| Amphenol Fathomlock Connector - 6 pin plug (FLS710N3W3S03)            | 1                 | [Link](https://au.mouser.com/ProductDetail/Amphenol-SINE-Systems/FLS710N3W3S03?qs=ulEaXIWI0c8tWp%252BkBCr3Ag%3D%3D)                                                                                                                                                                                                                                                                                               |
-| Adafruit RJ45 Cable Gland                                             | 1                 | [Link](https://au.mouser.com/ProductDetail/Adafruit/827?qs=GURawfaeGuA%2FhbkGNTwr3g%3D%3D)                                                                                                                                                                                                                                                                                                                        |
-| 16mm Cable Gland                                                      | 1                 | [Link](https://au.mouser.com/ProductDetail/Davies-Molding/GC1000-B?qs=xhbEVWpZdWd7C8HYv4mDiQ%3D%3D)                                                                                                                                                                                                                                                                                                               |
-| **Miscellaneous**                                                     |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 3 - 16V Piezo Buzzer (optional)                                       | 1                 | [Link](https://www.jaycar.com.au/mini-piezo-buzzer-3-16v/p/AB3462?pos=8&queryId=404751ef55b1d6b8adef8b031d16576f&sort=relevance)                                                                                                                                                                                                                                                                                  |
-| Brass Standoffs - M2/3/4 (required for HAT/driver board)              | Kit               | [Link](https://www.amazon.com/Hilitchi-360pcs-Female-Standoff-Assortment/dp/B013ZWM1F6/ref=sr_1_5?dchild=1&keywords=standoff+kit&qid=1623697572&sr=8-5)                                                                                                                                                                                                                                                           |
-| Wire - 20AWG (red/black/green/blue/yellow/white)                      | 1 roll each       | [Link](https://www.amazon.com/Electronics-different-Insulated-Temperature-Resistance/dp/B07G2GLKMP/ref=sr_1_1_sspa?dchild=1&keywords=20+awg+wire&qid=1623697639&sr=8-1-spons&psc=1&spLa=ZW5jcnlwdGVkUXVhbGlmaWVyPUEyMUNVM1BBQUNKSFNBJmVuY3J5cHRlZElkPUEwNjQ4MTQ5M0dRTE9ZR0MzUFE5VyZlbmNyeXB0ZWRBZElkPUExMDMwNTIwODM5OVVBOTFNRjdSJndpZGdldE5hbWU9c3BfYXRmJmFjdGlvbj1jbGlja1JlZGlyZWN0JmRvTm90TG9nQ2xpY2s9dHJ1ZQ==) |
+| **OFFICIAL OWL DRIVER BOARD** (incl. power mgmt, relay control)      | 1                 | TBD                                                                                                                                                                                                                                                                                                                                                                                                               |
+| * 5V 5A Step Down Voltage Regulator                                  | 1                 | [Link](https://core-electronics.com.au/pololu-5v-5a-step-down-voltage-regulator-d24v50f5.html)                                                                                                                                                                                                                                                                                                                    |
+| * 4 Channel, Relay Control Board HAT                                 | 1                 | [Link](https://core-electronics.com.au/pirelay-v2-relay-board-for-raspberry-pi-1.html?gad_source=1&gclid=Cj0KCQjw_qexBhCoARIsAFgBlev42xD_VLsmZHCLmIPB-NCCMRCGtKRPbH7WV2ddw4oucobn-XOUpLkaArl5EALw_wcB)                                                                                                                                                                                                            |
+| * Jumper Wire                                                        | 1                 | [Link](https://core-electronics.com.au/solderless-breadboard-jumper-cable-wires-female-female-40-pieces.html)                                                                                                                                                                                                                                                                                                     |
+| Amphenol Fathomlock Connector - 6 pin connector (FLS6BS10N3W3P03)    | 1                 | [Link](https://au.mouser.com/ProductDetail/Amphenol-SINE-Systems/FLS6BS10N3W3P03?qs=ulEaXIWI0c%2FMtNeYzYmViA%3D%3D)                                                                                                                                                                                                                                                                                               |
+| Amphenol Fathomlock Connector - 6 pin plug (FLS710N3W3S03)           | 1                 | [Link](https://au.mouser.com/ProductDetail/Amphenol-SINE-Systems/FLS710N3W3S03?qs=ulEaXIWI0c8tWp%252BkBCr3Ag%3D%3D)                                                                                                                                                                                                                                                                                               |
+| Adafruit RJ45 Cable Gland                                            | 1                 | [Link](https://au.mouser.com/ProductDetail/Adafruit/827?qs=GURawfaeGuA%2FhbkGNTwr3g%3D%3D)                                                                                                                                                                                                                                                                                                                        |
+| 16mm Cable Gland                                                     | 1                 | [Link](https://au.mouser.com/ProductDetail/Davies-Molding/GC1000-B?qs=xhbEVWpZdWd7C8HYv4mDiQ%3D%3D)                                                                                                                                                                                                                                                                                                               |
+| **Miscellaneous**                                                    |                   |                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 3 - 16V Piezo Buzzer (optional)                                      | 1                 | [Link](https://www.jaycar.com.au/mini-piezo-buzzer-3-16v/p/AB3462?pos=8&queryId=404751ef55b1d6b8adef8b031d16576f&sort=relevance)                                                                                                                                                                                                                                                                                  |
+| Brass Standoffs - M2/3/4 (required for HAT/driver board)             | Kit               | [Link](https://www.amazon.com/Hilitchi-360pcs-Female-Standoff-Assortment/dp/B013ZWM1F6/ref=sr_1_5?dchild=1&keywords=standoff+kit&qid=1623697572&sr=8-5)                                                                                                                                                                                                                                                           |
+| Wire - 20AWG (red/black/green/blue/yellow/white)                     | 1 roll each       | [Link](https://www.amazon.com/Electronics-different-Insulated-Temperature-Resistance/dp/B07G2GLKMP/ref=sr_1_1_sspa?dchild=1&keywords=20+awg+wire&qid=1623697639&sr=8-1-spons&psc=1&spLa=ZW5jcnlwdGVkUXVhbGlmaWVyPUEyMUNVM1BBQUNKSFNBJmVuY3J5cHRlZElkPUEwNjQ4MTQ5M0dRTE9ZR0MzUFE5VyZlbmNyeXB0ZWRBZElkPUExMDMwNTIwODM5OVVBOTFNRjdSJndpZGdldE5hbWU9c3BfYXRmJmFjdGlvbj1jbGlja1JlZGlyZWN0JmRvTm90TG9nQ2xpY2s9dHJ1ZQ==) |
 
 </details>
 
@@ -294,7 +294,7 @@ Separate guides are provided for the Original OWL assembly and the Compact OWL.
 <summary> Original OWL - Hardware Assembly</summary>
 <br>
 
-**NOTE:** All components listed above are relatively "plug and play" with minimal soldering or complex electronics required.
+>⚠️**NOTE**⚠️ All components listed above are relatively "plug and play" with minimal soldering or complex electronics required.
 Follow these instructions carefully and triple check your connections before powering anything on to avoid losing
 the [magic smoke](https://en.wikipedia.org/wiki/Magic_smoke) and potentially a few hundred dollars. Never make changes
 to the wiring on the detection unit while it is connected to 12V and always remain within the safe operating voltages of
@@ -338,12 +338,12 @@ will likely only have the red and black wires. Isolate the red (+5V) and black (
 off the end. Solder the red wire to the positive output on the voltage regulator and black wire to the GND pin. Once you
 have finished, it should look like the first panel in the figure below.
 
-**NOTE**: Soldering can burn you and generates potentially hazardous smoke! Use appropriate care, fume extractors and
+>⚠️**NOTE**⚠️ Soldering can burn you and generates potentially hazardous smoke! Use appropriate care, fume extractors and
 PPE to avoid any injury. If you're new to soldering, read
 through [this guide](https://www.makerspaces.com/how-to-solder/), which explains in more detail how to perfect your
 skills and solder safely.
 
-**NOTE**: When soldering, it's best to cover the exposed terminals with glue lined heat shrink to reduce the risk of
+>⚠️**NOTE**⚠️ When soldering, it's best to cover the exposed terminals with glue lined heat shrink to reduce the risk of
 electrical short circuits.
 
 Voltage regulator | Voltage regulator pins | Fuse
@@ -385,7 +385,7 @@ Bulgin terminal number | Wire connection
 5 | Red 12VDC - connects to fuse wire already soldered. Make sure wire is the right length when mounted. 
 6 | Black GND - connects to Wago 2-way terminal
 
-**NOTE**: Skip this step if you're using cable glands.
+>⚠️**NOTE**⚠️ Skip this step if you're using cable glands.
 
 Once all the wires have been connected you can now mount the Bulgin connector to the OWL base.
 
@@ -396,7 +396,7 @@ regulator to the 3D printed voltage regulator mount with 2 mm standoffs. The mou
 mounted to one corner of the relay control board. The relay board and voltage regulator can then be installed in the
 raised slots in the OWL base.
 
-**NOTE**: Use **2.5 mm** standoffs for mounting the relay control board to its base. Use **2 mm** standoffs to mount the
+>⚠️**NOTE**⚠️ Use **2.5 mm** standoffs for mounting the relay control board to its base. Use **2 mm** standoffs to mount the
 voltage regulator to its base.
 
 ![Relaymount](https://media.github.sydney.edu.au/user/5402/files/964c5500-cf6a-11eb-8d2f-e1282b6411c3)
@@ -405,7 +405,7 @@ voltage regulator to its base.
 
 Connect the relay control board to the Bulgin connector using the table in step 3 as a guide.
 
-**NOTE**: Some relay control boards such
+>⚠️**NOTE**⚠️ Some relay control boards such
 as [this](https://www.amazon.com/ELEGOO-Channel-Optocoupler-Arduino-Raspberry/dp/B01HEQF5HU/ref=asc_df_B01HEQF5HU/?tag=hyprod-20&linkCode=df0&hvadid=198076677096&hvpos=&hvnetw=g&hvrand=5997956897740931812&hvpone=&hvptwo=&hvqmt=&hvdev=c&hvdvcmdl=&hvlocint=&hvlocphy=9027902&hvtargid=pla-350609711896&psc=1)
 on Amazon are ACTIVE on LOW. This means that the signal provided by the Raspberry Pi (a higher voltage) to activate a
 relay will instead turn the relay off. While this can be changed in the code, please consider purchasing HIGH level
@@ -549,7 +549,7 @@ The Official OWL Enclosure will be available for purchase through the OWL store 
 |-----------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
 | ![3D Printed OWL](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/a9771aa2-355d-40db-ac15-f6da037b63ed) | ![Extruded OWL](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/d153db2d-624b-427e-832e-599a3a841623) |
 
-**NOTE**: The 3D printed version requires the additional purchase of:
+>⚠️**NOTE**⚠️ The 3D printed version requires the additional purchase of:
 1. [1.6mm](https://au.rs-online.com/web/p/o-ring-cords/1591478) and [3mm](https://au.rs-online.com/web/p/o-ring-cords/1591490) nitrile rubber o-ring cord
 2. [M2, M3 and M4 threaded inserts](https://www.amazon.com.au/WEZCHUGHAOL-Threaded-Embedment-Printing-Components/dp/B0CN39ZSC2/ref=sr_1_21_sspa?crid=2R258Z1R9XYJQ&dib=eyJ2IjoiMSJ9.YV_8e4yZB5Up2sxjc6yADA7Nnr7U_kpewviCOxQiUAiT6HPGv5rLlXY1PVeDUBAfmO5LAuekzE8VmOU_0V6pDgL1lOmLjEqU8cGrC2bBxPeu3bDe1ZAScHdT6FLAoWi8i-J9F7nz0hj0S_zyow4N92_ZBdySI1CdG651qgCoF7hC5Av5xYcZBqJ41agRh0WjTmNiIGDV9LRODEPy9hAwFm7tM8XzQpL7jXGtycJNoqOVEEck64araKnzphdkqWC0wKWFVRQOyTKw7LM3TBAsXJPsq83qrBvGJ0vNIgayg2Y.gVKTvrTwcC1PdIZc9g_UckOD3B8z063oPKo9M3o9-Sg&dib_tag=se&keywords=embedded+nuts+threaded&qid=1715135215&sprefix=embedded+nuts+threadd%2Caps%2C385&sr=8-21-spons&sp_csd=d2lkZ2V0TmFtZT1zcF9tdGY&psc=1) + M2, M3 and M4 hex head screws
 3. [K&F Concept 37 mm UV lens filter](https://www.amazon.com.au/Concept-18-Layer-Protection-Nanotech-Ultra-Slim/dp/B07NYPCPD5/ref=sr_1_4_sspa?crid=7B57R6GYCCC3&dib=eyJ2IjoiMSJ9.WLMO784g_HVvxPY8RxBi3DdjOJlAw_RRc543yR2qlin4vGGdFusrTxn-OxNr4IQHY_EKtKFwLx9ti6e-ALuUeVuEPGkmCZS7yYe_uisRUN6iDpCOagXAL06Q0aOmh6lWsjS1evk7QMSITdwViuI32n7Ow8KUD6r4Lwm8aun0tsPdBgr3D5Mzo02aGihHL0BmXnmzfR2qbmxQlxaYH-v-IKB2FeQFeMQWt8vFQSe__lSOo3g9ZlSra5mTliSksZh7TLDxBywpR6vOkLD8b1Lxf7ZO__iZLLj9-fmmRJeWQ38.RnnA1gpAajKrN8o4tZgGclc3GRE1tvm50y234Ah4mVE&dib_tag=se&keywords=37mm%2Buv%2Blens%2Bfilter&qid=1715135313&sprefix=37%2Bmm%2BUV%2Bl%2Caps%2C316&sr=8-4-spons&sp_csd=d2lkZ2V0TmFtZT1zcF9hdGY&th=1)
@@ -722,11 +722,11 @@ the end of each wire for neater and more reliable connections.
 |-------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------|
 | ![20240507_160726_crop](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/e225496d-f08b-4304-8239-bcee196a5524) | ![owl_driver_board_install](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/8735a833-f157-456a-a6cd-3dd037ed6e5d) | ![finished_tray](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/50ea79c5-ee7c-4e95-9a46-5f57d773de1b) |
 
-**OPTIONAL** Add a 5V buzzer inside the OWL by mounting it to the corner of the HAT with a screw. Connect the 5 V and ground wires 
+>**OPTIONAL** Add a 5V buzzer inside the OWL by mounting it to the corner of the HAT with a screw. Connect the 5 V and ground wires 
 to Raspberry Pi GPIO pins 7 and 9, respectively. The buzzer is useful for identifying when the OWL has started successfully.
 It isn't essential to operation.
 
-**OPTIONAL** Add Kapton tape to the camera cable and internal wiring. Kapton tape is a god insulator and resistant to high
+>**OPTIONAL** Add Kapton tape to the camera cable and internal wiring. Kapton tape is a god insulator and resistant to high
 temperatures, improving the robustness of the device.
 
 | Tray with Kapton tape                                                                                                         |
@@ -735,7 +735,7 @@ temperatures, improving the robustness of the device.
 
 
 ### Step 4 - inserting the tray and closing the device
-**NOTE**: For software installation, you'll need access to the Raspberry Pi display, and USB ports. We recommend you
+>⚠️**NOTE**⚠️ For software installation, you'll need access to the Raspberry Pi display, and USB ports. We recommend you
 set up the software prior to completing the build and inserting the tray. Alternatively, flash the SD card with one of 
 the provided owl disk images.
 
@@ -850,15 +850,15 @@ For the first, all you'll need to do is download the disk image file (vX.X.X-owl
 SD card. The second method is more in depth, but takes you through the entire process from beginning to end. If you're
 looking to learn about how everything works, take some time to work through this process.
 
-**NOTE**: 08/05/2024 - OWL transitioned from `picamera` to `picamera2` support. The v1.0.0 disk image below (Buster) does not
+>⚠️**NOTE**⚠️ 08/05/2024 - OWL transitioned from `picamera` to `picamera2` support. The v1.0.0 disk image below (Buster) does not
 support `picamera2` and will not work on the Raspberry Pi 5 nor with the recent camera releases. We strongly recommend
 using the most up to date version of Raspbian with the latest OWL software.
 
-**NOTE**: 17/03/2023 - running of the OWL changed from using `greenonbrown.py` to `owl.py`. This
+>⚠️**NOTE**⚠️ 17/03/2023 - running of the OWL changed from using `greenonbrown.py` to `owl.py`. This
 ensures better cross compatibility with GoG algorithms. It improves the modularity of the system.
 
 ## Quick Method
-**IMPORTANT**: v1.0.0-owl.img DOES NOT WORK WITH RASPBERRY PI 5.
+>⚠️**IMPORTANT**⚠️ v1.0.0-owl.img DOES NOT WORK WITH RASPBERRY PI 5.
 
 For this method you'll need access to:
 
@@ -876,7 +876,7 @@ For this method you'll need access to:
 Download the entire disk image file (v1.0.0-owl.img)
 here: [OWL disk image](https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0) (NOT COMPATIBLE WITH RASPBERRY PI 5)
 
-**NOTE** The v1.0.0-owl.img file contains the original software and we strongly recommend updating using the process
+>⚠️**NOTE**⚠️ The v1.0.0-owl.img file contains the original software and we strongly recommend updating using the process
 below. It also includes the deprecated naming of `greenonbrown.py` instead of `owl.py`. If you do not update the
 software, be aware that you will need to run `greenonbrown.py` instead.
 
@@ -1034,7 +1034,7 @@ video feed is NOT displayed and the system will operate whenever it is powered o
 will be displayed. To change this parameter, scroll to the bottom of `greenonbrown.py` and find the
 line `headless=True`. Change as desired.
 
-**NOTE** `headless` must be set to `True` for operation without a screen. If a screen is not attached
+>⚠️**NOTE**⚠️ `headless` must be set to `True` for operation without a screen. If a screen is not attached
 but `headless=False` the Raspberry Pi will not boot correctly and the OWL software will not run.
 
 To run the software from the command line (assuming it is not currently running), follow these steps:
@@ -1045,7 +1045,7 @@ owl@raspberrypi:~ $ workon owl
 (owl) owl@raspberrypi:~ /owl $ ./greenonbrown.py  
 ```
 
-**BUG ALERT** There is a known bug with this version where the script will not run if you are running it outside of
+>⚠️**BUG ALERT**⚠️ There is a known bug with this version where the script will not run if you are running it outside of
 the `owl` directory. If you enocunter this error, `cd` into the `owl` directory and run the code again.
 
 
@@ -1087,11 +1087,14 @@ and choose a password.
 
 | Raspberry Pi Imager                                                                                                    | Configuring the OWL                                                                                             |
 |-----------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------|
-| ![Raspberry Pi Imager](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/a86a6358-3a8c-4f40-94df-9eeba9c17e4d) | ![Imager](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/5f0756e0-52f5-4eb4-8e38-e3ee323cc468) |
+| ![Raspberry Pi Imager](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/a86a6358-3a8c-4f40-94df-9eeba9c17e4d) | ![Imager](https://github.com/user-attachments/assets/10a74429-fc12-49a6-a9df-cc67a55dab0c) |
 
-#### Step 1b - Setting up the OWL environment
+#### Step 1b - Setting up the OWL
 Once the Raspian OS has been flashed to the SD Card (may take 5 - 10 minutes), remove the SD card and insert it into the
-Raspberry Pi. Connect the screen, keyboard and mouse and then power up the Pi. 
+Raspberry Pi. Connect the screen, keyboard and mouse and then power up the Pi.
+
+Alternatively, you can SSH into your OWL from a separate device and install it remotely. A good guide on how to do that is 
+available [here](https://www.makeuseof.com/how-to-ssh-into-raspberry-pi-remote/). 
 
 ##### First boot
 On the first boot you may be asked to set country, timezone, keyboard, connect to wifi and look for updates among other
@@ -1104,17 +1107,50 @@ symbol. The instructions that follow are a blend of those available from
 [PyImageSearch](https://pyimagesearch.com/2019/09/16/install-opencv-4-on-raspberry-pi-4-and-raspbian-buster/) 
 and [QEngineering](https://qengineering.eu/bookworm.html)
 
-**NOTE:** We recommend naming the device `owl` when asked if you didn't set it during the flashing process. 
+>⚠️**NOTE**⚠️ All commands below are provided for easy copy/paste. When using terminal you should see `owl@raspberrypi:~ $`
+> at the start of each line and `(owl) owl@raspberrypi:~ $` when operating within the `owl` virtual environment. Pay very close
+> attention to the presence/absence of `(owl)` in front of each line, as this can make/break installation.
+
+>⚠️**NOTE**⚠️ We recommend naming the device `owl` when asked if you didn't set it during the flashing process. 
+
+#### Two-line Install
+If you prefer a faster and simpler installation, try the following two-line install. You'll first need to clone the owl repository
+before running `owl_setup.sh`. 
+
+To start, clone the Github repository:
+```commandline
+git clone https://github.com/geezacoleman/OpenWeedLocator owl
+```
+With the repository cloned into the 'owl' folder, we can now run the bash script `owl_setup.sh`. This will take some time
+to complete
+
+```commandline
+bash owl/setup_owl.sh
+```
+Once completed successfully, your OWL is ready to go.
+
+>⚠️**NOTE**⚠️ If you use this method, you can finish the installation here. The following steps just go through what is 
+> in the `owl_setup.sh` script step-by-step. We recommend the step-by-step approach if you want to become more familiar
+> with how the OWL works.
+
+#### Step-by-step install
+Instead of the two-line installation, the following procedure details all steps required.
 
 ##### Free up space
 The Raspberry Pi comes pre-installed with a range of software. To free up space it can be removed from the OWL. 
 Depending on your install, these may or may not be present. At the command line (it should look like `owl@raspberrypi:~ $`), 
 run the following:
 ```commandline
-$ sudo apt-get purge wolfram-engine
-$ sudo apt-get purge libreoffice*
-$ sudo apt-get clean
-$ sudo apt-get autoremove
+sudo apt-get purge wolfram-engine
+```
+```commandline
+sudo apt-get purge libreoffice*
+```
+```commandline
+sudo apt-get clean
+```
+```commandline
+sudo apt-get autoremove
 ```
 ##### Set up the virtual environment
 A virtual environment contains all the necessary packages in one neat spot. We'll be using `virtualenv` and 
@@ -1124,35 +1160,53 @@ To start with, update the system. The update may take a few minutes depending on
 packages need updating. It's good practice to do this regularly. Then you'll add the following two lines to the `bashrc`
 file.
 
-**WARNING** using `rpi-update` will update to the latest kernel and drivers. This is to fix an issue with image component
+>⚠️**WARNING**⚠️ using `rpi-update` will update to the latest kernel and drivers. This is to fix an issue with image component
 order. The problem should eventually be merged into normal `apt-get update && upgrade`. This notice will be removed then.
 
+Begin by updating the system:
 ```commandline
-$ sudo apt-get update && sudo apt-get upgrade
-# update to the latest firmware version
-$ sudo rpi-update
-$ echo # virtualenv and virtualenvwraper >> ~/.bashrc
-# add the following line to the bashrc file
-$ echo "export VIRTUALENVWRAPPER_PYTHON=/usr/bin/python" >> ~/.bashrc
-# reload the profile
-$ source ~/.bashrc
+sudo apt-get update && sudo apt-get upgrade
 ```
-
+Now, update to the latest firmware version to fix the issue between RGB and BGR channel ordering.
+```commandline
+sudo rpi-update
+```
+Then add the following lines to the `.bashrc` file to prepare for the creation of virtual environments.
+```commandline
+echo "# virtualenv and virtualenvwraper" >> ~/.bashrc
+```
+```commandline
+echo "export VIRTUALENVWRAPPER_PYTHON=/usr/bin/python" >> ~/.bashrc
+```
+Finally, reload the `.bashrc` file.
+```commandline
+source ~/.bashrc
+```
 Once that is complete, you can install `virtualenv` and `virtualenvwrapper` and add a few more lines to the same `bashrc`
 file.
 ```commandline
-$ sudo apt-get install python3-virtualenv
-$ sudo apt-get install python3-virtualenvwrapper
-$ echo "export WORKON_HOME=$HOME/.virtualenvs" >> ~/.bashrc
-$ echo "source /usr/share/virtualenvwrapper/virtualenvwrapper.sh" >> ~/.bashrc
-$ source ~/.bashrc
+sudo apt-get install python3-virtualenv
+```
+```commandline
+sudo apt-get install python3-virtualenvwrapper
+```
+Following the installation of these packages, add the following lines to the `.bashrc` file.
+```commandline
+echo "export WORKON_HOME=$HOME/.virtualenvs" >> ~/.bashrc
+```
+```commandline
+echo "source /usr/share/virtualenvwrapper/virtualenvwrapper.sh" >> ~/.bashrc
+```
+As above, reload the file to update the changes.
+```commandline
+source ~/.bashrc
 ```
 With the virtual environment software successfully installed, it's now time to create the `owl` environment. Importantly,
 we need to inherit the site-packages (i.e. everything currently on the Pi) because they contain `picamera2` pre-installed.
 
 To make the `owl` environment, run the following:
 ```commandline
-$ mkvirtualenv --system-site-packages -p python owl
+mkvirtualenv --system-site-packages -p python owl
 ```
 The command line should now look like `(owl) owl@raspberrypi:~ $`. The '(owl)' at the start of the line means you're currently within
 that virtual environment. To turn it off you can run `deactivate` and to turn it run `workon owl`.
@@ -1161,21 +1215,38 @@ that virtual environment. To turn it off you can run `deactivate` and to turn it
 
 ### Step 2 - Installing packages
 We now need to install the Python libraries that let the OWL work. The most import is OpenCV, which we'll do first before
-downloading the OWL repository and installing the remainder from the `requirements.txt` file.
+downloading the OWL repository and installing the remainder from the `requirements.txt` file. Begin by ensuring the `owl`
+environment is active.
+
+>⚠️**WARNING**⚠️ It is ESSENTIAL that `(owl)` is present at the start of each line in terminal for this section. The `(owl)`
+> indicates that you are within the `owl` virtual environment and that these Python packages will be installed and accessible
+> within this environment. Run `workon owl` to ensure you are in the `owl` environment.
 
 ```commandline
-owl@raspberrypi:~ $ workon owl
-(owl) owl@raspberrypi:~ $ pip3 install opencv-contrib-python
+workon owl
+```
+Now that you are in the `owl` virtual environment we can begin installing packages.
+```commandline
+pip3 install opencv-contrib-python
 ```
 This should have successfully installed OpenCV into the `owl` virtual environment. You can double check by quickly starting a
-Python session at the command line.
+Python session at the command line:
 ```commandline
-(owl) owl@raspberrypi:~ $ python
+python
+```
+This will open up an interactive Python session (indicated by >>>) from which you should type:
+
+```commandline
 >>> import cv2
 >>> import picamera2
 >>> exit()
+```
+This should then exit you from the Python session. The command line should look like this:
+
+```commandline
 (owl) owl@raspberrypi:~ $
 ```
+
 If both of these complete without error, then you've successfully set up the virtual environment and installed OpenCV.
 
 ### Step 3 - Downloading the 'owl' repository
@@ -1186,11 +1257,15 @@ Now you should have:
 * A working version of OpenCV installed into that environment
 * a Terminal window open with the 'owl' environment activated.
 
-The next step is to download the entire OpenWeedLocator repository into your *home* directory on the Raspberry Pi.
+The next step is to download the entire OpenWeedLocator repository into your *home* directory on the Raspberry Pi. First
+change into the home directory:
 
 ```commandline
-(owl) owl@raspberrypi:~ $ cd ~
-(owl) owl@raspberrypi:~ $ git clone https://github.com/geezacoleman/OpenWeedLocator owl
+cd ~
+```
+then clone the repository 'https://github.com/geezacoleman/OpenWeedLocator' into a new folder called 'owl'
+```commandline
+git clone https://github.com/geezacoleman/OpenWeedLocator owl
 ```
 This will download the repository into a folder called `owl`. Double check it is there by typing `(owl) owl@raspberrypi:~ $ ls` 
 and reading through the results, alternatively open up the Home folder using a mouse. If that was successful, you can 
@@ -1211,20 +1286,25 @@ each and every module in the requirements.txt file has been installed correctly.
 * blessed (for command line visualisation)
 * threading, multiprocessing, collections, queue, time, os (though these are included as standard Python modules).
 
-**IMPORTANT**: Before continuing make sure you are in the `owl` virtual environment. Check that `(owl)` appears at the start
+>⚠️**IMPORTANT**⚠️ Before continuing make sure you are in the `owl` virtual environment. Check that `(owl)` appears at the start
 of each command line, e.g. `(owl) owl@raspberrypi:~ $`. Run `workon owl` if you are unsure. If you are not in the `owl`
 environment, you will run into errors when starting `owl.py`.
 
-To install all the requirements.txt, simply run:
+To install all the requirements.txt, change into the owl directory:
 
 ```commandline
-(owl) owl@raspberrypi:~ $ cd ~/owl
-(owl) owl@raspberrypi:~/owl $ pip install -r requirements.txt
+cd ~/owl
 ```
-Now to double-check this has worked, we can open up another Python session and try importing the packages.
+
+then run:
 
 ```commandline
-(owl) owl@raspberrypi :~ $ python
+pip install -r requirements.txt
+```
+Now to double-check this has worked, we can open up another Python session and try importing the packages. Begin by typing:
+
+```commandline
+python
 ```
 Python should start up an interactive session; type each of these in and make sure you don't get any errors.
 
@@ -1252,11 +1332,19 @@ runs on startup. The first step is to make both the Python file `owl.py` and the
 executable. Then move both `owl_boot.sh` and `owl_boot_wrapper.sh` into the `/usr/local/bin` directory.
 
 ```commandline
-(owl) owl@raspberrypi:~/owl $ chmod a+x owl.py
-(owl) owl@raspberrypi:~/owl $ chmod a+x owl_boot.sh
-(owl) owl@raspberrypi:~/owl $ chmod a+x owl_boot_wrapper.sh
-(owl) owl@raspberrypi:~/owl $ sudo mv owl_boot.sh /usr/local/bin/owl_boot.sh
-(owl) owl@raspberrypi:~/owl $ sudo mv owl_boot_wrapper.sh /usr/local/bin/owl_boot_wrapper.sh
+chmod a+x owl.py
+```
+```commandline
+chmod a+x owl_boot.sh
+```
+```commandline
+chmod a+x owl_boot_wrapper.sh
+```
+```commandline
+sudo mv owl_boot.sh /usr/local/bin/owl_boot.sh
+```
+```commandline
+sudo mv owl_boot_wrapper.sh /usr/local/bin/owl_boot_wrapper.sh
 ```
 
 After they have been made executable, the `owl.py` needs to be launched on startup so each time the Raspberry Pi is
@@ -1289,8 +1377,8 @@ uses that user to run `owl_boot.sh`. This makes the system more resilient to cha
 
 To add this to the list of cron jobs, you'll need to edit it as a root user:
 
-```
-(owl) owl@raspberrypi:~/owl $ sudo crontab -e
+```commandline
+sudo crontab -e
 ```
 
 Select `1. /bin/nano editor`, which should bring up the crontab file. At the base of the file add this text:
@@ -1308,7 +1396,7 @@ Now you'll just need to reboot the system. Once it reboots, `owl.py` will launch
 
 ### Step 6 - focusing the camera
 
-**NOTE**: *Cameras with automatic focus such as the Raspberry Pi Camera Module 3 will be automatically focused to 1.2m 
+>⚠️**NOTE**⚠️ *Cameras with automatic focus such as the Raspberry Pi Camera Module 3 will be automatically focused to 1.2m 
 distance. The following guide is useful for the HQ and Global Shutter cameras which require manual focusing.*
 
 The final step in the process is to make sure the camera is correctly focused for the mounting height. With the latest
@@ -1316,10 +1404,12 @@ software, when you run `owl.py --focus` a sharpness (i.e. least blurry) estimati
 algorithm determines how sharp an image is, so the higher the value the better. A single script is provided to make
 focusing as easy as possible. Simply run:
 
- ```
-(owl) owl@raspberrypi:~ $ cd ~/owl
-(owl) owl@raspberrypi:~/owl $ bash focus_owl.sh 
- ```
+```commandline
+cd ~/owl
+```
+```commandline
+bash focus_owl.sh 
+```
 
 This will automate all the steps below. If this doesn't work, follow the steps below. If you would like to focus the OWL
 again, you can always run `./owl.py --focus`.
@@ -1348,7 +1438,7 @@ PID TTY              TIME CMD
 The PID is the important part, it's the ID number for the `owl.py` program. In this case it is `515`, but it is likely
 to be different on your OWL.
 
-IMPORTANT: If the headings `PID TTY              TIME CMD` appear but a PID/line for owl.py doesn't appear it could mean
+>⚠️**IMPORTANT**⚠️ If the headings `PID TTY              TIME CMD` appear but a PID/line for owl.py doesn't appear it could mean
 two things. Firstly make sure you've typed `owl.py` correctly. If it doesn't have the right program to look for, it
 won't find it. The other option is that `owl.py` isn't running, which may also be the case. If you're certain it's not
 running in the background, skip the stop program step below, and move straight to launching `owl.py`.
@@ -1382,7 +1472,7 @@ HAT uses transistors and will not click - look for the lights) and lights come o
 set the OWL up! If not, check the troubleshooting chart below and see if you can get it fixed. Raise an issue and get in touch
 if you're not sure how to proceed.
 
-**NOTE** The unit does not perform well under office/artificial lighting. The thresholds have been set for outdoor
+>⚠️**NOTE**⚠️ The unit does not perform well under office/artificial lighting. The thresholds have been set for outdoor
 conditions.
 </details>
 
@@ -1657,7 +1747,7 @@ if __name__ == "__main__":
 Here's a summary table of what each parameter does. Run `./owl.py --show-display` to view the output results. Without
 this `--show-display` flag the video will not appear on the screen.
 
-**NOTE** In older versions ONLY, ff you change the now defunct parameter of `headless` to `False`, you'll be able to see
+>⚠️**NOTE**⚠️ In older versions ONLY, ff you change the now defunct parameter of `headless` to `False`, you'll be able to see
 a real time feed of what the algorithm is doing and where the detections are occurring. This will need to be switched
 back to `headless=True` if you decide to run it without the screen connected. Note that the owl program will not run on
 startup if `headless=False`.
@@ -1718,7 +1808,7 @@ start collecting and annotating images of relevant weeds for training. Alternati
 to [Weed-AI](https://weed-ai.sydney.edu.au/explore?is_head_filter=%5B%22latest+version%22%5D) to see if any image data
 may be relevant for your purposes.
 
-**NOTE** There do appear to be some issues with the exporting functionality of YOLOv5/v8 to .tflite models for use with
+>⚠️**NOTE**⚠️There do appear to be some issues with the exporting functionality of YOLOv5/v8 to .tflite models for use with
 the Coral. The issue has been raised on the Ultralytics repository and should hopefully be resolved soon. You can follow
 the updates [here](https://github.com/ultralytics/ultralytics/issues/1312).
 
@@ -1891,7 +1981,7 @@ connect a screen, keyboard and mouse to the OWL unit and boot it up. Navigate to
 in `/home/owl/` and either delete or rename that folder. Remember if you've made any of your own changes to the
 parameters/code, write them down. Then open up a Terminal window (Ctrl + T) and follow these steps:
 
-**IMPORTANT**: Before continuing make sure you are in the `owl` virtual environment. Check that `(owl)` appears at the
+>⚠️**IMPORTANT**⚠️ Before continuing make sure you are in the `owl` virtual environment. Check that `(owl)` appears at the
 start of each command line, e.g. `(owl) owl@raspberrypi:~ $`. Run `workon owl` if you are unsure. If you are not in
 the `owl` environment, you will run into errors when starting `owl.py`.
 
@@ -1933,7 +2023,7 @@ Here's a table of some of the common symptoms and possible explanations for erro
 means exhaustive, but hopefully helps in diagnosing any issues you might have. If you come across any others please
 contact us so we can improve the software, hardware and guide.
 
-**NOTE** If you are using the original disk image without updating, there are a number of issues that will appear. We
+>⚠️**NOTE**⚠️ If you are using the original disk image without updating, there are a number of issues that will appear. We
 recommend updating to the latest software by following the procedure detailed in the [Updating OWL](#updating-owl)
 section above.
 
