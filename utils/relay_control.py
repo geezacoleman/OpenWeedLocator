@@ -118,6 +118,7 @@ class StatusIndicator:
 
                         if os.path.ismount(self.save_directory):
                             os.makedirs(self.save_subdirectory, exist_ok=True)
+
                         print(f'[SUCCESS] Tried {drive}. Connected')
                         self.setup_success()
 

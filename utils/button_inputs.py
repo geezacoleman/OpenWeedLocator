@@ -23,9 +23,10 @@ else:
 
 
 class BasicController:
-    def __init__(self, detection_state, sample_state, stop_flag, switch_purpose='detection', board_pin='BOARD37',
-                 bounce_time=1.0):
-        self.switch = Button(board_pin, bounce_time=bounce_time)
+    def __init__(self, detection_state, sample_state, stop_flag, switch_purpose='detection', switch_board_pin='BOARD36',
+                 det_status_pin='BOARD37', bounce_time=1.0):
+        self.switch = Button(switch_board_pin, bounce_time=bounce_time)
+        self.status_led = LED(det_status_pin)
         self.switch_purpose = switch_purpose
 
         self.detection_state = detection_state
@@ -50,10 +51,12 @@ class BasicController:
     def enable_detection(self):
         with self.detection_state.get_lock():
             self.detection_state.value = True
+            self.status_led.on()
 
     def disable_detection(self):
         with self.detection_state.get_lock():
             self.detection_state.value = False
+            self.status_led.off()
 
     def enable_recording(self):
         with self.sample_state.get_lock():

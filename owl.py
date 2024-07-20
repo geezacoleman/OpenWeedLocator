@@ -209,8 +209,8 @@ class Owl:
         algorithm = self.config.get('System', 'algorithm')
         log_fps = self.config.getboolean('DataCollection', 'log_fps')
         if self.enable_controller:
-            self.disable_detection = not self.detection_state
-            self.sample_images = self.sample_state
+            self.disable_detection = not self.detection_state.value
+            self.sample_images = self.sample_state.value
 
         # track FPS and framecount
         frame_count = 0
