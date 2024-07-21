@@ -22,10 +22,19 @@ sudo rm -rvf /var/log/*
 # Clear command history for the current session
 history -c
 
-# Zero out free space to help compression and prevent data recovery
-echo "[INFO] Zeroing free space - this may take a while"
-sudo dd if=/dev/zero of=/bigfile bs=1M status=progress
-sudo rm /bigfile
+read -p "Zero free space? (y/n): " choice
+case "$choice" in
+  y|Y )
+    echo "[INFO] Zeroing free space"
+    sudo dd if=/dev/zero of=/bigfile bs=1M status=progress
+    sudo rm /bigfile
+    df -h  # Display disk usage after zeroing
+    echo "[INFO] Free space zeroed successfully";;
+  n|N )
+    echo "[INFO] Zeroing skipped";;
+  * )
+    echo "[ERROR] Invalid input. Please enter y or n.";;
+esac
 
 # Shutting down the system
 echo "[INFO] Shutting down in 5 seconds"

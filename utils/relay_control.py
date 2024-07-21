@@ -118,6 +118,7 @@ class StatusIndicator:
 
                         if os.path.ismount(self.save_directory):
                             os.makedirs(self.save_subdirectory, exist_ok=True)
+
                         print(f'[SUCCESS] Tried {drive}. Connected')
                         self.setup_success()
 
@@ -246,9 +247,10 @@ class RelayControl:
 # this class does the hard work of receiving detection 'jobs' and queuing them to be actuated. It only turns a nozzle on
 # if the sprayDur has not elapsed or if the nozzle isn't already on.
 class RelayController:
-    def __init__(self, relay_dict, vis=False):
+    def __init__(self, relay_dict, vis=False, status_led=None):
         self.relay_dict = relay_dict
         self.vis = vis
+        self.status_led = status_led
         # instantiate relay control with supplied relay dictionary to map to correct board pins
         self.relay = RelayControl(self.relay_dict)
         self.relay_queue_dict = {}
@@ -298,7 +300,7 @@ class RelayController:
         Takes only one parameter - nozzle, which enables the selection of the deque, condition from the dictionaries.
         The consumer method is threaded for each nozzle and will wait until it is notified that a new job has been added
         from the receive method. It will then compare the time of detection with time of spraying to activate that nozzle
-        for requried length of time.
+        for required length of time.
         :param relay: relay id number
         """
         self.running = True
@@ -317,6 +319,8 @@ class RelayController:
                 if not relay_on:
                     time.sleep(job[2]) # add in the delay variable
                     self.relay.relay_on(relay, verbose=False)
+                    if self.status_led:
+                        self.status_led.blink(on_time=0.1, n=1, background=True)
 
                     if self.vis:
                         self.relay_vis.update(relay=relay, status=True)
@@ -334,6 +338,7 @@ class RelayController:
 
             if len(relay_queue) == 0:
                 self.relay.relay_off(relay, verbose=False)
+
                 if self.vis:
                     self.relay_vis.update(relay=relay, status=False)
                 relay_on = False

@@ -58,7 +58,7 @@ class Owl:
             self.basic_controller = BasicController(detection_state=self.detection_state,
                                                     sample_state=self.sample_state,
                                                     stop_flag=self.stop_flag,
-                                                    board_pin=f'BOARD{self.switch_pin}',
+                                                    switch_board_pin=f'BOARD{self.switch_pin}',
                                                     switch_purpose=self.switch_purpose)
 
             self.basic_controller_process = Process(target=self.basic_controller.run)
@@ -110,7 +110,12 @@ class Owl:
             self.relay_dict[int(key)] = int(value)
 
         # instantiate the relay controller - successful start should beep the buzzer
-        self.relay_controller = RelayController(relay_dict=self.relay_dict)
+        if self.enable_controller:
+            self.relay_controller = RelayController(relay_dict=self.relay_dict,
+                                                    status_led=self.basic_controller.status_led)
+        else:
+            self.relay_controller = RelayController(relay_dict=self.relay_dict,
+                                                    status_led=None)
 
         # instantiate the logger
         self.logger = self.relay_controller.logger
@@ -209,8 +214,8 @@ class Owl:
         algorithm = self.config.get('System', 'algorithm')
         log_fps = self.config.getboolean('DataCollection', 'log_fps')
         if self.enable_controller:
-            self.disable_detection = not self.detection_state
-            self.sample_images = self.sample_state
+            self.disable_detection = not self.detection_state.value
+            self.sample_images = self.sample_state.value
 
         # track FPS and framecount
         frame_count = 0
