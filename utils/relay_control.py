@@ -116,8 +116,7 @@ class StatusIndicator:
                         self.save_directory = os.path.join('/media', username, drive)
                         self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
 
-                        if os.path.ismount(self.save_directory):
-                            os.makedirs(self.save_subdirectory, exist_ok=True)
+                        os.makedirs(self.save_subdirectory, exist_ok=True)
 
                         print(f'[SUCCESS] Tried {drive}. Connected')
                         self.setup_success()

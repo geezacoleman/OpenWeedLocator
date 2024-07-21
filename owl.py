@@ -110,12 +110,7 @@ class Owl:
             self.relay_dict[int(key)] = int(value)
 
         # instantiate the relay controller - successful start should beep the buzzer
-        if self.enable_controller:
-            self.relay_controller = RelayController(relay_dict=self.relay_dict,
-                                                    status_led=self.basic_controller.status_led)
-        else:
-            self.relay_controller = RelayController(relay_dict=self.relay_dict,
-                                                    status_led=None)
+        self.relay_controller = RelayController(relay_dict=self.relay_dict)
 
         # instantiate the logger
         self.logger = self.relay_controller.logger
@@ -315,6 +310,9 @@ class Owl:
 
                     # Precompute the integer lane coordinates for reuse
                     lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
+
+                    if len(weed_centres) > 0:
+                        self.basic_controller.weed_detect_indicator()
 
                     # loop over the weed centres
                     for centre in weed_centres:
