@@ -58,7 +58,7 @@ class Owl:
             self.basic_controller = BasicController(detection_state=self.detection_state,
                                                     sample_state=self.sample_state,
                                                     stop_flag=self.stop_flag,
-                                                    board_pin=f'BOARD{self.switch_pin}',
+                                                    switch_board_pin=f'BOARD{self.switch_pin}',
                                                     switch_purpose=self.switch_purpose)
 
             self.basic_controller_process = Process(target=self.basic_controller.run)

@@ -35,48 +35,50 @@ class BasicController:
         self.stop_flag = stop_flag
 
         if self.switch_purpose == 'detection':
-            self.switch.when_pressed = self.enable_detection
-            self.switch.when_released = self.disable_detection
+            self.switch.when_pressed = self.toggle_off
+            self.switch.when_released = self.toggle_on
+
         elif self.switch_purpose == 'recording':
-            self.switch.when_pressed = self.enable_recording
-            self.switch.when_released = self.disable_recording
+            self.switch.when_pressed = self.toggle_on
+            self.switch.when_released = self.toggle_off
+
         else:
-            raise ValueError("Invalid switch purpose. Use 'detection' or 'recording'.")
+            raise ValueError("[ERROR] Invalid switch purpose. Use 'detection' or 'recording'.")
 
         if self.switch.is_pressed:
             self.enable_current_purpose()
         else:
             self.disable_current_purpose()
 
-    def enable_detection(self):
-        with self.detection_state.get_lock():
-            self.detection_state.value = True
-            self.status_led.on()
-
-    def disable_detection(self):
+    def toggle_on(self):
         with self.detection_state.get_lock():
             self.detection_state.value = False
             self.status_led.off()
 
-    def enable_recording(self):
         with self.sample_state.get_lock():
             self.sample_state.value = True
 
-    def disable_recording(self):
+    def toggle_off(self):
+        with self.detection_state.get_lock():
+            self.detection_state.value = True
+            self.status_led.on()
+
         with self.sample_state.get_lock():
             self.sample_state.value = False
 
     def enable_current_purpose(self):
         if self.switch_purpose == 'detection':
-            self.enable_detection()
+            self.toggle_off()
+
         elif self.switch_purpose == 'recording':
-            self.enable_recording()
+            self.toggle_on()
 
     def disable_current_purpose(self):
         if self.switch_purpose == 'detection':
-            self.disable_detection()
+            self.toggle_on()
+
         elif self.switch_purpose == 'recording':
-            self.disable_recording()
+            self.toggle_off()
 
     def run(self):
         while not self.stop_flag.value:
