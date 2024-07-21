@@ -311,7 +311,7 @@ class Owl:
                     # Precompute the integer lane coordinates for reuse
                     lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
 
-                    if len(weed_centres) > 0:
+                    if len(weed_centres) > 0 and self.enable_controller:
                         self.basic_controller.weed_detect_indicator()
 
                     # loop over the weed centres
