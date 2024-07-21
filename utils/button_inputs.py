@@ -10,7 +10,6 @@ elif platform.system() == "Windows":
     warning_message = "[WARNING] The system is running on a Windows platform. GPIO disabled. Test mode active."
     warnings.warn(warning_message, RuntimeWarning)
     testing = True
-    testing = True
 
 elif 'aarch' in platform.platform():
     testing = False
@@ -24,15 +23,16 @@ else:
 
 class BasicController:
     def __init__(self, detection_state, sample_state, stop_flag, switch_purpose='detection', switch_board_pin='BOARD36',
-                 det_status_pin='BOARD37', bounce_time=1.0):
+                 status_LED_board_pin='BOARD37', bounce_time=1.0):
         self.switch = Button(switch_board_pin, bounce_time=bounce_time)
-        self.status_led = LED(det_status_pin)
         self.switch_purpose = switch_purpose
 
         self.detection_state = detection_state
         self.sample_state = sample_state
 
         self.stop_flag = stop_flag
+
+        self.detect_status_LED = LED(status_LED_board_pin)
 
         if self.switch_purpose == 'detection':
             self.switch.when_pressed = self.toggle_off
@@ -53,7 +53,6 @@ class BasicController:
     def toggle_on(self):
         with self.detection_state.get_lock():
             self.detection_state.value = False
-            self.status_led.off()
 
         with self.sample_state.get_lock():
             self.sample_state.value = True
@@ -61,7 +60,6 @@ class BasicController:
     def toggle_off(self):
         with self.detection_state.get_lock():
             self.detection_state.value = True
-            self.status_led.blink(on_time=0.2, off_time=0.2, n=5, background=True)
 
         with self.sample_state.get_lock():
             self.sample_state.value = False
@@ -79,6 +77,9 @@ class BasicController:
 
         elif self.switch_purpose == 'recording':
             self.toggle_off()
+
+    def weed_detect_indicator(self):
+        self.detect_status_LED.blink(on_time=0.1, n=1, background=True)
 
     def run(self):
         while not self.stop_flag.value:
