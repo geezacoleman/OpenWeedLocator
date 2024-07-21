@@ -325,6 +325,7 @@ class Owl:
                                     self.relay_controller.receive(relay=i, delay=delay,
                                                                   time_stamp=actuation_time,
                                                                   duration=actuation_duration)
+                                    self.basic_controller.status_led.blink(on_time=0.1, n=1, background=True)
 
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often

@@ -61,7 +61,7 @@ class BasicController:
     def toggle_off(self):
         with self.detection_state.get_lock():
             self.detection_state.value = True
-            self.status_led.on()
+            self.status_led.blink(on_time=0.2, off_time=0.2, n=5, background=True)
 
         with self.sample_state.get_lock():
             self.sample_state.value = False
