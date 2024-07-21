@@ -110,7 +110,12 @@ class Owl:
             self.relay_dict[int(key)] = int(value)
 
         # instantiate the relay controller - successful start should beep the buzzer
-        self.relay_controller = RelayController(relay_dict=self.relay_dict)
+        if self.enable_controller:
+            self.relay_controller = RelayController(relay_dict=self.relay_dict,
+                                                    status_led=self.basic_controller.status_led)
+        else:
+            self.relay_controller = RelayController(relay_dict=self.relay_dict,
+                                                    status_led=None)
 
         # instantiate the logger
         self.logger = self.relay_controller.logger
