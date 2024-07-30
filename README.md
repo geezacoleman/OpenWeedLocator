@@ -1125,7 +1125,7 @@ With the repository cloned into the 'owl' folder, we can now run the bash script
 to complete
 
 ```commandline
-bash owl/setup_owl.sh
+bash owl/owl_setup.sh
 ```
 Once completed successfully, your OWL is ready to go.
 
