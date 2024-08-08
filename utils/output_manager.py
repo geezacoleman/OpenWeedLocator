@@ -219,7 +219,7 @@ class AdvancedStatusIndicator(BaseStatusIndicator):
             self.state = AdvancedIndicatorState.NOTIFICATION
             self.led.off()
 
-            self.led.blink(on_time=0.5, off_time=0.5, n=2, background=False)
+            self.led.blink(on_time=0.1, off_time=0.1, n=2, background=False)
             self.state = init_state
 
     def error(self, error_code):
