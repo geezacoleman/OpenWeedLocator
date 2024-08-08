@@ -125,8 +125,10 @@ class AdvancedController:
         self.high_sensitivity_config = high_sensitivity_config
 
         # Set up switch handlers
-        self.recording_switch.when_pressed = self.toggle_recording
-        self.sensitivity_switch.when_pressed = self.toggle_sensitivity
+        self.recording_switch.when_pressed = self.update_recording_state
+        self.recording_switch.when_released = self.update_recording_state
+        self.sensitivity_switch.when_pressed = self.update_sensitivity_state
+        self.sensitivity_switch.when_released = self.update_sensitivity_state
         self.detection_mode_switch_up.when_pressed = lambda: self.set_detection_mode(2)  # All solenoids on
         self.detection_mode_switch_up.when_released = lambda: self.set_detection_mode(1)  # Off
         self.detection_mode_switch_down.when_pressed = lambda: self.set_detection_mode(0)  # Detection on
@@ -140,28 +142,15 @@ class AdvancedController:
         self.update_sensitivity_state()
         self.update_detection_mode_state()
 
-    def toggle_recording(self):
+    def update_recording_state(self):
         with self.recording_state.get_lock():
-            self.recording_state.value = not self.recording_state.value
+            self.recording_state.value = self.recording_switch.is_pressed
         if self.recording_state.value:
             self.status_indicator.enable_image_recording()
             self.owl.sample_images = True
         else:
             self.status_indicator.disable_image_recording()
             self.owl.sample_images = False
-
-    def update_recording_state(self):
-        with self.recording_state.get_lock():
-            self.recording_state.value = self.recording_switch.is_pressed
-        if self.recording_state.value:
-            self.status_indicator.enable_image_recording()
-        else:
-            self.status_indicator.disable_image_recording()
-
-    def toggle_sensitivity(self):
-        with self.sensitivity_state.get_lock():
-            self.sensitivity_state.value = not self.sensitivity_state.value
-        self.update_sensitivity_settings()
 
     def update_sensitivity_state(self):
         with self.sensitivity_state.get_lock():

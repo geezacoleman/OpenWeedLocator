@@ -274,13 +274,13 @@ class RelayControl:
     def beep(self, duration=0.2, repeats=2):
         self.buzzer.beep(on_time=duration, off_time=(duration / 2), n=repeats)
 
-    def all_on(self):
+    def all_on(self, verbose=False):
         for relay in self.relay_dict.keys():
-            self.relay_on(relay)
+            self.relay_on(relay, verbose=verbose)
 
-    def all_off(self):
+    def all_off(self, verbose=False):
         for relay in self.relay_dict.keys():
-            self.relay_off(relay)
+            self.relay_off(relay, verbose=verbose)
 
     def remove(self, relay_number):
         self.relay_dict.pop(relay_number, None)

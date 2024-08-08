@@ -293,10 +293,6 @@ class Owl:
             delay = self.config.getfloat('System', 'delay')
 
             while True:
-                if self.controller:
-                    self.disable_detection = not self.detection_state.value
-                    self.sample_images = self.sample_state.value
-
                 frame = self.cam.read()
 
                 if self.focus:
