@@ -170,7 +170,7 @@ class AdvancedStatusIndicator(BaseStatusIndicator):
             self.error(1)  # Use error code 1 for drive full
 
     def setup_success(self):
-        self.led.blink(on_time=0.1, off_time=0.2, n=3)
+        self.led.blink(on_time=0.1, off_time=0.1, n=2)
 
     def _update_state(self):
         if self.state != AdvancedIndicatorState.ERROR:
@@ -217,19 +217,10 @@ class AdvancedStatusIndicator(BaseStatusIndicator):
         with self.state_lock:
             init_state = self.state
             self.state = AdvancedIndicatorState.NOTIFICATION
-
-            # Immediately stop any ongoing LED activity
             self.led.off()
 
-        def blink_and_restore():
-            # Blocking blink for immediate visual feedback
-            self.led.blink(on_time=0.2, off_time=0.2, n=3, background=False)
-
-            with self.state_lock:
-                self.state = init_state
-
-        # Start the blinking in a separate thread
-        Thread(target=blink_and_restore, daemon=True).start()
+            self.led.blink(on_time=0.5, off_time=0.5, n=2, background=False)
+            self.state = init_state
 
     def error(self, error_code):
         with self.state_lock:

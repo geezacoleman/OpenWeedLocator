@@ -288,9 +288,6 @@ class Owl:
             self.relay_vis.setup()
             self.relay_controller.vis = True
 
-        if self.controller:
-            self.status_indicator.setup_success()
-
         try:
             actuation_duration = self.config.getfloat('System', 'actuation_duration')
             delay = self.config.getfloat('System', 'delay')
