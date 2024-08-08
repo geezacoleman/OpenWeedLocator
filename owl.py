@@ -43,6 +43,33 @@ class Owl:
         # visualise the detections with video feed
         self.show_display = show_display
 
+        # threshold parameters for different algorithms
+        self.exgMin = self.config.getint('GreenOnBrown', 'exgMin')
+        self.exgMax = self.config.getint('GreenOnBrown', 'exgMax')
+        self.hueMin = self.config.getint('GreenOnBrown', 'hueMin')
+        self.hueMax = self.config.getint('GreenOnBrown', 'hueMax')
+        self.saturationMin = self.config.getint('GreenOnBrown', 'saturationMin')
+        self.saturationMax = self.config.getint('GreenOnBrown', 'saturationMax')
+        self.brightnessMin = self.config.getint('GreenOnBrown', 'brightnessMin')
+        self.brightnessMax = self.config.getint('GreenOnBrown', 'brightnessMax')
+
+        # time spent on each image when looping over a directory
+        self.image_loop_time = self.config.getint('Visualisation', 'image_loop_time')
+
+        # setup the track bars if show_display is True
+        if self.show_display:
+            # create trackbars for the threshold calculation
+            self.window_name = "Adjust Detection Thresholds"
+            cv2.namedWindow("Adjust Detection Thresholds", cv2.WINDOW_AUTOSIZE)
+            cv2.createTrackbar("ExG-Min", self.window_name, self.exgMin, 255, nothing)
+            cv2.createTrackbar("ExG-Max", self.window_name, self.exgMax, 255, nothing)
+            cv2.createTrackbar("Hue-Min", self.window_name, self.hueMin, 179, nothing)
+            cv2.createTrackbar("Hue-Max", self.window_name, self.hueMax, 179, nothing)
+            cv2.createTrackbar("Sat-Min", self.window_name, self.saturationMin, 255, nothing)
+            cv2.createTrackbar("Sat-Max", self.window_name, self.saturationMax, 255, nothing)
+            cv2.createTrackbar("Bright-Min", self.window_name, self.brightnessMin, 255, nothing)
+            cv2.createTrackbar("Bright-Max", self.window_name, self.brightnessMax, 255, nothing)
+
         ### Data collection only ###
         # WARNING: initialise option disable detection for data collection
         self.disable_detection = False
@@ -140,33 +167,6 @@ class Owl:
         self.resolution = (self.config.getint('Camera', 'resolution_width'),
                            self.config.getint('Camera', 'resolution_height'))
         self.exp_compensation = self.config.getint('Camera', 'exp_compensation')
-
-        # threshold parameters for different algorithms
-        self.exgMin = self.config.getint('GreenOnBrown', 'exgMin')
-        self.exgMax = self.config.getint('GreenOnBrown', 'exgMax')
-        self.hueMin = self.config.getint('GreenOnBrown', 'hueMin')
-        self.hueMax = self.config.getint('GreenOnBrown', 'hueMax')
-        self.saturationMin = self.config.getint('GreenOnBrown', 'saturationMin')
-        self.saturationMax = self.config.getint('GreenOnBrown', 'saturationMax')
-        self.brightnessMin = self.config.getint('GreenOnBrown', 'brightnessMin')
-        self.brightnessMax = self.config.getint('GreenOnBrown', 'brightnessMax')
-
-        # time spent on each image when looping over a directory
-        self.image_loop_time = self.config.getint('Visualisation', 'image_loop_time')
-
-        # setup the track bars if show_display is True
-        if self.show_display:
-            # create trackbars for the threshold calculation
-            self.window_name = "Adjust Detection Thresholds"
-            cv2.namedWindow("Adjust Detection Thresholds", cv2.WINDOW_AUTOSIZE)
-            cv2.createTrackbar("ExG-Min", self.window_name, self.exgMin, 255, nothing)
-            cv2.createTrackbar("ExG-Max", self.window_name, self.exgMax, 255, nothing)
-            cv2.createTrackbar("Hue-Min", self.window_name, self.hueMin, 179, nothing)
-            cv2.createTrackbar("Hue-Max", self.window_name, self.hueMax, 179, nothing)
-            cv2.createTrackbar("Sat-Min", self.window_name, self.saturationMin, 255, nothing)
-            cv2.createTrackbar("Sat-Max", self.window_name, self.saturationMax, 255, nothing)
-            cv2.createTrackbar("Bright-Min", self.window_name, self.brightnessMin, 255, nothing)
-            cv2.createTrackbar("Bright-Max", self.window_name, self.brightnessMax, 255, nothing)
 
         # Relay Dict maps the reference relay number to a boardpin on the embedded device
         self.relay_dict = {}
@@ -460,7 +460,10 @@ class Owl:
         self.cam.stop()
 
         if self.controller:
-            self.controller.stop()
+            if hasattr(self, 'controller'):
+                self.controller.stop()
+                if hasattr(self, 'controller_process'):
+                    self.controller_process.join()
 
         if self.sample_images:
             self.status_indicator.stop()
