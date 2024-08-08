@@ -70,6 +70,23 @@ class Owl:
             cv2.createTrackbar("Bright-Min", self.window_name, self.brightnessMin, 255, nothing)
             cv2.createTrackbar("Bright-Max", self.window_name, self.brightnessMax, 255, nothing)
 
+        self.resolution = (self.config.getint('Camera', 'resolution_width'),
+                           self.config.getint('Camera', 'resolution_height'))
+        self.exp_compensation = self.config.getint('Camera', 'exp_compensation')
+
+        # Relay Dict maps the reference relay number to a boardpin on the embedded device
+        self.relay_dict = {}
+
+        # use the [Relays] section to build the dictionary
+        for key, value in self.config['Relays'].items():
+            self.relay_dict[int(key)] = int(value)
+
+        # instantiate the relay controller - successful start should beep the buzzer
+        self.relay_controller = RelayController(relay_dict=self.relay_dict)
+
+        # instantiate the logger
+        self.logger = self.relay_controller.logger
+
         ### Data collection only ###
         # WARNING: initialise option disable detection for data collection
         self.disable_detection = False
@@ -164,23 +181,6 @@ class Owl:
         if self.focus:
             self.show_display = True
 
-        self.resolution = (self.config.getint('Camera', 'resolution_width'),
-                           self.config.getint('Camera', 'resolution_height'))
-        self.exp_compensation = self.config.getint('Camera', 'exp_compensation')
-
-        # Relay Dict maps the reference relay number to a boardpin on the embedded device
-        self.relay_dict = {}
-
-        # use the [Relays] section to build the dictionary
-        for key, value in self.config['Relays'].items():
-            self.relay_dict[int(key)] = int(value)
-
-        # instantiate the relay controller - successful start should beep the buzzer
-        self.relay_controller = RelayController(relay_dict=self.relay_dict)
-
-        # instantiate the logger
-        self.logger = self.relay_controller.logger
-
         # check that the resolution is not so high it will entirely brick/destroy the OWL.
         total_pixels = self.resolution[0] * self.resolution[1]
         if total_pixels > (832 * 640):
@@ -253,7 +253,7 @@ class Owl:
         algorithm = self.config.get('System', 'algorithm')
         log_fps = self.config.getboolean('DataCollection', 'log_fps')
         if self.controller:
-            self.controller.update_all_states()
+            self.controller.update_state()
 
         # track FPS and framecount
         frame_count = 0
