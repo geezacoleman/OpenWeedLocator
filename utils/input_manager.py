@@ -143,6 +143,7 @@ class AdvancedController:
         self.update_detection_mode_state()
 
     def update_recording_state(self):
+        self.status_indicator.generic_notification()
         with self.recording_state.get_lock():
             self.recording_state.value = self.recording_switch.is_pressed
         if self.recording_state.value:
@@ -158,6 +159,7 @@ class AdvancedController:
         self.update_sensitivity_settings()
 
     def update_sensitivity_settings(self):
+        self.status_indicator.generic_notification()
         settings = self.low_sensitivity_settings if self.sensitivity_state.value else self.high_sensitivity_settings
 
         # Update Owl instance settings
@@ -184,6 +186,8 @@ class AdvancedController:
     def set_detection_mode(self, mode):
         with self.detection_mode_state.get_lock():
             self.detection_mode_state.value = mode
+        self.status_indicator.generic_notification()
+
         if mode == 0:  # Detection on
             self.status_indicator.enable_weed_detection()
             self.owl.disable_detection = False

@@ -1,9 +1,8 @@
 from utils.logger import Logger
-from threading import Thread, Event, Condition
+from threading import Thread, Event, Condition, Lock
 from utils.cli_vis import RelayVis
 from enum import Enum
 from collections import deque
-from threading import Lock
 
 import shutil
 import time
@@ -150,8 +149,9 @@ class AdvancedIndicatorState(Enum):
     IDLE = 0
     RECORDING = 1
     DETECTING = 2
-    RECORDING_AND_DETECTING = 3
-    ERROR = 4
+    NOTIFICATION = 3
+    RECORDING_AND_DETECTING = 4
+    ERROR = 5
 
 class AdvancedStatusIndicator(BaseStatusIndicator):
     def __init__(self, save_directory, status_led_pin='BOARD37', testing=False):
@@ -212,6 +212,24 @@ class AdvancedStatusIndicator(BaseStatusIndicator):
         with self.state_lock:
             if self.state in [AdvancedIndicatorState.DETECTING, AdvancedIndicatorState.RECORDING_AND_DETECTING]:
                 self.led.blink(on_time=0.05, off_time=0.05, n=1, background=True)
+
+    def generic_notification(self):
+        with self.state_lock:
+            init_state = self.state
+            self.state = AdvancedIndicatorState.NOTIFICATION
+
+            # Immediately stop any ongoing LED activity
+            self.led.off()
+
+        def blink_and_restore():
+            # Blocking blink for immediate visual feedback
+            self.led.blink(on_time=0.2, off_time=0.2, n=3, background=False)
+
+            with self.state_lock:
+                self.state = init_state
+
+        # Start the blinking in a separate thread
+        Thread(target=blink_and_restore, daemon=True).start()
 
     def error(self, error_code):
         with self.state_lock:

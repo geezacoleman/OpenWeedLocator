@@ -24,7 +24,7 @@ class DirectorySetup:
         for attempt in range(max_retries):
             try:
                 return self._try_setup_directories()
-            except (USBMountError, USBWriteError) as e:
+            except (USBMountError, USBWriteError, NoWritableUSBError) as e:
                 print(f"[INFO] Attempt {attempt + 1} failed: {str(e)}. Retrying in {retry_delay} seconds...")
                 time.sleep(retry_delay)
 
