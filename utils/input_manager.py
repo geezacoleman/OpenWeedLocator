@@ -121,8 +121,8 @@ class AdvancedController:
         self.owl = owl_instance
         self.status_indicator = status_indicator
 
-        self.low_sensitivity_config = low_sensitivity_config
-        self.high_sensitivity_config = high_sensitivity_config
+        self.low_sensitivity_settings = self._read_config(low_sensitivity_config)
+        self.high_sensitivity_settings = self._read_config(high_sensitivity_config)
 
         # Set up switch handlers
         self.recording_switch.when_pressed = self.update_recording_state
@@ -158,21 +158,17 @@ class AdvancedController:
         self.update_sensitivity_settings()
 
     def update_sensitivity_settings(self):
-        config = configparser.ConfigParser()
-        if self.sensitivity_state.value:  # High sensitivity
-            config.read(self.high_sensitivity_config)
-        else:  # Low sensitivity
-            config.read(self.low_sensitivity_config)
+        settings = self.low_sensitivity_settings if self.sensitivity_state.value else self.high_sensitivity_settings
 
         # Update Owl instance settings
-        self.owl.exgMin = config.getint('GreenOnBrown', 'exgMin')
-        self.owl.exgMax = config.getint('GreenOnBrown', 'exgMax')
-        self.owl.hueMin = config.getint('GreenOnBrown', 'hueMin')
-        self.owl.hueMax = config.getint('GreenOnBrown', 'hueMax')
-        self.owl.saturationMin = config.getint('GreenOnBrown', 'saturationMin')
-        self.owl.saturationMax = config.getint('GreenOnBrown', 'saturationMax')
-        self.owl.brightnessMin = config.getint('GreenOnBrown', 'brightnessMin')
-        self.owl.brightnessMax = config.getint('GreenOnBrown', 'brightnessMax')
+        self.owl.exgMin = settings['exgMin']
+        self.owl.exgMax = settings['exgMax']
+        self.owl.hueMin = settings['hueMin']
+        self.owl.hueMax = settings['hueMax']
+        self.owl.saturationMin = settings['saturationMin']
+        self.owl.saturationMax = settings['saturationMax']
+        self.owl.brightnessMin = settings['brightnessMin']
+        self.owl.brightnessMax = settings['brightnessMax']
 
         # Update trackbars if show_display is True
         if self.owl.show_display:
@@ -221,65 +217,17 @@ class AdvancedController:
     def stop(self):
         with self.stop_flag.get_lock():
             self.stop_flag.value = True
-class SensitivitySelector:
-    def __init__(self, switchDict: dict):
-        self.switchDict = switchDict
-        self.buttonList = []
 
-        for sensitivityList, GPIOpin in self.switchDict.items():
-            button = Button(f"BOARD{GPIOpin}")
-            self.buttonList.append([button, sensitivityList])
-
-    def sensitivity_selector(self):
-        pass
-
-# used with a physical dial to select the algorithm during initial validation.
-# No longer used in the main greenonbrown.py file
-class Selector:
-    def __init__(self, switchDict: dict):
-        self.switchDict = switchDict
-        self.buttonList = []
-
-        for algorithm, GPIOpin in self.switchDict.items():
-            button = Button(f"BOARD{GPIOpin}")
-            self.buttonList.append([button, algorithm])
-
-    def algorithm_selector(self, algorithm):
-        for button in self.buttonList:
-            if button[0].is_pressed:
-                if algorithm == button[1]:
-                    return button[1], False
-
-                return button[1], True
-
-        return 'exg', False
-
-# video recording button
-class Recorder:
-    def __init__(self, recordGPIO: int):
-        self.record_button = Button(f"BOARD{recordGPIO}")
-        self.record = False
-        self.save_recording = False
-        self.running = True
-        self.led = LED(pin='BOARD38')
-
-        self.record_button.when_pressed = self.start_recording
-        self.record_button.when_released = self.stop_recording
-
-    def button_check(self):
-        while self.running:
-            self.record_button.when_pressed = self.start_recording
-            self.record_button.when_released = self.stop_recording
-            time.sleep(1)
-
-    def start_recording(self):
-        self.record = True
-        self.save_recording = False
-        self.led.on()
-
-    def stop_recording(self):
-        self.save_recording = True
-        self.record = False
-        self.led.off()
-
-
+    def _read_config(self, config_file):
+        config = configparser.ConfigParser()
+        config.read(config_file)
+        return {
+            'exgMin': config.getint('GreenOnBrown', 'exgMin'),
+            'exgMax': config.getint('GreenOnBrown', 'exgMax'),
+            'hueMin': config.getint('GreenOnBrown', 'hueMin'),
+            'hueMax': config.getint('GreenOnBrown', 'hueMax'),
+            'saturationMin': config.getint('GreenOnBrown', 'saturationMin'),
+            'saturationMax': config.getint('GreenOnBrown', 'saturationMax'),
+            'brightnessMin': config.getint('GreenOnBrown', 'brightnessMin'),
+            'brightnessMax': config.getint('GreenOnBrown', 'brightnessMax')
+        }
