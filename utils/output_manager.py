@@ -1,13 +1,15 @@
-import sys
-
 from utils.logger import Logger
 from threading import Thread, Event, Condition
 from utils.cli_vis import RelayVis
-from datetime import datetime
-import collections
+from enum import Enum
+from collections import deque
+from threading import Lock
+
 import shutil
 import time
 import os
+
+
 
 import platform
 import warnings
@@ -70,73 +72,16 @@ class TestLED:
         print(f'LED {self.pin} OFF')
 
 
-class StatusIndicator:
-    def __init__(self, save_directory, record_led_boardpin='BOARD38', storage_led_boardpin='BOARD40'):
-        self.testing = True if testing else False
+class BaseStatusIndicator:
+    def __init__(self, save_directory, testing=False):
         self.save_directory = save_directory
-        self.save_subdirectory = None
+        self.testing = testing
         self.storage_used = None
         self.storage_total = None
         self.update_event = Event()
-
         self.running = True
         self.thread = None
-
         self.DRIVE_FULL = False
-
-        if not testing:
-            self.record_LED = LED(pin=record_led_boardpin)
-            self.storage_LED = LED(pin=storage_led_boardpin)
-
-        else:
-            self.record_LED = TestLED(pin=record_led_boardpin)
-            self.storage_LED = TestLED(pin=storage_led_boardpin)
-
-    def setup_directories(self, enable_device_save=False):
-        self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
-
-        try:
-            if os.path.ismount(self.save_directory):
-                os.makedirs(self.save_subdirectory, exist_ok=True)
-
-            elif enable_device_save:
-                os.makedirs(self.save_subdirectory, exist_ok=True)
-
-            else:
-                os.makedirs(self.save_subdirectory, exist_ok=True)
-
-            self.setup_success()
-
-        except PermissionError:
-            try:
-                username = os.listdir('/media/')[0]
-                usb_drives = os.listdir(os.path.join('/media', username))
-                for drive in usb_drives:
-                    try:
-                        self.save_directory = os.path.join('/media', username, drive)
-                        self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
-
-                        os.makedirs(self.save_subdirectory, exist_ok=True)
-
-                        print(f'[SUCCESS] Tried {drive}. Connected')
-                        self.setup_success()
-
-                        return self.save_subdirectory
-
-                    except PermissionError:
-                        print(f'[ERROR] Tried {drive}. Failed')
-
-            except Exception as e:
-                print(f"\n[USB ERROR] Permission error.\nError message: {e}")
-
-        return self.save_subdirectory
-
-    def setup_success(self):
-        self.storage_LED.blink(on_time=0.1, off_time=0.2, n=3)
-        self.record_LED.blink(on_time=0.1, off_time=0.2, n=3)
-
-    def image_write_indicator(self):
-        self.record_LED.blink(on_time=0.1, n=1, background=True)
 
     def start_storage_indicator(self):
         self.thread = Thread(target=self.run_update)
@@ -150,42 +95,146 @@ class StatusIndicator:
 
     def update(self):
         self.storage_total, self.storage_used, _ = shutil.disk_usage(self.save_directory)
+        percent_full = (self.storage_used / self.storage_total)
+        self._update_storage_indicator(percent_full)
 
-        percent_full = (self.storage_used / (self.storage_total))
+    def _update_storage_indicator(self, percent_full):
+        raise NotImplementedError("This method should be implemented by subclasses")
 
+    def stop(self):
+        self.update_event.set()
+        self.running = False
+        self.thread.join()
+
+class UteStatusIndicator(BaseStatusIndicator):
+    def __init__(self, save_directory, record_led_pin='BOARD38', storage_led_pin='BOARD40', testing=False):
+        super().__init__(save_directory, testing)
+        LED_class = LED if not testing else TestLED
+        self.record_LED = LED_class(pin=record_led_pin)
+        self.storage_LED = LED_class(pin=storage_led_pin)
+
+    def _update_storage_indicator(self, percent_full):
         if percent_full >= 0.90:
             self.DRIVE_FULL = True
             self.storage_LED.on()
             self.record_LED.off()
-
         elif percent_full >= 0.85:
             self.storage_LED.blink(on_time=0.2, off_time=0.2, n=None, background=True)
-
         elif percent_full >= 0.80:
             self.storage_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
-
         elif percent_full >= 0.75:
             self.storage_LED.blink(on_time=0.5, off_time=1.5, n=None, background=True)
-
         elif percent_full >= 0.5:
             self.storage_LED.blink(on_time=0.5, off_time=3.0, n=None, background=True)
-
         else:
             self.storage_LED.blink(on_time=0.5, off_time=4.5, n=None, background=True)
+
+    def setup_success(self):
+        self.storage_LED.blink(on_time=0.1, off_time=0.2, n=3)
+        self.record_LED.blink(on_time=0.1, off_time=0.2, n=3)
+
+    def image_write_indicator(self):
+        self.record_LED.blink(on_time=0.1, n=1, background=True)
 
     def alert_flash(self):
         self.storage_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
         self.record_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
 
     def stop(self):
-        self.update_event.set()
-
-        self.running = False
+        super().stop()
         self.storage_LED.off()
         self.record_LED.off()
 
-        self.thread.join()
 
+class AdvancedIndicatorState(Enum):
+    IDLE = 0
+    RECORDING = 1
+    DETECTING = 2
+    RECORDING_AND_DETECTING = 3
+    ERROR = 4
+
+class AdvancedStatusIndicator(BaseStatusIndicator):
+    def __init__(self, save_directory, status_led_pin='BOARD37', testing=False):
+        super().__init__(save_directory, testing)
+        LED_class = LED if not testing else TestLED
+        self.led = LED_class(pin=status_led_pin)
+        self.state = AdvancedIndicatorState.IDLE
+        self.error_queue = deque()
+        self.state_lock = Lock()
+        self.weed_detection_enabled = False
+        self.image_recording_enabled = False
+
+    def _update_storage_indicator(self, percent_full):
+        if percent_full >= 0.90:
+            self.DRIVE_FULL = True
+            self.error(1)  # Use error code 1 for drive full
+
+    def setup_success(self):
+        self.led.blink(on_time=0.1, off_time=0.2, n=3)
+
+    def _update_state(self):
+        if self.state != AdvancedIndicatorState.ERROR:
+            if self.weed_detection_enabled and self.image_recording_enabled:
+                self.state = AdvancedIndicatorState.RECORDING_AND_DETECTING
+            elif self.weed_detection_enabled:
+                self.state = AdvancedIndicatorState.DETECTING
+            elif self.image_recording_enabled:
+                self.state = AdvancedIndicatorState.RECORDING
+            else:
+                self.state = AdvancedIndicatorState.IDLE
+
+    def enable_weed_detection(self):
+        with self.state_lock:
+            self.weed_detection_enabled = True
+            self._update_state()
+
+    def disable_weed_detection(self):
+        with self.state_lock:
+            self.weed_detection_enabled = False
+            self._update_state()
+
+    def enable_image_recording(self):
+        with self.state_lock:
+            self.image_recording_enabled = True
+            self._update_state()
+
+    def disable_image_recording(self):
+        with self.state_lock:
+            self.image_recording_enabled = False
+            self._update_state()
+
+    def image_write_indicator(self):
+        with self.state_lock:
+            if self.state not in [AdvancedIndicatorState.ERROR, AdvancedIndicatorState.DETECTING, AdvancedIndicatorState.RECORDING_AND_DETECTING]:
+                self.led.blink(on_time=0.1, off_time=0.1, n=1, background=True)
+
+    def weed_detect_indicator(self):
+        with self.state_lock:
+            if self.state in [AdvancedIndicatorState.DETECTING, AdvancedIndicatorState.RECORDING_AND_DETECTING]:
+                self.led.blink(on_time=0.05, off_time=0.05, n=1, background=True)
+
+    def error(self, error_code):
+        with self.state_lock:
+            self.state = AdvancedIndicatorState.ERROR
+            self.error_queue.append(error_code)
+        self._process_error_queue()
+
+    def _process_error_queue(self):
+        with self.state_lock:
+            if self.error_queue:
+                error_code = self.error_queue.popleft()
+                self.led.blink(on_time=0.2, off_time=0.2, n=error_code*2, background=False)
+                self.led.off()
+                if self.error_queue:
+                    self.led.blink(on_time=0.5, off_time=0.5, n=1, background=False)
+                    self._process_error_queue()
+                else:
+                    self._update_state()
+                    self.led.off()
+
+    def stop(self):
+        super().stop()
+        self.led.off()
 
 # control class for the relay board
 class RelayControl:
@@ -263,7 +312,7 @@ class RelayController:
         print("[INFO] Setting up nozzles...")
         self.relay_vis = RelayVis(relays=len(self.relay_dict.keys()))
         for relay_number in range(0, len(self.relay_dict)):
-            self.relay_queue_dict[relay_number] = collections.deque(maxlen=5)
+            self.relay_queue_dict[relay_number] = deque(maxlen=5)
             self.relay_condition_dict[relay_number] = Condition()
 
             # create the consumer threads, setDaemon and start the threads.
