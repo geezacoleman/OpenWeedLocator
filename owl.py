@@ -2,6 +2,7 @@
 from utils.input_manager import UteController, AdvancedController
 from utils.output_manager import RelayController, UteStatusIndicator, AdvancedStatusIndicator
 from utils.directory_manager import DirectorySetup
+from utils.video_manager import VideoStream
 
 from utils.image_sampler import ImageRecorder
 from utils.blur_algorithms import fft_blur
@@ -13,7 +14,6 @@ from configparser import ConfigParser
 from pathlib import Path
 from datetime import datetime
 from imutils.video import FPS
-from utils.video import VideoStream
 
 import argparse
 import imutils
@@ -42,6 +42,10 @@ class Owl:
 
         # visualise the detections with video feed
         self.show_display = show_display
+        self.focus = focus
+
+        if self.focus:
+            self.show_display = True
 
         # threshold parameters for different algorithms
         self.exgMin = self.config.getint('GreenOnBrown', 'exgMin')
@@ -177,10 +181,6 @@ class Owl:
 
         self.relay_vis = None
 
-        self.focus = focus
-        if self.focus:
-            self.show_display = True
-
         # check that the resolution is not so high it will entirely brick/destroy the OWL.
         total_pixels = self.resolution[0] * self.resolution[1]
         if total_pixels > (832 * 640):
@@ -250,6 +250,9 @@ class Owl:
             self.lane_coords[i] = laneX
 
     def hoot(self):
+        self.record_video = False  # Flag to control video recording
+        self.video_writer = None
+
         algorithm = self.config.get('System', 'algorithm')
         log_fps = self.config.getboolean('DataCollection', 'log_fps')
         if self.controller:
@@ -408,6 +411,18 @@ class Owl:
                     if self.disable_detection:
                         image_out = frame.copy()
 
+                    if self.record_video:
+                        if self.video_writer is None:
+                            # Initialize video writer
+                            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            video_filename = f"owl_recording_{timestamp}.mp4"
+                            self.video_writer = cv2.VideoWriter(video_filename, fourcc, 30.0,
+                                                                (frame.shape[1], frame.shape[0]))
+
+                        # Write the frame with detections
+                        self.video_writer.write(image_out)
+
                     cv2.putText(image_out, f'OWL-gorithm: {algorithm}', (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
                                 (80, 80, 255), 1)
                     cv2.putText(image_out, f'Press "S" to save {algorithm} thresholds to file.',
@@ -423,7 +438,18 @@ class Owl:
                     self.save_parameters()
                     self.logger.log_line("[INFO] Parameters saved.", verbose=True)
 
-                if k == 27:
+                elif k == ord('r'):
+                    # Toggle video recording
+                    self.record_video = not self.record_video
+                    if self.record_video:
+                        print("[INFO] Started video recording.")
+                    else:
+                        if self.video_writer:
+                            self.video_writer.release()
+                            self.video_writer = None
+                        print("[INFO] Stopped video recording.")
+
+                elif k == 27:
                     if log_fps:
                         fps.stop()
                         self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
@@ -454,6 +480,9 @@ class Owl:
         self.relay_controller.relay.beep(duration=0.1)
 
         self.cam.stop()
+
+        if self.video_writer:
+            self.video_writer.release()
 
         if self.controller:
             if hasattr(self, 'controller'):

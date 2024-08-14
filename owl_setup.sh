@@ -25,9 +25,6 @@ echo "[INFO] Updating the system and firmware..."
 sudo apt-get update && sudo apt-get upgrade -y
 check_status "System update and upgrade"
 
-sudo rpi-update
-check_status "Firmware update"
-
 # Set up the virtual environment
 echo "[INFO] Setting up the virtual environment..."
 echo "# virtualenv and virtualenvwrapper" >> ~/.bashrc

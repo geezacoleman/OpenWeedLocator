@@ -7,8 +7,6 @@ import cv2
 class GreenOnBrown:
     def __init__(self, algorithm='exg', label_file='models/labels.txt'):
         self.algorithm = algorithm
-        self.weed_centres = None
-        self.boxes = None
         self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
 
         # Dictionary mapping algorithm names to functions
@@ -42,8 +40,8 @@ class GreenOnBrown:
         else:
             output = func(image)
 
-        self.weed_centres = []
-        self.boxes = []
+        weed_centres = []
+        boxes = []
 
         if not threshed_already:
             output = np.clip(output, exgMin, exgMax)
@@ -61,21 +59,19 @@ class GreenOnBrown:
 
         for c in contours:
             if cv2.contourArea(c) > min_detection_area:
-                startX, startY, boxW, boxH = cv2.boundingRect(c)
-                self.boxes.append([startX, startY, boxW, boxH])
-                centerX = int(startX + (boxW / 2))
-                centerY = int(startY + (boxH / 2))
-                self.weed_centres.append([centerX, centerY])
+                x, y, w, h = cv2.boundingRect(c)
+                boxes.append([x, y, w, h])
+                weed_centres.append([x + w // 2, y + h // 2])
 
         if show_display:
             image_out = image.copy()
-            for box in self.boxes:
+            for box in boxes:
                 startX, startY, boxW, boxH = box
                 endX = startX + boxW
                 endY = startY + boxH
                 cv2.putText(image_out, label, (startX, startY + 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
                 cv2.rectangle(image_out, (int(startX), int(startY)), (endX, endY), (0, 0, 255), 2)
 
-            return contours, self.boxes, self.weed_centres, image_out
+            return contours, boxes, weed_centres, image_out
 
-        return contours, self.boxes, self.weed_centres, image
+        return contours, boxes, weed_centres, image
