@@ -105,6 +105,17 @@ class BaseStatusIndicator:
         self.running = False
         self.thread.join()
 
+class HeadlessStatusIndicator(BaseStatusIndicator):
+    def __init__(self, save_directory=None, testing=False):
+        super().__init__(save_directory, testing)
+
+    def _update_storage_indicator(self, percent_full):
+        if percent_full >= 0.90:
+            self.DRIVE_FULL = True
+
+    def stop(self):
+        super().stop()
+
 class UteStatusIndicator(BaseStatusIndicator):
     def __init__(self, save_directory, record_led_pin='BOARD38', storage_led_pin='BOARD40', testing=False):
         super().__init__(save_directory, testing)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 from utils.input_manager import UteController, AdvancedController
-from utils.output_manager import RelayController, UteStatusIndicator, AdvancedStatusIndicator
+from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator
 from utils.directory_manager import DirectorySetup
 from utils.video_manager import VideoStream
 
@@ -94,6 +94,7 @@ class Owl:
         ### Data collection only ###
         # WARNING: initialise option disable detection for data collection
         self.disable_detection = False
+        self.save_directory = None
 
         # if a controller is connected, sample images must be true to set up directories correctly
         self.controller_type = self.config.get('Controller', 'controller_type')
@@ -102,6 +103,7 @@ class Owl:
         else:
             self.sample_images = self.config.getboolean('DataCollection', 'sample_images')
 
+        # if controller is 'None' but sample_images is True, then it will set it up still
         if self.sample_images:
             self.sample_method = self.config.get('DataCollection', 'sample_method')
             self.disable_detection = self.config.getboolean('DataCollection', 'disable_detection')
@@ -178,6 +180,12 @@ class Owl:
             self.controller_process.start()
         else:
             self.controller = None
+            if self.sample_images:
+                self.status_indicator = HeadlessStatusIndicator(save_directory=self.save_directory)
+                self.status_indicator.start_storage_indicator()
+
+            else:
+                self.status_indicator = None
 
         self.relay_vis = None
 
@@ -381,8 +389,6 @@ class Owl:
                 if self.sample_images:
                     # only record every sampleFreq number of frames. If sample_frequency = 60, this will activate every 60th frame
                     if frame_count % self.sample_frequency == 0:
-                        self.status_indicator.image_write_indicator()
-
                         if self.sample_method == 'whole':
                             self.image_recorder.add_frame(frame=frame, frame_id=frame_count, boxes=None, centres=None)
 
@@ -392,9 +398,12 @@ class Owl:
                         else:
                             self.image_recorder.add_frame(frame=frame, frame_id=frame_count, boxes=None, centres=None)
 
-                    if self.status_indicator.DRIVE_FULL:
-                        self.sample_images = False
-                        self.image_recorder.stop()
+                        if self.controller:
+                            self.status_indicator.image_write_indicator()
+
+                        if self.status_indicator.DRIVE_FULL:
+                            self.sample_images = False
+                            self.image_recorder.stop()
 
                 frame_count = frame_count + 1 if frame_count < 900 else 1
 

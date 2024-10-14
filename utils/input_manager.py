@@ -42,6 +42,7 @@ class UteController:
 
         self.owl = owl_instance
         self.status_indicator = status_indicator
+        self.status_indicator.start_storage_indicator()
 
         self.stop_flag = stop_flag
 
@@ -120,6 +121,7 @@ class AdvancedController:
         # set up instances for owl and status
         self.owl = owl_instance
         self.status_indicator = status_indicator
+        self.status_indicator.start_storage_indicator()
 
         self.low_sensitivity_settings = self._read_config(low_sensitivity_config)
         self.high_sensitivity_settings = self._read_config(high_sensitivity_config)
