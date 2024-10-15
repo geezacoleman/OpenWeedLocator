@@ -112,7 +112,7 @@ class Owl:
             self.camera_name = self.config.get('DataCollection', 'camera_name')
 
             self.directory_manager = DirectorySetup(save_directory=self.save_directory)
-            self.save_subdirectory = self.directory_manager.setup_directories()
+            self.save_directory, self.save_subdirectory = self.directory_manager.setup_directories()
 
             self.image_recorder = ImageRecorder(save_directory=self.save_subdirectory, mode=self.sample_method)
         ############################
@@ -185,7 +185,7 @@ class Owl:
                 self.status_indicator.start_storage_indicator()
 
             else:
-                self.status_indicator = None
+                self.status_indicator = HeadlessStatusIndicator(save_directory=None, no_save=True)
 
         self.relay_vis = None
 
@@ -228,13 +228,16 @@ class Owl:
             except ModuleNotFoundError as e:
                 missing_module = str(e).split("'")[-2]
                 error_message = f"Missing required module: {missing_module}. Please install it and try again."
+                self.status_indicator.error(1)
+                time.sleep(2)
                 raise ModuleNotFoundError(error_message) from None
 
             except Exception as e:
                 error_detail = f"[CRITICAL ERROR] Stopped OWL at start: {e}"
                 self.logger.log_line(error_detail, verbose=True)
                 self.relay_controller.relay.beep(duration=1, repeats=1)
-                time.sleep(2)
+                self.status_indicator.error(1)
+                time.sleep(5)
 
                 sys.exit(1)
 
@@ -332,10 +335,6 @@ class Owl:
                     self.brightnessMin = cv2.getTrackbarPos("Bright-Min", self.window_name)
                     self.brightnessMax = cv2.getTrackbarPos("Bright-Max", self.window_name)
 
-                else:
-                    # this leaves it open to adding dials for sensitivity. Static at the moment, but could be dynamic
-                    self.update(exgMin=self.exgMin, exgMax=self.exgMax)  # add in update values here
-
                 # pass image, thresholds to green_on_brown function
                 if not self.disable_detection:
                     if algorithm == 'gog':
@@ -404,6 +403,7 @@ class Owl:
                         if self.status_indicator.DRIVE_FULL:
                             self.sample_images = False
                             self.image_recorder.stop()
+                            self.status_indicator.error(5)
 
                 frame_count = frame_count + 1 if frame_count < 900 else 1
 
@@ -507,14 +507,6 @@ class Owl:
             cv2.destroyAllWindows()
 
         sys.exit()
-
-    def update(self, exgMin=30, exgMax=180):
-        self.exgMin = exgMin
-        self.exgMax = exgMax
-
-    def update_delay(self, delay=0):
-        # if GPS added, could use it here to return a delay variable based on speed.
-        return delay
 
     def save_parameters(self):
         timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')

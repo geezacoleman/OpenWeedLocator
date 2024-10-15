@@ -40,7 +40,7 @@ class DirectorySetup:
             raise USBWriteError("Failed to write test file")
 
         print(f"[SUCCESS] Directory setup complete: {self.save_subdirectory}")
-        return self.save_subdirectory
+        return self.save_directory, self.save_subdirectory
 
     def _handle_mount_error(self):
         media_dir = '/media'
@@ -56,7 +56,7 @@ class DirectorySetup:
                             os.makedirs(self.save_subdirectory, exist_ok=True)
                             if self.test_file_write():
                                 print(f'[SUCCESS] Connected to {drive_path} and it is writable.')
-                                return self.save_subdirectory
+                                return self.save_directory, self.save_subdirectory
                             else:
                                 print(f'[ERROR] {drive_path} is connected but not writable.')
                         except PermissionError:

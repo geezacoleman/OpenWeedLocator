@@ -3,7 +3,7 @@ from threading import Thread, Event, Condition, Lock
 from utils.cli_vis import RelayVis
 from enum import Enum
 from collections import deque
-
+import subprocess
 import shutil
 import time
 import os
@@ -72,15 +72,21 @@ class TestLED:
 
 
 class BaseStatusIndicator:
-    def __init__(self, save_directory, testing=False):
+    def __init__(self, save_directory, no_save=False):
         self.save_directory = save_directory
-        self.testing = testing
+        self.no_save = no_save
+        self.testing = True if testing else False
         self.storage_used = None
         self.storage_total = None
         self.update_event = Event()
         self.running = True
         self.thread = None
         self.DRIVE_FULL = False
+
+        self.error_code = None
+        self.flashing_thread = None
+        self._set_led_trigger("ACT", "none")
+        self._set_led_trigger("PWR", "none")
 
     def start_storage_indicator(self):
         self.thread = Thread(target=self.run_update)
@@ -93,9 +99,66 @@ class BaseStatusIndicator:
             self.update_event.clear()
 
     def update(self):
-        self.storage_total, self.storage_used, _ = shutil.disk_usage(self.save_directory)
-        percent_full = (self.storage_used / self.storage_total)
-        self._update_storage_indicator(percent_full)
+        if self.save_directory is not None:
+            self.storage_total, self.storage_used, _ = shutil.disk_usage(self.save_directory)
+            percent_full = (self.storage_used / self.storage_total)
+            self._update_storage_indicator(percent_full)
+
+        elif self.no_save:
+            pass
+
+        else:
+            self.error(6)
+
+    def error(self, error_code):
+        self.error_code = error_code
+        if self.flashing_thread is None or not self.flashing_thread.is_alive():
+            self.flashing_thread = Thread(target=self._flash_error_code)
+            self.flashing_thread.start()
+
+    def _flash_error_code(self):
+        while self.running:
+            for _ in range(self.error_code):
+                self._blink_leds()
+                time.sleep(0.2)  # Interval between flashes
+            time.sleep(2)  # Pause after each sequence
+
+    def _blink_leds(self):
+        self._set_led_state("ACT", 1)
+        self._set_led_state("PWR", 1)
+        time.sleep(0.2)
+        self._set_led_state("ACT", 0)
+        self._set_led_state("PWR", 0)
+
+    def _set_led_state(self, led, state):
+        if not self.testing:
+            LED_PATHS = {
+                "ACT": "/sys/class/leds/ACT/brightness",
+                "PWR": "/sys/class/leds/PWR/brightness"
+            }
+            try:
+                subprocess.run(
+                    ['sudo', 'sh', '-c', f'echo {1 if state else 0} > {LED_PATHS[led]}'],
+                    check=True
+                )
+            except subprocess.CalledProcessError as e:
+                print(f"Error: Could not set {led} LED. {e}")
+
+    # Method to set LED trigger to 'none' to ensure manual control.
+    # Based on: https://howtoraspberrypi.com/controler-led-verte-raspberry-pi-2/
+    def _set_led_trigger(self, led, trigger):
+        if not self.testing:
+            LED_TRIGGER_PATHS = {
+                "ACT": "/sys/class/leds/ACT/trigger",
+                "PWR": "/sys/class/leds/PWR/trigger"
+            }
+            try:
+                subprocess.run(
+                    ['sudo', 'sh', '-c', f'echo {trigger} > {LED_TRIGGER_PATHS[led]}'],
+                    check=True
+                )
+            except subprocess.CalledProcessError as e:
+                print(f"Error: Could not set {led} trigger to {trigger}. {e}")
 
     def _update_storage_indicator(self, percent_full):
         raise NotImplementedError("This method should be implemented by subclasses")
@@ -105,20 +168,19 @@ class BaseStatusIndicator:
         self.running = False
         self.thread.join()
 
+
 class HeadlessStatusIndicator(BaseStatusIndicator):
-    def __init__(self, save_directory=None, testing=False):
-        super().__init__(save_directory, testing)
+    def __init__(self, save_directory=None, no_save=False):
+        super().__init__(save_directory, no_save)
 
     def _update_storage_indicator(self, percent_full):
         if percent_full >= 0.90:
             self.DRIVE_FULL = True
 
-    def stop(self):
-        super().stop()
 
 class UteStatusIndicator(BaseStatusIndicator):
-    def __init__(self, save_directory, record_led_pin='BOARD38', storage_led_pin='BOARD40', testing=False):
-        super().__init__(save_directory, testing)
+    def __init__(self, save_directory, record_led_pin='BOARD38', storage_led_pin='BOARD40'):
+        super().__init__(save_directory)
         LED_class = LED if not testing else TestLED
         self.record_LED = LED_class(pin=record_led_pin)
         self.storage_LED = LED_class(pin=storage_led_pin)
@@ -150,8 +212,25 @@ class UteStatusIndicator(BaseStatusIndicator):
         self.storage_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
         self.record_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
 
+    def error(self, error_code):
+        self.error_code = error_code
+        if self.flashing_thread is None or not self.flashing_thread.is_alive():
+            self.flashing_thread = Thread(target=self._flash_error_code)
+            self.flashing_thread.start()
+
+    def _flash_error_code(self):
+        while self.running:
+            for _ in range(self.error_code):
+                self._blink_leds()
+                self.storage_LED.blink(on_time=0.2, n=1, background=False)  # Flash storage LED
+                self.record_LED.blink(on_time=0.2, n=1, background=False)  # Flash record LED
+                time.sleep(0.2)  # Interval between flashes
+            time.sleep(2)  # Pause after each sequence
+
     def stop(self):
         super().stop()
+        if self.flashing_thread and self.flashing_thread.is_alive():
+            self.flashing_thread.join()
         self.storage_LED.off()
         self.record_LED.off()
 
@@ -164,9 +243,10 @@ class AdvancedIndicatorState(Enum):
     RECORDING_AND_DETECTING = 4
     ERROR = 5
 
+
 class AdvancedStatusIndicator(BaseStatusIndicator):
-    def __init__(self, save_directory, status_led_pin='BOARD37', testing=False):
-        super().__init__(save_directory, testing)
+    def __init__(self, save_directory, status_led_pin='BOARD37'):
+        super().__init__(save_directory)
         LED_class = LED if not testing else TestLED
         self.led = LED_class(pin=status_led_pin)
         self.state = AdvancedIndicatorState.IDLE
@@ -174,6 +254,7 @@ class AdvancedStatusIndicator(BaseStatusIndicator):
         self.state_lock = Lock()
         self.weed_detection_enabled = False
         self.image_recording_enabled = False
+        self.flashing_thread = None
 
     def _update_storage_indicator(self, percent_full):
         if percent_full >= 0.90:
@@ -234,27 +315,27 @@ class AdvancedStatusIndicator(BaseStatusIndicator):
             self.state = init_state
 
     def error(self, error_code):
+        self.error_code = error_code
         with self.state_lock:
             self.state = AdvancedIndicatorState.ERROR
-            self.error_queue.append(error_code)
-        self._process_error_queue()
+        if self.flashing_thread is None or not self.flashing_thread.is_alive():
+            self.flashing_thread = Thread(target=self._flash_error_code)
+            self.flashing_thread.start()
 
-    def _process_error_queue(self):
-        with self.state_lock:
-            if self.error_queue:
-                error_code = self.error_queue.popleft()
-                self.led.blink(on_time=0.2, off_time=0.2, n=error_code*2, background=False)
-                self.led.off()
-                if self.error_queue:
-                    self.led.blink(on_time=0.5, off_time=0.5, n=1, background=False)
-                    self._process_error_queue()
-                else:
-                    self._update_state()
-                    self.led.off()
+    def _flash_error_code(self):
+        while self.running:
+            for _ in range(self.error_code):
+                self._blink_leds()
+                self.led.blink(on_time=0.2, n=1, background=False)
+                time.sleep(0.5)
+            time.sleep(2)
 
     def stop(self):
         super().stop()
+        if self.flashing_thread and self.flashing_thread.is_alive():
+            self.flashing_thread.join()
         self.led.off()
+
 
 # control class for the relay board
 class RelayControl:
@@ -412,3 +493,27 @@ class RelayController:
                 relay_on = False
 
             input_condition.wait()
+
+
+if __name__ == "__main__":
+    print("Starting test of status indicators...")
+
+    # Test HeadlessStatusIndicator
+    print("\nTesting HeadlessStatusIndicator...")
+    headless_indicator = HeadlessStatusIndicator(save_directory="output")
+    headless_indicator.show_error(3)  # Show an error with 3 flashes
+    headless_indicator.stop()
+
+    # Test UteStatusIndicator
+    print("\nTesting UteStatusIndicator...")
+    ute_indicator = UteStatusIndicator(save_directory="output", record_led_pin='BOARD38', storage_led_pin='BOARD40')
+    ute_indicator.show_error(4)  # Show an error with 4 flashes
+    ute_indicator.stop()
+
+    # Test AdvancedStatusIndicator
+    print("\nTesting AdvancedStatusIndicator...")
+    advanced_indicator = AdvancedStatusIndicator(save_directory="output", status_led_pin='BOARD37')
+    advanced_indicator.show_error(2)  # Show an error with 2 flashes
+    advanced_indicator.stop()
+
+    print("\nTest complete.")
