@@ -1,16 +1,19 @@
-import os
-import subprocess
 from datetime import datetime
 import time
+import os
+
 
 class USBMountError(Exception):
     pass
 
+
 class USBWriteError(Exception):
     pass
 
+
 class NoWritableUSBError(Exception):
     pass
+
 
 class DirectorySetup:
     def __init__(self, save_directory):
@@ -40,51 +43,26 @@ class DirectorySetup:
         return self.save_subdirectory
 
     def _handle_mount_error(self):
-        # Check all devices connected via USB
-        usb_devices = self.get_usb_devices()
-
-        if not usb_devices:
-            raise USBMountError("No USB drives detected.")
-
-        # Attempt to mount the first available writable USB drive
-        for device in usb_devices:
-            mount_point = self.mount_usb_device(device)
-            if mount_point:
-                self.save_directory = mount_point
-                self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
-                os.makedirs(self.save_subdirectory, exist_ok=True)
-
-                if self.test_file_write():
-                    print(f'[SUCCESS] Connected to {mount_point} and it is writable.')
-                    return self.save_subdirectory
-                else:
-                    print(f'[ERROR] {mount_point} is connected but not writable.')
+        media_dir = '/media'
+        for username in os.listdir(media_dir):
+            user_media_dir = os.path.join(media_dir, username)
+            if os.path.isdir(user_media_dir):
+                for drive in os.listdir(user_media_dir):
+                    drive_path = os.path.join(user_media_dir, drive)
+                    if os.path.ismount(drive_path):
+                        self.save_directory = drive_path
+                        self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
+                        try:
+                            os.makedirs(self.save_subdirectory, exist_ok=True)
+                            if self.test_file_write():
+                                print(f'[SUCCESS] Connected to {drive_path} and it is writable.')
+                                return self.save_subdirectory
+                            else:
+                                print(f'[ERROR] {drive_path} is connected but not writable.')
+                        except PermissionError:
+                            print(f'[ERROR] Failed to access {drive_path}')
 
         raise NoWritableUSBError("No writable USB drives found.")
-
-    def get_usb_devices(self):
-        # Use 'lsblk' to list block devices and filter USB devices
-        result = subprocess.run(['lsblk', '-o', 'NAME,TRAN'], capture_output=True, text=True)
-        devices = []
-        for line in result.stdout.splitlines():
-            if 'usb' in line:
-                device_name = line.split()[0]
-                devices.append(f'/dev/{device_name}')
-        return devices
-
-    def mount_usb_device(self, device):
-        # Mount the USB device to /media
-        mount_point = f'/media/usb_{device.split("/")[-1]}'
-        try:
-            if not os.path.ismount(mount_point):
-                os.makedirs(mount_point, exist_ok=True)
-                subprocess.run(['sudo', 'mount', device, mount_point], check=True)
-                return mount_point
-            else:
-                return mount_point
-        except subprocess.CalledProcessError as e:
-            print(f"[ERROR] Failed to mount {device}: {e}")
-            return None
 
     def test_file_write(self):
         test_file_path = os.path.join(self.save_subdirectory, 'test_write.txt')
