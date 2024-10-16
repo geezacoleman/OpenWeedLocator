@@ -1,18 +1,7 @@
 from datetime import datetime
+from utils.error_manager import USBMountError, NoWritableUSBError, USBWriteError
 import time
 import os
-
-
-class USBMountError(Exception):
-    pass
-
-
-class USBWriteError(Exception):
-    pass
-
-
-class NoWritableUSBError(Exception):
-    pass
 
 
 class DirectorySetup:

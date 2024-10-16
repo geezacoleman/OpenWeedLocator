@@ -1,6 +1,7 @@
 from utils.logger import Logger
 from threading import Thread, Event, Condition, Lock
 from utils.cli_vis import RelayVis
+from utils.error_manager import OWLAlreadyRunningError
 from enum import Enum
 from collections import deque
 import subprocess
@@ -8,29 +9,28 @@ import shutil
 import time
 import os
 
-
-
 import platform
 import warnings
+
 # check if the system is being tested on a Windows or Linux x86 64 bit machine
-if 'rpi' in platform.platform():
+if 'rpi' in platform.platform().lower() or 'aarch' in platform.platform().lower():
     testing = False
     from gpiozero import Buzzer, OutputDevice, LED
+    import lgpio
+
+    lgpioERROR = lgpio.error
 
 elif platform.system() == "Windows":
     warning_message = "[WARNING] The system is running on a Windows platform. GPIO disabled. Test mode active."
     warnings.warn(warning_message, RuntimeWarning)
     testing = True
-    testing = True
-
-elif 'aarch' in platform.platform():
-    testing = False
-    from gpiozero import Buzzer, OutputDevice, LED
+    lgpioERROR = None
 
 else:
     warning_message = "[WARNING] The system is not running on a recognized platform. GPIO disabled. Test mode active."
     warnings.warn(warning_message, RuntimeWarning)
     testing = True
+    lgpioERROR = None
 
 # two test classes to run the analysis on a desktop computer if a "win32" platform is detected
 class TestRelay:
@@ -348,7 +348,17 @@ class RelayControl:
         self.field_data_recording = False
 
         if not self.testing:
-            self.buzzer = Buzzer(pin='BOARD7')
+            try:
+                self.buzzer = Buzzer(pin='BOARD7')
+
+            except Exception as e:
+                if lgpioERROR and isinstance(e, lgpioERROR):
+                    if 'GPIO busy' in str(e):
+                        raise OWLAlreadyRunningError() from e
+                    else:
+                        raise e
+                else:
+                    raise e
 
             for relay, board_pin in self.relay_dict.items():
                 self.relay_dict[relay] = OutputDevice(pin=f'BOARD{board_pin}')
