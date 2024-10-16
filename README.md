@@ -68,8 +68,9 @@ Repository DOI: [![DOI](https://zenodo.org/badge/399194159.svg)](https://zenodo.
     - [Quick Method](#quick-method)
     - [Detailed Method](#detailed-method)
     - [Changing Detection Settings](#changing-detection-settings)
-    - [Green-on-Green (available NOW) :eyes::dart::seedling:](#green-on-green)
+    - [Green-on-Green (almost) :eyes::dart::seedling:](#green-on-green)
     - [Installing on non-Raspberry Pi Computers](#non-raspberry-pi-installation)
+* [Controller](#connecting-a-controller)
 * [3D Printing](#3d-printing)
 * [Updating OWL](#updating-owl)
     - [Version History](#version-history)
@@ -1811,6 +1812,7 @@ Detailed installation instructions will be added soon.
 |---------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|
 | ![IMG-20240606-WA0016](https://github.com/user-attachments/assets/2df7819f-79cc-4803-a7b8-e83000add7af) | ![20240815_131829](https://github.com/user-attachments/assets/d3ff9365-9296-47e8-8dd5-cf2ba59d7657) |
 
+</details>
 
 ## Green-on-Green
 
