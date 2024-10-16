@@ -1535,21 +1535,37 @@ owl = Owl(config_file='config/ENTER_YOUR_CONFIG_FILE_HERE.ini')
 These are the various system, data collection and detection settings that can be changed. They are defined further below.
 ```ini
 [System]
+# select your algorithm
 algorithm = exhsv
-# operate on a directory, single image or video
+# operate on a video, image or directory of media
 input_file_or_directory =
+# choose how many relays are connected to the OWL
 relay_num = 4
 actuation_duration = 0.15
 delay = 0
 
+[Controller]
+# choose between 'None', 'ute' or 'advanced'
+controller_type = None
+
+# for advanced controller
+detection_mode_pin_up = 35
+detection_mode_pin_down = 36
+recording_pin = 38
+sensitivity_pin = 40
+low_sensitivity_config = config/DAY_SENSITIVITY_2.ini
+high_sensitivity_config = config/DAY_SENSITIVITY_3.ini
+
+# for UteController
+switch_purpose = recording
+switch_pin = 37
+
 [Visualisation]
-show_display = False
-focus = False
 image_loop_time = 5
 
 [Camera]
-resolution_width = 416
-resolution_height = 320
+resolution_width = 640
+resolution_height = 480
 exp_compensation = -2
 
 [GreenOnGreen]
@@ -1573,17 +1589,15 @@ invert_hue = False
 
 [DataCollection]
 # all data collection related parameters
-# image collection, sample method include: 'bbox' | 'square' | 'whole'. Set sample_method=None
+# set sample_images True/False to enable/disable image collection
 sample_images = False
+# image collection, sample method include: 'bbox' | 'square' | 'whole'
 sample_method = whole
 sample_frequency = 30
-# toggle saving to the device or external drives only
-enable_device_save = False
-save_directory = output
+save_directory = /media/owl/SanDisk
 # set to True to disable weed detection for data collection only
 disable_detection = False
-# enable video recording
-recording = False
+# log fps
 log_fps = False
 camera_name = cam1
 
@@ -1597,47 +1611,55 @@ camera_name = cam1
 ```
 
 ### Parameter definitions
+|       **Parameter**       |                      **Options**                       |                                                                                                       **Description**                                                                                                       |
+|:-------------------------:|:------------------------------------------------------:|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|
+|        **System**         |                                                        |                                                                                                                                                                                                                             |
+|        `algorithm`        | Any of: `gog`,`exg`,`exgr`,`exgs`,`exhu`,`hsv`,`exhsv` |                                        Changes the selected algorithm. Most sensitive: 'exg', least sensitive/most precise (least false positives): 'exgr', 'exhu', 'hsv', 'exhsv'.                                         |
+|   `actuation_duration`    |                  Any float (decimal)                   |                                                                                Changes the length of time for which the relay is activated.                                                                                 |
+| `input_file_or_directory` |     path to a image, video, or directory of media      |                                                                  Will iterate over each image at a default 5 FPS, or over a directory of images or videos.                                                                  |
+|        `relay_num`        |                        integer                         |                                                     Change the number of activation 'lanes' and therefore the number of relays activated. Set to 1 for a single relay.                                                      |
+|          `delay`          |                       Any float                        |                                                                                    Delay between detection and actuation. Defaults to 0.                                                                                    |
+|      **Controller**       |                                                        |                                                                                                                                                                                                                             |
+|     `controller_type`     |            `'None'`, `'ute'`, `'advanced'`             |            Specifies the type of controller to use. `'advanced'` enables extra features such as detection mode and sensitivity switching, while `'ute'` is for simpler use cases. `'None'` disables controller.             |
+|  `detection_mode_pin_up`  |                        Integer                         |                                                                        Specifies the GPIO pin for "detection mode up" in advanced controller setups.                                                                        |
+| `detection_mode_pin_down` |                        Integer                         |                                                                       Specifies the GPIO pin for "detection mode down" in advanced controller setups.                                                                       |
+|      `recording_pin`      |                        Integer                         |                                                                Specifies the GPIO pin to activate/deactivate image recording in advanced controller setups.                                                                 |
+|     `sensitivity_pin`     |                        Integer                         |                                                              Specifies the GPIO pin to switch between low and high sensitivity in advanced controller setups.                                                               |
+| `low_sensitivity_config`  |                          Path                          |                                                                 Path to the configuration file for low sensitivity settings in advanced controller setups.                                                                  |
+| `high_sensitivity_config` |                          Path                          |                                                                 Path to the configuration file for high sensitivity settings in advanced controller setups.                                                                 |
+|     `switch_purpose`      |              'recording' or other purpose              |                                                  Describes the purpose of the switch in UteController setups (e.g., activating recording or controlling other functions).                                                   |
+|       `switch_pin`        |                        Integer                         |                                                               GPIO pin used for switching functionality in UteController setups (e.g., recording activation).                                                               |
+|     **Visualisation**     |                                                        |                                                                                                                                                                                                                             |
+|     `image_loop_time`     |                        Integer                         |                                                    How long (ms) to wait on each image when looping over the same image if a single image file or directory is provided.                                                    |
+|        **Camera**         |                                                        |                                                                                                                                                                                                                             |
+|    `resolution_width`     |                        Integer                         |                                                                                      Width of the camera resolution (updated to 640).                                                                                       |
+|    `resolution_height`    |                        Integer                         |                                                                                      Height of the camera resolution (updated to 480).                                                                                      |
+|    `exp_compensation`     |                Integer between -8 and 8                |                                           Change the target exposure setting for the exposure algorithm. Defaults to -2, preferencing darker settings for faster shutter speeds.                                            |
+|     **GreenOnGreen**      |                                                        |                                                                                                                                                                                                                             |
+|       `model_path`        |                          Path                          |                                                                                                  A path to the model file                                                                                                   |
+|       `confidence`        |                                                        |                                                                            The cutoff confidence value for a detection. Defaults to 0.5 or 50%.                                                                             |
+|     `class_filter_id`     |                        Integer                         |                           Which classes to filter and target. For example, using a out-the-box COCO model, you may want to only detect a specific class. Enter that specific class integer here.                            |
+|     **GreenOnBrown**      |                                                        |                                                                                                                                                                                                                             |
+|         `exgMin`          |             Any integer between 0 and 255              |                                                Provides the minimum threshold value for the exg algorithm. Usually leave between 10 (very sensitive) and 25 (not sensitive)                                                 |
+|         `exgMax`          |             Any integer between 0 and 255              |                                                                            Provides a maximum threshold for the exg algorithm. Leave above 180.                                                                             |
+|         `hueMin`          |             Any integer between 0 and 128              |                                                      Provides a minimum threshold for the hue channel when using hsv or exhsv algorithms. Typically between 39 and 83.                                                      |
+|         `hueMax`          |             Any integer between 0 and 128              |                                               Provides a maximum threshold for the hue (colour hue) channel when using hsv or exhsv algorithms. Typically between 39 and 83.                                                |
+|      `saturationMin`      |             Any integer between 0 and 255              |                                        Provides a minimum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 50 and 220.                                         |
+|      `saturationMax`      |             Any integer between 0 and 255              |                                        Provides a maximum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 50 and 220.                                         |
+|      `brightnessMin`      |             Any integer between 0 and 255              |                                              Provides a minimum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 60 and 190.                                              |
+|      `brightnessMax`      |             Any integer between 0 and 255              |                                              Provides a maximum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 60 and 190.                                              |
+|   `min_detection_area`    |                        Integer                         |                                                                                        The minimum area for which to detect a weed.                                                                                         |
+|       `invert_hue`        |                        Boolean                         |                                                      True/False, inverts the detected hue from everything within the thresholds to everything outside the thresholds.                                                       |
+|    **DataCollection**     |                                                        |                                                                                                                                                                                                                             |
+|      `sample_images`      |                 Boolean: True or False                 |                                                            Enables or disables image data collection. Defaults to False. Set to True to start collecting images.                                                            |
+|      `sample_method`      |         Choose from 'bbox', 'square', 'whole'          |                                                 If sample_method=None, sampling is deactivated. Do not leave on for long periods or SD card will fill up and stop working.                                                  |
+|    `sample_frequency`     |                  Any positive integer                  |                                            Changes how often (after how many frames) image sampling will occur. If sample_frequency=30, images will be sampled every 30 frames.                                             |
+|     `save_directory`      |                          Path                          | Set where you want the images saved. Defaults to `/media/owl/SanDisk`. When sample_images is True, the software will look for an attached USB drive at this location. It will try 5 times before exiting if none are found. |
+|    `disable_detection`    |                 Boolean: True or False                 |                        Disable detection when running data collection. This will reduce the workload on the Pi and increase frame rate. Useful if using the OWL for dedicated image data collection.                        |
+|         `log_fps`         |                 Boolean: True or False                 |                                                                                                     Save FPS to a file.                                                                                                     |
+|       `camera_name`       |                       Any string                       |                                                               Changes the save name if recording videos of the camera. Ignore - only used if recording data.                                                                |
+|        **Relays**         |                 Integer/GPIO Boardpin                  |                                                                                    Maps a relay number to a boardpin on the GPIO header                                                                                     |
 
-|       **Parameter**       |                  **Options**                   |                                                                                                                                                                 **Description**                                                                                                                                                                  |
-|:-------------------------:|:----------------------------------------------:|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|
-|        **System**         |                                                |                                                                                                                                                                                                                                                                                                                                                  |
-|        `algorithm`        | Any of: `gog`,`exg`,`exgr`,`exgs`,`exhu`,`hsv` | Changes the selected algorithm. Most sensitive: 'exg', least sensitive/most precise (least false positives): 'exgr', 'exhu', 'hsv'. `gog` will activate a provided Green-on-Green detection algorithm, a .tflite model in the models folder. Ensure you have connected and installed a Google Coral using the procedure [here](#green-on-green). |
-|   `actuation_duration`    |              Any float (decimal)               |                                                                                                                                           Changes the length of time for which the relay is activated.                                                                                                                                           |
-| `input_file_or_directory` |  path to a image, video or directory of media  |                                                                                                                            Will iterate over each image at a default 5 FPS, or over a directory of images or videos.                                                                                                                             |
-|        `relay_num`        |                    integer                     |                                         Change the number of activation 'lanes' and therefore the number of relays activated. Set to 1 for a single relay. If <4, then the first boardpins will be used by default. More than four will require additional hardware and changes to the [Relays] mapping.                                         |
-|          `delay`          |                   Any float                    |                                                                                                                                              Delay between detection and actuation. Defaults to 0.                                                                                                                                               |
-|     **Visualisation**     |                                                |                                                                                                                                                                                                                                                                                                                                                  |
-|     `image_loop_time`     |                    Integer                     |                                                                                                              How long (ms) to wait on each image when looping over the same image if a single image file or directory is provided.                                                                                                               |
-|        **Camera**         |                                                |                                                                                                                                                                                                                                                                                                                                                  |
-|    `resolution_width`     |                    Integer                     |                                                                                                                                                                                                                                                                                                                                                  |
-|    `resolution_height`    |                    Integer                     |                                                                                                                                                                                                                                                                                                                                                  |
-|    `exp_compensation`     |            Integer between -8 and 8            |                                                                                                      Change the target exposure setting for the exposure algorithm. Defaults to -2, preferencing darker settings for faster shutter speeds.                                                                                                      |
-|     **GreenOnGreen**      |                                                |                                                                                                                                                                                                                                                                                                                                                  |
-|       `model_path`        |                      Path                      |                                                                                                                                                             A path to the model file                                                                                                                                                             |
-|       `confidence`        |                                                |                                                                                                                                       The cutoff confidence value for a detection. Defaults to 0.5 or 50%.                                                                                                                                       |
-|     `class_filter_id`     |                    Integer                     |                                                                                      Which classes to filter and target. For example, using a out-the-box COCO model, you may want to only detect a specific class. Enter that specific class integer here.                                                                                      |
-|     **GreenOnBrown**      |                                                |                                                                                                                                                                                                                                                                                                                                                  |
-|         `exgMin`          |         Any integer between 0 and 255          |                                                                                                           Provides the minimum threshold value for the exg algorithm. Usually leave between 10 (very sensitive) and 25 (not sensitive)                                                                                                           |
-|         `exgMax`          |         Any integer between 0 and 255          |                                                                                                                                       Provides a maximum threshold for the exg algorithm. Leave above 180.                                                                                                                                       |
-|         `hueMin`          |         Any integer between 0 and 128          |                                                                                                Provides a minimum threshold for the hue channel when using hsv or exhsv algorithms. Typically between 28 and 45. Increase to reduce sensitivity.                                                                                                 |
-|         `hueMax`          |         Any integer between 0 and 128          |                                                                                          Provides a maximum threshold for the hue (colour hue) channel when using hsv or exhsv algorithms. Typically between 80 and 95. Decrease to reduce sensitivity.                                                                                          |
-|      `saturationMin`      |         Any integer between 0 and 255          |                                                                                    Provides a minimum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 4 and 20. Increase to reduce sensitivity.                                                                                    |
-|      `saturationMax`      |         Any integer between 0 and 255          |                                                                                  Provides a maximum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 200 and 250. Decrease to reduce sensitivity.                                                                                   |
-|      `brightnessMin`      |         Any integer between 0 and 255          |                                                                   Provides a minimum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 10 and 60. Increase to reduce sensitivity particularly if false positives in shadows.                                                                    |
-|      `brightnessMax`      |         Any integer between 0 and 255          |                                                                 Provides a maximum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 190 and 250. Decrease to reduce sensitivity particularly if false positives in bright sun.                                                                 |
-|   `min_detection_area`    |                    Integer                     |                                                                                                                                                   The minimum area for which to detect a weed.                                                                                                                                                   |
-|       `invert_hue`        |                    Boolean                     |                                                                                                                 True/False, inverts the detected hue from everything within the thresholds to everything outside the thresholds.                                                                                                                 |
-|    **DataCollection**     |                                                |                                                                                                                                                                                                                                                                                                                                                  |
-|      `sample_images`      |             Boolean: True or False             |                                                                                                                      Enables or disables image data collection. Defaults to False. Set to True to start collecting images.                                                                                                                       |
-|      `sample_method`      |     Choose from 'bbox', 'square', 'whole'      |                                                                                                            If sample_method=None, sampling is deactivated. Do not leave on for long periods or SD card will fill up and stop working.                                                                                                            |
-|    `sample_frequency`     |              Any positive integer              |                                                                                                          Changes how often (after how many frames) image sampling will occur. If sampleFreq=60, images will be sampled every 60 frames.                                                                                                          |
-|    `disable_detection`    |             Boolean: True or False             |                                                                                  Disable detection when running data collection. This will reduce the workload on the Pi and increase frame rate. Useful if using the OWL for dedicated image data collection.                                                                                   |
-|     `save_directory`      |             Path to save directory             |                                                                                                            Set where you want the images saved. If you insert a USB and would like to save images to it, put the path for that here.                                                                                                             |
-|   `enable_device_save`    |               Boolean: True or False               |                                                                                                  Enable saving to the device itself. This is to avoid accidentally filling the device with collected data when it was intended for a USB drive.                                                                                                  |
-|        `recording`        |             Boolean: True or False             |                                                                                                                                                   True/False - turn video recording on or off.                                                                                                                                                   |
-|         `log_fps`         |             Boolean: True or False             |                                                                                                                                                               Save FPS to a file.                                                                                                                                                                |
-|       `camera_name`       |                   Any string                   |                                                                                                                          Changes the save name if recording videos of the camera. Ignore - only used if recording data.                                                                                                                          |
-|        **Relays**         |             Integer/GPIO Boardpin              |                                                                                                                                               Maps a relay number to a boardpin on the GPIO header                                                                                                                                               |
 
  </details>
 
@@ -1776,6 +1798,20 @@ startup if `headless=False`.
 
  </details>
 
+## Connecting a Controller
+
+<details>
+<summary>Adding simple controllers to manage fewer than 4 OWLs</summary>
+<br>
+
+The software and designs for GPIO-based controllers (between 1 and 4 OWL units) are complete. 
+Detailed installation instructions will be added soon.
+
+| Ute Controller                                                                                          | 'Advanced' Controller                                                                               |
+|---------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|
+| ![IMG-20240606-WA0016](https://github.com/user-attachments/assets/2df7819f-79cc-4803-a7b8-e83000add7af) | ![20240815_131829](https://github.com/user-attachments/assets/d3ff9365-9296-47e8-8dd5-cf2ba59d7657) |
+
+
 ## Green-on-Green
 
 <details>
@@ -1784,22 +1820,14 @@ startup if `headless=False`.
 
 ### OWL Integration
 
-Green-on-Green capability is here!
+Green-on-Green capability is (almost) here!
 
-Deep learning object detection algorithms for in-crop or 'Green-on-Green' (GoG) require much more processing power than
-the green detection algorithms we have used previously. If we ran these GoG algorithms directly on the Raspberry Pi, the
-frame rate would be prohibitively slow. To overcome this, you can use more powerful computers with GPUs (i.e. any of
-NVIDIA's Jetson series), alternatively you can connect a third party processor such as Google Coral's TPU through the
-USB3.0 ports of the Raspberry Pi 4. This means increased performance without needing to purchase another embedded
-computer.
+While we previously had implemented in-crop detection models with the Google Coral and Pycoral, the lack of support
+has made us reconsider that approach. Running detection models like YOLO is in the works to run on the base Raspberry Pi
+5 or with additional hardware such as the Raspberry Pi AI Kit with the Hailo 8L.
 
-The [Google Coral USB accelerator](https://coral.ai/products/accelerator) is only $59.99, so it provides performance
-upgrades without substantial cost increases. With the added hardware, there are some additional software installation
-details that you should follow. And you will need to connect the Google Coral to the Raspberry Pi USB3.0 port too. At
-the moment, this won't fit neatly in the case, but we are continuing to work on improving this.
+If you would like to try the Google Coral, you can by following the instructions in the 'models' directory.
 
-For all the details on how to install the Google Coral, please head over to the `models` directory. We have provided an
-installation script to make it as straightforward as possible.
 
 ### Model Training
 
@@ -1976,30 +2004,21 @@ at 25% infill.
 <br>
 
 We and others will be continually contributing to and improving OWL as we become aware of issues or opportunities to
-increase detection performance. Once you have a functioning setup the process to update is simple. First, you'll need to
-connect a screen, keyboard and mouse to the OWL unit and boot it up. Navigate to the existing owl directory
-in `/home/owl/` and either delete or rename that folder. Remember if you've made any of your own changes to the
-parameters/code, write them down. Then open up a Terminal window (Ctrl + T) and follow these steps:
+increase detection performance. Once you have a functioning setup the process to update is simple with a single bash script. 
+First, you'll either need to connect a screen, keyboard and mouse to the OWL unit or do this via SSH.
 
->⚠️**IMPORTANT**⚠️ Before continuing make sure you are in the `owl` virtual environment. Check that `(owl)` appears at the
-start of each command line, e.g. `(owl) owl@raspberrypi:~ $`. Run `workon owl` if you are unsure. If you are not in
-the `owl` environment, you will run into errors when starting `owl.py`.
+>⚠️**IMPORTANT**⚠️ Before continuing make sure you are NOT in the `owl` directory: e.g. `(owl) owl@raspberrypi:~. You can
+> double check by running `~``
 
+The software can be updated using a one line bash script:
 ```
-(owl) owl@raspberrypi:~ $ cd ~
-(owl) owl@raspberrypi:~ $ mv owl owl-old      # this renames the old 'owl' folder to 'owl-old'
-(owl) owl@raspberrypi:~ $ git clone https://github.com/geezacoleman/OpenWeedLocator        # download the new software
-(owl) owl@raspberrypi:~ $ mv OpenWeedLocator owl      # rename the download to 'owl'
-(owl) owl@raspberrypi:~ $ cd ~/owl
-(owl) owl@raspberrypi:~/owl $ pip install -r requirements.txt
-(owl) owl@raspberrypi:~/owl $ chmod a+x owl.py
-(owl) owl@raspberrypi:~/owl $ chmod a+x owl_boot.sh
+bash owl_update.sh
 ```
 
 And that's it! You're good to go with the latest software.
 
 If you have multiple units running, the most efficient method is to update one and then copy the SD card disk image to
-every other unit. Follow these instructions here. ADD INSTRUCTIONS
+every other unit. Follow the instructions presented here, to use software already installed on the Pi.
 
 ## Version History
 
