@@ -2014,7 +2014,7 @@ First, you'll either need to connect a screen, keyboard and mouse to the OWL uni
 
 The software can be updated using a one line bash script:
 ```
-bash owl_update.sh
+bash ~/owl/owl_update.sh
 ```
 
 And that's it! You're good to go with the latest software.
