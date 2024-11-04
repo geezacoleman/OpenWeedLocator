@@ -1,13 +1,18 @@
 #!/usr/bin/env python
-from utils.input_manager import UteController, AdvancedController
+import logging
+
+from utils.error_manager import OWLConfigError
+from utils.input_manager import UteController, AdvancedController, get_rpi_version
 from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator
 from utils.directory_manager import DirectorySetup
 from utils.video_manager import VideoStream
-
 from utils.image_sampler import ImageRecorder
-from utils.blur_algorithms import fft_blur
+from utils.algorithms import fft_blur
 from utils.greenonbrown import GreenOnBrown
 from utils.frame_reader import FrameReader
+from utils.config_manager import ConfigValidator
+
+import utils.error_manager as errors
 
 from multiprocessing import Value, Process
 from configparser import ConfigParser
@@ -15,6 +20,7 @@ from pathlib import Path
 from datetime import datetime
 from imutils.video import FPS
 
+import warnings
 import argparse
 import imutils
 import time
@@ -34,9 +40,14 @@ class Owl:
 
         # start by reading the config file
         self._config_path = Path(__file__).parent / config_file
-        self.config = ConfigParser()
-        self.config.read(self._config_path)
+        try:
+            self.config = ConfigValidator.load_and_validate_config(self._config_path)
+        except OWLConfigError as e:
+            logging.error(f"Configuration error: {e}")
+            raise
 
+        self.config.read(self._config_path)
+        self.RPI_VERSION = get_rpi_version()
         # is the source a directory/file
         self.input_file_or_directory = input_file_or_directory
 
@@ -97,13 +108,17 @@ class Owl:
         self.save_directory = None
 
         # if a controller is connected, sample images must be true to set up directories correctly
-        self.controller_type = self.config.get('Controller', 'controller_type')
-        if self.controller_type != 'None':
+        self.controller_type = self.config.get('Controller', 'controller_type').strip("'\" ").lower()
+
+        if self.controller_type not in {'none', 'ute', 'advanced'}:
+            raise errors.ControllerTypeError(self.config.get('Controller', 'controller_type'))
+
+        if self.controller_type != 'none':
             self.sample_images = True
         else:
             self.sample_images = self.config.getboolean('DataCollection', 'sample_images')
 
-        # if controller is 'None' but sample_images is True, then it will set it up still
+        # if controller is 'none' but sample_images is True, then it will set it up still
         if self.sample_images:
             self.sample_method = self.config.get('DataCollection', 'sample_method')
             self.disable_detection = self.config.getboolean('DataCollection', 'disable_detection')
@@ -118,7 +133,7 @@ class Owl:
         ############################
 
         # initialise controller buttons and async management
-        if self.controller_type != 'None':
+        if self.controller_type != 'none':
             self.detection_state = Value('b', False)
             self.sample_state = Value('b', False)
             self.stop_flag = Value('b', False)
@@ -130,7 +145,7 @@ class Owl:
                     record_led_pin='BOARD38',
                     storage_led_pin='BOARD40')
 
-                self.switch_purpose = self.config.get('Controller', 'switch_purpose')
+                self.switch_purpose = self.config.get('Controller', 'switch_purpose').lower()
                 self.switch_pin = self.config.getint('Controller', 'switch_pin')
 
                 self.controller = UteController(
@@ -174,7 +189,8 @@ class Owl:
                 )
 
             else:
-                raise ValueError(f"Invalid controller type: {self.controller_type}")
+                raise ValueError(f"Invalid controller type: {self.controller_type}. "
+                                 f"Select from None, Advanced or Ute in the config file.")
 
             self.controller_process = Process(target=self.controller.run)
             self.controller_process.start()
@@ -189,14 +205,17 @@ class Owl:
 
         self.relay_vis = None
 
-        # check that the resolution is not so high it will entirely brick/destroy the OWL.
+        # Check which Raspberry Pi is being used and adjust the resolution accordingly.
+        # Use `cat /proc-device-tree/model` to check the model of the Raspberry Pi.
         total_pixels = self.resolution[0] * self.resolution[1]
-        if total_pixels > (832 * 640):
+
+        if (self.RPI_VERSION in ['rpi-3', 'rpi-4']) and total_pixels > (832 * 640):
             # change here if you want to test higher resolutions, but be warned, backup your current image!
             self.resolution = (640, 480)
-            self.logger.log_line(f"[WARNING] Resolution {self.config.getint('Camera', 'resolution_width')}, "
-                                 f"{self.config.getint('Camera', 'resolution_height')} selected is dangerously high. ",
-                                 verbose=True)
+            warnings.warn(f"[WARNING] Resolution {self.config.getint('Camera', 'resolution_width')}, "
+                                 f"{self.config.getint('Camera', 'resolution_height')} selected is dangerously high. ")
+        else:
+            warnings.warn(f'High resolution, expect low framerate. Resolution set to {self.resolution[0]}x{self.resolution[1]}.')
 
         # check if test video or videostream from camera
         # is the source a directory/file
@@ -206,7 +225,7 @@ class Owl:
         self.input_file_or_directory = input_file_or_directory
 
         if len(self.config.get('System', 'input_file_or_directory')) > 0 and input_file_or_directory is not None:
-            print('[WARNING] two paths to image/videos provided. Defaulting to the command line flag.')
+            warnings.warn('[WARNING] two paths to image/videos provided. Defaulting to the command line flag.')
 
         if self.input_file_or_directory:
             self.cam = FrameReader(path=self.input_file_or_directory,

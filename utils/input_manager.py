@@ -2,7 +2,7 @@ import time
 import platform
 import warnings
 import configparser
-
+import subprocess
 import cv2
 
 # check if the system is being tested on a Windows or Linux x86 64 bit machine
@@ -237,3 +237,24 @@ class AdvancedController:
             'brightnessMin': config.getint('GreenOnBrown', 'brightnessMin'),
             'brightnessMax': config.getint('GreenOnBrown', 'brightnessMax')
         }
+
+def get_rpi_version():
+    try:
+        cmd = ["cat", "/proc/device-tree/model"]
+        model = subprocess.check_output(cmd).decode('utf-8').rstrip('\x00').strip()
+
+        if 'Pi 5' in model:
+            return 'rpi-5'
+        elif 'Pi 4' in model:
+            return 'rpi-4'
+        elif 'Pi 3' in model:
+            return 'rpi-3'
+        else:
+            return 'non-rpi'
+
+    except FileNotFoundError:
+        return 'non-rpi'
+    except subprocess.CalledProcessError:
+        raise ValueError("Error reading Raspberry Pi version.")
+
+

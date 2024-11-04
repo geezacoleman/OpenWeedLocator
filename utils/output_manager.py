@@ -1,6 +1,6 @@
 from utils.logger import Logger
 from threading import Thread, Event, Condition, Lock
-from utils.cli_vis import RelayVis
+from utils.vis_manager import RelayVis
 from utils.error_manager import OWLAlreadyRunningError
 from enum import Enum
 from collections import deque
