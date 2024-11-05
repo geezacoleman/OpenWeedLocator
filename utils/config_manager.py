@@ -113,7 +113,7 @@ class ConfigValidator:
     @classmethod
     def validate_controller(cls, config: ConfigParser) -> Tuple[bool, Dict[str, Dict[str, str]]]:
         """Validate controller configuration."""
-        errors: Dict[str, Dict[str, str]] = {}  # Type hint for errors dictionary
+        controller_errors: Dict[str, Dict[str, str]] = {}  # Type hint for errors dictionary
         controller_type = config.get('Controller', 'controller_type', fallback='').lower()
 
         # Validate controller type
@@ -130,8 +130,8 @@ class ConfigValidator:
             switch_purpose = config.get('Controller', 'switch_purpose').lower()
             if switch_purpose not in cls.VALID_SWITCH_PURPOSES:
                 if 'Controller' not in errors:
-                    errors['Controller'] = {}
-                errors['Controller'][
+                    controller_errors['Controller'] = {}
+                controller_errors['Controller'][
                     'switch_purpose'] = f'Must be one of: {", ".join(sorted(cls.VALID_SWITCH_PURPOSES))}'
 
         # For advanced controller, validate config files exist
@@ -141,10 +141,10 @@ class ConfigValidator:
                     config_path = Path(config.get('Controller', config_key))
                     if not config_path.exists():
                         if 'Controller' not in errors:
-                            errors['Controller'] = {}
-                        errors['Controller'][config_key] = f'Config file does not exist: {config_path}'
+                            controller_errors['Controller'] = {}
+                        controller_errors['Controller'][config_key] = f'Config file does not exist: {config_path}'
 
-        return not bool(errors), errors
+        return not bool(controller_errors), controller_errors
 
     @classmethod
     def get_controller_requirements(cls, controller_type: str) -> Tuple[set, set]:
@@ -183,7 +183,7 @@ class ConfigValidator:
         Returns (is_valid, errors)
         """
         ACCEPTABLE_RANGE = 5
-        errors = {}
+        threshold_errors = {}
         section_errors = {}
 
         # Validate min < max for all threshold pairs
@@ -238,9 +238,9 @@ class ConfigValidator:
                 pass
 
         if section_errors:
-            errors['GreenOnBrown'] = section_errors
+            threshold_errors['GreenOnBrown'] = section_errors
 
-        return not bool(errors), errors
+        return not bool(threshold_errors), threshold_errors
 
     @classmethod
     def validate_value(cls, key: str, value: str, used_pins: Set[int]) -> Tuple[bool, str]:
@@ -344,6 +344,8 @@ class ConfigValidator:
         used_pins = set()
         validation_errors = {}
 
+        # File existence and parsing must still raise immediately
+        # as we can't continue without a valid file
         if not config_path.exists():
             raise errors.ConfigFileError(config_path, "File does not exist")
 
@@ -354,14 +356,13 @@ class ConfigValidator:
         except ConfigParserError as e:
             raise errors.ConfigFileError(config_path, f"Parse error: {str(e)}")
 
-        # Create working copy of config requirements to account for differences in config between controllers
+        # Create working copy of config requirements
         working_config = dict(cls.REQUIRED_CONFIG)
 
-        # Validate controller specific rules first
+        # Validate controller specific rules
         is_valid, controller_errors = cls.validate_controller(config)
         if not is_valid:
             validation_errors.update(controller_errors)
-            raise errors.ConfigValueError(validation_errors, config_path)
 
         # Update controller requirements based on type
         controller_type = config.get('Controller', 'controller_type', fallback='').lower()
@@ -375,17 +376,18 @@ class ConfigValidator:
         is_valid, algorithm_errors = cls.validate_algorithm(config)
         if not is_valid:
             validation_errors.update(algorithm_errors)
-            raise errors.ConfigValueError(validation_errors, config_path)
 
         # Threshold validation
         is_valid, threshold_errors = cls.validate_thresholds(config)
         if not is_valid:
             validation_errors.update(threshold_errors)
 
-        # Check required sections - use working_config
+        # Check required sections
         missing_sections = set(working_config.keys()) - set(config.sections())
         if missing_sections:
-            raise errors.ConfigSectionError(missing_sections, config_path)
+            validation_errors['missing_sections'] = {
+                'sections': f"Missing required sections: {', '.join(missing_sections)}"
+            }
 
         # Validate sections and values
         for section in config.sections():
@@ -406,23 +408,31 @@ class ConfigValidator:
         for warning in relay_warnings:
             logging.warning(warning)
 
-        if validation_errors:
-            raise errors.ConfigValueError(validation_errors, config_path)
-
-        # Check required keys in each section - use working_config
+        # Check required keys in each section
         for section, requirements in working_config.items():
+            if section not in config.sections():
+                continue  # Skip if section is missing - we've already recorded this error
+
             config_keys = set(config[section].keys())
             required_keys = {k.lower() for k in requirements['required_keys']}
             optional_keys = {k.lower() for k in requirements['optional_keys']}
 
             missing_keys = required_keys - config_keys
             if missing_keys:
-                raise errors.ConfigKeyError(section, missing_keys, config_path)
+                if section not in validation_errors:
+                    validation_errors[section] = {}
+                validation_errors[section].update({
+                    k: "Required key missing" for k in missing_keys
+                })
 
             unknown_keys = config_keys - (required_keys | optional_keys)
             if unknown_keys:
                 logging.warning(
                     f"Unknown keys in section [{section}]: {', '.join(unknown_keys)}"
                 )
+
+        # Raise all validation errors at once
+        if validation_errors:
+            raise errors.ConfigValueError(validation_errors, config_path)
 
         return config
