@@ -74,22 +74,22 @@ def exg_standardised(image):
     return image_out
 
 def exg_standardised_hue(image,
-                         hueMin=30,
-                         hueMax=90,
-                         brightnessMin=10,
-                         brightnessMax=220,
-                         saturationMin=30,
-                         saturationMax=255,
+                         hue_min=30,
+                         hue_max=90,
+                         brightness_min=10,
+                         brightness_max=220,
+                         saturation_min=30,
+                         saturation_max=255,
                          invert_hue=False):
     '''
     Takes an image and performs a combined ExG + HSV algorithm
     :param image: image as a BGR array (i.e. opened with opencv not PIL)
-    :param hueMin: minimum hue value
-    :param hueMax: maximum hue value
-    :param brightnessMin: minimum 'value' or brightness value
-    :param brightnessMax: maximum 'value' or brightness value
-    :param saturationMin: minimum saturation
-    :param saturationMax: maximum saturation
+    :param hue_min: minimum hue value
+    :param hue_max: maximum hue value
+    :param brightness_min: minimum 'value' or brightness value
+    :param brightness_max: maximum 'value' or brightness value
+    :param saturation_min: minimum saturation
+    :param saturation_max: maximum saturation
     :param invert_hue: inverts the hue threshold to exclude anything within the thresholds
     :return: returns a grayscale image
     '''
@@ -112,9 +112,9 @@ def exg_standardised_hue(image,
     image_out = image_out.astype('uint8')
 
     hsv_thresh, _ = hsv(image,
-                       hueMin=hueMin, hueMax=hueMax,
-                       brightnessMin=brightnessMin, brightnessMax=brightnessMax,
-                       saturationMin=saturationMin, saturationMax=saturationMax,
+                       hue_min=hue_min, hue_max=hue_max,
+                       brightness_min=brightness_min, brightness_max=brightness_max,
+                       saturation_min=saturation_min, saturation_max=saturation_max,
                        invert_hue=invert_hue)
     image_out = hsv_thresh & image_out
     # cv2.imshow('exhu', imgOut)
@@ -139,41 +139,39 @@ def exgr(image):
     return image_out
 
 def hsv(image,
-        hueMin=30,
-        hueMax=90,
-        brightnessMin=10,
-        brightnessMax=220,
-        saturationMin=30,
-        saturationMax=255,
+        hue_min=30,
+        hue_max=90,
+        brightness_min=10,
+        brightness_max=220,
+        saturation_min=30,
+        saturation_max=255,
         invert_hue=False):
-    '''
+
+    """
     Performs an HSV thresholding operation on the input image
     :param image: image as a BGR array (i.e. opened with opencv not PIL)
-    :param hueMin: minimum hue threshold
-    :param hueMax: maximum hue threshold
-    :param brightnessMin: minimum 'brightness' or 'value' threshold
-    :param brightnessMax: maximum 'brightness' or 'value' threshold
-    :param saturationMin: minimum saturation threshold
-    :param saturationMax: maximum saturation threshold
+    :param hue_min: minimum hue threshold
+    :param hue_max: maximum hue threshold
+    :param brightness_min: minimum 'brightness' or 'value' threshold
+    :param brightness_max: maximum 'brightness' or 'value' threshold
+    :param saturation_min: minimum saturation threshold
+    :param saturation_max: maximum saturation threshold
     :param invert_hue: inverts the hue threshold to exclude anything within the thresholds
     :return: returns a binary image and boolean thresholded or not
-    '''
+    """
+
     image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     hue = image[:, :, 0]
     sat = image[:, :, 1]
     val = image[:, :, 2]
 
-    hue_thresh = cv2.inRange(hue, hueMin, hueMax)
-    sat_thresh = cv2.inRange(sat, saturationMin, saturationMax)
-    val_thresh = cv2.inRange(val, brightnessMin, brightnessMax)
+    hue_thresh = cv2.inRange(hue, hue_min, hue_max)
+    sat_thresh = cv2.inRange(sat, saturation_min, saturation_max)
+    val_thresh = cv2.inRange(val, brightness_min, brightness_max)
 
     # allow users to select purple/red colour ranges by excluding green
     if invert_hue:
         hue_thresh = cv2.bitwise_not(hue_thresh)
-
-    # cv2.imshow('hue', hueThresh)
-    # cv2.imshow('sat', satThresh)
-    # cv2.imshow('val', valThresh)
 
     out_thresh = sat_thresh & val_thresh & hue_thresh
     # cv2.imshow('HSV Out', outThresh)

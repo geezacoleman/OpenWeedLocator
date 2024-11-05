@@ -59,14 +59,14 @@ class Owl:
             self.show_display = True
 
         # threshold parameters for different algorithms
-        self.exgMin = self.config.getint('GreenOnBrown', 'exgMin')
-        self.exgMax = self.config.getint('GreenOnBrown', 'exgMax')
-        self.hueMin = self.config.getint('GreenOnBrown', 'hueMin')
-        self.hueMax = self.config.getint('GreenOnBrown', 'hueMax')
-        self.saturationMin = self.config.getint('GreenOnBrown', 'saturationMin')
-        self.saturationMax = self.config.getint('GreenOnBrown', 'saturationMax')
-        self.brightnessMin = self.config.getint('GreenOnBrown', 'brightnessMin')
-        self.brightnessMax = self.config.getint('GreenOnBrown', 'brightnessMax')
+        self.exg_min = self.config.getint('GreenOnBrown', 'exg_min')
+        self.exg_max = self.config.getint('GreenOnBrown', 'exg_max')
+        self.hue_min = self.config.getint('GreenOnBrown', 'hue_min')
+        self.hue_max = self.config.getint('GreenOnBrown', 'hue_max')
+        self.saturation_min = self.config.getint('GreenOnBrown', 'saturation_min')
+        self.saturation_max = self.config.getint('GreenOnBrown', 'saturation_max')
+        self.brightness_min = self.config.getint('GreenOnBrown', 'brightness_min')
+        self.brightness_max = self.config.getint('GreenOnBrown', 'brightness_max')
 
         # time spent on each image when looping over a directory
         self.image_loop_time = self.config.getint('Visualisation', 'image_loop_time')
@@ -76,14 +76,14 @@ class Owl:
             # create trackbars for the threshold calculation
             self.window_name = "Adjust Detection Thresholds"
             cv2.namedWindow("Adjust Detection Thresholds", cv2.WINDOW_AUTOSIZE)
-            cv2.createTrackbar("ExG-Min", self.window_name, self.exgMin, 255, nothing)
-            cv2.createTrackbar("ExG-Max", self.window_name, self.exgMax, 255, nothing)
-            cv2.createTrackbar("Hue-Min", self.window_name, self.hueMin, 179, nothing)
-            cv2.createTrackbar("Hue-Max", self.window_name, self.hueMax, 179, nothing)
-            cv2.createTrackbar("Sat-Min", self.window_name, self.saturationMin, 255, nothing)
-            cv2.createTrackbar("Sat-Max", self.window_name, self.saturationMax, 255, nothing)
-            cv2.createTrackbar("Bright-Min", self.window_name, self.brightnessMin, 255, nothing)
-            cv2.createTrackbar("Bright-Max", self.window_name, self.brightnessMax, 255, nothing)
+            cv2.createTrackbar("ExG-Min", self.window_name, self.exg_min, 255, nothing)
+            cv2.createTrackbar("ExG-Max", self.window_name, self.exg_max, 255, nothing)
+            cv2.createTrackbar("Hue-Min", self.window_name, self.hue_min, 179, nothing)
+            cv2.createTrackbar("Hue-Max", self.window_name, self.hue_max, 179, nothing)
+            cv2.createTrackbar("Sat-Min", self.window_name, self.saturation_min, 255, nothing)
+            cv2.createTrackbar("Sat-Max", self.window_name, self.saturation_max, 255, nothing)
+            cv2.createTrackbar("Bright-Min", self.window_name, self.brightness_min, 255, nothing)
+            cv2.createTrackbar("Bright-Max", self.window_name, self.brightness_max, 255, nothing)
 
         self.resolution = (self.config.getint('Camera', 'resolution_width'),
                            self.config.getint('Camera', 'resolution_height'))
@@ -345,14 +345,14 @@ class Owl:
 
                 # retrieve the trackbar positions for thresholds
                 if self.show_display:
-                    self.exgMin = cv2.getTrackbarPos("ExG-Min", self.window_name)
-                    self.exgMax = cv2.getTrackbarPos("ExG-Max", self.window_name)
-                    self.hueMin = cv2.getTrackbarPos("Hue-Min", self.window_name)
-                    self.hueMax = cv2.getTrackbarPos("Hue-Max", self.window_name)
-                    self.saturationMin = cv2.getTrackbarPos("Sat-Min", self.window_name)
-                    self.saturationMax = cv2.getTrackbarPos("Sat-Max", self.window_name)
-                    self.brightnessMin = cv2.getTrackbarPos("Bright-Min", self.window_name)
-                    self.brightnessMax = cv2.getTrackbarPos("Bright-Max", self.window_name)
+                    self.exg_min = cv2.getTrackbarPos("ExG-Min", self.window_name)
+                    self.exg_max = cv2.getTrackbarPos("ExG-Max", self.window_name)
+                    self.hue_min = cv2.getTrackbarPos("Hue-Min", self.window_name)
+                    self.hue_max = cv2.getTrackbarPos("Hue-Max", self.window_name)
+                    self.saturation_min = cv2.getTrackbarPos("Sat-Min", self.window_name)
+                    self.saturation_max = cv2.getTrackbarPos("Sat-Max", self.window_name)
+                    self.brightness_min = cv2.getTrackbarPos("Bright-Min", self.window_name)
+                    self.brightness_max = cv2.getTrackbarPos("Bright-Max", self.window_name)
 
                 # pass image, thresholds to green_on_brown function
                 if not self.disable_detection:
@@ -365,14 +365,14 @@ class Owl:
                     else:
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
                             frame,
-                            exgMin=self.exgMin,
-                            exgMax=self.exgMax,
-                            hueMin=self.hueMin,
-                            hueMax=self.hueMax,
-                            saturationMin=self.saturationMin,
-                            saturationMax=self.saturationMax,
-                            brightnessMin=self.brightnessMin,
-                            brightnessMax=self.brightnessMax,
+                            exg_min=self.exg_min,
+                            exg_max=self.exg_max,
+                            hue_min=self.hue_min,
+                            hue_max=self.hue_max,
+                            saturation_min=self.saturation_min,
+                            saturation_max=self.saturation_max,
+                            brightness_min=self.brightness_min,
+                            brightness_max=self.brightness_max,
                             show_display=self.show_display,
                             algorithm=algorithm,
                             min_detection_area=min_detection_area,
@@ -536,14 +536,14 @@ class Owl:
         if 'GreenOnBrown' not in self.config.sections():
             self.config.add_section('GreenOnBrown')
 
-        self.config.set('GreenOnBrown', 'exgMin', str(self.exgMin))
-        self.config.set('GreenOnBrown', 'exgMax', str(self.exgMax))
-        self.config.set('GreenOnBrown', 'hueMin', str(self.hueMin))
-        self.config.set('GreenOnBrown', 'hueMax', str(self.hueMax))
-        self.config.set('GreenOnBrown', 'saturationMin', str(self.saturationMin))
-        self.config.set('GreenOnBrown', 'saturationMax', str(self.saturationMax))
-        self.config.set('GreenOnBrown', 'brightnessMin', str(self.brightnessMin))
-        self.config.set('GreenOnBrown', 'brightnessMax', str(self.brightnessMax))
+        self.config.set('GreenOnBrown', 'exg_min', str(self.exg_min))
+        self.config.set('GreenOnBrown', 'exg_max', str(self.exg_max))
+        self.config.set('GreenOnBrown', 'hue_min', str(self.hue_min))
+        self.config.set('GreenOnBrown', 'hue_max', str(self.hue_max))
+        self.config.set('GreenOnBrown', 'saturation_min', str(self.saturation_min))
+        self.config.set('GreenOnBrown', 'saturation_max', str(self.saturation_max))
+        self.config.set('GreenOnBrown', 'brightness_min', str(self.brightness_min))
+        self.config.set('GreenOnBrown', 'brightness_max', str(self.brightness_max))
 
         # Write the updated configuration to the new file with a timestamped filename
         with open(new_config_path, 'w') as configfile:

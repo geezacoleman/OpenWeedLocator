@@ -53,7 +53,7 @@ class OWLError(Exception):
     def format_error_header(self, title: str) -> str:
         """Create a standardized error header."""
         return (
-            f"\n{self.colorize('!!! ' + title + ' !!!', 'RED', bold=True)}\n"
+            f"\n{self.colorize(title, 'RED', bold=True)}\n"
             f"{self.colorize(f'Error ID: {self.error_id}', 'YELLOW')}\n"
         )
 
@@ -350,7 +350,6 @@ class ConfigSectionError(OWLConfigError):
 class ConfigKeyError(OWLConfigError):
     """Raised when required keys are missing in a section"""
     def __init__(self, section: str, missing_keys: Set[str], config_path: Path):
-        # First initialize parent
         super().__init__(
             message=None,
             details={
@@ -360,7 +359,6 @@ class ConfigKeyError(OWLConfigError):
             }
         )
 
-        # Now build message
         message = (
             self.format_error_header("Missing Configuration Keys") +
             self.format_section(
@@ -372,6 +370,39 @@ class ConfigKeyError(OWLConfigError):
             self.format_section(
                 "Fix",
                 f"Add the missing keys to the [{section}] section of your config file"
+            )
+        )
+        self.args = (message,)
+
+class ConfigValueError(OWLConfigError):
+    """Raised when configuration values are invalid"""
+    def __init__(self, section_errors: Dict[str, Dict[str, str]], config_path: Path):
+        super().__init__(
+            message=None,
+            details={
+                'section_errors': section_errors,
+                'config_path': str(config_path)
+            }
+        )
+
+        error_lines = []
+        for section, errors in section_errors.items():
+            for key, error_msg in errors.items():
+                error_lines.append(
+                    f"[{self.colorize(section, 'WHITE', bold=True)}] "
+                    f"{self.colorize(key, 'WHITE', bold=True)} = {error_msg}"
+                )
+
+        message = (
+            self.format_error_header("Invalid Configuration Values") +
+            self.format_section(
+                "Problem",
+                "The following configuration values are invalid:\n" +
+                "\n".join(f"• {line}" for line in error_lines)
+            ) +
+            self.format_section(
+                "Fix",
+                f"Correct these values in your config file to be within their expected ranges"
             )
         )
         self.args = (message,)

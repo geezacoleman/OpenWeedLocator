@@ -20,9 +20,20 @@ class GreenOnBrown:
             'gndvi': gndvi
         }
 
-    def inference(self, image, exgMin=30, exgMax=250, hueMin=30, hueMax=90, brightnessMin=5, brightnessMax=200,
-                  saturationMin=30, saturationMax=255, min_detection_area=1, show_display=False, algorithm='exg',
-                  invert_hue=False, label='WEED'):
+    def inference(self, image,
+                  exg_min=30,
+                  exg_max=250,
+                  hue_min=30,
+                  hue_max=90,
+                  brightness_min=5,
+                  brightness_max=200,
+                  saturation_min=30,
+                  saturation_max=255,
+                  min_detection_area=1,
+                  show_display=False,
+                  algorithm='exg',
+                  invert_hue=False,
+                  label='WEED'):
         threshed_already = False
 
         # Retrieve the function based on the algorithm name
@@ -30,13 +41,13 @@ class GreenOnBrown:
 
         # Handle special cases for functions with additional parameters
         if algorithm == 'exhsv':
-            output = func(image, hueMin=hueMin, hueMax=hueMax, brightnessMin=brightnessMin,
-                          brightnessMax=brightnessMax, saturationMin=saturationMin,
-                          saturationMax=saturationMax, invert_hue=invert_hue)
+            output = func(image, hue_min=hue_min, hue_max=hue_max, brightness_min=brightness_min,
+                          brightness_max=brightness_max, saturation_min=saturation_min,
+                          saturation_max=saturation_max, invert_hue=invert_hue)
         elif algorithm == 'hsv':
-            output, threshed_already = func(image, hueMin=hueMin, hueMax=hueMax, brightnessMin=brightnessMin,
-                                            brightnessMax=brightnessMax, saturationMin=saturationMin,
-                                            saturationMax=saturationMax, invert_hue=invert_hue)
+            output, threshed_already = func(image, hue_min=hue_min, hue_max=hue_max, brightness_min=brightness_min,
+                                            brightness_max=brightness_max, saturation_min=saturation_min,
+                                            saturation_max=saturation_max, invert_hue=invert_hue)
         else:
             output = func(image)
 
@@ -44,13 +55,13 @@ class GreenOnBrown:
         boxes = []
 
         if not threshed_already:
-            output = np.clip(output, exgMin, exgMax)
+            output = np.clip(output, exg_min, exg_max)
             output = np.uint8(np.abs(output))
             if show_display:
                 cv2.imshow("HSV Threshold on ExG", output)
             threshold_out = cv2.adaptiveThreshold(output, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV,
                                                   31, 2)
-            # threshold_out = cv2.threshold(output, exgMin, exgMax, cv2.THRESH_BINARY)
+            # threshold_out = cv2.threshold(output, exg_min, exg_max, cv2.THRESH_BINARY)
             threshold_out = cv2.morphologyEx(threshold_out, cv2.MORPH_CLOSE, self.kernel, iterations=1)
         else:
             threshold_out = cv2.morphologyEx(output, cv2.MORPH_CLOSE, self.kernel, iterations=5)

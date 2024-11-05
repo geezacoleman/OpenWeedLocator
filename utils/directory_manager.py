@@ -17,7 +17,7 @@ class DirectorySetup:
                 print(f"[INFO] Attempt {attempt + 1} failed: {str(e)}. Retrying in {retry_delay} seconds...")
                 time.sleep(retry_delay)
 
-        raise NoWritableUSBError("Failed to set up directories after multiple attempts.")
+        raise NoWritableUSBError()
 
     def _try_setup_directories(self):
         self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))

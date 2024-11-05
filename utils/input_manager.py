@@ -165,25 +165,25 @@ class AdvancedController:
         settings = self.low_sensitivity_settings if self.sensitivity_state.value else self.high_sensitivity_settings
 
         # Update Owl instance settings
-        self.owl.exgMin = settings['exgMin']
-        self.owl.exgMax = settings['exgMax']
-        self.owl.hueMin = settings['hueMin']
-        self.owl.hueMax = settings['hueMax']
-        self.owl.saturationMin = settings['saturationMin']
-        self.owl.saturationMax = settings['saturationMax']
-        self.owl.brightnessMin = settings['brightnessMin']
-        self.owl.brightnessMax = settings['brightnessMax']
+        self.owl.exg_min = settings['exg_min']
+        self.owl.exg_max = settings['exg_max']
+        self.owl.hue_min = settings['hue_min']
+        self.owl.hue_max = settings['hue_max']
+        self.owl.saturation_min = settings['saturation_min']
+        self.owl.saturation_max = settings['saturation_max']
+        self.owl.brightness_min = settings['brightness_min']
+        self.owl.brightness_max = settings['brightness_max']
 
         # Update trackbars if show_display is True
         if self.owl.show_display:
-            cv2.setTrackbarPos("ExG-Min", self.owl.window_name, self.owl.exgMin)
-            cv2.setTrackbarPos("ExG-Max", self.owl.window_name, self.owl.exgMax)
-            cv2.setTrackbarPos("Hue-Min", self.owl.window_name, self.owl.hueMin)
-            cv2.setTrackbarPos("Hue-Max", self.owl.window_name, self.owl.hueMax)
-            cv2.setTrackbarPos("Sat-Min", self.owl.window_name, self.owl.saturationMin)
-            cv2.setTrackbarPos("Sat-Max", self.owl.window_name, self.owl.saturationMax)
-            cv2.setTrackbarPos("Bright-Min", self.owl.window_name, self.owl.brightnessMin)
-            cv2.setTrackbarPos("Bright-Max", self.owl.window_name, self.owl.brightnessMax)
+            cv2.setTrackbarPos("ExG-Min", self.owl.window_name, self.owl.exg_min)
+            cv2.setTrackbarPos("ExG-Max", self.owl.window_name, self.owl.exg_max)
+            cv2.setTrackbarPos("Hue-Min", self.owl.window_name, self.owl.hue_min)
+            cv2.setTrackbarPos("Hue-Max", self.owl.window_name, self.owl.hue_max)
+            cv2.setTrackbarPos("Sat-Min", self.owl.window_name, self.owl.saturation_min)
+            cv2.setTrackbarPos("Sat-Max", self.owl.window_name, self.owl.saturation_max)
+            cv2.setTrackbarPos("Bright-Min", self.owl.window_name, self.owl.brightness_min)
+            cv2.setTrackbarPos("Bright-Max", self.owl.window_name, self.owl.brightness_max)
 
     def set_detection_mode(self, mode):
         with self.detection_mode_state.get_lock():
@@ -228,14 +228,14 @@ class AdvancedController:
         config = configparser.ConfigParser()
         config.read(config_file)
         return {
-            'exgMin': config.getint('GreenOnBrown', 'exgMin'),
-            'exgMax': config.getint('GreenOnBrown', 'exgMax'),
-            'hueMin': config.getint('GreenOnBrown', 'hueMin'),
-            'hueMax': config.getint('GreenOnBrown', 'hueMax'),
-            'saturationMin': config.getint('GreenOnBrown', 'saturationMin'),
-            'saturationMax': config.getint('GreenOnBrown', 'saturationMax'),
-            'brightnessMin': config.getint('GreenOnBrown', 'brightnessMin'),
-            'brightnessMax': config.getint('GreenOnBrown', 'brightnessMax')
+            'exg_min': config.getint('GreenOnBrown', 'exg_min'),
+            'exg_max': config.getint('GreenOnBrown', 'exg_max'),
+            'hue_min': config.getint('GreenOnBrown', 'hue_min'),
+            'hue_max': config.getint('GreenOnBrown', 'hue_max'),
+            'saturation_min': config.getint('GreenOnBrown', 'saturation_min'),
+            'saturation_max': config.getint('GreenOnBrown', 'saturation_max'),
+            'brightness_min': config.getint('GreenOnBrown', 'brightness_min'),
+            'brightness_max': config.getint('GreenOnBrown', 'brightness_max')
         }
 
 def get_rpi_version():
