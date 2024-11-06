@@ -221,42 +221,49 @@ class OWLAlreadyRunningError(OWLProcessError):
                 for line in result
                 if 'owl.py' in line
                    and len(parts := line.strip().split()) >= 2
-                   and parts[0].isdigit()  # Verify it's a valid number first
+                   and parts[0].isdigit()
             ]
         except subprocess.CalledProcessError:
             return []
 
     def __init__(self, message: Optional[str] = None):
         processes = self.get_owl_processes()
-        details = {'running_processes': [vars(p) for p in processes]}
 
-        if not message:
-            process_list = "\n".join(
-                f"    {self.colorize(f'PID: {proc.pid}', 'WHITE', bold=True)} - Command: {proc.command}"
-                for proc in processes
-            ) or "    No OWL processes found in PS output."
+        super().__init__(
+            message=None,
+            details={'running_processes': [vars(p) for p in processes]}
+        )
 
-            message = (
-                    self.format_error_header("OWL Process Already Running") +
-                    self.format_section(
-                        "Status",
-                        "It looks like owl.py is already running. To continue, you need to stop the existing instance."
-                    ) +
-                    self.format_section("Running OWL processes", process_list) +
-                    self.format_section(
-                        "Commands to stop processes",
-                        f"    {self.colorize('kill <PID>', 'WHITE', bold=True)}  - Graceful termination\n"
-                        f"    {self.colorize('kill -9 <PID>', 'WHITE', bold=True)} - Force termination (use with caution)"
-                    ) +
-                    self.format_section(
-                        "Important Notes",
-                        "- Double-check the PID before stopping it!\n"
-                        "- If no processes are listed but error persists, check GPIO outputs\n"
-                        "- Ensure all GPIO resources are properly released"
-                    )
-            )
+        process_list = "\n".join(
+            f"    {self.colorize(f'PID: {proc.pid}', 'WHITE', bold=True)} - Command: {proc.command}"
+            for proc in processes
+        ) or "    No OWL processes found in PS output."
 
-        super().__init__(message, details)
+        formatted_message = (
+                self.format_error_header("OWL Process Already Running") +
+                self.format_section(
+                    "Status",
+                    "Another instance of OWL appears to be running. The GPIO pins are in use."
+                ) +
+                self.format_section(
+                    "Running OWL Processes",
+                    process_list
+                ) +
+                self.format_section(
+                    "Commands to Stop",
+                    f"    {self.colorize('kill <PID>', 'WHITE', bold=True)}  - Graceful termination\n"
+                    f"    {self.colorize('kill -9 <PID>', 'WHITE', bold=True)} - Force termination (use with caution)"
+                ) +
+                self.format_section(
+                    "Important Notes",
+                    "- Double-check the PID before stopping it!\n"
+                    "- If no processes are listed but error persists, check GPIO outputs\n"
+                    "- Ensure all GPIO resources are properly released\n"
+                    "- Try rebooting if the issue persists"
+                )
+        )
+
+        self.args = (formatted_message,)
 
 
 class OWLControllerError(OWLError):
@@ -264,89 +271,66 @@ class OWLControllerError(OWLError):
     pass
 
 
-class ControllerTypeError(OWLControllerError):
-    """Raised when an invalid controller type is specified."""
-
-    def __init__(self, invalid_type: str, config_file: str = "config.ini"):
-        details = {
-            'invalid_type': invalid_type,
-            'valid_types': ['None', 'Ute', 'Advanced'],
-            'config_file': config_file
-        }
-
-        message = (
-                self.format_error_header("Invalid Controller Type") +
-                self.format_section(
-                    "Problem",
-                    f"Controller type '{self.colorize(invalid_type, 'WHITE', bold=True)}' is not valid"
-                ) +
-                self.format_section(
-                    "Valid Types",
-                    "• None - No physical controller\n"
-                    "• Ute - Single switch controller\n"
-                    "• Advanced - Multi-switch controller"
-                ) +
-                self.format_section(
-                    "Fix",
-                    f"Edit {self.colorize(config_file, 'WHITE', bold=True)} and set correct controller_type"
-                    f"in the config file. Remember '' are not needed."
-                )
-        )
-        super().__init__(message, details)
-
-
 class ControllerPinError(OWLControllerError):
     """Raised when there are issues with controller GPIO pins."""
 
     def __init__(self, pin_name: str, pin_number: int = None, reason: str = None):
-        details = {
-            'pin_name': pin_name,
-            'pin_number': pin_number,
-            'reason': reason
-        }
+        # Call super first
+        super().__init__(
+            message=None,
+            details={
+                'pin_name': pin_name,
+                'pin_number': pin_number,
+                'reason': reason
+            }
+        )
 
         message = (
-                self.format_error_header("GPIO Pin Error") +
-                self.format_section(
-                    "Pin Details",
-                    f"• Name: {self.colorize(pin_name, 'WHITE', bold=True)}\n" +
-                    (f"• Number: {self.colorize(f'BOARD{pin_number}', 'WHITE', bold=True)}\n" if pin_number else "") +
-                    (f"• Reason: {reason}\n" if reason else "")
-                ) +
-                self.format_section(
-                    "Common Fixes",
-                    "1. Check for pin conflicts with other processes\n"
-                    "2. Verify physical connections\n"
-                    "3. Confirm pin numbers in config"
-                )
+            self.format_error_header("GPIO Pin Error") +
+            self.format_section(
+                "Pin Details",
+                f"• Name: {self.colorize(pin_name, 'WHITE', bold=True)}\n" +
+                (f"• Number: {self.colorize(f'BOARD{pin_number}', 'WHITE', bold=True)}\n" if pin_number else "") +
+                (f"• Reason: {reason}\n" if reason else "")
+            ) +
+            self.format_section(
+                "Common Fixes",
+                "1. Check for pin conflicts with other processes\n"
+                "2. Verify physical connections\n"
+                "3. Confirm pin numbers in config"
+            )
         )
-        super().__init__(message, details)
+        self.args = (message,)
 
 
 class ControllerConfigError(OWLControllerError):
     """Raised when there are issues with controller configuration."""
 
     def __init__(self, config_key: str, section: str = "Controller"):
-        details = {
-            'config_key': config_key,
-            'section': section
-        }
+        # Call super first
+        super().__init__(
+            message=None,
+            details={
+                'config_key': config_key,
+                'section': section
+            }
+        )
 
         message = (
-                self.format_error_header("Controller Configuration Error") +
-                self.format_section(
-                    "Missing Configuration",
-                    f"Required key '{self.colorize(config_key, 'WHITE', bold=True)}' "
-                    f"not found in section [{self.colorize(section, 'WHITE', bold=True)}]"
-                ) +
-                self.format_section(
-                    "Fix",
-                    "1. Check your config.ini file\n"
-                    f"2. Add the missing {config_key} setting in [{section}] section\n"
-                    "3. Ensure the value is appropriate for your controller type"
-                )
+            self.format_error_header("Controller Configuration Error") +
+            self.format_section(
+                "Missing Configuration",
+                f"Required key '{self.colorize(config_key, 'WHITE', bold=True)}' "
+                f"not found in section [{self.colorize(section, 'WHITE', bold=True)}]"
+            ) +
+            self.format_section(
+                "Fix",
+                "1. Check your config.ini file\n"
+                f"2. Add the missing {config_key} setting in [{section}] section\n"
+                "3. Ensure the value is appropriate for your controller type"
+            )
         )
-        super().__init__(message, details)
+        self.args = (message,)
 
 
 class OWLConfigError(OWLError):

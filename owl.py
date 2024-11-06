@@ -109,7 +109,9 @@ class Owl:
         try:
             self.relay_controller = RelayController(relay_dict=self.relay_dict)
         except errors.OWLAlreadyRunningError:
-            self.logger.critical("OWL initialization failed: GPIO pin conflict. Another OWL instance may be running.")
+            self.logger.critical("OWL initialization failed: GPIO pin conflict. Another OWL instance may be running.",
+                                 exc_info=True)
+            raise
 
         ### Data collection only ###
         # WARNING: initialise option disable detection for data collection
