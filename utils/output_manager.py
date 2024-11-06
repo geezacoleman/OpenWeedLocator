@@ -1,36 +1,41 @@
-from utils.logger import Logger
 from threading import Thread, Event, Condition, Lock
 from utils.vis_manager import RelayVis
 from utils.error_manager import OWLAlreadyRunningError
+from utils.log_manager import LogManager
 from enum import Enum
 from collections import deque
 import subprocess
 import shutil
 import time
-import os
-
+import logging
 import platform
-import warnings
 
-# check if the system is being tested on a Windows or Linux x86 64 bit machine
-if 'rpi' in platform.platform().lower() or 'aarch' in platform.platform().lower():
-    testing = False
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+def get_platform_config() -> tuple[bool, Optional[Exception]]:
+    """Determine platform and return testing status and lgpio error type"""
+    system_platform = platform.platform().lower()
+    is_raspberry_pi = 'rpi' in system_platform or 'aarch' in system_platform
+
+    if is_raspberry_pi:
+        from gpiozero import Buzzer, OutputDevice, LED
+        import lgpio
+        return False, lgpio.error
+
+    is_windows = platform.system() == "Windows"
+    system_name = "Windows" if is_windows else "unrecognized"
+    logger.warning(
+        f"The system is running on a {system_name} platform. GPIO disabled. Test mode active."
+    )
+    return True, None
+
+testing, lgpioERROR = get_platform_config()
+
+# Import GPIO components only if needed
+if not testing:
     from gpiozero import Buzzer, OutputDevice, LED
-    import lgpio
-
-    lgpioERROR = lgpio.error
-
-elif platform.system() == "Windows":
-    warning_message = "[WARNING] The system is running on a Windows platform. GPIO disabled. Test mode active."
-    warnings.warn(warning_message, RuntimeWarning)
-    testing = True
-    lgpioERROR = None
-
-else:
-    warning_message = "[WARNING] The system is not running on a recognized platform. GPIO disabled. Test mode active."
-    warnings.warn(warning_message, RuntimeWarning)
-    testing = True
-    lgpioERROR = None
 
 # two test classes to run the analysis on a desktop computer if a "win32" platform is detected
 class TestRelay:
@@ -73,6 +78,8 @@ class TestLED:
 
 class BaseStatusIndicator:
     def __init__(self, save_directory, no_save=False):
+        self.logger = LogManager.get_logger(__name__)
+
         self.save_directory = save_directory
         self.no_save = no_save
         self.testing = True if testing else False
@@ -142,7 +149,7 @@ class BaseStatusIndicator:
                     check=True
                 )
             except subprocess.CalledProcessError as e:
-                print(f"Error: Could not set {led} LED. {e}")
+                self.logger.error(msg=f"Error: Could not set {led} LED. {e}", exc_info=True)
 
     # Method to set LED trigger to 'none' to ensure manual control.
     # Based on: https://howtoraspberrypi.com/controler-led-verte-raspberry-pi-2/
@@ -158,9 +165,10 @@ class BaseStatusIndicator:
                     check=True
                 )
             except subprocess.CalledProcessError as e:
-                print(f"Error: Could not set {led} trigger to {trigger}. {e}")
+                self.logger.error(f"Error: Could not set {led} trigger to {trigger}.", exc_info=True)
 
     def _update_storage_indicator(self, percent_full):
+        self.logger.warning("Called _update_storage_indicator() but it's not implemented.")
         raise NotImplementedError("This method should be implemented by subclasses")
 
     def stop(self):
@@ -340,6 +348,8 @@ class AdvancedStatusIndicator(BaseStatusIndicator):
 # control class for the relay board
 class RelayControl:
     def __init__(self, relay_dict):
+        self.logger = LogManager.get_logger(__name__)
+
         self.testing = True if testing else False
         self.relay_dict = relay_dict
         self.on = False
@@ -352,13 +362,10 @@ class RelayControl:
                 self.buzzer = Buzzer(pin='BOARD7')
 
             except Exception as e:
-                if lgpioERROR and isinstance(e, lgpioERROR):
-                    if 'GPIO busy' in str(e):
-                        raise OWLAlreadyRunningError() from e
-                    else:
-                        raise e
+                if isinstance(e, lgpioERROR) and 'GPIO busy' in str(e):
+                    raise OWLAlreadyRunningError("OWL instance may already be running.") from e
                 else:
-                    raise e
+                    raise
 
             for relay, board_pin in self.relay_dict.items():
                 self.relay_dict[relay] = OutputDevice(pin=f'BOARD{board_pin}')
@@ -407,20 +414,22 @@ class RelayControl:
 # if the sprayDur has not elapsed or if the nozzle isn't already on.
 class RelayController:
     def __init__(self, relay_dict, vis=False, status_led=None):
+        self.logger = LogManager.get_logger(__name__)
+
         self.relay_dict = relay_dict
         self.vis = vis
         self.status_led = status_led
         # instantiate relay control with supplied relay dictionary to map to correct board pins
-        self.relay = RelayControl(self.relay_dict)
+        try:
+            self.relay = RelayControl(self.relay_dict)
+        except OWLAlreadyRunningError:
+            self.logger.error("Failed to initialize RelayControl: OWL is already running and using GPIO pin 7.")
+            raise
         self.relay_queue_dict = {}
         self.relay_condition_dict = {}
 
-        # start the logger and log file using absolute path of python file
-        self.save_dir = os.path.join(os.path.dirname(__file__), 'logs')
-        self.logger = Logger(name="weed_log.txt", saveDir=self.save_dir)
-
         # create a job queue and Condition() for each nozzle
-        print("[INFO] Setting up nozzles...")
+        self.logger.info("[INFO] Setting up nozzles...")
         self.relay_vis = RelayVis(relays=len(self.relay_dict.keys()))
         for relay_number in range(0, len(self.relay_dict)):
             self.relay_queue_dict[relay_number] = deque(maxlen=5)
@@ -432,7 +441,7 @@ class RelayController:
             relay_thread.start()
 
         time.sleep(1)
-        print("[INFO] Nozzle setup complete. Initiating camera...")
+        self.logger.info("[INFO] Nozzle setup complete. Initiating camera...")
         self.relay.beep(duration=0.5)
 
     def receive(self, relay, time_stamp, location=0, delay=0, duration=1):
@@ -491,7 +500,6 @@ class RelayController:
 
                 except ValueError:
                     time.sleep(0)
-                    self.logger.log_line(f'[ERROR] negative onDur {onDur} for nozzle {relay} received. Turning on for 0 seconds.')
 
                 input_condition.acquire()
 

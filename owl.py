@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import logging
+from audioop import error
 
 from utils.error_manager import OWLConfigError
 from utils.input_manager import UteController, AdvancedController, get_rpi_version
@@ -11,43 +11,52 @@ from utils.algorithms import fft_blur
 from utils.greenonbrown import GreenOnBrown
 from utils.frame_reader import FrameReader
 from utils.config_manager import ConfigValidator
+from utils.log_manager import LogManager
 
 import utils.error_manager as errors
 
 from multiprocessing import Value, Process
-from configparser import ConfigParser
 from pathlib import Path
 from datetime import datetime
 from imutils.video import FPS
 
-import warnings
 import argparse
 import imutils
 import time
 import sys
 import cv2
+import os
 
+from version import SystemInfo, VERSION
 
 def nothing(x):
     pass
-
 
 class Owl:
     def __init__(self, show_display=False,
                  focus=False,
                  input_file_or_directory=None,
                  config_file='config/DAY_SENSITIVITY_2.ini'):
+        # set up the logger
+        log_dir = Path(os.path.join(os.path.dirname(__file__), 'logs'))
+        LogManager.setup(log_dir=log_dir, log_level='INFO')
+        self.logger = LogManager.get_logger(__name__)
 
-        # start by reading the config file
+        self.logger.info("Initializing OWL...")
+        self._log_system_info()
+
+        # read the config file
         self._config_path = Path(__file__).parent / config_file
         try:
             self.config = ConfigValidator.load_and_validate_config(self._config_path)
         except OWLConfigError as e:
-            logging.error(f"Configuration error: {e}")
+            self.logger.error(f"Configuration error: {e}", exc_info=True)
             raise
 
         self.config.read(self._config_path)
         self.RPI_VERSION = get_rpi_version()
+        self.logger.info(msg=f'Raspberry Pi version: {self.RPI_VERSION}')
+
         # is the source a directory/file
         self.input_file_or_directory = input_file_or_directory
 
@@ -97,10 +106,10 @@ class Owl:
             self.relay_dict[int(key)] = int(value)
 
         # instantiate the relay controller - successful start should beep the buzzer
-        self.relay_controller = RelayController(relay_dict=self.relay_dict)
-
-        # instantiate the logger
-        self.logger = self.relay_controller.logger
+        try:
+            self.relay_controller = RelayController(relay_dict=self.relay_dict)
+        except errors.OWLAlreadyRunningError:
+            self.logger.critical("OWL initialization failed: GPIO pin conflict. Another OWL instance may be running.")
 
         ### Data collection only ###
         # WARNING: initialise option disable detection for data collection
@@ -111,6 +120,7 @@ class Owl:
         self.controller_type = self.config.get('Controller', 'controller_type').strip("'\" ").lower()
 
         if self.controller_type not in {'none', 'ute', 'advanced'}:
+            self.logger.error(f"Invalid controller type: {self.controller_type}")
             raise errors.ControllerTypeError(self.config.get('Controller', 'controller_type'))
 
         if self.controller_type != 'none':
@@ -194,6 +204,7 @@ class Owl:
 
             self.controller_process = Process(target=self.controller.run)
             self.controller_process.start()
+
         else:
             self.controller = None
             if self.sample_images:
@@ -212,10 +223,10 @@ class Owl:
         if (self.RPI_VERSION in ['rpi-3', 'rpi-4']) and total_pixels > (832 * 640):
             # change here if you want to test higher resolutions, but be warned, backup your current image!
             self.resolution = (640, 480)
-            warnings.warn(f"[WARNING] Resolution {self.config.getint('Camera', 'resolution_width')}, "
+            self.logger.warning(f"Resolution {self.config.getint('Camera', 'resolution_width')}, "
                                  f"{self.config.getint('Camera', 'resolution_height')} selected is dangerously high. ")
         else:
-            warnings.warn(f'High resolution, expect low framerate. Resolution set to {self.resolution[0]}x{self.resolution[1]}.')
+            self.logger.warning(f'High resolution, expect low framerate. Resolution set to {self.resolution[0]}x{self.resolution[1]}.')
 
         # check if test video or videostream from camera
         # is the source a directory/file
@@ -225,14 +236,14 @@ class Owl:
         self.input_file_or_directory = input_file_or_directory
 
         if len(self.config.get('System', 'input_file_or_directory')) > 0 and input_file_or_directory is not None:
-            warnings.warn('[WARNING] two paths to image/videos provided. Defaulting to the command line flag.')
+            self.logger.warning('[WARNING] two paths to image/videos provided. Defaulting to the command line flag.')
 
         if self.input_file_or_directory:
             self.cam = FrameReader(path=self.input_file_or_directory,
                                    resolution=self.resolution,
                                    loop_time=self.image_loop_time)
             self.frame_width, self.frame_height = self.cam.resolution
-            self.logger.log_line(f'[INFO] Using {self.cam.input_type} from {self.input_file_or_directory}...', verbose=True)
+            self.logger.info(f'[INFO] Using {self.cam.input_type} from {self.input_file_or_directory}...')
 
         # if no video, start the camera with the provided parameters
         else:
@@ -253,7 +264,7 @@ class Owl:
 
             except Exception as e:
                 error_detail = f"[CRITICAL ERROR] Stopped OWL at start: {e}"
-                self.logger.log_line(error_detail, verbose=True)
+                self.logger.info(error_detail)
                 self.relay_controller.relay.beep(duration=1, repeats=1)
                 self.status_indicator.error(1)
                 time.sleep(5)
@@ -309,12 +320,12 @@ class Owl:
                 weed_detector = GreenOnBrown(algorithm=algorithm)
 
         except (ModuleNotFoundError, IndexError, FileNotFoundError, ValueError) as e:
-            self._handle_exceptions(e, algorithm)
+            algo_error = errors.AlgorithmError(algorithm, e)
+            algo_error.handle(self)
 
         except Exception as e:
-            self.logger.log_line(
-                f"\n[ALGORITHM ERROR] Unrecognised error while starting algorithm: {algorithm}.\nError message: {e}", verbose=True)
-            self.stop()
+            algo_error = errors.AlgorithmError(algorithm, e)
+            algo_error.handle(self)
 
         if self.show_display:
             self.relay_vis = self.relay_controller.relay_vis
@@ -428,7 +439,7 @@ class Owl:
 
                 if log_fps and frame_count % 900 == 0:
                     fps.stop()
-                    self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
+                    self.logger.info(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
                     fps = FPS().start()
 
                 # update the framerate counter
@@ -464,7 +475,7 @@ class Owl:
                 k = cv2.waitKey(1) & 0xFF
                 if k == ord('s'):
                     self.save_parameters()
-                    self.logger.log_line("[INFO] Parameters saved.", verbose=True)
+                    self.logger.info("[INFO] Parameters saved.")
 
                 elif k == ord('r'):
                     # Toggle video recording
@@ -480,25 +491,25 @@ class Owl:
                 elif k == 27:
                     if log_fps:
                         fps.stop()
-                        self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
+                        self.logger.info(f"[INFO] Approximate FPS: {fps.fps():.2f}")
                     if self.show_display:
                         self.relay_controller.relay_vis.close()
 
-                    self.logger.log_line("[INFO] Stopped.", verbose=True)
+                    self.logger.info("[INFO] Stopped.")
                     self.stop()
                     break
 
         except KeyboardInterrupt:
             if log_fps:
                 fps.stop()
-                self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
+                self.logger.info(f"[INFO] Approximate FPS: {fps.fps():.2f}")
             if self.show_display:
                 self.relay_controller.relay_vis.close()
-            self.logger.log_line("[INFO] Stopped.", verbose=True)
+            self.logger.info("[INFO] Stopped.")
             self.stop()
 
         except Exception as e:
-            self.logger.log_line(f"[CRITICAL ERROR] STOPPED: {e}", verbose=True)
+            self.logger.info(f"[CRITICAL ERROR] STOPPED: {e}")
             self.stop()
 
     def stop(self):
@@ -573,9 +584,50 @@ class Owl:
 
         full_message = f"\n[{error_type}] while starting algorithm: {algorithm}.\nError message: {error_message}{detailed_message}"
 
-        self.logger.log_line(full_message, verbose=True)
+        self.logger.info(full_message)
         self.relay_controller.relay.beep(duration=0.25, repeats=4)
         sys.exit()
+
+    def _log_system_info(self):
+        """Log system information on startup"""
+        self.logger.info(f"Starting OWL version {VERSION}")
+
+        try:
+            sys_info = SystemInfo.get_os_info()
+            self.logger.info(
+                f"System Information: OS: {sys_info['system']} {sys_info['release']}, "
+                f"Machine: {sys_info['machine']}"
+            )
+        except Exception as e:
+            self.logger.warning(f"Failed to retrieve OS information: {e}")
+
+        try:
+            python_info = SystemInfo.get_python_info()
+            self.logger.info(
+                f"Python Version: {python_info['version']}, "
+                f"Implementation: {python_info['implementation']}, "
+                f"Compiler: {python_info['compiler']}"
+            )
+        except Exception as e:
+            self.logger.warning(f"Failed to retrieve Python information: {e}")
+
+        try:
+            rpi_info = SystemInfo.get_rpi_info()
+            if rpi_info:
+                self.logger.info(f"Hardware: {rpi_info}")
+            else:
+                self.logger.info("Raspberry Pi hardware info not available.")
+        except Exception as e:
+            self.logger.warning(f"Failed to retrieve Raspberry Pi information: {e}")
+
+        try:
+            git_info = SystemInfo.get_git_info()
+            if git_info:
+                self.logger.info(f"Git: branch={git_info['branch']}, commit={git_info['commit']}")
+            else:
+                self.logger.info("Git information not available.")
+        except Exception as e:
+            self.logger.warning(f"Failed to retrieve Git information: {e}")
 
 
 # business end of things

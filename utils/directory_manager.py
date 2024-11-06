@@ -1,13 +1,16 @@
 from datetime import datetime
-from utils.error_manager import USBMountError, NoWritableUSBError, USBWriteError
+import utils.error_manager as errors
 import platform
 import logging
 import time
 import os
 
+from utils.log_manager import LogManager
+
 
 class DirectorySetup:
     def __init__(self, save_directory):
+        self.logger = LogManager.get_logger(__name__)
         self.save_directory = save_directory
         self.save_subdirectory = None
 
@@ -15,11 +18,11 @@ class DirectorySetup:
         for attempt in range(max_retries):
             try:
                 return self._try_setup_directories()
-            except (USBMountError, USBWriteError, NoWritableUSBError) as e:
-                print(f"[INFO] Attempt {attempt + 1} failed: {str(e)}. Retrying in {retry_delay} seconds...")
+            except (errors.USBMountError, errors.USBWriteError, errors.NoWritableUSBError) as e:
+                self.logger.info(f"[INFO] Attempt {attempt + 1} failed: {str(e)}. Retrying in {retry_delay} seconds...")
                 time.sleep(retry_delay)
 
-        raise NoWritableUSBError()
+        raise errors.NoWritableUSBError()
 
     def _try_setup_directories(self):
         self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
@@ -28,37 +31,30 @@ class DirectorySetup:
 
         os.makedirs(self.save_subdirectory, exist_ok=True)
         if not self.test_file_write():
-            raise USBWriteError("Failed to write test file")
+            raise errors.USBWriteError("Failed to write test file")
 
-        print(f"[SUCCESS] Directory setup complete: {self.save_subdirectory}")
+        self.logger.info(f"[SUCCESS] Directory setup complete: {self.save_subdirectory}")
         return self.save_directory, self.save_subdirectory
 
     def _handle_mount_error(self):
         """
         Handle USB mount errors on Raspberry Pi systems.
         Searches /media directory for mounted, writable USB drives.
-
-        Returns:
-            Tuple[str, str]: (save_directory, save_subdirectory) if found
-
-        Raises:
-            NoWritableUSBError: If no writable USB drive is found
-            RuntimeError: If not running on Linux/Raspberry Pi
         """
         if platform.system() != 'Linux':
-            raise RuntimeError(
-                "USB directory handling is only supported on Linux/Raspberry Pi. "
-                "If testing on another system, specify a valid directory path."
-            )
+            raise errors.StorageSystemError(platform=platform.system())
 
         media_dir = '/media'
-        mounted_drives = self._find_mounted_drives(media_dir)
+        try:
+            mounted_drives = self._find_mounted_drives(media_dir)
+        except OSError as e:
+            raise errors.USBMountError(device=media_dir) from e
 
         for drive_path in mounted_drives:
             if self._try_setup_drive(drive_path):
                 return self.save_directory, self.save_subdirectory
 
-        raise NoWritableUSBError("No writable USB drives found.")
+        raise errors.NoWritableUSBError(searched_paths=[media_dir])
 
     def _find_mounted_drives(self, media_dir: str) -> list[str]:
         """Find all mounted drives in the media directory."""
@@ -75,7 +71,7 @@ class DirectorySetup:
                     if os.path.ismount(drive_path):
                         mounted_drives.append(drive_path)
         except OSError as e:
-            logging.error(f"Error accessing media directory: {e}")
+            self.logger.error(f"Error accessing media directory: {e}", exc_info=True)
 
         return mounted_drives
 
@@ -95,11 +91,11 @@ class DirectorySetup:
         try:
             os.makedirs(self.save_subdirectory, exist_ok=True)
             if self.test_file_write():
-                logging.info(f'Connected to {drive_path} and it is writable.')
+                self.logger.info(f'Connected to {drive_path} and it is writable.')
                 return True
-            logging.error(f'{drive_path} is connected but not writable.')
+            self.logger.error(f'{drive_path} is connected but not writable.')
         except PermissionError:
-            logging.error(f'Failed to access {drive_path}')
+            self.logger.error(f'Failed to access {drive_path}', exc_info=True)
 
         return False
 
@@ -111,5 +107,5 @@ class DirectorySetup:
             os.remove(test_file_path)
             return True
         except Exception as e:
-            print(f"[ERROR] Failed to write test file: {e}")
+            self.logger.error(f"[ERROR] Failed to write test file: {e}", exc_info=True)
             return False

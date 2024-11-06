@@ -64,28 +64,34 @@ class OWLError(Exception):
             f"{content}\n"
         )
 
-    def log_error(self, logger=None):
-        """Log the error with its details."""
-        logger = logger or logging.getLogger(__name__)
-        logger.error(f"{self.__class__.__name__} ({self.error_id}): {str(self)}")
-        logger.debug(f"Error details: {self.details}")
-        logger.debug(f"Timestamp: {self.timestamp}")
-
 ### HARDWARE RELATED ERRORS ###
+
 @dataclass
 class ProcessInfo:
     pid: int
     command: str
 
-class USBError(OWLError):
-    """Base class for USB-related errors."""
+
+# utils/error_manager.py
+
+class StorageError(OWLError):
+    """Base class for storage-related errors"""
     pass
 
+
+class USBError(StorageError):
+    """Base class for USB-related errors"""
+    pass
+
+
 class USBMountError(USBError):
-    """Raised when there are issues mounting a USB device."""
+    """Raised when there are issues mounting a USB device"""
 
     def __init__(self, device: str = None, message: str = None):
-        details = {'device': device} if device else {}
+        super().__init__(
+            message=None,
+            details={'device': device} if device else {}
+        )
 
         if not message:
             message = (
@@ -93,17 +99,26 @@ class USBMountError(USBError):
                     self.format_section(
                         "Problem",
                         f"Failed to mount USB device: {self.colorize(str(device), 'WHITE', bold=True)}"
+                    ) +
+                    self.format_section(
+                        "Solutions",
+                        "1. Check if USB device is properly connected\n"
+                        "2. Verify device permissions\n"
+                        "3. Check system mount points"
                     )
             )
 
-        super().__init__(message, details)
+        self.args = (message,)
 
 
 class USBWriteError(USBError):
-    """Raised when there are issues writing to a USB device."""
+    """Raised when there are issues writing to a USB device"""
 
     def __init__(self, device: str = None, message: str = None):
-        details = {'device': device} if device else {}
+        super().__init__(
+            message=None,
+            details={'device': device} if device else {}
+        )
 
         if not message:
             message = (
@@ -111,31 +126,81 @@ class USBWriteError(USBError):
                     self.format_section(
                         "Problem",
                         f"Failed to write to USB device: {self.colorize(str(device), 'WHITE', bold=True)}"
+                    ) +
+                    self.format_section(
+                        "Solutions",
+                        "1. Check if device is write-protected\n"
+                        "2. Verify available space\n"
+                        "3. Check file system permissions"
                     )
             )
 
-        super().__init__(message, details)
+        self.args = (message,)
 
 
 class NoWritableUSBError(USBError):
-    """Raised when no writable USB devices are found."""
+    """Raised when no writable USB devices are found"""
 
-    def __init__(self):
+    def __init__(self, searched_paths: list[str] = None):
+        super().__init__(
+            message=None,
+            details={'searched_paths': searched_paths} if searched_paths else {}
+        )
+
         message = (
                 self.format_error_header("No Writable USB Devices") +
                 self.format_section(
                     "Problem",
                     "No writable USB devices were found"
-                ) +
-                self.format_section(
-                    "Solutions",
-                    "1. Check if USB device is properly connected\n"
-                    "2. Verify USB device is not write-protected\n"
-                    "3. Ensure USB device is properly formatted"
                 )
         )
-        super().__init__(message)
 
+        if searched_paths:
+            message += self.format_section(
+                "Searched Locations",
+                "\n".join(f"• {path}" for path in searched_paths)
+            )
+
+        message += self.format_section(
+            "Solutions",
+            "1. Check if USB device is properly connected\n"
+            "2. Verify USB device is not write-protected\n"
+            "3. Ensure USB device is properly formatted\n"
+            "4. Check device permissions"
+        )
+
+        self.args = (message,)
+
+
+class StorageSystemError(StorageError):
+    """Raised when there are platform/system compatibility issues with storage"""
+
+    def __init__(self, platform: str = None, message: str = None):
+        super().__init__(
+            message=None,
+            details={'platform': platform} if platform else {}
+        )
+
+        if not message:
+            message = (
+                    self.format_error_header("Storage System Compatibility Error") +
+                    self.format_section(
+                        "Problem",
+                        f"Storage operation not supported on {self.colorize(platform, 'WHITE', bold=True)} platform"
+                    ) +
+                    self.format_section(
+                        "Required",
+                        "This operation requires Linux/Raspberry Pi"
+                    ) +
+                    self.format_section(
+                        "Solutions",
+                        "1. Use a supported platform, or\n"
+                        "2. Specify a valid local directory path in config file\n"
+                        "3. Use --save-directory flag to set local path"
+                    )
+            )
+
+        self.args = (message,)
 
 ### PROCESS RELATED ERRORS ###
 class OWLProcessError(OWLError):
@@ -406,3 +471,124 @@ class ConfigValueError(OWLConfigError):
             )
         )
         self.args = (message,)
+
+
+class AlgorithmError(OWLError):
+    """Base class for algorithm-related errors"""
+
+    ERROR_MESSAGES = {
+        ModuleNotFoundError: {
+            'coral': {
+                'message': "Coral AI device support not installed",
+                'details': "Visit: https://coral.ai/docs/accelerator/get-started/#requirements",
+                'fix': "Install pycoral using: pip install pycoral"
+            }
+        },
+        (IndexError, FileNotFoundError): {
+            'models': {
+                'message': "Model files not found",
+                'details': "Required model files are missing from the 'models' directory",
+                'fix': "Ensure model files are present in the 'models' directory"
+            }
+        },
+        ValueError: {
+            'delegate': {
+                'message': "Coral AI device not recognized",
+                'details': "Google Coral device connection issue",
+                'fix': (
+                    "1. Check device connection\n"
+                    "2. Try unplugging and reconnecting the device\n"
+                    "3. Restart the Raspberry Pi\n"
+                    "More info: https://github.com/tensorflow/tensorflow/issues/32743"
+                )
+            }
+        }
+    }
+
+    def __init__(self, algorithm: str, error: Exception):
+        self.algorithm = algorithm
+        self.original_error = error
+        self.error_type = type(error)
+
+        # Find matching error configuration
+        error_config = self._get_error_config(error)
+        self.message = self._format_error_message(error_config)
+
+        super().__init__(message=self.message, details={
+            'algorithm': algorithm,
+            'error_type': self.error_type.__name__,
+            'original_error': str(error)
+        })
+
+    def _get_error_config(self, error: Exception) -> dict:
+        """Find the matching error configuration"""
+        for error_types, configs in self.ERROR_MESSAGES.items():
+            if isinstance(error, error_types):
+                # For ValueError, check specific error message
+                if isinstance(error, ValueError):
+                    if 'delegate' in str(error):
+                        return configs['delegate']
+                # For other errors, return first config
+                return next(iter(configs.values()))
+
+        # Default error config if no match found
+        return {
+            'message': "Unrecognized algorithm error",
+            'details': str(error),
+            'fix': "Check the error message and logs for more information"
+        }
+
+    def _format_error_message(self, config: dict) -> str:
+        """Format the error message with the configuration"""
+        return (
+                self.format_error_header(f"Algorithm Error: {config['message']}") +
+                self.format_section(
+                    "Algorithm",
+                    f"Failed to initialize algorithm: {self.colorize(self.algorithm, 'WHITE', bold=True)}"
+                ) +
+                self.format_section(
+                    "Details",
+                    f"{config['details']}\n"
+                    f"Original error: {self.colorize(str(self.original_error), 'WHITE')}"
+                ) +
+                self.format_section(
+                    "Fix",
+                    config['fix']
+                )
+        )
+
+    def handle(self, owl_instance) -> None:
+        """
+        Handle algorithm errors with appropriate logging and actions
+
+        Args:
+            owl_instance: The Owl instance that encountered the error
+        """
+        # Log the full error with context
+        owl_instance.logger.error(
+            self.message,
+            extra={
+                'algorithm': self.algorithm,
+                'error_type': self.error_type.__name__,
+                'error_details': self.details
+            }
+        )
+
+        # Debug logging for troubleshooting
+        owl_instance.logger.debug(
+            "Full error context",
+            extra={
+                'traceback': self.original_error.__traceback__,
+                'error_class': self.error_type.__module__ + '.' + self.error_type.__name__
+            }
+        )
+
+        # Sound the alarm if hardware available
+        try:
+            if hasattr(owl_instance, 'relay_controller'):
+                owl_instance.relay_controller.relay.beep(duration=0.25, repeats=4)
+        except Exception as beep_error:
+            owl_instance.logger.warning(f"Could not sound alarm: {beep_error}")
+
+        # Stop OWL
+        owl_instance.stop()

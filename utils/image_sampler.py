@@ -6,6 +6,8 @@ from datetime import datetime
 
 from multiprocessing import Process, Queue
 from multiprocessing.queues import Empty
+from utils.log_manager import LogManager
+
 
 class ImageRecorder:
     def __init__(self, save_directory, mode='whole', max_queue=200, new_process_threshold=90, max_processes=4):
@@ -18,14 +20,16 @@ class ImageRecorder:
         self.running = True
         self.start_new_process()
 
+        self.logger = LogManager.get_logger(__name__)
+
     def start_new_process(self):
         if len(self.processes) < self.max_processes:
             p = Process(target=self.save_images)
             p.start()
             self.processes.append(p)
-            print(f"[INFO] Started new process, total processes: {len(self.processes)}")
+            self.logger.info(f"[INFO] Started new process, total processes: {len(self.processes)}")
         else:
-            print("[INFO] Maximum number of processes reached.")
+            self.logger.warning("[INFO] Maximum number of processes reached.")
 
     def save_images(self):
         while self.running or not self.queue.empty():
@@ -84,7 +88,7 @@ class ImageRecorder:
         if not self.queue.full():
             self.queue.put((frame, frame_id, boxes, centres))
         else:
-            print("[INFO] Queue is full, spinning up new process. Frame skipped.")
+            self.logger.info("[INFO] Queue is full, spinning up new process. Frame skipped.")
 
         if self.queue.qsize() > self.new_process_threshold and len(self.processes) < self.max_processes:
             self.start_new_process()

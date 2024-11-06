@@ -4,25 +4,25 @@ import warnings
 import configparser
 import subprocess
 import cv2
+import logging
 
-# check if the system is being tested on a Windows or Linux x86 64 bit machine
-if 'rpi' in platform.platform():
-    testing = False
+logger = logging.getLogger(__name__)
+
+def is_raspberry_pi() -> bool:
+    """Check if system is running on Raspberry Pi"""
+    platform_str = platform.platform().lower()
+    return 'rpi' in platform_str or 'aarch' in platform_str
+
+# Determine if we're in testing mode and import GPIO if needed
+testing = not is_raspberry_pi()
+if not testing:
     from gpiozero import Button, LED
-
-elif platform.system() == "Windows":
-    warning_message = "[WARNING] The system is running on a Windows platform. GPIO disabled. Test mode active."
-    warnings.warn(warning_message, RuntimeWarning)
-    testing = True
-
-elif 'aarch' in platform.platform():
-    testing = False
-    from gpiozero import Button, LED
-
 else:
-    warning_message = "[WARNING] The system is not running on a recognized platform. GPIO disabled. Test mode active."
-    warnings.warn(warning_message, RuntimeWarning)
-    testing = True
+    platform_name = platform.system() if platform.system() == "Windows" else "unrecognized"
+    logger.warning(
+        f"The system is running on a {platform_name} platform. GPIO disabled. Test mode active.",
+        RuntimeWarning
+    )
 
 class UteController:
     def __init__(self, detection_state,
@@ -255,6 +255,7 @@ def get_rpi_version():
     except FileNotFoundError:
         return 'non-rpi'
     except subprocess.CalledProcessError:
+
         raise ValueError("Error reading Raspberry Pi version.")
 
 

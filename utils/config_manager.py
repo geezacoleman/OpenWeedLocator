@@ -1,10 +1,11 @@
 from pathlib import Path
 from configparser import ConfigParser, Error as ConfigParserError
-import logging
 from typing import Any, Dict, Set, Tuple
 
+import logging
 import utils.error_manager as errors
 
+logger = logging.getLogger(__name__)
 
 class ConfigValidator:
     """Validates OWL configuration files"""
@@ -129,7 +130,7 @@ class ConfigValidator:
         if controller_type == 'ute' and config.has_option('Controller', 'switch_purpose'):
             switch_purpose = config.get('Controller', 'switch_purpose').lower()
             if switch_purpose not in cls.VALID_SWITCH_PURPOSES:
-                if 'Controller' not in errors:
+                if 'Controller' not in controller_errors:
                     controller_errors['Controller'] = {}
                 controller_errors['Controller'][
                     'switch_purpose'] = f'Must be one of: {", ".join(sorted(cls.VALID_SWITCH_PURPOSES))}'
@@ -140,7 +141,7 @@ class ConfigValidator:
                 if config.has_option('Controller', config_key):
                     config_path = Path(config.get('Controller', config_key))
                     if not config_path.exists():
-                        if 'Controller' not in errors:
+                        if 'Controller' not in controller_errors:
                             controller_errors['Controller'] = {}
                         controller_errors['Controller'][config_key] = f'Config file does not exist: {config_path}'
 
@@ -406,7 +407,7 @@ class ConfigValidator:
 
         # Log any relay warnings
         for warning in relay_warnings:
-            logging.warning(warning)
+            logger.warning(warning)
 
         # Check required keys in each section
         for section, requirements in working_config.items():
@@ -427,7 +428,7 @@ class ConfigValidator:
 
             unknown_keys = config_keys - (required_keys | optional_keys)
             if unknown_keys:
-                logging.warning(
+                logger.warning(
                     f"Unknown keys in section [{section}]: {', '.join(unknown_keys)}"
                 )
 
@@ -435,4 +436,5 @@ class ConfigValidator:
         if validation_errors:
             raise errors.ConfigValueError(validation_errors, config_path)
 
+        logger.info(f"Successfully loaded and validated config: {config_path}")
         return config
