@@ -1,13 +1,15 @@
 import logging
 import json
 import queue
+import sys
+
 from pathlib import Path
 from queue import Queue
 from threading import Thread, Event
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from time import time
 from logging.handlers import RotatingFileHandler
-import sys
+
 
 class JSONFormatter(logging.Formatter):
     """Formats log records as JSON strings"""
@@ -40,6 +42,9 @@ class LogManager:
     """Centralized logging management for OWL"""
     _instance = None
     _initialized = False
+
+    BACKUP_COUNT = 100
+    MAX_BYTES = 10 * 1024 * 1024  # 10MB per file
 
     def __new__(cls):
         if cls._instance is None:
@@ -79,23 +84,22 @@ class LogManager:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(ConsoleFormatter(
             fmt='%(asctime)s - %(levelname)s - [%(name)s] - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        ))
+            datefmt='%Y-%m-%d %H:%M:%S'))
         root_logger.addHandler(console_handler)
 
         main_handler = RotatingFileHandler(
             filename=log_dir / 'owl.jsonl',
-            maxBytes=10 * 1024 * 1024,  # 10MB
-            backupCount=5
-        )
+            maxBytes=cls.MAX_BYTES,  # 10MB
+            backupCount=cls.BACKUP_COUNT)
+
         main_handler.setFormatter(JSONFormatter())
         root_logger.addHandler(main_handler)
 
         detection_handler = RotatingFileHandler(
             filename=log_dir / 'detections.jsonl',
-            maxBytes=10 * 1024 * 1024,  # 10MB
-            backupCount=5
-        )
+            maxBytes=cls.MAX_BYTES,  # 10MB
+            backupCount=cls.BACKUP_COUNT)
+
         detection_handler.setFormatter(JSONFormatter())
 
         # Configure detection logger

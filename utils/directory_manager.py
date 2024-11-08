@@ -1,7 +1,6 @@
 from datetime import datetime
 import utils.error_manager as errors
 import platform
-import logging
 import time
 import os
 

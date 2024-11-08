@@ -1,7 +1,7 @@
 import time
-
 import os
 import cv2
+
 from imutils.video import FileVideoStream
 from utils.log_manager import LogManager
 

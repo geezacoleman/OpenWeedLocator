@@ -1,6 +1,5 @@
 import time
 import platform
-import warnings
 import configparser
 import subprocess
 import cv2

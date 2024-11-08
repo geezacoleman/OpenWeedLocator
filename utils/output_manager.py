@@ -4,13 +4,15 @@ from utils.error_manager import OWLAlreadyRunningError
 from utils.log_manager import LogManager
 from enum import Enum
 from collections import deque
+from typing import Optional
+
 import subprocess
 import shutil
 import time
 import logging
 import platform
 
-from typing import Optional
+
 
 logger = logging.getLogger(__name__)
 

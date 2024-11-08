@@ -1,5 +1,7 @@
 import subprocess
 import logging
+import sys
+import os
 
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Set
@@ -457,6 +459,8 @@ class ConfigValueError(OWLConfigError):
         self.args = (message,)
 
 
+import traceback
+
 class AlgorithmError(OWLError):
     """Base class for algorithm-related errors"""
 
@@ -490,32 +494,34 @@ class AlgorithmError(OWLError):
     }
 
     def __init__(self, algorithm: str, error: Exception):
+        # Call the base class initializer to ensure attributes like error_id are set
+        super().__init__(
+            message=None,  # We'll set the detailed message below
+            details={
+                'algorithm': algorithm,
+                'error_type': type(error).__name__,
+                'original_error': str(error)
+            }
+        )
+
         self.algorithm = algorithm
         self.original_error = error
         self.error_type = type(error)
 
-        # Find matching error configuration
+        # Find matching error configuration and format the message
         error_config = self._get_error_config(error)
         self.message = self._format_error_message(error_config)
 
-        super().__init__(message=self.message, details={
-            'algorithm': algorithm,
-            'error_type': self.error_type.__name__,
-            'original_error': str(error)
-        })
+        # Update the message in the base class
+        self.args = (self.message,)
 
     def _get_error_config(self, error: Exception) -> dict:
-        """Find the matching error configuration"""
+        """Find the matching error configuration."""
         for error_types, configs in self.ERROR_MESSAGES.items():
             if isinstance(error, error_types):
-                # For ValueError, check specific error message
-                if isinstance(error, ValueError):
-                    if 'delegate' in str(error):
-                        return configs['delegate']
-                # For other errors, return first config
+                if isinstance(error, ValueError) and 'delegate' in str(error):
+                    return configs['delegate']
                 return next(iter(configs.values()))
-
-        # Default error config if no match found
         return {
             'message': "Unrecognized algorithm error",
             'details': str(error),
@@ -523,33 +529,36 @@ class AlgorithmError(OWLError):
         }
 
     def _format_error_message(self, config: dict) -> str:
-        """Format the error message with the configuration"""
+        """Format the error message with the configuration."""
         return (
-                self.format_error_header(f"Algorithm Error: {config['message']}") +
-                self.format_section(
-                    "Algorithm",
-                    f"Failed to initialize algorithm: {self.colorize(self.algorithm, 'WHITE', bold=True)}"
-                ) +
-                self.format_section(
-                    "Details",
-                    f"{config['details']}\n"
-                    f"Original error: {self.colorize(str(self.original_error), 'WHITE')}"
-                ) +
-                self.format_section(
-                    "Fix",
-                    config['fix']
-                )
+            self.format_error_header(f"Algorithm Error: {config['message']}") +
+            self.format_section(
+                "Algorithm",
+                f"Failed to initialize algorithm: {self.colorize(self.algorithm, 'WHITE', bold=True)}"
+            ) +
+            self.format_section(
+                "Details",
+                f"{config['details']}\n"
+                f"Original error: {self.colorize(str(self.original_error), 'WHITE')}"
+            ) +
+            self.format_section(
+                "Fix",
+                config['fix']
+            )
         )
 
     def handle(self, owl_instance) -> None:
         """
-        Handle algorithm errors with appropriate logging and actions
+        Handle algorithm errors with appropriate logging and actions.
 
         Args:
-            owl_instance: The Owl instance that encountered the error
+            owl_instance: The Owl instance that encountered the error.
         """
+        # Use the logger from the owl_instance if available
+        logger = getattr(owl_instance, 'logger', logging.getLogger(__name__))
+
         # Log the full error with context
-        owl_instance.logger.error(
+        logger.error(
             self.message,
             extra={
                 'algorithm': self.algorithm,
@@ -558,21 +567,215 @@ class AlgorithmError(OWLError):
             }
         )
 
-        # Debug logging for troubleshooting
-        owl_instance.logger.debug(
-            "Full error context",
-            extra={
-                'traceback': self.original_error.__traceback__,
-                'error_class': self.error_type.__module__ + '.' + self.error_type.__name__
+        # Debug logging for troubleshooting with traceback
+        if logger.isEnabledFor(logging.DEBUG):
+            traceback_str = ''.join(traceback.format_exception(None, self.original_error, self.original_error.__traceback__))
+            logger.debug(
+                "Full error context",
+                extra={
+                    'traceback': traceback_str,
+                    'error_class': f"{self.error_type.__module__}.{self.error_type.__name__}"
+                }
+            )
+
+        # Stop OWL
+        if hasattr(owl_instance, 'stop'):
+            owl_instance.stop()
+        else:
+            logger.info("Exiting due to algorithm error.")
+            sys.exit(1)
+
+
+class OpenCVError(OWLError):
+    """Raised when there are issues with OpenCV (cv2) initialization or imports"""
+
+    def __init__(self, error_msg: str = None):
+        # Initialize with a formatted error message
+        super().__init__(
+            message=None,  # Pass None initially; we’ll set the final message below
+            details={
+                'original_error': error_msg,
+                'virtual_env': os.environ.get('VIRTUAL_ENV'),
+                'python_version': sys.version,
+                'env_path': sys.prefix
             }
         )
 
-        # Sound the alarm if hardware available
-        try:
-            if hasattr(owl_instance, 'relay_controller'):
-                owl_instance.relay_controller.relay.beep(duration=0.25, repeats=4)
-        except Exception as beep_error:
-            owl_instance.logger.warning(f"Could not sound alarm: {beep_error}")
+        message = (
+            self.format_error_header("OpenCV (cv2) Import Error") +
+            self.format_section(
+                "Problem",
+                f"Failed to import OpenCV (cv2)\n"
+                f"Error: {self.colorize(str(error_msg), 'WHITE', bold=True)}"
+            ) +
+            self.format_section(
+                "Likely Cause",
+                "You are not in the 'owl' virtual environment"
+            ) +
+            self.format_section(
+                "Solution",
+                "1. Activate the owl virtual environment:\n"
+                f"   {self.colorize('workon owl', 'WHITE', bold=True)}\n\n"
+                "2. If the environment doesn't exist, create it with the owl_setup.sh:\n"
+                f"   {self.colorize('bash owl_setup.sh', 'WHITE', bold=True)}\n"
+                "3. If opencv (cv2) is not yet installed in the environment, use owl_setup.sh:\n"
+                f"   {self.colorize('bash owl_setup.sh', 'WHITE', bold=True)}\n"
+                f"3. or install it manually within the {self.colorize('(owl)', 'GREEN', bold=True)} environment:\n"
+                f"   {self.colorize('pip install opencv-python', 'WHITE', bold=True)}\n"
+            ) +
+            self.format_section(
+                "Verify Environment",
+                f"After activation, you should see {self.colorize('(owl)', 'GREEN', bold=True)} "
+                "at the start of the command prompt.\nIf the error persists, raise an issue on the OpenWeedLocator"
+                "Github page:\nhttps://github.com/geezacoleman/OpenWeedLocator/issues"
+            )
+        )
 
-        # Stop OWL
-        owl_instance.stop()
+        self.args = (message,)
+
+    def handle(self, owl_instance=None) -> None:
+        """
+        Handle OpenCV errors with appropriate logging and actions.
+
+        Args:
+            owl_instance: Optional Owl instance that encountered the error.
+        """
+        # Use owl_instance's logger if available, otherwise get the module logger
+        if owl_instance and hasattr(owl_instance, 'logger'):
+            logger = owl_instance.logger
+        else:
+            logger = logging.getLogger(__name__)
+
+        # Log the error
+        logger.error(
+            str(self),
+            extra={
+                'virtual_env': os.environ.get('VIRTUAL_ENV'),
+                'python_version': sys.version,
+                'env_path': sys.prefix,
+                'error_details': self.details
+            }
+        )
+
+        # Stop the application or exit if owl_instance is not available
+        if owl_instance and hasattr(owl_instance, 'stop'):
+            owl_instance.stop()
+        else:
+            logger.info("Exiting due to OpenCV import error.")
+            sys.exit(1)
+
+
+class DependencyError(OWLError):
+    """Raised when there are issues with Python package dependencies"""
+
+    # Map common packages to their pip install names
+    PACKAGE_MAP = {
+        'imutils': 'imutils',
+        'cv2': 'opencv-python',
+        'multiprocessing': 'multiprocessing',
+        'pathlib': 'pathlib',
+        'version': 'local version.py file',  # Local file
+        'SystemInfo': 'local version.py file',  # Local file
+        'FPS': 'imutils'  # Part of imutils package
+    }
+
+    def __init__(self, missing_module: str, error_msg: str = None):
+        self.missing_module = missing_module
+        self.pip_package = self.PACKAGE_MAP.get(missing_module, missing_module)
+
+        super().__init__(
+            message=None,
+            details={
+                'missing_module': missing_module,
+                'pip_package': self.pip_package,
+                'original_error': error_msg
+            }
+        )
+
+        # Build detailed error message
+        if self.pip_package.startswith('local'):
+            # Handle local file dependencies
+            message = self._format_local_file_error()
+        else:
+            # Handle pip installable packages
+            message = self._format_pip_package_error()
+
+        self.args = (message,)
+
+    def _format_pip_package_error(self) -> str:
+        """Format error message for pip installable packages"""
+        return (
+                self.format_error_header("Python Package Dependency Error") +
+                self.format_section(
+                    "Problem",
+                    f"Failed to import required module: {self.colorize(self.missing_module, 'WHITE', bold=True)}\n"
+                    "This usually means the package is not installed in the owl virtual environment."
+                ) +
+                self.format_section(
+                    "Quick Fix",
+                    f"Install the missing package:\n"
+                    f"1. Ensure you're in the owl environment:\n"
+                    f"   {self.colorize('workon owl', 'WHITE', bold=True)}\n"
+                    f"2. Install the package:\n"
+                    f"   {self.colorize(f'pip install {self.pip_package}', 'WHITE', bold=True)}"
+                ) +
+                self.format_section(
+                    "Complete Fix",
+                    "Install all requirements:\n"
+                    f"1. Activate owl environment: {self.colorize('workon owl', 'WHITE', bold=True)}\n"
+                    f"2. Navigate to owl directory: {self.colorize('cd /path/to/owl', 'WHITE', bold=True)}\n"
+                    f"3. Install requirements: {self.colorize('pip install -r requirements.txt', 'WHITE', bold=True)}"
+                ) +
+                self.format_section(
+                    "Verify Installation",
+                    f"Check if package is installed:\n"
+                    f"{self.colorize(f'pip show {self.pip_package}', 'WHITE', bold=True)}"
+                )
+        )
+
+    def _format_local_file_error(self) -> str:
+        """Format error message for local file dependencies"""
+        return (
+                self.format_error_header("Local Module Import Error") +
+                self.format_section(
+                    "Problem",
+                    f"Failed to import local module: {self.colorize(self.missing_module, 'WHITE', bold=True)}\n"
+                    "This usually means you're not in the correct directory or the file is missing."
+                ) +
+                self.format_section(
+                    "Solution",
+                    "1. Ensure you're in the owl environment:\n"
+                    f"   {self.colorize('workon owl', 'WHITE', bold=True)}\n"
+                    "2. Navigate to the owl directory:\n"
+                    f"   {self.colorize('cd /path/to/owl', 'WHITE', bold=True)}\n"
+                    "3. Verify the file exists:\n"
+                    f"   {self.colorize(f'ls {self.missing_module}.py', 'WHITE', bold=True)}"
+                ) +
+                self.format_section(
+                    "If File is Missing",
+                    "The file might have been deleted or not properly downloaded.\n"
+                    "Try reinstalling OWL from the repository."
+                )
+        )
+
+    def handle(self, owl_instance=None) -> None:
+        """Handle dependency errors with appropriate logging and actions"""
+        if owl_instance and hasattr(owl_instance, 'logger'):
+            logger = owl_instance.logger
+        else:
+            logger = logging.getLogger(__name__)
+
+        # Log the error
+        logger.error(
+            str(self),
+            extra={
+                'missing_module': self.missing_module,
+                'pip_package': self.pip_package,
+                'error_details': self.details
+            }
+        )
+
+        if owl_instance and hasattr(owl_instance, 'stop'):
+            owl_instance.stop()
+        else:
+            sys.exit(1)

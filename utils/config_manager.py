@@ -1,6 +1,6 @@
 from pathlib import Path
 from configparser import ConfigParser, Error as ConfigParserError
-from typing import Any, Dict, Set, Tuple
+from typing import Dict, Set, Tuple
 
 import logging
 import utils.error_manager as errors

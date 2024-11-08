@@ -1,33 +1,87 @@
 #!/usr/bin/env python
-from audioop import error
-
-from utils.error_manager import OWLConfigError
-from utils.input_manager import UteController, AdvancedController, get_rpi_version
-from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator
-from utils.directory_manager import DirectorySetup
-from utils.video_manager import VideoStream
-from utils.image_sampler import ImageRecorder
-from utils.algorithms import fft_blur
-from utils.greenonbrown import GreenOnBrown
-from utils.frame_reader import FrameReader
-from utils.config_manager import ConfigValidator
-from utils.log_manager import LogManager
-
-import utils.error_manager as errors
-
-from multiprocessing import Value, Process
-from pathlib import Path
-from datetime import datetime
-from imutils.video import FPS
-
-import argparse
-import imutils
-import time
-import sys
-import cv2
 import os
+import sys
 
-from version import SystemInfo, VERSION
+import logging
+import argparse
+import time
+from datetime import datetime
+from multiprocessing import Process, Value
+from pathlib import Path
+
+def get_python_env():
+    """Get current Python environment status"""
+    venv = os.environ.get('VIRTUAL_ENV')
+    if venv:
+        return f"Virtual environment: {venv}"
+    return "No virtual environment active (using system Python)"
+
+def setup_basic_logger():
+    """Simple startup logger that uses the same file as LogManager"""
+    log_dir = Path(os.getcwd()) / 'logs'
+    log_dir.mkdir(exist_ok=True)
+
+    file_handler = logging.FileHandler(log_dir / 'owl.jsonl')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+
+    return logging.getLogger('owl_startup')
+
+logger = setup_basic_logger()
+logger.info("Starting OWL - checking imports...")
+
+try:
+   import utils.error_manager as errors
+except ImportError:
+   logger.critical("Cannot import from utils package! Not in correct directory.")
+   logger.critical(f"Current working directory: {os.getcwd()}")
+   print("\nERROR: Cannot import from utils package!")
+   print("This usually means you are not in the correct directory.")
+   print("\nTo fix:")
+   print("1. Ensure owl environment is active: workon owl")
+   print("2. Navigate to owl directory:        cd /home/owl/owl")
+   sys.exit(1)
+
+try:
+   import cv23
+except ImportError as e:
+   logger.error("OpenCV import failed - likely not in `owl` virtual environment")
+   logger.error(f"Error details: {str(e)}")
+   logger.error(f"Python environment: {get_python_env()}")
+   raise errors.OpenCVError(str(e)) from None
+
+try:
+   import imutils
+   from imutils.video import FPS
+
+   from utils.input_manager import UteController, AdvancedController, get_rpi_version
+   from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator
+   from utils.directory_manager import DirectorySetup
+   from utils.video_manager import VideoStream
+   from utils.image_sampler import ImageRecorder
+   from utils.algorithms import fft_blur
+   from utils.greenonbrown import GreenOnBrown
+   from utils.frame_reader import FrameReader
+   from utils.config_manager import ConfigValidator
+   from utils.log_manager import LogManager
+   import utils.error_manager as errors
+   from version import SystemInfo, VERSION
+
+except ImportError as e:
+   missing_module = str(e).split("'")[1]
+   logger.error(f"Failed to import required module: {missing_module}")
+   logger.error(f"Error details: {str(e)}")
+   logger.error(f"Current virtual env: {os.environ.get('VIRTUAL_ENV', 'None')}")
+   logger.error(f"Current working directory: {os.getcwd()}")
+   raise errors.DependencyError(missing_module, str(e)) from None
+
+logger.info("All required modules imported successfully")
 
 def nothing(x):
     pass
@@ -39,7 +93,9 @@ class Owl:
                  config_file='config/DAY_SENSITIVITY_2.ini'):
         # set up the logger
         log_dir = Path(os.path.join(os.path.dirname(__file__), 'logs'))
-        LogManager.setup(log_dir=log_dir, log_level='INFO')
+        LogManager.setup(
+            log_dir=log_dir,
+            log_level='INFO')
         self.logger = LogManager.get_logger(__name__)
 
         self.logger.info("Initializing OWL...")
@@ -49,7 +105,7 @@ class Owl:
         self._config_path = Path(__file__).parent / config_file
         try:
             self.config = ConfigValidator.load_and_validate_config(self._config_path)
-        except OWLConfigError as e:
+        except errors.OWLConfigError as e:
             self.logger.error(f"Configuration error: {e}", exc_info=True)
             raise
 
