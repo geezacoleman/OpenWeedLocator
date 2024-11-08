@@ -49,7 +49,7 @@ except ImportError:
    sys.exit(1)
 
 try:
-   import cv23
+   import cv2
 except ImportError as e:
    logger.error("OpenCV import failed - likely not in `owl` virtual environment")
    logger.error(f"Error details: {str(e)}")
