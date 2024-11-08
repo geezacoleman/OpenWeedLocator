@@ -1,41 +1,117 @@
 #!/usr/bin/env python
-from utils.input_manager import UteController, AdvancedController
-from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator
-from utils.directory_manager import DirectorySetup
-from utils.video_manager import VideoStream
-
-from utils.image_sampler import ImageRecorder
-from utils.blur_algorithms import fft_blur
-from utils.greenonbrown import GreenOnBrown
-from utils.frame_reader import FrameReader
-
-from multiprocessing import Value, Process
-from configparser import ConfigParser
-from pathlib import Path
-from datetime import datetime
-from imutils.video import FPS
-
-import argparse
-import imutils
-import time
+import os
 import sys
-import cv2
 
+import logging
+import argparse
+import time
+from datetime import datetime
+from multiprocessing import Process, Value
+from pathlib import Path
+
+def get_python_env():
+    """Get current Python environment status"""
+    venv = os.environ.get('VIRTUAL_ENV')
+    if venv:
+        return f"Virtual environment: {venv}"
+    return "No virtual environment active (using system Python)"
+
+def setup_basic_logger():
+    """Simple startup logger that uses the same file as LogManager"""
+    log_dir = Path(os.getcwd()) / 'logs'
+    log_dir.mkdir(exist_ok=True)
+
+    file_handler = logging.FileHandler(log_dir / 'owl.jsonl')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+
+    return logging.getLogger('owl_startup')
+
+logger = setup_basic_logger()
+logger.info("Starting OWL - checking imports...")
+
+try:
+   import utils.error_manager as errors
+except ImportError:
+   logger.critical("Cannot import from utils package! Not in correct directory.")
+   logger.critical(f"Current working directory: {os.getcwd()}")
+   print("\nERROR: Cannot import from utils package!")
+   print("This usually means you are not in the correct directory.")
+   print("\nTo fix:")
+   print("1. Ensure owl environment is active: workon owl")
+   print("2. Navigate to owl directory:        cd /home/owl/owl")
+   sys.exit(1)
+
+try:
+   import cv2
+except ImportError as e:
+   logger.error("OpenCV import failed - likely not in `owl` virtual environment")
+   logger.error(f"Error details: {str(e)}")
+   logger.error(f"Python environment: {get_python_env()}")
+   raise errors.OpenCVError(str(e)) from None
+
+try:
+   import imutils
+   from imutils.video import FPS
+
+   from utils.input_manager import UteController, AdvancedController, get_rpi_version
+   from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator
+   from utils.directory_manager import DirectorySetup
+   from utils.video_manager import VideoStream
+   from utils.image_sampler import ImageRecorder
+   from utils.algorithms import fft_blur
+   from utils.greenonbrown import GreenOnBrown
+   from utils.frame_reader import FrameReader
+   from utils.config_manager import ConfigValidator
+   from utils.log_manager import LogManager
+   import utils.error_manager as errors
+   from version import SystemInfo, VERSION
+
+except ImportError as e:
+   missing_module = str(e).split("'")[1]
+   logger.error(f"Failed to import required module: {missing_module}")
+   logger.error(f"Error details: {str(e)}")
+   logger.error(f"Current virtual env: {os.environ.get('VIRTUAL_ENV', 'None')}")
+   logger.error(f"Current working directory: {os.getcwd()}")
+   raise errors.DependencyError(missing_module, str(e)) from None
+
+logger.info("All required modules imported successfully")
 
 def nothing(x):
     pass
-
 
 class Owl:
     def __init__(self, show_display=False,
                  focus=False,
                  input_file_or_directory=None,
                  config_file='config/DAY_SENSITIVITY_2.ini'):
+        # set up the logger
+        log_dir = Path(os.path.join(os.path.dirname(__file__), 'logs'))
+        LogManager.setup(
+            log_dir=log_dir,
+            log_level='INFO')
+        self.logger = LogManager.get_logger(__name__)
 
-        # start by reading the config file
+        self.logger.info("Initializing OWL...")
+        self._log_system_info()
+
+        # read the config file
         self._config_path = Path(__file__).parent / config_file
-        self.config = ConfigParser()
+        try:
+            self.config = ConfigValidator.load_and_validate_config(self._config_path)
+        except errors.OWLConfigError as e:
+            self.logger.error(f"Configuration error: {e}", exc_info=True)
+            raise
+
         self.config.read(self._config_path)
+        self.RPI_VERSION = get_rpi_version()
+        self.logger.info(msg=f'Raspberry Pi version: {self.RPI_VERSION}')
 
         # is the source a directory/file
         self.input_file_or_directory = input_file_or_directory
@@ -48,14 +124,14 @@ class Owl:
             self.show_display = True
 
         # threshold parameters for different algorithms
-        self.exgMin = self.config.getint('GreenOnBrown', 'exgMin')
-        self.exgMax = self.config.getint('GreenOnBrown', 'exgMax')
-        self.hueMin = self.config.getint('GreenOnBrown', 'hueMin')
-        self.hueMax = self.config.getint('GreenOnBrown', 'hueMax')
-        self.saturationMin = self.config.getint('GreenOnBrown', 'saturationMin')
-        self.saturationMax = self.config.getint('GreenOnBrown', 'saturationMax')
-        self.brightnessMin = self.config.getint('GreenOnBrown', 'brightnessMin')
-        self.brightnessMax = self.config.getint('GreenOnBrown', 'brightnessMax')
+        self.exg_min = self.config.getint('GreenOnBrown', 'exg_min')
+        self.exg_max = self.config.getint('GreenOnBrown', 'exg_max')
+        self.hue_min = self.config.getint('GreenOnBrown', 'hue_min')
+        self.hue_max = self.config.getint('GreenOnBrown', 'hue_max')
+        self.saturation_min = self.config.getint('GreenOnBrown', 'saturation_min')
+        self.saturation_max = self.config.getint('GreenOnBrown', 'saturation_max')
+        self.brightness_min = self.config.getint('GreenOnBrown', 'brightness_min')
+        self.brightness_max = self.config.getint('GreenOnBrown', 'brightness_max')
 
         # time spent on each image when looping over a directory
         self.image_loop_time = self.config.getint('Visualisation', 'image_loop_time')
@@ -65,14 +141,14 @@ class Owl:
             # create trackbars for the threshold calculation
             self.window_name = "Adjust Detection Thresholds"
             cv2.namedWindow("Adjust Detection Thresholds", cv2.WINDOW_AUTOSIZE)
-            cv2.createTrackbar("ExG-Min", self.window_name, self.exgMin, 255, nothing)
-            cv2.createTrackbar("ExG-Max", self.window_name, self.exgMax, 255, nothing)
-            cv2.createTrackbar("Hue-Min", self.window_name, self.hueMin, 179, nothing)
-            cv2.createTrackbar("Hue-Max", self.window_name, self.hueMax, 179, nothing)
-            cv2.createTrackbar("Sat-Min", self.window_name, self.saturationMin, 255, nothing)
-            cv2.createTrackbar("Sat-Max", self.window_name, self.saturationMax, 255, nothing)
-            cv2.createTrackbar("Bright-Min", self.window_name, self.brightnessMin, 255, nothing)
-            cv2.createTrackbar("Bright-Max", self.window_name, self.brightnessMax, 255, nothing)
+            cv2.createTrackbar("ExG-Min", self.window_name, self.exg_min, 255, nothing)
+            cv2.createTrackbar("ExG-Max", self.window_name, self.exg_max, 255, nothing)
+            cv2.createTrackbar("Hue-Min", self.window_name, self.hue_min, 179, nothing)
+            cv2.createTrackbar("Hue-Max", self.window_name, self.hue_max, 179, nothing)
+            cv2.createTrackbar("Sat-Min", self.window_name, self.saturation_min, 255, nothing)
+            cv2.createTrackbar("Sat-Max", self.window_name, self.saturation_max, 255, nothing)
+            cv2.createTrackbar("Bright-Min", self.window_name, self.brightness_min, 255, nothing)
+            cv2.createTrackbar("Bright-Max", self.window_name, self.brightness_max, 255, nothing)
 
         self.resolution = (self.config.getint('Camera', 'resolution_width'),
                            self.config.getint('Camera', 'resolution_height'))
@@ -86,10 +162,12 @@ class Owl:
             self.relay_dict[int(key)] = int(value)
 
         # instantiate the relay controller - successful start should beep the buzzer
-        self.relay_controller = RelayController(relay_dict=self.relay_dict)
-
-        # instantiate the logger
-        self.logger = self.relay_controller.logger
+        try:
+            self.relay_controller = RelayController(relay_dict=self.relay_dict)
+        except errors.OWLAlreadyRunningError:
+            self.logger.critical("OWL initialization failed: GPIO pin conflict. Another OWL instance may be running.",
+                                 exc_info=True)
+            raise
 
         ### Data collection only ###
         # WARNING: initialise option disable detection for data collection
@@ -97,13 +175,18 @@ class Owl:
         self.save_directory = None
 
         # if a controller is connected, sample images must be true to set up directories correctly
-        self.controller_type = self.config.get('Controller', 'controller_type')
-        if self.controller_type != 'None':
+        self.controller_type = self.config.get('Controller', 'controller_type').strip("'\" ").lower()
+
+        if self.controller_type not in {'none', 'ute', 'advanced'}:
+            self.logger.error(f"Invalid controller type: {self.controller_type}")
+            raise errors.ControllerTypeError(self.config.get('Controller', 'controller_type'))
+
+        if self.controller_type != 'none':
             self.sample_images = True
         else:
             self.sample_images = self.config.getboolean('DataCollection', 'sample_images')
 
-        # if controller is 'None' but sample_images is True, then it will set it up still
+        # if controller is 'none' but sample_images is True, then it will set it up still
         if self.sample_images:
             self.sample_method = self.config.get('DataCollection', 'sample_method')
             self.disable_detection = self.config.getboolean('DataCollection', 'disable_detection')
@@ -118,7 +201,7 @@ class Owl:
         ############################
 
         # initialise controller buttons and async management
-        if self.controller_type != 'None':
+        if self.controller_type != 'none':
             self.detection_state = Value('b', False)
             self.sample_state = Value('b', False)
             self.stop_flag = Value('b', False)
@@ -130,7 +213,7 @@ class Owl:
                     record_led_pin='BOARD38',
                     storage_led_pin='BOARD40')
 
-                self.switch_purpose = self.config.get('Controller', 'switch_purpose')
+                self.switch_purpose = self.config.get('Controller', 'switch_purpose').lower()
                 self.switch_pin = self.config.getint('Controller', 'switch_pin')
 
                 self.controller = UteController(
@@ -174,10 +257,12 @@ class Owl:
                 )
 
             else:
-                raise ValueError(f"Invalid controller type: {self.controller_type}")
+                raise ValueError(f"Invalid controller type: {self.controller_type}. "
+                                 f"Select from None, Advanced or Ute in the config file.")
 
             self.controller_process = Process(target=self.controller.run)
             self.controller_process.start()
+
         else:
             self.controller = None
             if self.sample_images:
@@ -189,14 +274,17 @@ class Owl:
 
         self.relay_vis = None
 
-        # check that the resolution is not so high it will entirely brick/destroy the OWL.
+        # Check which Raspberry Pi is being used and adjust the resolution accordingly.
+        # Use `cat /proc-device-tree/model` to check the model of the Raspberry Pi.
         total_pixels = self.resolution[0] * self.resolution[1]
-        if total_pixels > (832 * 640):
+
+        if (self.RPI_VERSION in ['rpi-3', 'rpi-4']) and total_pixels > (832 * 640):
             # change here if you want to test higher resolutions, but be warned, backup your current image!
             self.resolution = (640, 480)
-            self.logger.log_line(f"[WARNING] Resolution {self.config.getint('Camera', 'resolution_width')}, "
-                                 f"{self.config.getint('Camera', 'resolution_height')} selected is dangerously high. ",
-                                 verbose=True)
+            self.logger.warning(f"Resolution {self.config.getint('Camera', 'resolution_width')}, "
+                                 f"{self.config.getint('Camera', 'resolution_height')} selected is dangerously high. ")
+        else:
+            self.logger.warning(f'High resolution, expect low framerate. Resolution set to {self.resolution[0]}x{self.resolution[1]}.')
 
         # check if test video or videostream from camera
         # is the source a directory/file
@@ -206,14 +294,14 @@ class Owl:
         self.input_file_or_directory = input_file_or_directory
 
         if len(self.config.get('System', 'input_file_or_directory')) > 0 and input_file_or_directory is not None:
-            print('[WARNING] two paths to image/videos provided. Defaulting to the command line flag.')
+            self.logger.warning('[WARNING] two paths to image/videos provided. Defaulting to the command line flag.')
 
         if self.input_file_or_directory:
             self.cam = FrameReader(path=self.input_file_or_directory,
                                    resolution=self.resolution,
                                    loop_time=self.image_loop_time)
             self.frame_width, self.frame_height = self.cam.resolution
-            self.logger.log_line(f'[INFO] Using {self.cam.input_type} from {self.input_file_or_directory}...', verbose=True)
+            self.logger.info(f'[INFO] Using {self.cam.input_type} from {self.input_file_or_directory}...')
 
         # if no video, start the camera with the provided parameters
         else:
@@ -234,7 +322,7 @@ class Owl:
 
             except Exception as e:
                 error_detail = f"[CRITICAL ERROR] Stopped OWL at start: {e}"
-                self.logger.log_line(error_detail, verbose=True)
+                self.logger.info(error_detail)
                 self.relay_controller.relay.beep(duration=1, repeats=1)
                 self.status_indicator.error(1)
                 time.sleep(5)
@@ -290,12 +378,12 @@ class Owl:
                 weed_detector = GreenOnBrown(algorithm=algorithm)
 
         except (ModuleNotFoundError, IndexError, FileNotFoundError, ValueError) as e:
-            self._handle_exceptions(e, algorithm)
+            algo_error = errors.AlgorithmError(algorithm, e)
+            algo_error.handle(self)
 
         except Exception as e:
-            self.logger.log_line(
-                f"\n[ALGORITHM ERROR] Unrecognised error while starting algorithm: {algorithm}.\nError message: {e}", verbose=True)
-            self.stop()
+            algo_error = errors.AlgorithmError(algorithm, e)
+            algo_error.handle(self)
 
         if self.show_display:
             self.relay_vis = self.relay_controller.relay_vis
@@ -316,24 +404,24 @@ class Owl:
                 if frame is None:
                     if log_fps:
                         fps.stop()
-                        print(f"[INFO] Stopped. Approximate FPS: {fps.fps():.2f}")
+                        self.logger.info(f"[INFO] Stopped. Approximate FPS: {fps.fps():.2f}")
                         self.stop()
                         break
                     else:
-                        print("[INFO] Frame is None. Stopped.")
+                        self.logger.info("[INFO] Frame is None. Stopped.")
                         self.stop()
                         break
 
                 # retrieve the trackbar positions for thresholds
                 if self.show_display:
-                    self.exgMin = cv2.getTrackbarPos("ExG-Min", self.window_name)
-                    self.exgMax = cv2.getTrackbarPos("ExG-Max", self.window_name)
-                    self.hueMin = cv2.getTrackbarPos("Hue-Min", self.window_name)
-                    self.hueMax = cv2.getTrackbarPos("Hue-Max", self.window_name)
-                    self.saturationMin = cv2.getTrackbarPos("Sat-Min", self.window_name)
-                    self.saturationMax = cv2.getTrackbarPos("Sat-Max", self.window_name)
-                    self.brightnessMin = cv2.getTrackbarPos("Bright-Min", self.window_name)
-                    self.brightnessMax = cv2.getTrackbarPos("Bright-Max", self.window_name)
+                    self.exg_min = cv2.getTrackbarPos("ExG-Min", self.window_name)
+                    self.exg_max = cv2.getTrackbarPos("ExG-Max", self.window_name)
+                    self.hue_min = cv2.getTrackbarPos("Hue-Min", self.window_name)
+                    self.hue_max = cv2.getTrackbarPos("Hue-Max", self.window_name)
+                    self.saturation_min = cv2.getTrackbarPos("Sat-Min", self.window_name)
+                    self.saturation_max = cv2.getTrackbarPos("Sat-Max", self.window_name)
+                    self.brightness_min = cv2.getTrackbarPos("Bright-Min", self.window_name)
+                    self.brightness_max = cv2.getTrackbarPos("Bright-Max", self.window_name)
 
                 # pass image, thresholds to green_on_brown function
                 if not self.disable_detection:
@@ -346,14 +434,14 @@ class Owl:
                     else:
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
                             frame,
-                            exgMin=self.exgMin,
-                            exgMax=self.exgMax,
-                            hueMin=self.hueMin,
-                            hueMax=self.hueMax,
-                            saturationMin=self.saturationMin,
-                            saturationMax=self.saturationMax,
-                            brightnessMin=self.brightnessMin,
-                            brightnessMax=self.brightnessMax,
+                            exg_min=self.exg_min,
+                            exg_max=self.exg_max,
+                            hue_min=self.hue_min,
+                            hue_max=self.hue_max,
+                            saturation_min=self.saturation_min,
+                            saturation_max=self.saturation_max,
+                            brightness_min=self.brightness_min,
+                            brightness_max=self.brightness_max,
                             show_display=self.show_display,
                             algorithm=algorithm,
                             min_detection_area=min_detection_area,
@@ -409,7 +497,7 @@ class Owl:
 
                 if log_fps and frame_count % 900 == 0:
                     fps.stop()
-                    self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
+                    self.logger.info(f"[INFO] Approximate FPS: {fps.fps():.2f}")
                     fps = FPS().start()
 
                 # update the framerate counter
@@ -445,41 +533,41 @@ class Owl:
                 k = cv2.waitKey(1) & 0xFF
                 if k == ord('s'):
                     self.save_parameters()
-                    self.logger.log_line("[INFO] Parameters saved.", verbose=True)
+                    self.logger.info("[INFO] Parameters saved.")
 
                 elif k == ord('r'):
                     # Toggle video recording
                     self.record_video = not self.record_video
                     if self.record_video:
-                        print("[INFO] Started video recording.")
+                        self.logger.info("[INFO] Started video recording.")
                     else:
                         if self.video_writer:
                             self.video_writer.release()
                             self.video_writer = None
-                        print("[INFO] Stopped video recording.")
+                        self.logger.info("[INFO] Stopped video recording.")
 
                 elif k == 27:
                     if log_fps:
                         fps.stop()
-                        self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
+                        self.logger.info(f"[INFO] Approximate FPS: {fps.fps():.2f}")
                     if self.show_display:
                         self.relay_controller.relay_vis.close()
 
-                    self.logger.log_line("[INFO] Stopped.", verbose=True)
+                    self.logger.info("[INFO] Stopped.")
                     self.stop()
                     break
 
         except KeyboardInterrupt:
             if log_fps:
                 fps.stop()
-                self.logger.log_line(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
+                self.logger.info(f"[INFO] Approximate FPS: {fps.fps():.2f}")
             if self.show_display:
                 self.relay_controller.relay_vis.close()
-            self.logger.log_line("[INFO] Stopped.", verbose=True)
+            self.logger.info("[INFO] Stopped.")
             self.stop()
 
         except Exception as e:
-            self.logger.log_line(f"[CRITICAL ERROR] STOPPED: {e}", verbose=True)
+            self.logger.error(f"[CRITICAL ERROR] STOPPED: {e}", exc_info=True)
             self.stop()
 
     def stop(self):
@@ -517,46 +605,61 @@ class Owl:
         if 'GreenOnBrown' not in self.config.sections():
             self.config.add_section('GreenOnBrown')
 
-        self.config.set('GreenOnBrown', 'exgMin', str(self.exgMin))
-        self.config.set('GreenOnBrown', 'exgMax', str(self.exgMax))
-        self.config.set('GreenOnBrown', 'hueMin', str(self.hueMin))
-        self.config.set('GreenOnBrown', 'hueMax', str(self.hueMax))
-        self.config.set('GreenOnBrown', 'saturationMin', str(self.saturationMin))
-        self.config.set('GreenOnBrown', 'saturationMax', str(self.saturationMax))
-        self.config.set('GreenOnBrown', 'brightnessMin', str(self.brightnessMin))
-        self.config.set('GreenOnBrown', 'brightnessMax', str(self.brightnessMax))
+        self.config.set('GreenOnBrown', 'exg_min', str(self.exg_min))
+        self.config.set('GreenOnBrown', 'exg_max', str(self.exg_max))
+        self.config.set('GreenOnBrown', 'hue_min', str(self.hue_min))
+        self.config.set('GreenOnBrown', 'hue_max', str(self.hue_max))
+        self.config.set('GreenOnBrown', 'saturation_min', str(self.saturation_min))
+        self.config.set('GreenOnBrown', 'saturation_max', str(self.saturation_max))
+        self.config.set('GreenOnBrown', 'brightness_min', str(self.brightness_min))
+        self.config.set('GreenOnBrown', 'brightness_max', str(self.brightness_max))
 
         # Write the updated configuration to the new file with a timestamped filename
         with open(new_config_path, 'w') as configfile:
             self.config.write(configfile)
 
-        print(f"[INFO] Configuration saved to {new_config_path}")
+        self.logger.info(f"[INFO] Configuration saved to {new_config_path}")
 
-    def _handle_exceptions(self, e, algorithm):
-        # handle exceptions cleanly
-        error_type = type(e).__name__
-        error_message = str(e)
+    def _log_system_info(self):
+        """Log system information on startup"""
+        self.logger.info(f"Starting OWL version {VERSION}")
 
-        if isinstance(e, ModuleNotFoundError):
-            detailed_message = f"\nIs pycoral correctly installed? Visit: https://coral.ai/docs/accelerator/get-started/#requirements"
+        try:
+            sys_info = SystemInfo.get_os_info()
+            self.logger.info(
+                f"System Information: OS: {sys_info['system']} {sys_info['release']}, "
+                f"Machine: {sys_info['machine']}"
+            )
+        except Exception as e:
+            self.logger.warning(f"Failed to retrieve OS information: {e}")
 
-        elif isinstance(e, (IndexError, FileNotFoundError)):
-            detailed_message = "\nAre there model files in the 'models' directory?"
+        try:
+            python_info = SystemInfo.get_python_info()
+            self.logger.info(
+                f"Python Version: {python_info['version']}, "
+                f"Implementation: {python_info['implementation']}, "
+                f"Compiler: {python_info['compiler']}"
+            )
+        except Exception as e:
+            self.logger.warning(f"Failed to retrieve Python information: {e}")
 
-        elif isinstance(e, ValueError) and 'delegate' in error_message:
-            detailed_message = (
-                "\nThis is due to an unrecognised Google Coral device. Please make sure it is connected correctly.\n"
-                "If the error persists, try unplugging it and plugging it again or restarting the\n"
-                "Raspberry Pi. For more information visit:\nhttps://github.com/tensorflow/tensorflow/issues/32743")
+        try:
+            rpi_info = SystemInfo.get_rpi_info()
+            if rpi_info:
+                self.logger.info(f"Hardware: {rpi_info}")
+            else:
+                self.logger.info("Raspberry Pi hardware info not available.")
+        except Exception as e:
+            self.logger.warning(f"Failed to retrieve Raspberry Pi information: {e}")
 
-        else:
-            detailed_message = ""
-
-        full_message = f"\n[{error_type}] while starting algorithm: {algorithm}.\nError message: {error_message}{detailed_message}"
-
-        self.logger.log_line(full_message, verbose=True)
-        self.relay_controller.relay.beep(duration=0.25, repeats=4)
-        sys.exit()
+        try:
+            git_info = SystemInfo.get_git_info()
+            if git_info:
+                self.logger.info(f"Git: branch={git_info['branch']}, commit={git_info['commit']}")
+            else:
+                self.logger.info("Git information not available.")
+        except Exception as e:
+            self.logger.warning(f"Failed to retrieve Git information: {e}")
 
 
 # business end of things

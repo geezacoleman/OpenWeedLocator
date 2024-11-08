@@ -1,8 +1,9 @@
 import time
-
 import os
 import cv2
+
 from imutils.video import FileVideoStream
+from utils.log_manager import LogManager
 
 class FrameReader:
     def __init__(self, path, resolution=(640, 480), loop_time=5):
@@ -18,6 +19,8 @@ class FrameReader:
         self.resolution = resolution
         self.curr_image = None
         self.files = None
+
+        self.logger = LogManager.get_logger(__name__)
 
         if os.path.isdir(path):
             self.files = iter(os.listdir(path))
@@ -37,6 +40,7 @@ class FrameReader:
                 self.input_type = "video"
                 self.single_image = False
         else:
+            self.logger.error("Path must be a directory or a file", exc_info=True)
             raise ValueError(f'[ERROR] Invalid path to image/s: {path}')
 
     def read(self):
