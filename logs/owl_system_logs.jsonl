@@ -1,0 +1,12 @@
+{"timestamp": "2024-11-06 14:10:02,225", "level": "INFO", "logger": "__main__", "message": "Initializing OWL...", "module": "owl", "function": "__init__"}
+{"timestamp": "2024-11-06 14:10:02,227", "level": "INFO", "logger": "__main__", "message": "Starting OWL version 2.1.0", "module": "owl", "function": "_log_system_info"}
+{"timestamp": "2024-11-06 14:10:02,227", "level": "INFO", "logger": "__main__", "message": "System Information: OS: Raspbian 11 (bullseye)", "module": "owl", "function": "_log_system_info"}
+{"timestamp": "2024-11-06 14:10:02,227", "level": "INFO", "logger": "__main__", "message": "Python Version: 3.9.13", "module": "owl", "function": "_log_system_info"}
+{"timestamp": "2024-11-06 14:10:02,228", "level": "INFO", "logger": "SystemInfo", "message": "Raspberry Pi Model: 5, Revision: c03111", "module": "version", "function": "get_rpi_info"}
+{"timestamp": "2024-11-06 14:10:02,229", "level": "INFO", "logger": "SystemInfo", "message": "Git Commit: 4b825dc642cb6eb9a060e54bf8d69288fbee4904", "module": "version", "function": "get_git_info"}
+{"timestamp": "2024-11-06 14:10:02,230", "level": "INFO", "logger": "__main__", "message": "Git information retrieved successfully.", "module": "owl", "function": "_log_system_info"}
+{"timestamp": "2024-11-06 14:10:02,240", "level": "INFO", "logger": "__main__", "message": "Raspberry Pi version: 5", "module": "owl", "function": "__init__"}
+{"timestamp": "2024-11-06 14:10:02,338", "level": "INFO", "logger": "utils.output_manager", "message": "[INFO] Setting up nozzles...", "module": "output_manager", "function": "__init__"}
+{"timestamp": "2024-11-06 14:10:03,360", "level": "INFO", "logger": "utils.output_manager", "message": "[INFO] Nozzle setup complete. Initiating camera...", "module": "output_manager", "function": "__init__"}
+{"timestamp": "2024-11-06 14:10:03,374", "level": "WARNING", "logger": "__main__", "message": "High resolution, expect reduced framerate. Resolution set to 640x480.", "module": "owl", "function": "__init__"}
+{"timestamp": "2024-11-06 14:10:10,196", "level": "INFO", "logger": "__main__", "message": "[INFO] Stopped.", "module": "owl", "function": "hoot"}
