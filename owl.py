@@ -567,7 +567,7 @@ class Owl:
             self.stop()
 
         except Exception as e:
-            self.logger.info(f"[CRITICAL ERROR] STOPPED: {e}")
+            self.logger.error(f"[CRITICAL ERROR] STOPPED: {e}", exc_info=True)
             self.stop()
 
     def stop(self):
