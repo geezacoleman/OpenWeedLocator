@@ -19,9 +19,7 @@ if not testing:
 else:
     platform_name = platform.system() if platform.system() == "Windows" else "unrecognized"
     logger.warning(
-        f"The system is running on a {platform_name} platform. GPIO disabled. Test mode active.",
-        RuntimeWarning
-    )
+        f"The system is running on a {platform_name} platform. GPIO disabled. Test mode active.")
 
 class UteController:
     def __init__(self, detection_state,
