@@ -1,7 +1,8 @@
 import cv2
 import time
-import warnings
+
 from threading import Thread, Event, Condition, Lock
+from utils.log_manager import LogManager
 
 # determine availability of picamera versions
 try:
@@ -24,7 +25,9 @@ except Exception as e:
 # class to support webcams
 class WebcamStream:
     def __init__(self, src=0):
+        self.logger = LogManager.get_logger(__name__)
         self.name = "WebcamStream"
+        self.logger.info(f'Camera type: {self.name}')
         self.stream = cv2.VideoCapture(src)
 
         self.frame_width = self.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
@@ -32,22 +35,23 @@ class WebcamStream:
 
         # Check if the stream opened successfully
         if not self.stream.isOpened():
-            self.stream.release()  # Ensure resources are released
+            self.stream.release()
+            self.logger.error(f'Unable to open video source: {src}')
             raise ValueError("Unable to open video source:", src)
 
         # read the first frame from the stream
         self.grabbed, self.frame = self.stream.read()
         if not self.grabbed:
-            self.stream.release()  # Ensure resources are released if no frame is grabbed
+            self.stream.release()
+            self.logger.error(f'Unable to read from video source: {src}')
             raise ValueError("Unable to read from video source:", src)
 
         # initialize the thread name, stop event, and the thread itself
         self.stop_event = Event()
         self.thread = Thread(target=self.update, name=self.name, args=())
-        self.thread.daemon = True  # Thread will close when main program exits
+        self.thread.daemon = True
 
     def start(self):
-        # start the thread to read frames from the video stream
         self.thread.start()
         return self
 
@@ -62,7 +66,7 @@ class WebcamStream:
                 if not self.grabbed:
                     self.stop_event.set()  # Ensure the loop stops if no frame is grabbed
         except Exception as e:
-            print(f"Exception in WebcamStream update loop: {e}")
+            self.logger.error(f"Exception in WebcamStream update loop: {e}", exc_info=True)
         finally:
             # Clean up resources after loop is done
             self.stream.release()
@@ -78,7 +82,9 @@ class WebcamStream:
 
 class PiCamera2Stream:
     def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2, **kwargs):
+        self.logger = LogManager.get_logger(__name__)
         self.name = 'Picamera2Stream'
+        self.logger.info(f'Camera type: {self.name}')
         self.size = resolution  # picamera2 uses size instead of resolution, keeping this consistent
         self.frame_width = None
         self.frame_height = None
@@ -103,6 +109,16 @@ class PiCamera2Stream:
             "AwbMode": libcamera.controls.AwbModeEnum.Daylight,
             "ExposureValue": exp_compensation
         }
+        # Or if you prefer split logs for different aspects:
+        self.logger.info("Setting camera format", extra=dict(
+            format='RGB888',
+            image_size=list(self.size),
+            note='RGB888 represents BGR format in libcamera'))
+
+        self.logger.info("Setting camera controls", extra=dict(
+            exposure_mode=1,
+            awb_mode='Daylight',
+            exposure_value=exp_compensation))
 
         # Update config with any additional/overridden parameters
         self.controls.update(kwargs)
@@ -112,18 +128,18 @@ class PiCamera2Stream:
         self.camera_model = self.camera.camera_properties['Model']
 
         if self.camera_model == 'imx296':
-            print('[INFO] Using IMX296 Global Shutter Camera')
+            self.logger.info('[INFO] Using IMX296 Global Shutter Camera')
 
         elif self.camera_model == 'imx477':
-            print('[INFO] Using IMX477 HQ Camera')
+            self.logger.info('[INFO] Using IMX477 HQ Camera')
 
         elif self.camera_model == 'imx708':
-            print('[INFO] Using Raspberry Pi Camera Module 3. Setting focal point at 1.2 m...')
+            self.logger.info('[INFO] Using Raspberry Pi Camera Module 3. Setting focal point at 1.2 m...')
             self.controls['AfMode'] = libcamera.controls.AfModeEnum.Manual
             self.controls['LensPosition'] = 1.2
 
         else:
-            print('[INFO] Unrecognised camera module, continuing with default settings.')
+            self.logger.info('[INFO] Unrecognised camera module, continuing with default settings.')
 
         try:
             self.config = self.camera.create_preview_configuration(main=self.configurations,
@@ -141,13 +157,13 @@ class PiCamera2Stream:
             time.sleep(2)
 
         except Exception as e:
-            print(f"Failed to initialize PiCamera2: {e}")
+            self.logger.error(f"Failed to initialize PiCamera2: {e}", exc_info=True)
             raise
 
         if self.frame_width != resolution[0] or self.frame_height != resolution[1]:
             message = (f"The actual frame size ({self.frame_width}x{self.frame_height}) "
                        f"differs from the expected resolution ({resolution[0]}x{resolution[1]}).")
-            warnings.warn(message, RuntimeWarning)
+            self.logger.warning(message)
 
     def start(self):
         # Start the thread to update frames
@@ -169,7 +185,7 @@ class PiCamera2Stream:
                         self.condition.notify_all()
 
         except Exception as e:
-            print(f"Exception in PiCamera2Stream update loop: {e}")
+            self.logger.error(f"Exception in PiCamera2Stream update loop: {e}", exc_info=True)
         finally:
             self.camera.stop()  # Ensure camera resources are released properly
 
@@ -192,7 +208,9 @@ class PiCamera2Stream:
 
 class PiCameraStream:
     def __init__(self, resolution=(416, 320), exp_compensation=-2, **kwargs):
-        self.name = 'PiCameraStream'
+        self.logger = LogManager.get_logger(__name__)
+        self.name = 'PicameraStream'
+        self.logger.info(f'Camera type: {self.name}')
         self.frame_width = None
         self.frame_height = None
 
@@ -211,7 +229,7 @@ class PiCameraStream:
             if self.frame_width != resolution[0] or self.frame_height != resolution[1]:
                 message = (f"The actual frame size ({self.frame_width}x{self.frame_height}) "
                            f"differs from the expected resolution ({resolution[0]}x{resolution[1]}).")
-                warnings.warn(message, RuntimeWarning)
+                self.logger.warning(message)
 
             # Set optional camera parameters (refer to PiCamera docs)
             for (arg, value) in kwargs.items():
@@ -224,7 +242,7 @@ class PiCameraStream:
                                                          use_video_port=True)
 
         except Exception as e:
-            print(f"Failed to initialize PiCamera: {e}")
+            self.logger.error(f"Failed to initialize PiCamera: {e}", exc_info=True)
             raise
 
         self.frame = None
@@ -246,7 +264,7 @@ class PiCameraStream:
                 if self.stopped.is_set():
                     break
         except Exception as e:
-            print(f"Exception in PiCameraStream update loop: {e}")
+            self.logger.error(f"Exception in PiCameraStream update loop: {e}", exc_info=True)
 
         finally:
             self.stream.close()
@@ -269,6 +287,7 @@ class PiCameraStream:
 class VideoStream:
     def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2, **kwargs):
         self.CAMERA_VERSION = PICAMERA_VERSION if PICAMERA_VERSION is not None else 'webcam'
+        self.logger = LogManager.get_logger(__name__)
         self.frame_height = None
         self.frame_width = None
 
@@ -282,6 +301,7 @@ class VideoStream:
             self.stream = WebcamStream(src=src)
 
         else:
+            self.logger.error(f"Unsupported camera version: {self.CAMERA_VERSION}")
             raise ValueError(f"Unsupported camera version: {self.CAMERA_VERSION}")
 
         # set the image dimensions directly from the frame streamed

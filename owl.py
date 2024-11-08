@@ -404,11 +404,11 @@ class Owl:
                 if frame is None:
                     if log_fps:
                         fps.stop()
-                        print(f"[INFO] Stopped. Approximate FPS: {fps.fps():.2f}")
+                        self.logger.info(f"[INFO] Stopped. Approximate FPS: {fps.fps():.2f}")
                         self.stop()
                         break
                     else:
-                        print("[INFO] Frame is None. Stopped.")
+                        self.logger.info("[INFO] Frame is None. Stopped.")
                         self.stop()
                         break
 
@@ -497,7 +497,7 @@ class Owl:
 
                 if log_fps and frame_count % 900 == 0:
                     fps.stop()
-                    self.logger.info(f"[INFO] Approximate FPS: {fps.fps():.2f}", verbose=True)
+                    self.logger.info(f"[INFO] Approximate FPS: {fps.fps():.2f}")
                     fps = FPS().start()
 
                 # update the framerate counter
@@ -539,12 +539,12 @@ class Owl:
                     # Toggle video recording
                     self.record_video = not self.record_video
                     if self.record_video:
-                        print("[INFO] Started video recording.")
+                        self.logger.info("[INFO] Started video recording.")
                     else:
                         if self.video_writer:
                             self.video_writer.release()
                             self.video_writer = None
-                        print("[INFO] Stopped video recording.")
+                        self.logger.info("[INFO] Stopped video recording.")
 
                 elif k == 27:
                     if log_fps:
@@ -618,33 +618,7 @@ class Owl:
         with open(new_config_path, 'w') as configfile:
             self.config.write(configfile)
 
-        print(f"[INFO] Configuration saved to {new_config_path}")
-
-    def _handle_exceptions(self, e, algorithm):
-        # handle exceptions cleanly
-        error_type = type(e).__name__
-        error_message = str(e)
-
-        if isinstance(e, ModuleNotFoundError):
-            detailed_message = f"\nIs pycoral correctly installed? Visit: https://coral.ai/docs/accelerator/get-started/#requirements"
-
-        elif isinstance(e, (IndexError, FileNotFoundError)):
-            detailed_message = "\nAre there model files in the 'models' directory?"
-
-        elif isinstance(e, ValueError) and 'delegate' in error_message:
-            detailed_message = (
-                "\nThis is due to an unrecognised Google Coral device. Please make sure it is connected correctly.\n"
-                "If the error persists, try unplugging it and plugging it again or restarting the\n"
-                "Raspberry Pi. For more information visit:\nhttps://github.com/tensorflow/tensorflow/issues/32743")
-
-        else:
-            detailed_message = ""
-
-        full_message = f"\n[{error_type}] while starting algorithm: {algorithm}.\nError message: {error_message}{detailed_message}"
-
-        self.logger.info(full_message)
-        self.relay_controller.relay.beep(duration=0.25, repeats=4)
-        sys.exit()
+        self.logger.info(f"[INFO] Configuration saved to {new_config_path}")
 
     def _log_system_info(self):
         """Log system information on startup"""
