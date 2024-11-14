@@ -1,102 +1,98 @@
 ################################################################################
 Notes on owl.py
 
-Summary completed on 07/02/2024
-Summary based on commit 962e3fb
+Summary completed on 10/11/2024
+Summary based on commit: 95dfb6b
 ################################################################################
 
-Purpose: 
-Top-level Python script for the OWL. Runs weed detection and generates signals. 
-
+Purpose:
+- Primary control script for OWL system
+- Handles real-time weed detection and sprayer control
+- Manages configuration, data collection, and hardware interfaces
 
 Entrypoint:
-- When you execute owl.py, it parses any input flags into args. 
-- Then it creates an instance of the Owl class (called 'owl') using the args.
-  - The Owl class parameters mainly specify the camera and detection algorithm 
-    params.
-- Then it calls the 'hoot' method on 'owl'.
-  - The hoot method parameters mainly specify nozzle parameters, the chosen
-    algorithm, and optional image capture parameters.
-
+- Validates Python environment and imports
+- Parses command line arguments:
+  - --show-display: Enable visualization windows
+  - --focus: Add blur detection to output
+  - --input: Path to input media (image/video/directory)
+- Creates Owl instance with parsed arguments
+- Starts detection loop via owl.hoot()
 
 Owl class:
-- owl.py contains only one class ('Owl'). 
-- 'Owl' has 7 methods:
-  - __init__
-  - hoot
-  - stop
-  - update 
-  - update_delay
-  - _handle_exceptions
-  - save_parameters
+Main methods:
+- __init__: System initialization
+- hoot: Main detection loop
+- stop: Graceful shutdown
+- save_parameters: Save current settings
+- _log_system_info: Record system details
 
-Owl class --> __init__ method:
-- Instantiates the class with default values if none are provided.
-- Creates a json file of the weed detection parameters (if enabled).
-- Creates a cv2 GUI for changing the parameters (if enabled).
-- Maps the Raspberry Pi's GPIO pins to sprayer nozzle numbers.
-- Starts up nozzle control and logging. 
-- Checks to see if camera resolution is dangerously high.
-- Initialises image stream.
-  - If test video, sets video as image stream using 'FrameReader'.
-  - If camera, tries to init camera, logs init params, and starts video stream.
-- Sets y-axis trigger line in image for weed detection.
-- Sets x-axis nozzle lane coordinates for targeted spraying.
-- Does NOT call hoot, hoot is called from the entrypoint block.
+Initialization (__init__):
+1. Configuration
+   - Validates config file
+   - Sets up logging
+   - Initializes detection parameters
+   - Creates visualization GUI if enabled
 
-Owl class --> hoot method:
-- Starts image frame and fps tracking (if enabled).
-- Tries to initialise the chosen weed detection algorithm (GoG or GoB).
-- Initialises and starts a terminal display for nozzle spraying status.
-- Enters the main weed detection loop:
-  - Reads the next image.
-  - Calculates image blurriness (if enabled).
-  - Checks if the recording button is pressed/released (if recording enabled).
-  - Exits program if image is None.
-  - Initialises the VideoWriter object for adding frames to video file (if not 
-    done already). 
-  - Reads the weed detection parameters from the GUI (if enabled).
-  - Runs the inference method of the chosen weed detection algorithm, returns 
-    the weed bounding boxes and centres, as well as the labelled image. 
-  - Saves the image if frame count is a multiple of capture rate with cropping
-    to whole/bounding-box/square (if enabled).
-  - Increments frame count. 
-  - Sprays the weed:
-    - Checks if weed centre is below the y-axis detection line in the image.
-    - Checks what lane the weed centre is in. 
-    - Queues a nozzle spray with a nozzle number, delay duration, timestamp, and
-      spray duration (which is hard-coded to 0.15). 
-  - Updates the frame rate. 
-  - Displays labelled image with algorithm and blurriness (if enabled).
-  - Writes frame to video file if recording button is pressed, and releases 
-    VideoWriter if button is released (if enabled). 
-  - Checks if 's' key is pressed and saves weed detection parameters if it is.
-  - Chekcs if 'ESC' key is pressed and exits if it is.
+2. Hardware Setup
+   - Configures camera (resolution/exposure)
+   - Maps GPIO pins to relays
+   - Sets up controller (None/Ute/Advanced)
+   - Initializes USB storage for data collection
 
-Owl class --> stop method:
-- Turns off solenoids, stops spraying, stops recording, beeps, and exits.
-- Called in weed detection loop when when ESC is pressed or when no image is 
-  returned from camera read. 
+3. Detection Setup
+   - Configures spray zones and trigger lines
+   - Sets initial algorithm parameters
+   - Validates hardware capabilities
 
-Owl class --> update method:
-- Sets the exgMin and exgMax parameters. 
-- This alters the sensitivity of the excess green algorithm.
-- Possibility to use a dial for dynamic user control of sensitivity.
-- Currently called repeatedly in detection loop if display is not enabled (?).
+Main Loop (hoot):
+1. Frame Processing:
+   - Acquires frame from camera/file
+   - Updates detection parameters
+   - Runs weed detection algorithm
 
-Owl class --> update_delay method:
-- Empty function, not called anywhere. 
-- Could be modified to generate a delay if using GPS.
+2. Detection Response:
+   - Maps detected weeds to spray zones
+   - Triggers appropriate relays
+   - Updates visualization
 
-Owl class --> _handle_exceptions method:
-- Currently only called once in the hoot method whilst instantiating the weed 
-  detection algorithm (green-on-green or green-on-brown).
-- Creates a more detailed error message for green-on-green initialisation errors
-  including pycoral installation, the location of model files, and connection of
-  Google Coral hardware. 
-- Logs (and prints if verbose) the detailed error message with timestamp.
-- Exits the program.
+3. Data Collection:
+   - Records frames/regions based on config
+   - Manages storage limits
+   - Logs performance metrics
 
-Owl class --> save_parameters method:
-- Called in weed detection loop if the 's' key is pressed. 
-- Captures the weed detection algorithm parameters in a timestamped json file. 
+4. User Interface:
+   - Processes keyboard input
+   - Updates display windows
+   - Handles recording controls
+
+Error Handling:
+- Validates Python environment
+- Checks hardware compatibility
+- Manages GPIO conflicts
+- Handles storage issues
+- Reports algorithm errors
+
+Dependencies:
+Core:
+- OpenCV-Python: Image processing
+- NumPy: Array operations
+- imutils: Image utilities
+
+Custom modules:
+- error_manager: Error handling
+- input_manager: Hardware control
+- config_manager: Configuration
+- video_manager: Camera interface
+- image_sampler: Data collection
+- algorithms: Detection methods
+
+Configuration:
+- Uses .ini format
+- Validated sections:
+  - System: Core parameters
+  - Camera: Image acquisition
+  - Controller: Hardware interface
+  - DataCollection: Storage settings
+  - GreenOnBrown: Detection parameters
+  - Relays: GPIO mappings

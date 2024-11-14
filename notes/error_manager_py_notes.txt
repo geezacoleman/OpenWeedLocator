@@ -1,0 +1,105 @@
+################################################################################
+Notes on error_manager.py
+
+Summary completed on 14/11/2024
+Summary based on commit 95dfb6b
+################################################################################
+
+Purpose:
+- Handles all error management for OWL system
+- Provides colored terminal output for errors
+- Structures error hierarchy for consistent handling
+
+Class Hierarchy:
+- OWLError (Base Exception)
+  |- StorageError
+     |- USBError
+        |- USBMountError
+        |- USBWriteError
+        |- NoWritableUSBError
+     |- StorageSystemError
+  |- OWLProcessError
+     |- OWLAlreadyRunningError
+  |- OWLControllerError
+     |- ControllerPinError
+     |- ControllerConfigError
+  |- OWLConfigError
+     |- ConfigFileError
+     |- ConfigSectionError
+     |- ConfigKeyError
+     |- ConfigValueError
+  |- AlgorithmError
+  |- OpenCVError
+  |- DependencyError
+
+OWLError class:
+- Base exception for all OWL errors
+- Methods:
+  - __init__
+  - colorize
+  - format_error_header
+  - format_section
+
+OWLError class --> __init__ method:
+- Takes message and details dictionary
+- Sets timestamp and error ID
+- Initializes base Exception
+
+OWLError class --> colorize method:
+- Takes text, color, bold flag, underline flag
+- Returns ANSI-colored string for terminal output
+
+StorageError classes:
+- USBMountError: USB device mounting failures
+- USBWriteError: USB write permission issues
+- NoWritableUSBError: No available USB storage
+- StorageSystemError: Platform compatibility issues
+
+OWLProcessError classes:
+- OWLAlreadyRunningError: Handles duplicate instances
+- Methods:
+  - get_owl_processes: Lists running OWL instances
+
+OWLControllerError classes:
+- ControllerPinError: GPIO pin configuration issues
+- ControllerConfigError: Controller setup problems
+
+OWLConfigError classes:
+- ConfigFileError: Missing/invalid config file
+- ConfigSectionError: Missing required sections
+- ConfigKeyError: Missing required keys
+- ConfigValueError: Invalid configuration values
+
+AlgorithmError class:
+- Handles detection algorithm failures
+- Methods:
+  - handle: Logs error and stops OWL
+- Predefined messages for:
+  - ModuleNotFoundError
+  - IndexError/FileNotFoundError
+  - ValueError
+
+OpenCVError class:
+- OpenCV import/initialization failures
+- Methods:
+  - handle: Logs error and exits
+
+DependencyError class:
+- Python package dependency issues
+- Methods:
+  - _format_pip_package_error
+  - _format_local_file_error
+  - handle
+
+Error Display Features:
+- Colored terminal output
+- Standardized error headers
+- Formatted error sections
+- Timestamped error IDs
+- Detailed error messages
+
+Dependencies:
+- subprocess: Process management
+- logging: Error logging
+- pathlib: Path handling
+- datetime: Timestamp generation
