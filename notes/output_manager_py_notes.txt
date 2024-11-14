@@ -1,0 +1,171 @@
+################################################################################
+Notes on output_manager.py
+
+Summary completed on 14/11/2024
+Summary based on commit 95dfb6b
+################################################################################
+
+Purpose:
+- Controls hardware outputs for OWL system
+- Manages relay board control and status indicators
+- Provides test interfaces for non-Pi development
+
+Classes:
+- TestRelay
+- TestBuzzer
+- TestLED
+- BaseStatusIndicator
+- HeadlessStatusIndicator
+- UteStatusIndicator
+- AdvancedStatusIndicator
+- RelayControl
+- RelayController
+
+Entrypoint:
+- Has __main__ check for testing status indicators
+- Sets testing flag via get_platform_config() if not on Raspberry Pi
+- Uses terminal messages instead of GPIO when in test mode
+
+TestRelay class:
+- Simulates relay hardware for testing
+- Methods:
+  - __init__
+  - on
+  - off
+
+TestRelay class --> __init__ method:
+- Takes relay_number and verbose flag
+- Stores them as instance attributes
+
+TestRelay class --> on method:
+- Prints "[TEST] Relay {number} ON" if verbose enabled
+
+TestRelay class --> off method:
+- Prints "[TEST] Relay {number} OFF" if verbose enabled
+
+TestBuzzer class:
+- Simulates buzzer hardware for testing
+- Methods:
+  - beep
+
+TestBuzzer class --> beep method:
+- Takes on_time, off_time, n repeats, verbose flag
+- Prints "BEEP" n times if verbose enabled
+
+TestLED class:
+- Simulates LED hardware for testing
+- Methods:
+  - __init__
+  - blink
+  - on
+  - off
+
+TestLED class --> __init__ method:
+- Takes pin number
+- Stores as instance attribute
+
+TestLED class --> blink method:
+- Takes on_time, off_time, n repeats, verbose flag
+- Prints "BLINK {pin}" n times if verbose enabled
+
+TestLED class --> on/off methods:
+- Print "LED {pin} ON/OFF" respectively
+
+BaseStatusIndicator class:
+- Base class for all status indicators
+- Handles storage monitoring and LED control
+- Methods:
+  - __init__
+  - start_storage_indicator
+  - run_update
+  - update
+  - error
+  - stop
+
+BaseStatusIndicator class --> __init__ method:
+- Takes save_directory and no_save flag
+- Initializes storage monitoring
+- Sets up LED control threads
+- Configures system LEDs
+
+BaseStatusIndicator class --> update method:
+- Monitors storage usage
+- Updates LED states based on storage
+- Triggers errors if storage full
+
+HeadlessStatusIndicator class:
+- Minimal implementation without physical indicators
+- Inherits from BaseStatusIndicator
+- Only monitors storage capacity
+- Methods:
+  - __init__
+  - _update_storage_indicator
+
+UteStatusIndicator class:
+- Two-LED indicator system
+- Inherits from BaseStatusIndicator
+- Methods:
+  - __init__
+  - _update_storage_indicator
+  - setup_success
+  - image_write_indicator
+  - error
+  - stop
+
+UteStatusIndicator class --> __init__ method:
+- Takes save_directory and LED pin numbers
+- Initializes record and storage LEDs
+- Sets up status monitoring
+
+UteStatusIndicator class --> _update_storage_indicator method:
+- Takes percent_full value
+- Changes LED blink patterns based on storage level:
+  * >90%: Solid storage LED
+  * >85%: Fast blink
+  * >80%: Medium blink
+  * >75%: Slow blink
+  * >50%: Very slow blink
+  * <50%: Extremely slow blink
+
+RelayControl class:
+- Direct hardware interface for relay board
+- Methods:
+  - __init__
+  - relay_on
+  - relay_off
+  - beep
+  - all_on
+  - all_off
+  - remove
+  - clear
+  - stop
+
+RelayControl class --> __init__ method:
+- Takes relay_dict mapping relays to GPIO pins
+- Initializes buzzer on BOARD7
+- Creates OutputDevice for each relay
+- Sets up test devices if not on Pi
+
+RelayController class:
+- Manages relay timing and job queues
+- Methods:
+  - __init__
+  - receive
+  - consumer
+
+RelayController class --> __init__ method:
+- Takes relay_dict and visualization flags
+- Creates job queues for each relay
+- Initializes threading conditions
+- Starts consumer threads
+
+RelayController class --> receive method:
+- Takes relay, timestamp, location, delay, duration
+- Queues spray job for specified relay
+- Notifies consumer thread
+
+RelayController class --> consumer method:
+- Runs in separate thread for each relay
+- Processes queued spray jobs
+- Manages timing and relay states
+- Coordinates with visualization system

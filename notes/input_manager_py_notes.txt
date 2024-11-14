@@ -1,0 +1,109 @@
+################################################################################
+Notes on input_manager.py
+
+Summary completed on 14/11/2024
+Summary based on commit 95dfb6b
+################################################################################
+
+Purpose:
+- Manages physical control interfaces for OWL
+- Handles GPIO button inputs
+- Controls detection and recording states
+- Provides platform compatibility checks
+
+Functions:
+- is_raspberry_pi
+- get_rpi_version
+
+Classes:
+- UteController
+- AdvancedController
+
+UteController class:
+- Single-switch control interface
+- Methods:
+  - __init__
+  - update_state
+  - toggle_state
+  - weed_detect_indicator
+  - image_write_indicator
+  - run
+  - stop
+
+UteController class --> __init__ method:
+- Takes detection_state, sample_state, stop_flag
+- Takes owl_instance, status_indicator
+- Takes switch_purpose (recording/detection)
+- Takes switch_board_pin, bounce_time
+- Initializes GPIO button handlers
+
+UteController class --> update_state method:
+- Checks switch position
+- Updates detection or recording state
+- Toggles LED indicators
+- Controls weed detection/image sampling
+
+AdvancedController class:
+- Multi-switch interface for advanced control
+- Methods:
+  - __init__
+  - update_state
+  - update_recording_state
+  - update_sensitivity_state
+  - update_sensitivity_settings
+  - set_detection_mode
+  - update_detection_mode_state
+  - weed_detect_indicator
+  - image_write_indicator
+  - run
+  - stop
+  - _read_config
+
+AdvancedController class --> __init__ method:
+- Takes recording/sensitivity/detection states
+- Takes owl_instance, status_indicator
+- Takes config paths for sensitivity settings
+- Takes button pin mappings and bounce time
+- Initializes multiple GPIO buttons
+- Sets up button event handlers
+
+AdvancedController class --> update_state method:
+- Updates all control states:
+  * Recording state
+  * Sensitivity state
+  * Detection mode state
+
+AdvancedController class --> set_detection_mode method:
+- Takes mode parameter (0=detect, 1=off, 2=all on)
+- Controls relay states
+- Updates status indicators
+
+Platform Handling:
+- Detects Raspberry Pi platform
+- Provides GPIO access on Pi
+- Testing mode on non-Pi platforms
+- Version detection for Pi models
+
+Dependencies:
+- gpiozero: GPIO control (Pi only)
+- configparser: Config file reading
+- cv2: GUI trackbar updates
+- threading: Process control
+- logging: Status messages
+
+GPIO Configuration:
+- Button setup with bounce time
+- Event handler registration
+- State management
+- LED indicator control
+
+Thread Safety:
+- State locking for shared variables
+- Safe process termination
+- Event-based status updates
+
+Error Handling:
+- Platform compatibility checks
+- GPIO initialization errors
+- Config file reading errors
+- Process management safety

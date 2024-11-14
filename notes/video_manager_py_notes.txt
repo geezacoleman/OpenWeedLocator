@@ -1,0 +1,111 @@
+################################################################################
+Notes on video_manager.py
+
+Summary completed on 14/11/2024
+Summary based on commit 95dfb6b
+################################################################################
+
+Purpose:
+- Manages different camera types for video capture
+- Supports Picamera (legacy), Picamera2, and standard webcams
+- Provides thread-safe video streaming
+
+Classes:
+- WebcamStream
+- PiCamera2Stream
+- PiCameraStream
+- VideoStream
+
+WebcamStream class:
+- Handles USB/standard webcams via OpenCV
+- Methods:
+  - __init__
+  - start
+  - update
+  - read
+  - stop
+
+WebcamStream class --> __init__ method:
+- Takes camera source number
+- Initializes VideoCapture stream
+- Sets frame dimensions
+- Creates thread for frame updates
+
+WebcamStream class --> update method:
+- Runs in separate thread
+- Continuously reads frames
+- Updates frame buffer
+- Handles stream closure
+
+PiCamera2Stream class:
+- Handles newer Raspberry Pi cameras
+- Methods:
+  - __init__
+  - start
+  - update
+  - read
+  - stop
+
+PiCamera2Stream class --> __init__ method:
+- Takes resolution, exposure compensation
+- Configures camera parameters
+- Sets up thread synchronization
+- Detects camera model (imx296/imx477/imx708)
+
+PiCamera2Stream class --> update method:
+- Thread-safe frame capture
+- Uses condition/lock for synchronization
+- Handles camera cleanup
+
+PiCameraStream class:
+- Handles legacy Raspberry Pi camera
+- Methods:
+  - __init__
+  - start
+  - update
+  - read
+  - stop
+
+PiCameraStream class --> __init__ method:
+- Takes resolution, exposure compensation
+- Sets PiCamera parameters
+- Initializes frame buffer
+- Creates capture stream
+
+PiCameraStream class --> update method:
+- Continuous frame capture
+- Updates frame buffer
+- Handles resource cleanup
+
+VideoStream class:
+- Factory class to create appropriate stream
+- Methods:
+  - __init__
+  - start
+  - update
+  - read
+  - stop
+
+VideoStream class --> __init__ method:
+- Detects available camera version
+- Creates appropriate stream object
+- Sets frame dimensions
+- Handles initialization errors
+
+Dependencies:
+- cv2: OpenCV camera interface
+- picamera/picamera2: Raspberry Pi cameras
+- threading: Thread management
+- logging: Status and error logging
+
+Thread Safety:
+- Lock for frame buffer access
+- Condition for frame synchronization
+- Event for thread control
+- Daemon threads for cleanup
+
+Error Handling:
+- Camera initialization failures
+- Stream read errors
+- Resource cleanup on errors
+- Camera version compatibility

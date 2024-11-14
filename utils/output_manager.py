@@ -12,8 +12,6 @@ import time
 import logging
 import platform
 
-
-
 logger = logging.getLogger(__name__)
 
 def get_platform_config() -> tuple[bool, Optional[Exception]]:
