@@ -428,9 +428,7 @@ class Owl:
                     if algorithm == 'gog':
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
                             frame,
-                            confidence=confidence,
-                            filter_id=63
-                        )
+                            confidence=confidence)
                     else:
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
                             frame,

@@ -1,92 +1,75 @@
 #!/usr/bin/env python
-from pycoral.adapters.common import input_size
-from pycoral.adapters.detect import get_objects
-from pycoral.utils.dataset import read_label_file
-from pycoral.utils.edgetpu import make_interpreter
-from pycoral.utils.edgetpu import run_inference
 from pathlib import Path
-
+from typing import Tuple, List, Optional
+import numpy as np
+import logging
 import cv2
+from ultralytics import YOLO
+
+logger = logging.getLogger(__name__)
 
 
 class GreenOnGreen:
-    def __init__(self, model_path='models', label_file='models/labels.txt'):
-        if model_path is None:
-            print('[WARNING] No model directory or path provided with --model-path flag. '
-                  'Attempting to load from default...')
-            model_path = 'models'
+    def __init__(self, model_path: str = 'models', label_file: Optional[str] = None) -> None:
+        """Initialize YOLO model for weed detection."""
         self.model_path = Path(model_path)
+        self.model = self._load_model()
+        self.weed_centers: List[List[int]] = []
+        self.boxes: List[List[int]] = []
 
+    def _load_model(self) -> YOLO:
+        """Load YOLO model, supporting both .pt and NCNN formats."""
         if self.model_path.is_dir():
-            model_files = list(self.model_path.glob('*.tflite'))
-            if not model_files:
-                raise FileNotFoundError('No .tflite model files found. Please provide a directory or .tflite file.')
+            # Check for NCNN model first (model.param and model.bin)
+            ncnn_param = list(self.model_path.glob('*.param'))
+            if ncnn_param:
+                ncnn_dir = ncnn_param[0].parent
+                logger.info(f'Using NCNN model from {ncnn_dir}')
+                return YOLO(str(ncnn_dir))
 
-            else:
-                self.model_path = model_files[0]
-                print(f'[INFO] Using {self.model_path.stem} model...')
+            # Fall back to .pt files
+            pt_files = list(self.model_path.glob('*.pt'))
+            if not pt_files:
+                raise FileNotFoundError('No valid model files found (.pt or NCNN)')
 
-        elif self.model_path.suffix == '.tflite':
-            print(f'[INFO] Using {self.model_path.stem} model...')
+            self.model_path = pt_files[0]
+            logger.info(f'Using PyTorch model {self.model_path.stem}')
 
+        elif self.model_path.suffix == '.pt':
+            logger.info(f'Loading PyTorch model {self.model_path}')
         else:
-            print(f'[WARNING] Specified model path {model_path} is unsupported, attempting to use default...')
+            # Assume NCNN model directory
+            if not self.model_path.exists():
+                raise FileNotFoundError(f'Model path {self.model_path} does not exist')
+            logger.info(f'Loading NCNN model from {self.model_path}')
 
-            model_files = Path('models').glob('*.tflite')
-            try:
-                self.model_path = next(model_files)
-                print(f'[INFO] Using {self.model_path.stem} model...')
+        return YOLO(str(self.model_path))
 
-            except StopIteration:
-                print('[ERROR] No model files found.')
-
-        self.labels = read_label_file(label_file)
-        self.interpreter = make_interpreter(self.model_path.as_posix())
-        self.interpreter.allocate_tensors()
-        self.inference_size = input_size(self.interpreter)
-        self.objects = None
-
-    def inference(self, image, confidence=0.5, filter_id=0):
-        cv2_im_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        cv2_im_rgb = cv2.resize(cv2_im_rgb, self.inference_size)
-        run_inference(self.interpreter, cv2_im_rgb.tobytes())
-        self.objects = get_objects(self.interpreter, confidence)
-        self.filter_id = filter_id
-
-        height, width, channels = image.shape
-        scale_x, scale_y = width / self.inference_size[0], height / self.inference_size[1]
+    def inference(self,
+                  image: np.ndarray,
+                  confidence: float = 0.5) -> Tuple[None, List[List[int]], List[List[int]], np.ndarray]:
+        """Run inference on image and return detections."""
         self.weed_centers = []
         self.boxes = []
 
-        for det_object in self.objects:
-            if det_object.id == self.filter_id:
-                bbox = det_object.bbox.scale(scale_x, scale_y)
+        results = self.model.predict(source=image, conf=confidence, verbose=False)
 
-                startX, startY = int(bbox.xmin), int(bbox.ymin)
-                endX, endY = int(bbox.xmax), int(bbox.ymax)
-                boxW = endX - startX
-                boxH = endY - startY
+        # Process each detection
+        for result in results:
+            for box in result.boxes:
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                w = x2 - x1
+                h = y2 - y1
 
-                # save the bounding box
-                self.boxes.append([startX, startY, boxW, boxH])
-                # compute box center
-                centerX = int(startX + (boxW / 2))
-                centerY = int(startY + (boxH / 2))
-                self.weed_centers.append([centerX, centerY])
+                self.boxes.append([x1, y1, w, h])
+                center_x = x1 + w // 2
+                center_y = y1 + h // 2
+                self.weed_centers.append([center_x, center_y])
 
-                percent = int(100 * det_object.score)
-                label = f'{percent}% {self.labels.get(det_object.id, det_object.id)}'
-                cv2.rectangle(image, (startX, startY), (endX, endY), (0, 0, 255), 2)
-                cv2.putText(image, label, (startX, startY + 30),
-                                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
-            else:
-                pass
-        # print(self.weedCenters)
+                conf = float(box.conf[0])
+                label = f'{int(conf * 100)}% weed'
+                cv2.rectangle(image, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                cv2.putText(image, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                            1.0, (255, 0, 0), 2)
+
         return None, self.boxes, self.weed_centers, image
-
-
-
-
-
-
-
