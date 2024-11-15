@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import os
 import sys
-import time
+
 import numpy as np
 import logging
 import argparse
@@ -314,6 +314,10 @@ class Owl:
 
                 self.frame_width = self.cam.frame_width
                 self.frame_height = self.cam.frame_height
+
+            except IndexError as e:
+                self.status_indicator.error(2)
+                raise errors.CameraNotFoundError(error_type="Camera Not Found", original_error=str(e))
 
             except ModuleNotFoundError as e:
                 missing_module = str(e).split("'")[-2]

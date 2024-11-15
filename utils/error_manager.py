@@ -1,5 +1,6 @@
 import subprocess
 import logging
+import traceback
 import sys
 import os
 
@@ -67,15 +68,51 @@ class OWLError(Exception):
         )
 
 ### HARDWARE RELATED ERRORS ###
+class CameraNotFoundError(OWLError):
+    """Raised when there are issues with camera initialization or connection."""
+
+    def __init__(self, error_type: str = None, original_error: str = None):
+        # Initialize parent first
+        super().__init__(
+            message=None,
+            details={
+                'error_type': error_type,
+                'original_error': original_error
+            }
+        )
+
+        # Now we can build the message
+        message = (
+            self.format_error_header("Camera Connection Error") +
+            self.format_section(
+                "Problem",
+                f"Failed to initialize camera: {self.colorize(error_type, 'WHITE', bold=True)}\n"
+                f"Error details: {original_error}"
+            ) +
+            self.format_section(
+                "Solutions",
+                "1. Check if the camera ribbon cable is properly connected\n"
+                "2. Inspect the ribbon cable for damage\n"
+                "3. Verify camera module is properly seated\n"
+                "4. Check if camera is enabled in raspi-config\n"
+                "5. Try reconnecting the camera with the system powered off"
+            ) +
+            self.format_section(
+                "How to get more information",
+                f"• {self.colorize('vcgencmd get_camera', 'WHITE', bold=True)} - Check if camera is detected\n"
+                f"• {self.colorize('libcamera-hello', 'WHITE', bold=True)} - Test camera feed\n"
+                f"• {self.colorize('dmesg | grep -i camera', 'WHITE', bold=True)} - Check system logs"
+            )
+        )
+
+        self.args = (message,)
 
 @dataclass
 class ProcessInfo:
     pid: int
     command: str
 
-
-# utils/error_manager.py
-
+### Storage set up related errors ###
 class StorageError(OWLError):
     """Base class for storage-related errors"""
     pass
@@ -204,7 +241,7 @@ class StorageSystemError(StorageError):
 
         self.args = (message,)
 
-### PROCESS RELATED ERRORS ###
+### OWL PROCESS RELATED ERRORS ###
 class OWLProcessError(OWLError):
     """Base class for process-related errors."""
     pass
@@ -267,7 +304,7 @@ class OWLAlreadyRunningError(OWLProcessError):
 
         self.args = (formatted_message,)
 
-
+### CONTROLLER ERRORS ###
 class OWLControllerError(OWLError):
     """Base class for controller-related errors."""
     pass
@@ -334,7 +371,7 @@ class ControllerConfigError(OWLControllerError):
         )
         self.args = (message,)
 
-
+### CONFIGURATION ERRORS ###
 class OWLConfigError(OWLError):
     """Base class for config file errors"""
     pass
@@ -370,6 +407,7 @@ class ConfigFileError(OWLConfigError):
         )
         self.args = (message,)  # Update Exception's message
 
+
 class ConfigSectionError(OWLConfigError):
     """Raised when required sections are missing"""
     def __init__(self, missing_sections: Set[str], config_path: Path):
@@ -398,6 +436,7 @@ class ConfigSectionError(OWLConfigError):
         )
         self.args = (message,)
 
+
 class ConfigKeyError(OWLConfigError):
     """Raised when required keys are missing in a section"""
     def __init__(self, section: str, missing_keys: Set[str], config_path: Path):
@@ -424,6 +463,7 @@ class ConfigKeyError(OWLConfigError):
             )
         )
         self.args = (message,)
+
 
 class ConfigValueError(OWLConfigError):
     """Raised when configuration values are invalid"""
@@ -458,9 +498,7 @@ class ConfigValueError(OWLConfigError):
         )
         self.args = (message,)
 
-
-import traceback
-
+### ALGORITHM ERRORS ###
 class AlgorithmError(OWLError):
     """Base class for algorithm-related errors"""
 
@@ -585,7 +623,7 @@ class AlgorithmError(OWLError):
             logger.info("Exiting due to algorithm error.")
             sys.exit(1)
 
-
+### Module/Software/Dependency Errors ###
 class OpenCVError(OWLError):
     """Raised when there are issues with OpenCV (cv2) initialization or imports"""
 
