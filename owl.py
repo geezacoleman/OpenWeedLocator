@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 import os
 import sys
-
+import time
+import numpy as np
 import logging
 import argparse
 import time
@@ -301,6 +302,7 @@ class Owl:
                                    resolution=self.resolution,
                                    loop_time=self.image_loop_time)
             self.frame_width, self.frame_height = self.cam.resolution
+
             self.logger.info(f'[INFO] Using {self.cam.input_type} from {self.input_file_or_directory}...')
 
         # if no video, start the camera with the provided parameters
@@ -348,6 +350,10 @@ class Owl:
             laneX = int(i * self.lane_width)
             self.lane_coords[i] = laneX
 
+        self.lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
+        self.lane_starts = np.array([self.lane_coords_int[i] for i in range(self.relay_num)])
+        self.lane_ends = self.lane_starts + self.lane_width
+
     def hoot(self):
         self.record_video = False  # Flag to control video recording
         self.video_writer = None
@@ -393,7 +399,7 @@ class Owl:
         try:
             actuation_duration = self.config.getfloat('System', 'actuation_duration')
             delay = self.config.getfloat('System', 'delay')
-
+            elapsed_times = []
             while True:
                 frame = self.cam.read()
 
@@ -425,10 +431,10 @@ class Owl:
 
                 # pass image, thresholds to green_on_brown function
                 if not self.disable_detection:
+                    start_time = time.time()
                     if algorithm == 'gog':
-                        cnts, boxes, weed_centres, image_out = weed_detector.inference(
-                            frame,
-                            confidence=confidence)
+                        cnts, boxes, weed_centres, image_out = weed_detector.inference(frame, confidence=confidence)
+
                     else:
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
                             frame,
@@ -447,27 +453,38 @@ class Owl:
                             label='WEED'
                         )
 
-                    # Precompute the integer lane coordinates for reuse
-                    lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
-
                     if len(weed_centres) > 0 and self.controller:
                         self.controller.weed_detect_indicator()
 
-                    # loop over the weed centres
-                    for centre in weed_centres:
-                        if centre[1] > self.yAct:
-                            actuation_time = time.time()
-                            centre_x = centre[0]
+                    if len(weed_centres) > 0:
+                        weed_centres_array = np.array(weed_centres)
+                        filtered_centres = weed_centres_array[weed_centres_array[:, 1] > self.yAct]
 
-                            for i in range(self.relay_num):
-                                lane_start = lane_coords_int[i]
-                                lane_end = lane_start + self.lane_width
-                                if lane_start <= centre_x < lane_end:
-                                    self.relay_controller.receive(
-                                        relay=i,
-                                        delay=delay,
-                                        time_stamp=actuation_time,
-                                        duration=actuation_duration)
+                    else:
+                        filtered_centres = []
+
+                    # Iterate over filtered centres
+                    for centre in filtered_centres:
+                        centre_x = centre[0]
+                        matching_lanes = np.where((self.lane_starts <= centre_x) & (centre_x < self.lane_ends))[0]
+
+                        actuation_time = time.time()
+                        for lane in matching_lanes:
+                            self.relay_controller.receive(
+                                relay=lane,
+                                delay=delay,
+                                time_stamp=actuation_time,
+                                duration=actuation_duration)
+                    end_time = time.time()
+                    elapsed_time = (end_time - start_time) * 1000
+
+                    # print(f'[INFO] Elapsed time: {elapsed_time:.8f}')
+                    elapsed_times.append(elapsed_time)
+
+                    if len(elapsed_times) >= 100:
+                        avg_elapsed_time = sum(elapsed_times[-100:]) / 100  # Calculate mean of the last 100 times
+                        print(f'[INFO] Average elapsed time for last 100 iterations: {avg_elapsed_time:.3f} ms')
+                        elapsed_times.clear()
 
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often
@@ -493,7 +510,7 @@ class Owl:
 
                 frame_count = frame_count + 1 if frame_count < 900 else 1
 
-                if log_fps and frame_count % 900 == 0:
+                if log_fps and frame_count % 100 == 0:
                     fps.stop()
                     self.logger.info(f"[INFO] Approximate FPS: {fps.fps():.2f}")
                     fps = FPS().start()
@@ -526,7 +543,7 @@ class Owl:
                         cv2.putText(image_out, f'Blurriness: {blurriness:.2f}', (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 1,
                                     (80, 80, 255), 1)
 
-                    cv2.imshow("Detection Output", imutils.resize(image_out, width=600))
+                    cv2.imshow("Detection Output", image_out)
 
                 k = cv2.waitKey(1) & 0xFF
                 if k == ord('s'):

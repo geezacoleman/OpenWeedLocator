@@ -8,7 +8,6 @@ from ultralytics import YOLO
 
 logger = logging.getLogger(__name__)
 
-
 class GreenOnGreen:
     def __init__(self, model_path: str = 'models', label_file: Optional[str] = None) -> None:
         """Initialize YOLO model for weed detection."""
@@ -25,7 +24,7 @@ class GreenOnGreen:
             if ncnn_param:
                 ncnn_dir = ncnn_param[0].parent
                 logger.info(f'Using NCNN model from {ncnn_dir}')
-                return YOLO(str(ncnn_dir))
+                return YOLO(self.model_path)
 
             # Fall back to .pt files
             pt_files = list(self.model_path.glob('*.pt'))
@@ -51,7 +50,6 @@ class GreenOnGreen:
         """Run inference on image and return detections."""
         self.weed_centers = []
         self.boxes = []
-
         results = self.model.predict(source=image, conf=confidence, verbose=False)
 
         # Process each detection

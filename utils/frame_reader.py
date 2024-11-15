@@ -1,86 +1,147 @@
+from pathlib import Path
 import time
-import os
 import cv2
-
+import logging
+from typing import Optional, Tuple, Union
 from imutils.video import FileVideoStream
-from utils.log_manager import LogManager
+
+logger = logging.getLogger(__name__)
+
 
 class FrameReader:
-    def __init__(self, path, resolution=(640, 480), loop_time=5):
-        '''
-        FrameReader allows users to provide a directory of images, video or a single image to OWL for testing
-        and visualisation purposes.
-        :param path: path to the media (single image, directory of images or video)
-        :param loop_time: the delay between image display if using a directory)
-        '''
+    """Handles reading of different media types for OWL processing."""
 
+    def __init__(self, path: Union[str, Path], resolution: Optional[Tuple[int, int]] = None, loop_time: float = 5.0):
+        """
+        Initialize media reader for images, videos or directories.
+
+        Args:
+            path: Path to media (directory, image, or video)
+            resolution: Optional (width, height) to resize media
+            loop_time: Time between frames when reading from directory
+        """
+        self.path = Path(path)
+        self._resolution = None
         self.loop_time = loop_time
         self.loop_start_time = time.time()
-        self.resolution = resolution
+        self.cam = None
         self.curr_image = None
         self.files = None
+        self.single_image = False
 
-        self.logger = LogManager.get_logger(__name__)
+        if not self.path.exists():
+            raise FileNotFoundError(f"Path does not exist: {self.path}")
 
-        if os.path.isdir(path):
-            self.files = iter(os.listdir(path))
-            self.path = path
-            self.cam = None
-            self.input_type = "directory"
-            self.single_image = False
-
-        elif os.path.isfile(path):
-            if path.endswith(('.png', '.jpg', '.jpeg')):
-                self.cam = cv2.resize(cv2.imread(path), self.resolution, interpolation=cv2.INTER_AREA)
-                self.input_type = "image"
-                self.single_image = True
-
-            else:
-                self.cam = FileVideoStream(path).start()
-                self.input_type = "video"
-                self.single_image = False
+        if self.path.is_dir():
+            self._setup_directory()
         else:
-            self.logger.error("Path must be a directory or a file", exc_info=True)
-            raise ValueError(f'[ERROR] Invalid path to image/s: {path}')
+            self._setup_file()
+
+        # Set provided resolution after getting original dimensions
+        if resolution:
+            self._resolution = resolution
+
+        logger.info(f"Initialized FrameReader for {self.path} with resolution {self._resolution}")
+
+    def _setup_directory(self):
+        """Set up for reading from directory of images."""
+        files = list(self.path.glob("*.[jp][pn][g]"))  # jpg, jpeg, png
+        if not files:
+            raise ValueError(f"No valid images found in {self.path}")
+
+        # Get dimensions from first image
+        first_img = cv2.imread(str(files[0]))
+        if first_img is None:
+            raise ValueError(f"Could not read first image: {files[0]}")
+
+        h, w = first_img.shape[:2]
+        self._resolution = (w, h)
+        self.files = iter(files)
+        self.input_type = "directory"
+
+    def _setup_file(self):
+        """Set up for reading from single image or video file."""
+        if self.path.suffix.lower() in ('.jpg', '.jpeg', '.png'):
+            img = cv2.imread(str(self.path))
+            if img is None:
+                raise ValueError(f"Could not read image: {self.path}")
+
+            h, w = img.shape[:2]
+            self._resolution = (w, h)
+            self.cam = img
+            self.input_type = "image"
+            self.single_image = True
+
+        elif self.path.suffix.lower() in ('.mp4', '.avi', '.mov'):
+            # Get dimensions first
+            cap = cv2.VideoCapture(str(self.path))
+            if not cap.isOpened():
+                raise ValueError(f"Could not open video: {self.path}")
+
+            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            self._resolution = (w, h)
+            cap.release()
+
+            # Initialize video stream
+            self.cam = FileVideoStream(str(self.path)).start()
+            time.sleep(1)  # Allow stream to initialize
+            self.input_type = "video"
+        else:
+            raise ValueError(f"Unsupported file type: {self.path.suffix}")
+
+    @property
+    def resolution(self) -> Tuple[int, int]:
+        """Current resolution as (width, height)."""
+        return self._resolution
 
     def read(self):
+        """Read next frame/image from the source."""
         if self.single_image:
             return self.cam
 
-        elif self.files:
-            if self.curr_image is None or (time.time() - self.loop_start_time) > self.loop_time:
-                try:
-                    image = next(self.files)
-                    self.curr_image = cv2.imread(os.path.join(self.path, image))
-                    self.curr_image = cv2.resize(self.curr_image, self.resolution, interpolation=cv2.INTER_AREA)
+        if self.input_type == "directory":
+            return self._read_from_directory()
 
-                    self.loop_start_time = time.time()
+        return self._read_from_video()
 
-                except StopIteration:
-                    self.files = iter(os.listdir(self.path))  # restart from first image
-                    return self.read()
+    def _read_from_directory(self):
+        """Handle reading from image directory."""
+        if self.curr_image is None or (time.time() - self.loop_start_time) > self.loop_time:
+            try:
+                img_path = next(self.files)
+                self.curr_image = cv2.imread(str(img_path))
+                if self.curr_image is None:
+                    raise ValueError(f"Could not read image: {img_path}")
 
-            return self.curr_image
+                if self._resolution:
+                    self.curr_image = cv2.resize(self.curr_image, self._resolution,
+                                                 interpolation=cv2.INTER_AREA)
+                self.loop_start_time = time.time()
+            except StopIteration:
+                self.files = iter(self.path.glob("*.[jp][pn][g]"))
+                return self._read_from_directory()
 
-        else:
-            frame = self.cam.read()
-            frame = cv2.resize(frame, self.resolution, interpolation=cv2.INTER_AREA)
+        return self.curr_image
 
-            return frame
+    def _read_from_video(self):
+        """Handle reading from video stream."""
+        frame = self.cam.read()
+        if frame is not None and self._resolution:
+            frame = cv2.resize(frame, self._resolution, interpolation=cv2.INTER_AREA)
+        return frame
 
     def reset(self):
+        """Reset reader to beginning of source."""
         if self.input_type == "directory":
-            # reset the iterator to the beginning of the directory
-            self.files = iter(os.listdir(self.path))
+            self.files = iter(self.path.glob("*.[jp][pn][g]"))
             self.curr_image = None
-
         elif self.input_type == "video":
-            # stop the current video stream and start a new one
             self.cam.stop()
-            self.cam = FileVideoStream(self.path).start()
-
-        self.loop_start_time = time.time()  # reset the loop timer
+            self.cam = FileVideoStream(str(self.path)).start()
+        self.loop_start_time = time.time()
 
     def stop(self):
+        """Clean up resources."""
         if not self.single_image and self.cam:
             self.cam.stop()
