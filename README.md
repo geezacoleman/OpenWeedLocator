@@ -959,7 +959,7 @@ again, you can always run `./owl.py --focus`.
 |--------------|-------------|
 |![blurry owl](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/34ae71f2-8507-4892-b49a-195e515e56dd) | ![clear owl](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/20db536b-edaf-4085-a613-6ea786747998) |
 
-#### Legacy focusing
+#### Manual focusing
 
 With the older versions of the software, you need to stop all `owl.py` or `greenonbrown.py` background processes before
 you can restart the software with the video feed viewable on the screen. Enter the following into the terminal:
@@ -1419,7 +1419,7 @@ again, you can always run `./owl.py --focus`.
 |--------------|-------------|
 |![blurry owl](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/34ae71f2-8507-4892-b49a-195e515e56dd) | ![clear owl](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/20db536b-edaf-4085-a613-6ea786747998) |
 
-#### Legacy focusing
+#### Manual focusing
 
 With the older versions of the software, you need to stop all `owl.py` or `greenonbrown.py` background processes before
 you can restart the software with the video feed viewable on the screen. Enter the following into the terminal:
@@ -1577,14 +1577,14 @@ class_filter_id = None
 
 [GreenOnBrown]
 # parameters related to green-on-brown detection
-exgMin = 25
-exgMax = 200
-hueMin = 39
-hueMax = 83
-saturationMin = 50
-saturationMax = 220
-brightnessMin = 60
-brightnessMax = 190
+exg_min = 25
+exg_max = 200
+hue_min = 39
+hue_max = 83
+saturation_min = 50
+saturation_max = 220
+brightness_min = 60
+brightness_max = 190
 min_detection_area = 10
 invert_hue = False
 
@@ -1641,14 +1641,14 @@ camera_name = cam1
 |       `confidence`        |                                                        |                                                                            The cutoff confidence value for a detection. Defaults to 0.5 or 50%.                                                                             |
 |     `class_filter_id`     |                        Integer                         |                           Which classes to filter and target. For example, using a out-the-box COCO model, you may want to only detect a specific class. Enter that specific class integer here.                            |
 |     **GreenOnBrown**      |                                                        |                                                                                                                                                                                                                             |
-|         `exgMin`          |             Any integer between 0 and 255              |                                                Provides the minimum threshold value for the exg algorithm. Usually leave between 10 (very sensitive) and 25 (not sensitive)                                                 |
-|         `exgMax`          |             Any integer between 0 and 255              |                                                                            Provides a maximum threshold for the exg algorithm. Leave above 180.                                                                             |
-|         `hueMin`          |             Any integer between 0 and 128              |                                                      Provides a minimum threshold for the hue channel when using hsv or exhsv algorithms. Typically between 39 and 83.                                                      |
-|         `hueMax`          |             Any integer between 0 and 128              |                                               Provides a maximum threshold for the hue (colour hue) channel when using hsv or exhsv algorithms. Typically between 39 and 83.                                                |
-|      `saturationMin`      |             Any integer between 0 and 255              |                                        Provides a minimum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 50 and 220.                                         |
-|      `saturationMax`      |             Any integer between 0 and 255              |                                        Provides a maximum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 50 and 220.                                         |
-|      `brightnessMin`      |             Any integer between 0 and 255              |                                              Provides a minimum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 60 and 190.                                              |
-|      `brightnessMax`      |             Any integer between 0 and 255              |                                              Provides a maximum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 60 and 190.                                              |
+|         `exg_min`          |             Any integer between 0 and 255              |                                                Provides the minimum threshold value for the exg algorithm. Usually leave between 10 (very sensitive) and 25 (not sensitive)                                                 |
+|         `exg_max`          |             Any integer between 0 and 255              |                                                                            Provides a maximum threshold for the exg algorithm. Leave above 180.                                                                             |
+|         `hue_min`          |             Any integer between 0 and 128              |                                                      Provides a minimum threshold for the hue channel when using hsv or exhsv algorithms. Typically between 39 and 83.                                                      |
+|         `hue_max`          |             Any integer between 0 and 128              |                                               Provides a maximum threshold for the hue (colour hue) channel when using hsv or exhsv algorithms. Typically between 39 and 83.                                                |
+|      `saturation_min`      |             Any integer between 0 and 255              |                                        Provides a minimum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 50 and 220.                                         |
+|      `saturation_max`      |             Any integer between 0 and 255              |                                        Provides a maximum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 50 and 220.                                         |
+|      `brightness_min`      |             Any integer between 0 and 255              |                                              Provides a minimum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 60 and 190.                                              |
+|      `brightness_max`      |             Any integer between 0 and 255              |                                              Provides a maximum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 60 and 190.                                              |
 |   `min_detection_area`    |                        Integer                         |                                                                                        The minimum area for which to detect a weed.                                                                                         |
 |       `invert_hue`        |                        Boolean                         |                                                      True/False, inverts the detected hue from everything within the thresholds to everything outside the thresholds.                                                       |
 |    **DataCollection**     |                                                        |                                                                                                                                                                                                                             |
@@ -1661,141 +1661,6 @@ camera_name = cam1
 |       `camera_name`       |                       Any string                       |                                                               Changes the save name if recording videos of the camera. Ignore - only used if recording data.                                                                |
 |        **Relays**         |                 Integer/GPIO Boardpin                  |                                                                                    Maps a relay number to a boardpin on the GPIO header                                                                                     |
 
-
- </details>
-
-## Legacy detection settings
-
-<details>
-<summary>Legacy instructions to change detection settings</summary>
-<br>
-Prior to the `config.ini` file, all settings were controlled using command line flags. These have been replaced, however
-are listed below for reference.
-
-### Command line flags
-
-Command line flags are let you specify options on the command line within the Terminal window. It means you don't have
-to open up the code and make changes directly. OWL now supports the use of flags for some parameters. To read a
-description of all flags available type:
-
-```
-(owl) owl@raspberrypi:~ $./owl.py --help
-usage: owl.py [-h] [--input] [--show-display] [--focus] [--recording] [--algorithm {exg,nexg,exgr,maxg,exhsv,hsv}] [--framerate [10-120]]
-                       [--exposure-mode {off,auto,nightpreview,backlight,spotlight,sports,snow,beach,verylong,fixedfps,antishake,fireworks}]
-                       [--awb-mode {off,auto,sunlight,cloudy,shade,tungsten,fluorescent,incandescent,flash,horizon}] [--sensor-mode [0-3]]
-
-optional arguments:
-  -h, --help            show this help message and exit
-  --input               path to image directory, single image or video file
-  --show-display        show display windows
-  --focus               focus the camera
-  --recording           record video
-  --algorithm {exg,nexg,exgr,maxg,exhsv,hsv}
-  --framerate [10-120]  set camera framerate between 10 and 120 FPS. Framerate will depend on sensor mode, though setting framerate takes precedence over sensor_mode, For example sensor_mode=0 and framerate=120 will reset the
-                        sensor_mode to 3.
-  --exp-mode {off,auto,nightpreview,backlight,spotlight,sports,snow,beach,verylong,fixedfps,antishake,fireworks}
-                        set exposure mode of camera
-  --awb-mode {off,auto,sunlight,cloudy,shade,tungsten,fluorescent,incandescent,flash,horizon}
-                        set the auto white balance mode of the camera
-  --sensor-mode [0-3]   set the sensor mode for the camera between 0 and 3. Check Raspberry Pi camera documentation for specifics of each mode
-  --exp-compensation [-24 to 24]
-                        set the exposure compensation (EV) for the camera between -24 and 24. Raspberry Pi cameras seem to overexpose images preferentially.
-```
-
-Flag | Usage | Description
-:-------------: | :-------------: | :-------------:
---input | Specify the path to an image directory, single image or video file. | Use this if you want to run the software on images or videos. Useful when testing new algorithms or setting up the software without a camera connection.
-*legacy* --video-file | NOTE: this has been replaced by `--input` fag. Specify the path to the video file. | This is used when a video file is run instead of the live feed from a camera. It is mostly used in testing new algorithms. If this is not included, a connected camera will be used instead.
---show-display | If flag is present, this will return True | When this flag is included, video feeds and threshold adjustments will appear. Without the flag, the OWL will run `headless` with no display. This flag replaces the `Headless=True` variable in the `owl.py` file.
---focus | If the flag is present, focusing mode is activated. | WHen the flag is included, a Fast Fourier Transform is used to estimate image blurriness. The mean of this value is displayed on the video feed. High values mean it is in focus, low values mean it is blurry. 
---algorithm | gog, exg, nexg, exgr, maxg, exhsv, hsv | Select from the list of algorithms to use. Defaults to `exhsv`. GoG will enable the Google Coral and import 'pycoral' and related libraries. Only use if you have followed the instructions under the [Green-on-Green](#green-on-green) section.
---recording | If flag is present, this will return True | Record video to a file
---framerate | between 10 and 120 FPS, default=40 | sets the framerate for the camera.
---exp-mode | off, auto, nightpreview, backlight, spotlight, sports, snow, beach, verylong, fixedfps, antishake, fireworks | Select from the list of exposure modes available on the [Picamera](https://picamera.readthedocs.io/en/release-1.13/api_camera.html#picamera.PiCamera.exposure_mode). Defaults to 'sports' for faster shutter speed.
---awb-mode | off, auto, sunlight, cloudy, shade, tungsten, fluorescent, incandescent, flash, horizon | set the automatic white balance mode from [Picamera options](https://picamera.readthedocs.io/en/release-1.13/api_camera.html#picamera.PiCamera.awb_mode).
---sensor-mode | 0: default - automatic; modes 1, 2 and 3 are defined in the picamera documentation. | the sensor mode is specific to the camera. The Raspberry Pi v2 camera has 7 modes, whereas the HQ camera has only 4. Framerate is prioritised over sensor mode. WARNING: high framerates and larger resolutions may 'brick' the SD card. Always backup your SD card before testing new settings, or update from this repository if settings are lost.
---exp-compensation | Default: -4, use even values between between -24 and 24. | This sets the target brightness level for the camera. Typically it defaults to being overexposed in bright sun conditions so lower values will improve performance.
-
-### Changing threshold values in `owl.py`
-
-Other parameters such as selecting or modifying sensitivity settings can be adjusted in the owl.py file itself.
-
-To edit this file, connect a screen, keyboard and mouse and boot up the OWL. Navigate to the `owl` directory and open
-up `greenonbrown.py` in an editor. If it's an executable file, it will ask you if you want to "Execute", "Execute in
-Terminal" or "Open" (see image below). Make sure to select the `Open` option.
-
-Navigate to the `owl` directory  | Open the `owl.py` file
-:-------------------------:|:-------------------------:
-![owl_dir](https://user-images.githubusercontent.com/51358498/221152779-46c78fe2-92e6-4e65-9ebd-234ae02c33f6.png) | ![open_greenonbrown_py](https://user-images.githubusercontent.com/51358498/221153072-922d9ed6-8120-4c2d-9bd2-a999030b4723.png)
-
-Once you have opened the file in an editor (this can be a text editor, Thonny, Geany or other code editors), scroll down
-to the very bottom and you should come across values you can change, such as in the image or written out below.
-
-![image](https://user-images.githubusercontent.com/51358498/221154007-69007ab9-e1b9-4c2f-84dd-efe6b17ff3ca.png)
-
-Editable values for sensitivity:
-
-```
-if __name__ == "__main__":
-    owl = Owl(input_file_or_directory=args.input,
-              show_display=args.show_display,
-              focus=args.focus,
-              recording=args.recording,
-              exgMin=25,
-              exgMax=200,
-              hueMin=39,
-              hueMax=83,
-              saturationMin=50,
-              saturationMax=220,
-              brightnessMin=60,
-              brightnessMax=190,
-              framerate=args.framerate,
-              resolution=(416, 320),
-              exposure_mode=args.exposure_mode,
-              awb_mode=args.awb_mode,
-              sensor_mode=args.sensor_mode)
-
-    # start the targeting!
-    owl.hoot(sprayDur=0.15,
-             delay=0,
-             sampleMethod=None,
-             sampleFreq=60,
-             saveDir='/home/owl/owl-images',
-             algorithm=args.algorithm,
-             selectorEnabled=False,
-             camera_name='hsv',
-             minArea=10)
-```
-
-Here's a summary table of what each parameter does. Run `./owl.py --show-display` to view the output results. Without
-this `--show-display` flag the video will not appear on the screen.
-
->⚠️**NOTE**⚠️ In older versions ONLY, ff you change the now defunct parameter of `headless` to `False`, you'll be able to see
-a real time feed of what the algorithm is doing and where the detections are occurring. This will need to be switched
-back to `headless=True` if you decide to run it without the screen connected. Note that the owl program will not run on
-startup if `headless=False`.
-
-**Parameter**  | **Options** | **Description** 
-:-------------: | :-------------: | :-------------: 
-**Owl()** | | All options when the sprayer class is instantiated
-`exgMin`|Any integer between 0 and 255| Provides the minimum threshold value for the exg algorithm. Usually leave between 10 (very sensitive) and 25 (not sensitive)
-`exgMax`|Any integer between 0 and 255| Provides a maximum threshold for the exg algorithm. Leave above 180. 
-`hueMin`|Any integer between 0 and 128| Provides a minimum threshold for the hue channel when using hsv or exhsv algorithms. Typically between 28 and 45. Increase to reduce sensitivity.
-`hueMax`|Any integer between 0 and 128| Provides a maximum threshold for the hue (colour hue) channel when using hsv or exhsv algorithms. Typically between 80 and 95. Decrease to reduce sensitivity.
-`saturationMin`|Any integer between 0 and 255| Provides a minimum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 4 and 20. Increase to reduce sensitivity.
-`saturationMax`|Any integer between 0 and 255| Provides a maximum threshold for the saturation (colour intensity) channel when using hsv or exhsv algorithms. Typically between 200 and 250. Decrease to reduce sensitivity.
-`brightnessMin`|Any integer between 0 and 255| Provides a minimum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 10 and 60. Increase to reduce sensitivity particularly if false positives in shadows.
-`brightnessMax`|Any integer between 0 and 255| Provides a maximum threshold for the value (brightness) channel when using hsv or exhsv algorithms. Typically between 190 and 250. Decrease to reduce sensitivity particularly if false positives in bright sun.
-`resolution`|Tuple of (w, h) resolution| Changes output resolution from camera. Increasing rapidly decreased framerate but improves detection of small weeds.
-**hoot()** | | All options when the sprayer.start() function is called
-`sprayDur`|Any float (decimal)|Changes the length of time for which the relay is activated.|
-`sampleMethod`|Choose from None, 'bbox', 'square', 'whole' | If sampleMethod=None, sampling is deactivated. Do not leave on for long periods or SD card will fill up and stop working.|
-`sampleFreq` | Any positive integer | Changes how often (after how many frames) image sampling will occur. If sampleFreq=60, images will be sampled every 60 frames. |
-`saveDir` | Path to save directory | Set where you want the images saved. If you insert a USB and would like to save images to it, put the path for that here. |
-`algorithm`|Any of: `gog`,`exg`,`exgr`,`exgs`,`exhu`,`hsv`| Changes the selected algorithm. Most sensitive: 'exg', least sensitive/most precise (least false positives): 'exgr', 'exhu', 'hsv'. `gog` will activate a provided Green-on-Green detection algorithm, a .tflite model in the models folder. Ensure you have connected and installed a Google Coral using the procedure [here](#green-on-green). |
-`selectorEnabled`|`True` or `False`| Enables algorithm selection based on a rotary switch. Only enable if switch is connected.|
-`cameraName` | Any string | Changes the save name if recording videos of the camera. Ignore - only used if recording data.|
-`minArea`| Any integer  | Changes the minimum size of the detection. Leave low for more sensitivity of small weeds and increase to reduce false positives.|
 
  </details>
 
@@ -2229,6 +2094,37 @@ All versions of OWL can be found here. Only major changes will be recorded as se
 <summary>Troubleshooting OWL issues</summary>
 <br>
 
+## Software
+
+The table below includes a summary of all current error classes and their hierarchy. All errors include detailed logging, color-formatted terminal output, and standardized error handling. When encountering an error, check the terminal output for specific guidance and follow the suggested solutions for your specific error.
+
+If an error appears that isn't caught here, please raise an issue and we'll update this table and the `error_manager.py` file.
+
+| Error Class                | Subclasses / Specific Errors         | Common Causes                                                                                   | Solutions                                                                                     |
+|----------------------------|---------------------------------------|------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------|
+| **`OWLError`**             | Base exception for all OWL-related errors | —                                                                                              | —                                                                                            |
+|                            | **`CameraNotFoundError`**            | - Disconnected camera<br>- Damaged ribbon cable<br>- Camera not enabled                        | 1. Check camera connections<br>2. Run `vcgencmd get_camera`<br>3. Enable camera in raspi-config |
+|                            | **`OWLProcessError`**                | —                                                                                              | —                                                                                            |
+|                            | - `OWLAlreadyRunningError`           | - Another OWL instance active<br>- GPIO pins in use                                            | 1. Use `kill <PID>` to stop process<br>2. Check for zombie processes<br>3. Reboot if persists |
+| **`StorageError`**         | Base class for storage-related errors | —                                                                                              | —                                                                                            |
+|                            | **`USBError`**                       | —                                                                                              | —                                                                                            |
+|                            | - `USBMountError`                    | • Device not properly mounted<br>• Permission issues                                           | 1. Check physical connection<br>2. Verify mount points<br>3. Check device permissions         |
+|                            | - `USBWriteError`                    | • Write-protected device<br>• Full storage<br>• Permission issues                              | 1. Check write protection<br>2. Verify available space<br>3. Check file permissions           |
+|                            | - `NoWritableUSBError`               | • No USB storage detected<br>• All devices write-protected                                     | 1. Connect USB device<br>2. Check write protection<br>3. Format device if needed              |
+|                            | **`StorageSystemError`**             | - Incompatible platform for storage operation                                                  | 1. Use Linux/Raspberry Pi<br>2. Specify a valid local directory in config<br>3. Use `--save-directory` flag |
+| **`OWLControllerError`**   | Base class for controller-related errors | —                                                                                              | —                                                                                            |
+|                            | - `ControllerPinError`               | - Pin conflicts<br>- Invalid pin numbers<br>- Hardware issues                                  | 1. Check pin configurations<br>2. Verify physical connections<br>3. Check for conflicts       |
+|                            | - `ControllerConfigError`            | - Missing or invalid configuration                                                             | 1. Check config file<br>2. Add missing settings<br>3. Ensure values are appropriate           |
+| **`OWLConfigError`**       | Base class for configuration errors   | —                                                                                              | —                                                                                            |
+|                            | - `ConfigFileError`                  | - Missing config file<br>- Invalid file path<br>- Corrupt file                                 | 1. Verify file exists<br>2. Check file permissions<br>3. Validate file contents               |
+|                            | - `ConfigSectionError`               | - Missing required sections in config file                                                    | 1. Add missing sections to the config file                                                   |
+|                            | - `ConfigKeyError`                   | - Missing required keys in a section                                                          | 1. Add missing keys to the respective config section                                          |
+|                            | - `ConfigValueError`                 | - Invalid configuration values                                                                | 1. Correct values to fit expected ranges                                                     |
+| **`AlgorithmError`**       | Base class for algorithm-related errors | - Missing dependencies<br>- Invalid model files<br>- Coral device issues                      | 1. Install required packages<br>2. Verify model files<br>3. Check Coral device connection     |
+| **`OpenCVError`**          | —                                     | - OpenCV not installed<br>- Wrong virtual environment                                          | 1. Run `workon owl`<br>2. Install opencv-python<br>3. Run owl_setup.sh                        |
+| **`DependencyError`**      | —                                     | - Missing Python packages<br>- Wrong virtual environment                                      | 1. Activate owl environment<br>2. Run pip install for package<br>3. Install from requirements.txt |
+
+## Hardware
 
 Here's a table of some of the common symptoms and possible explanations for errors we've come across. This is by no
 means exhaustive, but hopefully helps in diagnosing any issues you might have. If you come across any others please
