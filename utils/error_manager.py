@@ -1,4 +1,5 @@
 import subprocess
+import traceback
 import logging
 import sys
 import os
@@ -8,7 +9,7 @@ from typing import List, Optional, Dict, Any, Set
 from datetime import datetime
 from dataclasses import dataclass
 
-# Base exception class for OWL-specific errors
+# Base exception class for all OWL-specific errors
 class OWLError(Exception):
     """Base exception class for all OWL-related errors."""
 
@@ -73,8 +74,6 @@ class ProcessInfo:
     pid: int
     command: str
 
-
-# utils/error_manager.py
 
 class StorageError(OWLError):
     """Base class for storage-related errors"""
@@ -370,10 +369,10 @@ class ConfigFileError(OWLConfigError):
         )
         self.args = (message,)  # Update Exception's message
 
+
 class ConfigSectionError(OWLConfigError):
     """Raised when required sections are missing"""
     def __init__(self, missing_sections: Set[str], config_path: Path):
-        # First initialize parent
         super().__init__(
             message=None,
             details={
@@ -382,7 +381,6 @@ class ConfigSectionError(OWLConfigError):
             }
         )
 
-        # Now build message
         message = (
             self.format_error_header("Missing Configuration Sections") +
             self.format_section(
@@ -397,6 +395,7 @@ class ConfigSectionError(OWLConfigError):
             )
         )
         self.args = (message,)
+
 
 class ConfigKeyError(OWLConfigError):
     """Raised when required keys are missing in a section"""
@@ -424,6 +423,7 @@ class ConfigKeyError(OWLConfigError):
             )
         )
         self.args = (message,)
+
 
 class ConfigValueError(OWLConfigError):
     """Raised when configuration values are invalid"""
@@ -459,8 +459,6 @@ class ConfigValueError(OWLConfigError):
         self.args = (message,)
 
 
-import traceback
-
 class AlgorithmError(OWLError):
     """Base class for algorithm-related errors"""
 
@@ -494,9 +492,8 @@ class AlgorithmError(OWLError):
     }
 
     def __init__(self, algorithm: str, error: Exception):
-        # Call the base class initializer to ensure attributes like error_id are set
         super().__init__(
-            message=None,  # We'll set the detailed message below
+            message=None,
             details={
                 'algorithm': algorithm,
                 'error_type': type(error).__name__,
@@ -508,11 +505,9 @@ class AlgorithmError(OWLError):
         self.original_error = error
         self.error_type = type(error)
 
-        # Find matching error configuration and format the message
         error_config = self._get_error_config(error)
         self.message = self._format_error_message(error_config)
 
-        # Update the message in the base class
         self.args = (self.message,)
 
     def _get_error_config(self, error: Exception) -> dict:
@@ -554,10 +549,8 @@ class AlgorithmError(OWLError):
         Args:
             owl_instance: The Owl instance that encountered the error.
         """
-        # Use the logger from the owl_instance if available
         logger = getattr(owl_instance, 'logger', logging.getLogger(__name__))
 
-        # Log the full error with context
         logger.error(
             self.message,
             extra={
@@ -567,7 +560,6 @@ class AlgorithmError(OWLError):
             }
         )
 
-        # Debug logging for troubleshooting with traceback
         if logger.isEnabledFor(logging.DEBUG):
             traceback_str = ''.join(traceback.format_exception(None, self.original_error, self.original_error.__traceback__))
             logger.debug(
@@ -578,7 +570,6 @@ class AlgorithmError(OWLError):
                 }
             )
 
-        # Stop OWL
         if hasattr(owl_instance, 'stop'):
             owl_instance.stop()
         else:
@@ -590,9 +581,8 @@ class OpenCVError(OWLError):
     """Raised when there are issues with OpenCV (cv2) initialization or imports"""
 
     def __init__(self, error_msg: str = None):
-        # Initialize with a formatted error message
         super().__init__(
-            message=None,  # Pass None initially; we’ll set the final message below
+            message=None,
             details={
                 'original_error': error_msg,
                 'virtual_env': os.environ.get('VIRTUAL_ENV'),
@@ -640,13 +630,11 @@ class OpenCVError(OWLError):
         Args:
             owl_instance: Optional Owl instance that encountered the error.
         """
-        # Use owl_instance's logger if available, otherwise get the module logger
         if owl_instance and hasattr(owl_instance, 'logger'):
             logger = owl_instance.logger
         else:
             logger = logging.getLogger(__name__)
 
-        # Log the error
         logger.error(
             str(self),
             extra={
@@ -657,7 +645,6 @@ class OpenCVError(OWLError):
             }
         )
 
-        # Stop the application or exit if owl_instance is not available
         if owl_instance and hasattr(owl_instance, 'stop'):
             owl_instance.stop()
         else:
@@ -668,15 +655,14 @@ class OpenCVError(OWLError):
 class DependencyError(OWLError):
     """Raised when there are issues with Python package dependencies"""
 
-    # Map common packages to their pip install names
     PACKAGE_MAP = {
         'imutils': 'imutils',
         'cv2': 'opencv-python',
         'multiprocessing': 'multiprocessing',
         'pathlib': 'pathlib',
-        'version': 'local version.py file',  # Local file
-        'SystemInfo': 'local version.py file',  # Local file
-        'FPS': 'imutils'  # Part of imutils package
+        'version': 'local version.py file',
+        'SystemInfo': 'local version.py file',
+        'FPS': 'imutils'
     }
 
     def __init__(self, missing_module: str, error_msg: str = None):
@@ -779,3 +765,155 @@ class DependencyError(OWLError):
             owl_instance.stop()
         else:
             sys.exit(1)
+
+
+### MEDIA RELATED ERRORS ###
+class MediaPathError(OWLError):
+    """Raised when specified media path does not exist"""
+
+    def __init__(self, path: Path, message: str = None):
+        super().__init__(
+            message=None,
+            details={'path': str(path)}
+        )
+
+        message = (
+                self.format_error_header("Media Path Error") +
+                self.format_section(
+                    "Problem",
+                    f"Cannot access input path: {self.colorize(str(path), 'WHITE', bold=True)}"
+                ) +
+                self.format_section(
+                    "Fix",
+                    "1. Verify the path exists\n"
+                    "2. Check file/directory permissions\n"
+                    "3. Ensure the path is correctly specified in config or CLI args"
+                )
+        )
+        self.args = (message,)
+
+
+class InvalidMediaError(OWLError):
+    """Raised when input file is not a supported media format"""
+
+    def __init__(self, path: Path, valid_formats: set):
+        super().__init__(
+            message=None,
+            details={
+                'path': str(path),
+                'extension': path.suffix,
+                'valid_formats': list(valid_formats)
+            }
+        )
+
+        message = (
+                self.format_error_header("Invalid Media Format") +
+                self.format_section(
+                    "Problem",
+                    f"File type not supported: {self.colorize(str(path), 'WHITE', bold=True)}"
+                ) +
+                self.format_section(
+                    "Supported Formats",
+                    "All media: " + ", ".join(f for f in valid_formats if f[0] == '.')
+                ) +
+                self.format_section(
+                    "Fix",
+                    "1. Provide a file in one of the supported formats\n"
+                    "2. Convert your media to a supported format"
+                )
+        )
+        self.args = (message,)
+
+
+class MediaInitError(OWLError):
+    """Raised when media source fails to initialize"""
+
+    def __init__(self, path: Path, original_error: str):
+        super().__init__(
+            message=None,
+            details={
+                'path': str(path),
+                'error': original_error
+            }
+        )
+
+        message = (
+                self.format_error_header("Media Initialization Error") +
+                self.format_section(
+                    "Problem",
+                    f"Failed to initialize media from: {self.colorize(str(path), 'WHITE', bold=True)}\n"
+                    f"Error: {original_error}"
+                ) +
+                self.format_section(
+                    "Fix",
+                    "1. Verify the file is not corrupted\n"
+                    "2. Check if the file can be opened in other applications\n"
+                    "3. Ensure sufficient system resources are available"
+                )
+        )
+        self.args = (message,)
+
+
+class CameraNotFoundError(OWLError):
+    """Raised when there are issues with camera initialization or connection."""
+
+    def __init__(self, error_type: str = None, original_error: str = None):
+        # Initialize parent first
+        super().__init__(
+            message=None,
+            details={
+                'error_type': error_type,
+                'original_error': original_error
+            }
+        )
+
+        message = (
+            self.format_error_header("Camera Connection Error") +
+            self.format_section(
+                "Problem",
+                f"Failed to initialize camera: {self.colorize(error_type, 'WHITE', bold=True)}\n"
+                f"Error details: {original_error}"
+            ) +
+            self.format_section(
+                "Solutions",
+                "1. Check if the camera ribbon cable is properly connected\n"
+                "2. Inspect the ribbon cable for damage\n"
+                "3. Verify camera module is properly seated\n"
+                "4. Check if camera is enabled in raspi-config\n"
+                "5. Try reconnecting the camera with the system powered off"
+            ) +
+            self.format_section(
+                "How to get more information",
+                f"• {self.colorize('vcgencmd get_camera', 'WHITE', bold=True)} - Check if camera is detected\n"
+                f"• {self.colorize('libcamera-hello', 'WHITE', bold=True)} - Test camera feed\n"
+                f"• {self.colorize('dmesg | grep -i camera', 'WHITE', bold=True)} - Check system logs"
+            )
+        )
+
+        self.args = (message,)
+
+
+class CameraInitError(OWLError):
+    """Raised when camera initialization fails"""
+
+    def __init__(self, error_msg: str):
+        super().__init__(
+            message=None,
+            details={'error': error_msg}
+        )
+
+        message = (
+                self.format_error_header("Camera Initialization Error") +
+                self.format_section(
+                    "Problem",
+                    f"Failed to initialize camera\nError: {error_msg}"
+                ) +
+                self.format_section(
+                    "Fix",
+                    "1. Check camera connection\n"
+                    "2. Verify the camera is supported (currently only Raspberry Pi Cameras and USB Cameras are likely to work.\n"
+                    "3. Ensure camera is not in use by another process\n"
+                    "4. Try rebooting the system."
+                )
+        )
+        self.args = (message,)
