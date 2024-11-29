@@ -550,15 +550,17 @@ class Owl:
 
         try:
             if hasattr(self, 'controller'):
-                safe_stop(self.controller, 'controller')
-                if hasattr(self, 'controller_process'):
-                    try:
+                try:
+                    self.controller.stop()
+                    if hasattr(self, 'controller_process'):
                         self.controller_process.join(timeout=3)
                         if self.controller_process.is_alive():
                             self.controller_process.terminate()
-                            self.logger.warning("Force terminated controller process")
-                    except Exception as e:
-                        self.logger.error(f"Failed to terminate controller process: {e}")
+                            time.sleep(0.5)  # Brief pause before kill if needed
+                            if self.controller_process.is_alive():
+                                self.controller_process.kill()
+                except Exception as e:
+                    self.logger.error(f"Failed to stop controller: {e}")
 
             if hasattr(self, 'relay_controller'):
                 safe_stop(self.relay_controller, 'relay controller')
