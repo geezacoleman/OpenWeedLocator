@@ -93,9 +93,7 @@ class Owl:
                  config_file='config/DAY_SENSITIVITY_2.ini'):
         # set up the logger
         log_dir = Path(os.path.join(os.path.dirname(__file__), 'logs'))
-        LogManager.setup(
-            log_dir=log_dir,
-            log_level='INFO')
+        LogManager.setup(log_dir=log_dir, log_level='INFO')
         self.logger = LogManager.get_logger(__name__)
 
         self.logger.info("Initializing OWL...")
@@ -296,8 +294,7 @@ class Owl:
 
         except (errors.MediaPathError, errors.InvalidMediaError, errors.MediaInitError, errors.CameraInitError) as e:
             self.logger.error(str(e))
-            self.status_indicator.error(1)
-            sys.exit(1)
+            self.stop()
 
         # sensitivity and weed size to be added
         self.sensitivity = None
@@ -539,30 +536,59 @@ class Owl:
             self.stop()
 
     def stop(self):
-        self.relay_controller.running = False
-        self.relay_controller.relay.all_off()
-        self.relay_controller.relay.beep(duration=0.1)
-        self.relay_controller.relay.beep(duration=0.1)
+        """Gracefully shut down all OWL components."""
 
-        self.cam.stop()
+        def safe_stop(component, name, method='stop'):
+            try:
+                if method == 'stop':
+                    component.stop()
+                elif method == 'release':
+                    component.release()
+                self.logger.info(f"Stopped {name}")
+            except Exception as e:
+                self.logger.error(f"Failed to stop {name}: {e}")
 
-        if self.video_writer:
-            self.video_writer.release()
-
-        if self.controller:
+        try:
             if hasattr(self, 'controller'):
-                self.controller.stop()
+                safe_stop(self.controller, 'controller')
                 if hasattr(self, 'controller_process'):
-                    self.controller_process.join()
+                    try:
+                        self.controller_process.join(timeout=3)
+                        if self.controller_process.is_alive():
+                            self.controller_process.terminate()
+                            self.logger.warning("Force terminated controller process")
+                    except Exception as e:
+                        self.logger.error(f"Failed to terminate controller process: {e}")
 
-        if self.sample_images:
-            self.status_indicator.stop()
-            self.image_recorder.stop()
+            if hasattr(self, 'relay_controller'):
+                safe_stop(self.relay_controller, 'relay controller')
+                try:
+                    self.relay_controller.relay.all_off()
+                    self.relay_controller.relay.beep(duration=0.1, repeats=2)
+                except Exception:
+                    pass
 
-        if self.show_display:
-            cv2.destroyAllWindows()
+            if self.video_writer:
+                safe_stop(self.video_writer, 'video writer', method='release')
+            if hasattr(self, 'cam'):
+                safe_stop(self.cam, 'camera')
 
-        sys.exit()
+            if getattr(self, 'sample_images', False):
+                safe_stop(self.image_recorder, 'image recorder')
+                safe_stop(self.status_indicator, 'status indicator')
+
+            if self.show_display:
+                safe_stop(cv2, 'display', method='destroyAllWindows')
+
+        except Exception as e:
+            self.logger.error(f"Critical error during shutdown: {e}", exc_info=True)
+        finally:
+            try:
+                LogManager().stop()
+                self.logger.info("OWL shutdown complete")
+            except Exception as e:
+                print(f"Failed to stop LogManager: {e}", file=sys.stderr)
+            sys.exit(0)
 
     def save_parameters(self):
         timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
@@ -651,18 +677,21 @@ class Owl:
         except IndexError as e:
             self.logger.error("Camera index not found", exc_info=True)
             self.status_indicator.error(2)
+            self.stop()
             raise errors.CameraNotFoundError(error_type="Camera Not Found", original_error=str(e))
 
         except ModuleNotFoundError as e:
             self.logger.error(e, exc_info=True)
             module_name = str(e).split("'")[-2]
             self.status_indicator.error(1)
+            self.stop()
             raise errors.DependencyError(missing_module=module_name, error_msg=str(e)) from None
 
         except Exception as e:
             error_msg = f"[CRITICAL ERROR] Failed to initialize camera: {str(e)}"
             self.logger.error(error_msg)
             self.status_indicator.error(1)
+            self.stop()
             raise errors.CameraInitError(str(e)) from e
 
     def _log_system_info(self):

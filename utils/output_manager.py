@@ -512,6 +512,9 @@ class RelayController:
 
             input_condition.wait()
 
+    def stop(self):
+        self.running = False
+
 
 if __name__ == "__main__":
     print("Starting test of status indicators...")
