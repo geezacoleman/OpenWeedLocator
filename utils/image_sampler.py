@@ -17,9 +17,9 @@ class ImageRecorder:
         self.max_processes = max_processes
         self.processes = []
         self.running = True
-        self.start_new_process()
-
         self.logger = LogManager.get_logger(__name__)
+
+        self.start_new_process()
 
     def start_new_process(self):
         if len(self.processes) < self.max_processes:
