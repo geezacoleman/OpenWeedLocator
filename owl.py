@@ -403,7 +403,7 @@ class Owl:
         try:
             actuation_duration = self.config.getfloat('System', 'actuation_duration')
             delay = self.config.getfloat('System', 'delay')
-            elapsed_times = []
+
             while True:
                 frame = self.cam.read()
 
@@ -435,9 +435,10 @@ class Owl:
 
                 # pass image, thresholds to green_on_brown function
                 if not self.disable_detection:
-                    start_time = time.time()
                     if algorithm == 'gog':
-                        cnts, boxes, weed_centres, image_out = weed_detector.inference(frame, confidence=confidence)
+                        cnts, boxes, weed_centres, image_out = weed_detector.inference(frame,
+                                                                                       confidence=confidence,
+                                                                                       show_display=self.show_display)
 
                     else:
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
@@ -451,16 +452,15 @@ class Owl:
                             brightness_min=self.brightness_min,
                             brightness_max=self.brightness_max,
                             show_display=self.show_display,
-                            algorithm=algorithm,
                             min_detection_area=min_detection_area,
                             invert_hue=invert_hue,
                             label='WEED'
                         )
 
-                    if len(weed_centres) > 0 and self.controller:
-                        self.controller.weed_detect_indicator()
-
                     if len(weed_centres) > 0:
+                        if self.controller:
+                            self.controller.weed_detect_indicator()
+
                         weed_centres_array = np.array(weed_centres)
                         filtered_centres = weed_centres_array[weed_centres_array[:, 1] > self.yAct]
 
@@ -479,16 +479,6 @@ class Owl:
                                 delay=delay,
                                 time_stamp=actuation_time,
                                 duration=actuation_duration)
-                    end_time = time.time()
-                    elapsed_time = (end_time - start_time) * 1000
-
-                    # print(f'[INFO] Elapsed time: {elapsed_time:.8f}')
-                    elapsed_times.append(elapsed_time)
-
-                    if len(elapsed_times) >= 100:
-                        avg_elapsed_time = sum(elapsed_times[-100:]) / 100  # Calculate mean of the last 100 times
-                        print(f'[INFO] Average elapsed time for last 100 iterations: {avg_elapsed_time:.3f} ms')
-                        elapsed_times.clear()
 
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often

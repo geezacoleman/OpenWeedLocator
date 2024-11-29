@@ -20,6 +20,9 @@ class GreenOnBrown:
             'gndvi': gndvi
         }
 
+        # Retrieve the function based on the algorithm name
+        self.func = self.algorithms.get(algorithm, exg_standardised_hue)
+
     def inference(self, image,
                   exg_min=30,
                   exg_max=250,
@@ -31,13 +34,9 @@ class GreenOnBrown:
                   saturation_max=255,
                   min_detection_area=1,
                   show_display=False,
-                  algorithm='exg',
                   invert_hue=False,
                   label='WEED'):
         threshed_already = False
-
-        # Retrieve the function based on the algorithm name
-        func = self.algorithms.get(algorithm, exg_standardised_hue)
 
         # Handle special cases for functions with additional parameters
         if algorithm == 'exhsv':
@@ -85,4 +84,4 @@ class GreenOnBrown:
 
             return contours, boxes, weed_centres, image_out
 
-        return contours, boxes, weed_centres, image
+        return contours, boxes, weed_centres, None
