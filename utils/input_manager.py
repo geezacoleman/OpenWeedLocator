@@ -143,9 +143,15 @@ class AdvancedController:
         self.update_state()
 
     def update_state(self):
-        self.update_recording_state()
-        self.update_sensitivity_state()
-        self.update_detection_mode_state()
+        try:
+            self.update_recording_state()
+            self.update_sensitivity_state()
+            self.update_detection_mode_state()
+        except KeyboardInterrupt:
+            logger.info("[INFO] KeyboardInterrupt received in update_state. Exiting.")
+            raise  # Propagate to hoot()
+        except Exception as e:
+            logger.error(f"Error in update_state: {e}", exc_info=True)
 
     def update_recording_state(self):
         self.status_indicator.generic_notification()

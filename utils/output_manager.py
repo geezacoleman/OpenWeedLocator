@@ -346,21 +346,20 @@ class AdvancedStatusIndicator(BaseStatusIndicator):
                     logger.error(f"Error in weed_detect_indicator: {e}", exc_info=True)
 
     def generic_notification(self):
-        with self.state_lock:
-            init_state = self.state
-            self.state = AdvancedIndicatorState.NOTIFICATION
-            self.led.off()  # Turn off LED before starting notification
+        try:
+            with self.state_lock:
+                init_state = self.state
+                self.state = AdvancedIndicatorState.NOTIFICATION
+                self.led.off()  # Reset LED state before notification
 
-            try:
                 self.led.blink(on_time=0.1, off_time=0.1, n=2, background=False)
-            except KeyboardInterrupt:
-                logger.info("[INFO] KeyboardInterrupt received during generic_notification. Turning off LED.")
-                self.led.off()
-                raise
-            except Exception as e:
-                logger.error(f"Error in generic_notification: {e}", exc_info=True)
-
-            self.state = init_state
+                self.state = init_state
+        except KeyboardInterrupt:
+            logger.info("[INFO] KeyboardInterrupt received during generic_notification. Turning off LED.")
+            self.led.off()
+            raise
+        except Exception as e:
+            logger.error(f"Error in generic_notification: {e}", exc_info=True)
 
     def error(self, error_code):
         self.error_code = error_code

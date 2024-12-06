@@ -99,13 +99,15 @@ class ImageRecorder:
         """Stop image recording processes and clean up resources."""
         self.running = False
 
-        # Clear and close queue
-        if not self.queue.empty():
-            with self.queue.mutex:
-                self.queue.queue.clear()
-        self.queue.close()
+        try:
+            while not self.queue.empty():
+                self.queue.get_nowait()
+        except Exception as e:
+            self.logger.warning(f"Failed to clear queue: {e}")
 
-        # Stop processes
+        self.queue.close()
+        self.queue.join_thread()
+
         for p in self.processes:
             try:
                 p.join(timeout=1)
@@ -116,14 +118,19 @@ class ImageRecorder:
                 self.logger.error(f"Failed to stop process: {e}")
 
         self.processes.clear()
+        self.logger.info("[INFO] ImageRecorder stopped.")
 
     def terminate(self):
         """Force terminate all image recording processes."""
         self.running = False
         for p in self.processes:
             if p.is_alive():
-                p.terminate()
-                p.join(timeout=0.5)
+                try:
+                    p.terminate()
+                    p.join(timeout=0.5)
+                except Exception as e:
+                    self.logger.error(f"Failed to terminate process: {e}")
+
         self.processes.clear()
         self.queue.close()
         self.queue.join_thread()
