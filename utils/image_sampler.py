@@ -38,8 +38,11 @@ class ImageRecorder:
             except Empty:
                 if not self.running:
                     break
-
                 continue
+
+            except KeyboardInterrupt:
+                self.logger.info("[INFO] KeyboardInterrupt received in save_images. Exiting.")
+                break
 
             # Process and save images based on mode
             self.process_frame(frame, frame_id, boxes, centres)
