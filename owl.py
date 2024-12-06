@@ -7,7 +7,6 @@ import argparse
 import time
 from datetime import datetime
 from multiprocessing import Process, Value
-from queue import Empty
 from pathlib import Path
 
 def get_python_env():
@@ -539,72 +538,60 @@ class Owl:
     def stop(self):
         """Gracefully shut down all OWL components."""
 
-        def safe_stop(component, name, method='stop'):
+        def safe_stop(component, name, fallback_to_terminate=True):
+            """
+            Attempt to gracefully stop a component, with an option to terminate if stopping fails.
+            """
             try:
-                if method == 'stop':
+                if hasattr(component, 'stop'):
                     component.stop()
-                elif method == 'release':
-                    component.release()
-                elif method == 'destroyAllWindows':
-                    component.destroyAllWindows()
-                self.logger.info(f"Stopped {name}")
+                self.logger.info(f"Gracefully stopped {name}")
             except Exception as e:
-                self.logger.error(f"Failed to stop {name}: {e}")
+                self.logger.warning(f"Graceful stop failed for {name}: {e}")
+                if fallback_to_terminate and hasattr(component, 'terminate'):
+                    try:
+                        component.terminate()
+                        self.logger.info(f"Forcefully terminated {name}")
+                    except Exception as terminate_error:
+                        self.logger.error(f"Failed to terminate {name}: {terminate_error}")
 
         try:
-            # Stop threads and processes first
-            if hasattr(self, 'controller'):
-                try:
-                    self.controller.stop()
-                    time.sleep(0.5)  # Allow threads to clean up
-                    if hasattr(self, 'controller_process'):
-                        self.controller_process.join(timeout=3)
-                        if self.controller_process.is_alive():
-                            self.controller_process.terminate()
-                            time.sleep(0.5)
-                            if self.controller_process.is_alive():
-                                self.controller_process.kill()
-                except Exception as e:
-                    self.logger.error(f"Failed to stop controller: {e}")
+            # Stop controller processes
+            if hasattr(self, 'controller') and self.controller:
+                safe_stop(self.controller, 'controller', fallback_to_terminate=False)
+                if hasattr(self, 'controller_process') and self.controller_process.is_alive():
+                    self.controller_process.terminate()
+                    self.controller_process.join(timeout=0.5)
+                    self.logger.info("Controller process terminated")
 
-            # Stop data collection components
-            if getattr(self, 'sample_images', False):
-                if hasattr(self.image_recorder, 'queue'):
-                    while not self.image_recorder.queue.empty():
-                        try:
-                            self.image_recorder.queue.get_nowait()
-                        except Empty:
-                            break
+            # Stop image recorder
+            if hasattr(self, 'image_recorder') and self.image_recorder:
                 safe_stop(self.image_recorder, 'image recorder')
-                safe_stop(self.status_indicator, 'status indicator')
 
-            # Stop hardware components
-            if hasattr(self, 'relay_controller'):
-                safe_stop(self.relay_controller, 'relay controller')
+            # Stop status indicator
+            if hasattr(self, 'status_indicator') and self.status_indicator:
+                safe_stop(self.status_indicator, 'status indicator', fallback_to_terminate=False)
+
+            # Stop relay controller
+            if hasattr(self, 'relay_controller') and self.relay_controller:
+                safe_stop(self.relay_controller, 'relay controller', fallback_to_terminate=False)
                 try:
-                    self.relay_controller.relay.all_off()
-                    self.relay_controller.relay.beep(duration=0.1, repeats=2)
-                except Exception:
-                    pass
+                    self.relay_controller.relay.all_off()  # Ensure all relays are off
+                except Exception as e:
+                    self.logger.warning(f"Failed to turn off relays: {e}")
 
-            # Stop media components
-            if self.video_writer:
-                safe_stop(self.video_writer, 'video writer', method='release')
-            if hasattr(self, 'cam'):
-                safe_stop(self.cam, 'camera')
-
-            # Clean up display
-            if self.show_display:
-                safe_stop(cv2, 'display', method='destroyAllWindows')
+            # Stop camera
+            if hasattr(self, 'cam') and self.cam:
+                safe_stop(self.cam, 'camera', fallback_to_terminate=False)
 
         except Exception as e:
             self.logger.error(f"Critical error during shutdown: {e}", exc_info=True)
         finally:
             try:
-                LogManager().stop()
+                LogManager().stop()  # Ensure logger shuts down properly
                 self.logger.info("OWL shutdown complete")
-            except Exception as e:
-                print(f"Failed to stop LogManager: {e}", file=sys.stderr)
+            except Exception as log_error:
+                print(f"Failed to stop LogManager: {log_error}", file=sys.stderr)
             sys.exit(0)
 
     def save_parameters(self):

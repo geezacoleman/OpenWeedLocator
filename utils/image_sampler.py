@@ -93,18 +93,35 @@ class ImageRecorder:
             self.start_new_process()
 
     def stop(self):
+        """Stop image recording processes and clean up resources."""
         self.running = False
-        while not self.queue.empty():
-            try:
-                self.queue.get_nowait()
-            except Empty:
-                break
+
+        # Clear and close queue
+        if not self.queue.empty():
+            with self.queue.mutex:
+                self.queue.queue.clear()
         self.queue.close()
+
+        # Stop processes
         for p in self.processes:
             try:
-                p.join(timeout=2)
+                p.join(timeout=1)
                 if p.is_alive():
                     p.terminate()
-                    p.join(timeout=1)
+                    p.join(timeout=0.5)
             except Exception as e:
-                self.logger.error(f"Failed to stop image recorder process: {e}")
+                self.logger.error(f"Failed to stop process: {e}")
+
+        self.processes.clear()
+
+    def terminate(self):
+        """Force terminate all image recording processes."""
+        self.running = False
+        for p in self.processes:
+            if p.is_alive():
+                p.terminate()
+                p.join(timeout=0.5)
+        self.processes.clear()
+        self.queue.close()
+        self.queue.join_thread()
+        self.logger.info("[INFO] All recording processes terminated forcefully.")
