@@ -7,6 +7,7 @@ import argparse
 import time
 from datetime import datetime
 from multiprocessing import Process, Value
+from queue import Empty
 from pathlib import Path
 
 def get_python_env():
@@ -544,24 +545,40 @@ class Owl:
                     component.stop()
                 elif method == 'release':
                     component.release()
+                elif method == 'destroyAllWindows':
+                    component.destroyAllWindows()
                 self.logger.info(f"Stopped {name}")
             except Exception as e:
                 self.logger.error(f"Failed to stop {name}: {e}")
 
         try:
+            # Stop threads and processes first
             if hasattr(self, 'controller'):
                 try:
                     self.controller.stop()
+                    time.sleep(0.5)  # Allow threads to clean up
                     if hasattr(self, 'controller_process'):
                         self.controller_process.join(timeout=3)
                         if self.controller_process.is_alive():
                             self.controller_process.terminate()
-                            time.sleep(0.5)  # Brief pause before kill if needed
+                            time.sleep(0.5)
                             if self.controller_process.is_alive():
                                 self.controller_process.kill()
                 except Exception as e:
                     self.logger.error(f"Failed to stop controller: {e}")
 
+            # Stop data collection components
+            if getattr(self, 'sample_images', False):
+                if hasattr(self.image_recorder, 'queue'):
+                    while not self.image_recorder.queue.empty():
+                        try:
+                            self.image_recorder.queue.get_nowait()
+                        except Empty:
+                            break
+                safe_stop(self.image_recorder, 'image recorder')
+                safe_stop(self.status_indicator, 'status indicator')
+
+            # Stop hardware components
             if hasattr(self, 'relay_controller'):
                 safe_stop(self.relay_controller, 'relay controller')
                 try:
@@ -570,15 +587,13 @@ class Owl:
                 except Exception:
                     pass
 
+            # Stop media components
             if self.video_writer:
                 safe_stop(self.video_writer, 'video writer', method='release')
             if hasattr(self, 'cam'):
                 safe_stop(self.cam, 'camera')
 
-            if getattr(self, 'sample_images', False):
-                safe_stop(self.image_recorder, 'image recorder')
-                safe_stop(self.status_indicator, 'status indicator')
-
+            # Clean up display
             if self.show_display:
                 safe_stop(cv2, 'display', method='destroyAllWindows')
 
