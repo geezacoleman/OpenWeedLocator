@@ -81,8 +81,14 @@ class UteController:
         self.status_indicator.image_write_indicator()
 
     def run(self):
-        while not self.stop_flag.value:
-            time.sleep(0.1)  # sleep to reduce CPU usage
+        try:
+            while not self.stop_flag.value:
+                time.sleep(0.1)  # sleep to reduce CPU usage
+        except KeyboardInterrupt:
+            logger.info("[INFO] KeyboardInterrupt received in controller run loop. Exiting.")
+            self.stop()  # Ensure the stop flag is set
+        except Exception as e:
+            logger.error(f"Error in controller run loop: {e}", exc_info=True)
 
     def stop(self):
         with self.stop_flag.get_lock():
@@ -214,8 +220,14 @@ class AdvancedController:
         self.status_indicator.image_write_indicator()
 
     def run(self):
-        while not self.stop_flag.value:
-            time.sleep(0.1)  # sleep to reduce CPU usage
+        try:
+            while not self.stop_flag.value:
+                time.sleep(0.1)  # sleep to reduce CPU usage
+        except KeyboardInterrupt:
+            logger.info("[INFO] KeyboardInterrupt received in controller run loop. Exiting.")
+            self.stop()  # Ensure the stop flag is set
+        except Exception as e:
+            logger.error(f"Error in controller run loop: {e}", exc_info=True)
 
     def stop(self):
         with self.stop_flag.get_lock():

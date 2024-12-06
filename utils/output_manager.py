@@ -172,9 +172,26 @@ class BaseStatusIndicator:
         raise NotImplementedError("This method should be implemented by subclasses")
 
     def stop(self):
-        self.update_event.set()
+        """Stop all threads and ensure resources are cleaned up."""
         self.running = False
-        self.thread.join()
+        self.update_event.set()  # Wake up storage indicator thread
+
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=1)  # Ensure thread stops
+
+        if self.flashing_thread and self.flashing_thread.is_alive():
+            self.flashing_thread.join(timeout=1)  # Ensure flashing thread stops
+
+        self._cleanup_leds()
+        logger.info("[INFO] StatusIndicator stopped.")
+
+    def _cleanup_leds(self):
+        """Turn off LEDs and reset their states."""
+        try:
+            self._set_led_state("ACT", 0)
+            self._set_led_state("PWR", 0)
+        except Exception as e:
+            logger.error(f"Failed to clean up LEDs: {e}")
 
 
 class HeadlessStatusIndicator(BaseStatusIndicator):
@@ -305,21 +322,44 @@ class AdvancedStatusIndicator(BaseStatusIndicator):
 
     def image_write_indicator(self):
         with self.state_lock:
-            if self.state not in [AdvancedIndicatorState.ERROR, AdvancedIndicatorState.DETECTING, AdvancedIndicatorState.RECORDING_AND_DETECTING]:
-                self.led.blink(on_time=0.1, off_time=0.1, n=1, background=True)
+            if self.state not in [AdvancedIndicatorState.ERROR, AdvancedIndicatorState.DETECTING,
+                                  AdvancedIndicatorState.RECORDING_AND_DETECTING]:
+                try:
+                    self.led.blink(on_time=0.1, off_time=0.1, n=1, background=True)
+                except KeyboardInterrupt:
+                    logger.info("[INFO] KeyboardInterrupt received during image_write_indicator. Turning off LED.")
+                    self.led.off()
+                    raise
+                except Exception as e:
+                    logger.error(f"Error in image_write_indicator: {e}", exc_info=True)
 
     def weed_detect_indicator(self):
         with self.state_lock:
             if self.state in [AdvancedIndicatorState.DETECTING, AdvancedIndicatorState.RECORDING_AND_DETECTING]:
-                self.led.blink(on_time=0.05, off_time=0.05, n=1, background=True)
+                try:
+                    self.led.blink(on_time=0.05, off_time=0.05, n=1, background=True)
+                except KeyboardInterrupt:
+                    logger.info("[INFO] KeyboardInterrupt received during weed_detect_indicator. Turning off LED.")
+                    self.led.off()
+                    raise
+                except Exception as e:
+                    logger.error(f"Error in weed_detect_indicator: {e}", exc_info=True)
 
     def generic_notification(self):
         with self.state_lock:
             init_state = self.state
             self.state = AdvancedIndicatorState.NOTIFICATION
-            self.led.off()
+            self.led.off()  # Turn off LED before starting notification
 
-            self.led.blink(on_time=0.1, off_time=0.1, n=2, background=False)
+            try:
+                self.led.blink(on_time=0.1, off_time=0.1, n=2, background=False)
+            except KeyboardInterrupt:
+                logger.info("[INFO] KeyboardInterrupt received during generic_notification. Turning off LED.")
+                self.led.off()
+                raise
+            except Exception as e:
+                logger.error(f"Error in generic_notification: {e}", exc_info=True)
+
             self.state = init_state
 
     def error(self, error_code):
@@ -331,12 +371,18 @@ class AdvancedStatusIndicator(BaseStatusIndicator):
             self.flashing_thread.start()
 
     def _flash_error_code(self):
-        while self.running:
-            for _ in range(self.error_code):
-                self._blink_leds()
-                self.led.blink(on_time=0.2, n=1, background=False)
-                time.sleep(0.5)
-            time.sleep(2)
+        try:
+            while self.running:
+                for _ in range(self.error_code):
+                    self._blink_leds()
+                    time.sleep(0.2)
+                time.sleep(2)
+        except KeyboardInterrupt:
+            logger.info("[INFO] KeyboardInterrupt received in _flash_error_code. Exiting.")
+        except Exception as e:
+            logger.error(f"Error in _flash_error_code: {e}", exc_info=True)
+        finally:
+            self._cleanup_leds()
 
     def stop(self):
         super().stop()
