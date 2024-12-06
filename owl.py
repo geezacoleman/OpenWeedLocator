@@ -313,6 +313,9 @@ class Owl:
             laneX = int(i * self.lane_width)
             self.lane_coords[i] = laneX
 
+        # Precompute the integer lane coordinates for reuse
+        self.lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
+
     def hoot(self):
         self.record_video = False  # Flag to control video recording
         self.video_writer = None
@@ -414,9 +417,6 @@ class Owl:
                             label='WEED'
                         )
 
-                    # Precompute the integer lane coordinates for reuse
-                    lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
-
                     if len(weed_centres) > 0 and self.controller:
                         self.controller.weed_detect_indicator()
 
@@ -427,7 +427,7 @@ class Owl:
                             centre_x = centre[0]
 
                             for i in range(self.relay_num):
-                                lane_start = lane_coords_int[i]
+                                lane_start = self.lane_coords_int[i]
                                 lane_end = lane_start + self.lane_width
                                 if lane_start <= centre_x < lane_end:
                                     self.relay_controller.receive(
@@ -545,7 +545,7 @@ class Owl:
             try:
                 if hasattr(component, 'stop'):
                     component.stop()
-                self.logger.info(f"Gracefully stopped {name}")
+                self.logger.info(f"Stopped {name}")
             except Exception as e:
                 self.logger.warning(f"Graceful stop failed for {name}: {e}")
                 if fallback_to_terminate and hasattr(component, 'terminate'):
