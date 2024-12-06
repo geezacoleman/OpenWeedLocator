@@ -195,21 +195,28 @@ class AdvancedController:
             cv2.setTrackbarPos("Bright-Max", self.owl.window_name, self.owl.brightness_max)
 
     def set_detection_mode(self, mode):
-        with self.detection_mode_state.get_lock():
-            self.detection_mode_state.value = mode
-        self.status_indicator.generic_notification()
+        try:
+            with self.detection_mode_state.get_lock():
+                self.detection_mode_state.value = mode
 
-        if mode == 0:  # Detection on
-            self.status_indicator.enable_weed_detection()
-            self.owl.disable_detection = False
-        elif mode == 2: # all solenoids on
-            self.status_indicator.disable_weed_detection()
-            self.owl.relay_controller.relay.all_on()
-            self.owl.disable_detection = True
-        else:  # off or any other unexpected value
-            self.status_indicator.disable_weed_detection()
-            self.owl.relay_controller.relay.all_off()
-            self.owl.disable_detection = True
+            self.status_indicator.generic_notification()
+
+            if mode == 0:  # Detection on
+                self.status_indicator.enable_weed_detection()
+                self.owl.disable_detection = False
+            elif mode == 2:  # All solenoids on
+                self.status_indicator.disable_weed_detection()
+                self.owl.relay_controller.relay.all_on()
+                self.owl.disable_detection = True
+            else:  # Off or any unexpected value
+                self.status_indicator.disable_weed_detection()
+                self.owl.relay_controller.relay.all_off()
+                self.owl.disable_detection = True
+        except KeyboardInterrupt:
+            logger.info("[INFO] KeyboardInterrupt received in set_detection_mode. Exiting.")
+            raise
+        except Exception as e:
+            logger.error(f"Error in set_detection_mode: {e}", exc_info=True)
 
     def update_detection_mode_state(self):
         if self.detection_mode_switch_up.is_pressed:
