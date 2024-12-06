@@ -94,15 +94,17 @@ class ImageRecorder:
 
     def stop(self):
         self.running = False
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+            except Empty:
+                break
+        self.queue.close()
         for p in self.processes:
             try:
-                p.join(timeout=3)  # Wait for process to finish naturally
+                p.join(timeout=2)
                 if p.is_alive():
-                    p.terminate()  # Force terminate if still running after timeout
-                    p.join(timeout=1)  # Wait for termination
-                    if p.is_alive():
-                        p.kill()  # Last resort
+                    p.terminate()
+                    p.join(timeout=1)
             except Exception as e:
-                self.logger.error(f"Failed to stop process: {e}")
-        self.queue.close()
-        self.queue.join_thread()
+                self.logger.error(f"Failed to stop image recorder process: {e}")
