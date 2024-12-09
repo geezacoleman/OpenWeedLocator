@@ -290,6 +290,7 @@ class Owl:
 
         try:
             self.cam = self.setup_media_source(input_file_or_directory)
+            self.logger.info('Media source successfully set up...')
             time.sleep(1.0)
 
         except (errors.MediaPathError, errors.InvalidMediaError, errors.MediaInitError, errors.CameraInitError) as e:
