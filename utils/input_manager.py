@@ -81,8 +81,14 @@ class UteController:
         self.status_indicator.image_write_indicator()
 
     def run(self):
-        while not self.stop_flag.value:
-            time.sleep(0.1)  # sleep to reduce CPU usage
+        try:
+            while not self.stop_flag.value:
+                time.sleep(0.1)  # sleep to reduce CPU usage
+        except KeyboardInterrupt:
+            logger.info("[INFO] KeyboardInterrupt received in controller run loop. Exiting.")
+            self.stop()  # Ensure the stop flag is set
+        except Exception as e:
+            logger.error(f"Error in controller run loop: {e}", exc_info=True)
 
     def stop(self):
         with self.stop_flag.get_lock():
@@ -137,9 +143,15 @@ class AdvancedController:
         self.update_state()
 
     def update_state(self):
-        self.update_recording_state()
-        self.update_sensitivity_state()
-        self.update_detection_mode_state()
+        try:
+            self.update_recording_state()
+            self.update_sensitivity_state()
+            self.update_detection_mode_state()
+        except KeyboardInterrupt:
+            logger.info("[INFO] KeyboardInterrupt received in update_state. Exiting.")
+            raise  # Propagate to hoot()
+        except Exception as e:
+            logger.error(f"Error in update_state: {e}", exc_info=True)
 
     def update_recording_state(self):
         self.status_indicator.generic_notification()
@@ -183,21 +195,28 @@ class AdvancedController:
             cv2.setTrackbarPos("Bright-Max", self.owl.window_name, self.owl.brightness_max)
 
     def set_detection_mode(self, mode):
-        with self.detection_mode_state.get_lock():
-            self.detection_mode_state.value = mode
-        self.status_indicator.generic_notification()
+        try:
+            with self.detection_mode_state.get_lock():
+                self.detection_mode_state.value = mode
 
-        if mode == 0:  # Detection on
-            self.status_indicator.enable_weed_detection()
-            self.owl.disable_detection = False
-        elif mode == 2: # all solenoids on
-            self.status_indicator.disable_weed_detection()
-            self.owl.relay_controller.relay.all_on()
-            self.owl.disable_detection = True
-        else:  # off or any other unexpected value
-            self.status_indicator.disable_weed_detection()
-            self.owl.relay_controller.relay.all_off()
-            self.owl.disable_detection = True
+            self.status_indicator.generic_notification()
+
+            if mode == 0:  # Detection on
+                self.status_indicator.enable_weed_detection()
+                self.owl.disable_detection = False
+            elif mode == 2:  # All solenoids on
+                self.status_indicator.disable_weed_detection()
+                self.owl.relay_controller.relay.all_on()
+                self.owl.disable_detection = True
+            else:  # Off or any unexpected value
+                self.status_indicator.disable_weed_detection()
+                self.owl.relay_controller.relay.all_off()
+                self.owl.disable_detection = True
+        except KeyboardInterrupt:
+            logger.info("[INFO] KeyboardInterrupt received in set_detection_mode. Exiting.")
+            raise
+        except Exception as e:
+            logger.error(f"Error in set_detection_mode: {e}", exc_info=True)
 
     def update_detection_mode_state(self):
         if self.detection_mode_switch_up.is_pressed:
@@ -214,8 +233,14 @@ class AdvancedController:
         self.status_indicator.image_write_indicator()
 
     def run(self):
-        while not self.stop_flag.value:
-            time.sleep(0.1)  # sleep to reduce CPU usage
+        try:
+            while not self.stop_flag.value:
+                time.sleep(0.1)  # sleep to reduce CPU usage
+        except KeyboardInterrupt:
+            logger.info("[INFO] KeyboardInterrupt received in controller run loop. Exiting.")
+            self.stop()  # Ensure the stop flag is set
+        except Exception as e:
+            logger.error(f"Error in controller run loop: {e}", exc_info=True)
 
     def stop(self):
         with self.stop_flag.get_lock():

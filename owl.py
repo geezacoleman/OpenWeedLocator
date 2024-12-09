@@ -93,9 +93,7 @@ class Owl:
                  config_file='config/DAY_SENSITIVITY_2.ini'):
         # set up the logger
         log_dir = Path(os.path.join(os.path.dirname(__file__), 'logs'))
-        LogManager.setup(
-            log_dir=log_dir,
-            log_level='INFO')
+        LogManager.setup(log_dir=log_dir, log_level='INFO')
         self.logger = LogManager.get_logger(__name__)
 
         self.logger.info("Initializing OWL...")
@@ -213,7 +211,7 @@ class Owl:
                     record_led_pin='BOARD38',
                     storage_led_pin='BOARD40')
 
-                self.switch_purpose = self.config.get('Controller', 'switch_purpose').lower()
+                self.switch_purpose = self.config.get('Controller', 'switch_purpose').strip("'\" ").lower()
                 self.switch_pin = self.config.getint('Controller', 'switch_pin')
 
                 self.controller = UteController(
@@ -238,8 +236,8 @@ class Owl:
                 sensitivity_pin = self.config.getint('Controller', 'sensitivity_pin')
                 detection_mode_pin_up = self.config.getint('Controller', 'detection_mode_pin_up')
                 detection_mode_pin_down = self.config.getint('Controller', 'detection_mode_pin_down')
-                low_sensitivity_config = self.config.get('Controller', 'low_sensitivity_config')
-                high_sensitivity_config = self.config.get('Controller', 'high_sensitivity_config')
+                low_sensitivity_config = self.config.get('Controller', 'low_sensitivity_config').strip("'\" ")
+                high_sensitivity_config = self.config.get('Controller', 'high_sensitivity_config').strip("'\" ")
 
                 self.controller = AdvancedController(
                     recording_state=self.sample_state,
@@ -280,56 +278,24 @@ class Owl:
 
         if (self.RPI_VERSION in ['rpi-3', 'rpi-4']) and total_pixels > (832 * 640):
             # change here if you want to test higher resolutions, but be warned, backup your current image!
+            # the older versions of the Pi are known to 'brick' and become unusable if too high resolutions are used.
             self.resolution = (640, 480)
             self.logger.warning(f"Resolution {self.config.getint('Camera', 'resolution_width')}, "
                                  f"{self.config.getint('Camera', 'resolution_height')} selected is dangerously high. ")
         else:
             self.logger.warning(f'High resolution, expect low framerate. Resolution set to {self.resolution[0]}x{self.resolution[1]}.')
 
-        # check if test video or videostream from camera
-        # is the source a directory/file
-        if len(self.config.get('System', 'input_file_or_directory')) > 0:
-            self.input_file_or_directory = self.config.get('System', 'input_file_or_directory')
+        self.frame_width = None
+        self.frame_height = None
 
-        self.input_file_or_directory = input_file_or_directory
+        try:
+            self.cam = self.setup_media_source(input_file_or_directory)
+            self.logger.info('Media source successfully set up...')
+            time.sleep(1.0)
 
-        if len(self.config.get('System', 'input_file_or_directory')) > 0 and input_file_or_directory is not None:
-            self.logger.warning('[WARNING] two paths to image/videos provided. Defaulting to the command line flag.')
-
-        if self.input_file_or_directory:
-            self.cam = FrameReader(path=self.input_file_or_directory,
-                                   resolution=self.resolution,
-                                   loop_time=self.image_loop_time)
-            self.frame_width, self.frame_height = self.cam.resolution
-            self.logger.info(f'[INFO] Using {self.cam.input_type} from {self.input_file_or_directory}...')
-
-        # if no video, start the camera with the provided parameters
-        else:
-            try:
-                self.cam = VideoStream(resolution=self.resolution,
-                                       exp_compensation=self.exp_compensation)
-                self.cam.start()
-
-                self.frame_width = self.cam.frame_width
-                self.frame_height = self.cam.frame_height
-
-            except ModuleNotFoundError as e:
-                missing_module = str(e).split("'")[-2]
-                error_message = f"Missing required module: {missing_module}. Please install it and try again."
-                self.status_indicator.error(1)
-                time.sleep(2)
-                raise ModuleNotFoundError(error_message) from None
-
-            except Exception as e:
-                error_detail = f"[CRITICAL ERROR] Stopped OWL at start: {e}"
-                self.logger.info(error_detail)
-                self.relay_controller.relay.beep(duration=1, repeats=1)
-                self.status_indicator.error(1)
-                time.sleep(5)
-
-                sys.exit(1)
-
-        time.sleep(1.0)
+        except (errors.MediaPathError, errors.InvalidMediaError, errors.MediaInitError, errors.CameraInitError) as e:
+            self.logger.error(str(e))
+            self.stop()
 
         # sensitivity and weed size to be added
         self.sensitivity = None
@@ -347,6 +313,9 @@ class Owl:
         for i in range(self.relay_num):
             laneX = int(i * self.lane_width)
             self.lane_coords[i] = laneX
+
+        # Precompute the integer lane coordinates for reuse
+        self.lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
 
     def hoot(self):
         self.record_video = False  # Flag to control video recording
@@ -449,9 +418,6 @@ class Owl:
                             label='WEED'
                         )
 
-                    # Precompute the integer lane coordinates for reuse
-                    lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
-
                     if len(weed_centres) > 0 and self.controller:
                         self.controller.weed_detect_indicator()
 
@@ -462,7 +428,7 @@ class Owl:
                             centre_x = centre[0]
 
                             for i in range(self.relay_num):
-                                lane_start = lane_coords_int[i]
+                                lane_start = self.lane_coords_int[i]
                                 lane_end = lane_start + self.lane_width
                                 if lane_start <= centre_x < lane_end:
                                     self.relay_controller.receive(
@@ -571,30 +537,63 @@ class Owl:
             self.stop()
 
     def stop(self):
-        self.relay_controller.running = False
-        self.relay_controller.relay.all_off()
-        self.relay_controller.relay.beep(duration=0.1)
-        self.relay_controller.relay.beep(duration=0.1)
+        """Gracefully shut down all OWL components."""
 
-        self.cam.stop()
+        def safe_stop(component, name, fallback_to_terminate=True):
+            """
+            Attempt to gracefully stop a component, with an option to terminate if stopping fails.
+            """
+            try:
+                if hasattr(component, 'stop'):
+                    component.stop()
+                self.logger.info(f"Stopped {name}")
+            except Exception as e:
+                self.logger.warning(f"Graceful stop failed for {name}: {e}")
+                if fallback_to_terminate and hasattr(component, 'terminate'):
+                    try:
+                        component.terminate()
+                        self.logger.info(f"Forcefully terminated {name}")
+                    except Exception as terminate_error:
+                        self.logger.error(f"Failed to terminate {name}: {terminate_error}")
 
-        if self.video_writer:
-            self.video_writer.release()
+        try:
+            # Stop controller processes
+            if hasattr(self, 'controller') and self.controller:
+                safe_stop(self.controller, 'controller', fallback_to_terminate=False)
+                if hasattr(self, 'controller_process') and self.controller_process.is_alive():
+                    self.controller_process.terminate()
+                    self.controller_process.join(timeout=0.5)
+                    self.logger.info("Controller process terminated")
 
-        if self.controller:
-            if hasattr(self, 'controller'):
-                self.controller.stop()
-                if hasattr(self, 'controller_process'):
-                    self.controller_process.join()
+            # Stop image recorder
+            if hasattr(self, 'image_recorder') and self.image_recorder:
+                safe_stop(self.image_recorder, 'image recorder')
 
-        if self.sample_images:
-            self.status_indicator.stop()
-            self.image_recorder.stop()
+            # Stop status indicator
+            if hasattr(self, 'status_indicator') and self.status_indicator:
+                safe_stop(self.status_indicator, 'status indicator', fallback_to_terminate=False)
 
-        if self.show_display:
-            cv2.destroyAllWindows()
+            # Stop relay controller
+            if hasattr(self, 'relay_controller') and self.relay_controller:
+                safe_stop(self.relay_controller, 'relay controller', fallback_to_terminate=False)
+                try:
+                    self.relay_controller.relay.all_off()  # Ensure all relays are off
+                except Exception as e:
+                    self.logger.warning(f"Failed to turn off relays: {e}")
 
-        sys.exit()
+            # Stop camera
+            if hasattr(self, 'cam') and self.cam:
+                safe_stop(self.cam, 'camera', fallback_to_terminate=False)
+
+        except Exception as e:
+            self.logger.error(f"Critical error during shutdown: {e}", exc_info=True)
+        finally:
+            try:
+                LogManager().stop()  # Ensure logger shuts down properly
+                self.logger.info("OWL shutdown complete")
+            except Exception as log_error:
+                print(f"Failed to stop LogManager: {log_error}", file=sys.stderr)
+            sys.exit(0)
 
     def save_parameters(self):
         timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
@@ -619,6 +618,86 @@ class Owl:
             self.config.write(configfile)
 
         self.logger.info(f"[INFO] Configuration saved to {new_config_path}")
+
+    def setup_media_source(self, input_file_or_directory):
+        """
+        Configure and initialize the appropriate media source (camera or media file/directory).
+
+        Args:
+            input_file_or_directory: Optional path from CLI args to image/video source
+
+        Returns:
+            VideoStream or FrameReader: Initialized media source
+
+        Raises:
+            FileNotFoundError: If specified media path does not exist
+            InvalidMediaError: If specified file is not a valid image/video format
+            RuntimeError: If media source initialization fails
+        """
+        # Determine input source with CLI taking precedence over config
+        if input_file_or_directory:
+            if len(self.config.get('System', 'input_file_or_directory')) > 0:
+                self.logger.warning('[WARNING] Input sources provided in both CLI and config file. Using CLI argument.')
+            self.input_file_or_directory = input_file_or_directory
+        else:
+            self.input_file_or_directory = self.config.get('System', 'input_file_or_directory').strip('"\'')
+
+        if self.input_file_or_directory:
+            path = Path(self.input_file_or_directory)
+
+            if not path.exists():
+                raise errors.MediaPathError(path=path, message="Specified input path does not exist")
+
+            if path.is_file():
+                valid_extensions = {
+                    '.jpg', '.jpeg', '.png', '.bmp',  # Images
+                    '.mp4', '.avi', '.mov', '.mkv'  # Videos
+                }
+                if path.suffix.lower() not in valid_extensions:
+                    raise errors.InvalidMediaError(path=path, valid_formats=valid_extensions)
+
+            try:
+                media_source = FrameReader(path=self.input_file_or_directory,
+                                           resolution=self.resolution,
+                                           loop_time=self.image_loop_time)
+
+                self.frame_width, self.frame_height = media_source.resolution
+                self.logger.info(f'[INFO] Using {media_source.input_type} from {self.input_file_or_directory}...')
+                return media_source
+
+            except Exception as e:
+                raise errors.MediaInitError(path=path, original_error=str(e)) from e
+
+        # Set up camera if no file input specified
+        try:
+            media_source = VideoStream(resolution=self.resolution,
+                                       exp_compensation=self.exp_compensation)
+            media_source.start()
+
+            self.frame_width = media_source.frame_width
+            self.frame_height = media_source.frame_height
+
+            return media_source
+
+        except IndexError as e:
+            self.logger.error("Camera index not found", exc_info=True)
+            self.status_indicator.error(2)
+            self.stop()
+            raise errors.CameraNotFoundError(error_type="Camera Not Found", original_error=str(e))
+
+        except ModuleNotFoundError as e:
+            self.logger.error(e, exc_info=True)
+            module_name = str(e).split("'")[-2]
+            self.status_indicator.error(1)
+            self.stop()
+            raise errors.DependencyError(missing_module=module_name, error_msg=str(e)) from None
+
+        except Exception as e:
+            error_msg = f"[CRITICAL ERROR] Failed to initialize camera: {str(e)}"
+            self.logger.error(error_msg)
+            self.status_indicator.error(1)
+            self.stop()
+            raise errors.CameraInitError(str(e)) from e
 
     def _log_system_info(self):
         """Log system information on startup"""
