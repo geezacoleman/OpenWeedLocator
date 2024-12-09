@@ -5,6 +5,7 @@ import sys
 import logging
 import argparse
 import time
+import threading
 from datetime import datetime
 from multiprocessing import Process, Value
 from pathlib import Path
@@ -59,7 +60,7 @@ except ImportError as e:
 try:
    import imutils
    from imutils.video import FPS
-
+   from utils.dashboard_manager import OWLDashboard
    from utils.input_manager import UteController, AdvancedController, get_rpi_version
    from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator
    from utils.directory_manager import DirectorySetup
@@ -115,6 +116,12 @@ class Owl:
 
         # visualise the detections with video feed
         self.show_display = show_display
+
+        # initialize dashboard if enabled
+        self.dashboard = None
+        if self.config.getboolean('System', 'enable_dashboard', fallback=False):
+            self.dashboard = OWLDashboard(port=self.config.getint('System', 'dashboard_port', fallback=5000))
+            threading.Thread(target=self.dashboard.run, daemon=True).start()
 
         # threshold parameters for different algorithms
         self.exg_min = self.config.getint('GreenOnBrown', 'exg_min')
@@ -360,6 +367,8 @@ class Owl:
 
             while True:
                 frame = self.cam.read()
+                if self.dashboard:
+                    self.dashboard.update_frame(frame)
 
                 if frame is None:
                     if log_fps:

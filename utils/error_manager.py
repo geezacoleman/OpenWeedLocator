@@ -917,3 +917,66 @@ class CameraInitError(OWLError):
                 )
         )
         self.args = (message,)
+
+
+### DASHBOARD RELATED ERRORS ###
+class DashboardError(OWLError):
+    """Base class for dashboard-specific errors."""
+    pass
+
+
+class StreamInitError(DashboardError):
+    """Raised when the dashboard stream fails to initialize."""
+
+    def __init__(self, reason: str = None):
+        super().__init__(
+            message=None,
+            details={'reason': reason}
+        )
+
+        message = (
+                self.format_error_header("Dashboard Stream Error") +
+                self.format_section(
+                    "Problem",
+                    f"Failed to initialize dashboard stream\n"
+                    f"Reason: {self.colorize(reason, 'WHITE', bold=True)}"
+                ) +
+                self.format_section(
+                    "Fix",
+                    "1. Check if port 5000 is available\n"
+                    "2. Verify Flask server can start\n"
+                    "3. Ensure sufficient system resources\n"
+                    "4. Check network connectivity"
+                )
+        )
+        self.args = (message,)
+
+
+class StreamUpdateError(DashboardError):
+    """Raised when updating the stream frame fails."""
+
+    def __init__(self, frame_size: Optional[tuple] = None, reason: str = None):
+        super().__init__(
+            message=None,
+            details={
+                'frame_size': frame_size,
+                'reason': reason
+            }
+        )
+
+        message = (
+                self.format_error_header("Stream Update Error") +
+                self.format_section(
+                    "Problem",
+                    f"Failed to update stream frame\n" +
+                    (f"Frame size: {frame_size}\n" if frame_size else "") +
+                    f"Reason: {self.colorize(reason, 'WHITE', bold=True)}"
+                ) +
+                self.format_section(
+                    "Fix",
+                    "1. Check frame format is correct\n"
+                    "2. Verify frame is not corrupted\n"
+                    "3. Ensure sufficient memory available"
+                )
+        )
+        self.args = (message,)
