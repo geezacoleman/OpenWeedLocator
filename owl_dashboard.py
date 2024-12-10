@@ -285,7 +285,7 @@ class OWLDashboard:
         while True:
             try:
                 frame = self.frame_queue.get(timeout=1.0)
-                self.last_frame_time = datetime.now().strftime('%H:%M:%S')
+                self.last_frame_time = datetime.now()
 
                 success, buffer = cv2.imencode(
                     '.jpg',
