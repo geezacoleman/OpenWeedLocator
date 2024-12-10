@@ -301,6 +301,7 @@ HTML_TEMPLATE = """
         }
 
         .status {
+            display: block
             color: var(--owl-grey);
             font-size: 0.9rem;
             margin-top: 0.5rem;
@@ -333,8 +334,8 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="header">
-        <img src="{{ url_for('serve_image', filename='owl-logo.png') }}" alt="OWL Logo">
-        <h1>OpenWeedLocator Dashboard</h1>
+        <img src="{{ url_for('serve_image', filename='owl-logo-wht.png') }}" alt="OWL Logo">
+        <h1>OWL Dashboard</h1>
     </div>
 
     <div class="container">
@@ -351,8 +352,8 @@ HTML_TEMPLATE = """
             <div class="controls">
                 <button onclick="downloadFrame()">Download Frame</button>
                 <button onclick="toggleRecording()" id="recordButton">Start Recording</button>
-                <span class="status" id="status"></span>
             </div>
+            <span class="status" id="status"></span>
         </div>
     </div>
 
