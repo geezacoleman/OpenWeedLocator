@@ -59,6 +59,8 @@ class OWLDashboard:
         self.connection_status = "Connected"
         self.CPU_CHECK_INTERVAL = 2
         self.TEMP_CHECK_INTERVAL = 5
+        self.MAX_RECORDING_TIME = 30  # seconds
+        self.recording_start_time = None
 
         # Setup logging
         logging.basicConfig(level=logging.INFO)
@@ -121,6 +123,7 @@ class OWLDashboard:
         @self.app.route('/start_recording', methods=['POST'])
         def start_recording():
             """Start video recording"""
+            self.recording_start_time = time.time()
             try:
                 self.frame_buffer = []
                 self.recording = True

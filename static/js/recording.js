@@ -1,47 +1,49 @@
 let isRecording = false;
+let recordingStartTime = null;
+const MAX_RECORDING_TIME = 30; // seconds
+let estimatedSize = 0;
+const ESTIMATED_BITRATE = 500000; // 500 kbps - adjust based on your video quality
 
-function updateStatus(message) {
-    const status = document.getElementById('status');
-    if (status) {
-        status.textContent = message;
-        if (!isRecording) {
-            setTimeout(() => {
-                status.textContent = '';
-            }, 3000);
+function updateRecordingStatus() {
+    const statusElement = document.getElementById('recordingStatus');
+    if (!statusElement) return;
+
+    if (isRecording) {
+        const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+        const remaining = MAX_RECORDING_TIME - elapsed;
+        estimatedSize = Math.floor((elapsed * ESTIMATED_BITRATE) / (8 * 1024 * 1024)); // Convert to MB
+
+        statusElement.innerHTML = `
+            Recording: ${remaining}s remaining
+            <br>
+            Estimated Size: ~${estimatedSize}MB
+        `;
+
+        // Auto-stop if max time reached
+        if (elapsed >= MAX_RECORDING_TIME) {
+            toggleRecording();
         }
     }
 }
 
-function downloadFrame() {
-    fetch('/download_frame', { method: 'POST' })
-        .then(response => {
-            if (!response.ok) {
-                throw new Error('Frame not available');
-            }
-            return response.blob();
-        })
-        .then(blob => {
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.style.display = 'none';
-            a.href = url;
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            a.download = `owl_frame_${timestamp}.jpg`;
+function showProcessingSpinner() {
+    const button = document.getElementById('recordButton');
+    button.disabled = true;
+    button.innerHTML = `
+        <div class="spinner"></div>
+        Processing...
+    `;
+}
 
-            document.body.appendChild(a);
-            a.click();
-            window.URL.revokeObjectURL(url);
-            document.body.removeChild(a);
-
-            updateStatus('Frame downloaded successfully');
-        })
-        .catch(error => {
-            updateStatus(`Error: ${error.message}`);
-        });
+function hideProcessingSpinner() {
+    const button = document.getElementById('recordButton');
+    button.disabled = false;
+    button.textContent = 'Start Recording';
 }
 
 function toggleRecording() {
     const button = document.getElementById('recordButton');
+    const statusElement = document.getElementById('recordingStatus');
 
     if (!isRecording) {
         // Start recording
@@ -50,14 +52,19 @@ function toggleRecording() {
             .then(data => {
                 if (data.success) {
                     isRecording = true;
+                    recordingStartTime = Date.now();
                     button.textContent = 'Stop Recording';
                     button.classList.add('recording');
-                    updateStatus('Recording started...');
+                    statusElement.style.display = 'block';
+                    // Start status updates
+                    setInterval(updateRecordingStatus, 1000);
                 }
             })
             .catch(error => updateStatus(`Error: ${error.message}`));
     } else {
         // Stop recording and download
+        showProcessingSpinner();
+
         fetch('/stop_recording', { method: 'POST' })
             .then(response => {
                 if (!response.ok) {
@@ -67,8 +74,8 @@ function toggleRecording() {
             })
             .then(blob => {
                 isRecording = false;
-                button.textContent = 'Start Recording';
-                button.classList.remove('recording');
+                hideProcessingSpinner();
+                statusElement.style.display = 'none';
 
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -86,7 +93,8 @@ function toggleRecording() {
             })
             .catch(error => {
                 isRecording = false;
-                button.textContent = 'Start Recording';
+                hideProcessingSpinner();
+                statusElement.style.display = 'none';
                 button.classList.remove('recording');
                 updateStatus(`Error: ${error.message}`);
             });
