@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OWL Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- CSS includes -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/status.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/controls.css') }}">
+</head>
+<body>
+    <div class="header">
+        <img src="{{ url_for('static', filename='images/owl-logo-wht.png') }}" alt="OWL Logo">
+        <h1>OWL Dashboard</h1>
+    </div>
+
+    <div class="container">
+        {% include 'components/stream.html' %}
+        {% include 'components/status_box.html' %}
+    </div>
+
+    <!-- JavaScript includes -->
+    <script src="{{ url_for('static', filename='js/zoom.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/recording.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/status.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

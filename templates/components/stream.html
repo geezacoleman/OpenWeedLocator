@@ -1,0 +1,15 @@
+<div class="stream-container">
+    <div class="zoom-container">
+        <img id="stream" class="stream zoom-image" src="{{ url_for('video_feed') }}">
+        <div class="zoom-controls">
+            <button onclick="zoomIn()">+</button>
+            <button onclick="zoomOut()">-</button>
+            <button onclick="resetZoom()">Reset</button>
+        </div>
+    </div>
+
+    <div class="controls">
+        <button onclick="downloadFrame()">Download Frame</button>
+        <button onclick="toggleRecording()" id="recordButton">Start Recording</button>
+    </div>
+</div>
