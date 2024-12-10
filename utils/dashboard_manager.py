@@ -2,10 +2,12 @@ import logging
 import queue
 import psutil
 import time
-from datetime import datetime
 import tempfile
 import os
-
+import platform
+from typing import Optional
+from datetime import datetime
+from output_manager import get_platform_config
 import utils.error_manager as errors
 
 # Try importing required packages
@@ -24,6 +26,12 @@ try:
 except ImportError as e:
     raise errors.DependencyError('numpy', str(e))
 
+testing, lgpioERROR = get_platform_config()
+
+# Import GPIO components only if needed
+if not testing:
+    from gpiozero import CPUTemperature
+
 
 class OWLDashboard:
     """Manages secure dashboard interface for OWL."""
@@ -38,16 +46,26 @@ class OWLDashboard:
             StreamInitError: If dashboard fails to initialize
             DependencyError: If required packages are missing
         """
+        # Core Flask and video streaming
         self.app = Flask(__name__)
         self.port = port
         self.frame_queue = queue.Queue(maxsize=1)
-        self.frame_count = 0
         self.latest_frame = None
         self.last_frame_time = None
         self.recording = False
         self.frame_buffer = []
         self.target_fps = target_fps
         self.last_frame_push_time = 0
+
+        # System monitoring
+        self.last_cpu_check = 0
+        self.cached_cpu_usage = 0
+        self.last_temp_check = 0
+        self.cached_temp = 0
+        self.last_connection_check = time.time()
+        self.connection_status = "Connected"
+        self.CPU_CHECK_INTERVAL = 2
+        self.TEMP_CHECK_INTERVAL = 5
 
         # Setup logging
         logging.basicConfig(level=logging.INFO)
@@ -124,25 +142,26 @@ class OWLDashboard:
                     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 
-                    # Get frame dimensions from first frame
                     height, width = self.frame_buffer[0].shape[:2]
 
-                    # Create temporary file
                     with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_file:
                         out = cv2.VideoWriter(temp_file.name, fourcc, 30.0, (width, height))
-                        for frame in self.frame_buffer:
-                            out.write(frame)
+
+                        CHUNK_SIZE = 50
+
+                        for i in range(0, len(self.frame_buffer), CHUNK_SIZE):
+                            chunk = self.frame_buffer[i:i + CHUNK_SIZE]
+                            for frame in chunk:
+                                out.write(frame)
+
                         out.release()
 
-                        # Read the temporary file
                         with open(temp_file.name, 'rb') as f:
                             video_data = f.read()
 
-                    # Clean up
                     os.unlink(temp_file.name)
                     self.frame_buffer = []
 
-                    # Send video file to browser
                     return Response(
                         video_data,
                         mimetype='video/mp4',
@@ -156,28 +175,22 @@ class OWLDashboard:
                 self.logger.error(f"Failed to stop recording: {e}")
                 return jsonify({'error': str(e)}), 500
 
-        @self.app.route('/cpu_usage', methods=['GET'])
-        def cpu_usage():
-            usage = psutil.cpu_percent(interval=0)  # non-blocking check
-            return jsonify({'cpu_percent': usage})
+        @self.app.route('/system_stats')
+        def system_stats():
+            return jsonify(self.get_system_stats())
 
 
     def update_frame(self, frame) -> None:
         """Update the current frame with error handling."""
-        # Implement frame governor
         current_time = time.time()
-        # Ensure we don't exceed target_fps
+        self.last_frame_push_time = current_time
         if current_time - self.last_frame_push_time < (1.0 / self.target_fps):
-            # Skip this frame
             return
 
-        # Update last push time
-        self.last_frame_push_time = current_time
         try:
             if not isinstance(frame, np.ndarray):
                 raise errors.StreamUpdateError(reason="Invalid frame format - must be numpy array")
 
-            # Store frame if recording
             if self.recording:
                 self.frame_buffer.append(frame)
 
@@ -196,6 +209,41 @@ class OWLDashboard:
                 frame_size=frame.shape if isinstance(frame, np.ndarray) else None,
                 reason=str(e)
             )
+
+    def get_system_stats(self):
+        """Get all system statistics with caching."""
+        current_time = time.time()
+
+        # Update CPU usage if interval passed
+        if current_time - self.last_cpu_check >= self.CPU_CHECK_INTERVAL:
+            self.cached_cpu_usage = psutil.cpu_percent(interval=None)
+            self.last_cpu_check = current_time
+
+        # Update temperature if interval passed
+        if current_time - self.last_temp_check >= self.TEMP_CHECK_INTERVAL:
+            try:
+                cpu = CPUTemperature()
+                self.cached_temp = cpu.temperature
+            except Exception as e:
+                self.logger.error(f"Failed to read CPU temperature: {e}")
+                self.cached_temp = 0
+            self.last_temp_check = current_time
+
+        # Check connection status
+        if current_time - self.last_connection_check > 10:  # Check every 10 seconds
+            if hasattr(self, 'last_frame_time') and self.last_frame_time:
+                time_diff = (datetime.now() - self.last_frame_time).total_seconds()
+                if time_diff > 5:  # No frame for 5 seconds
+                    self.connection_status = "Disconnected"
+                else:
+                    self.connection_status = "Connected"
+            self.last_connection_check = current_time
+
+        return {
+            'cpu_percent': round(self.cached_cpu_usage, 1),
+            'cpu_temp': round(self.cached_temp, 1),
+            'status': self.connection_status,
+            'timestamp': datetime.now().strftime('%H:%M:%S')}
 
     def _generate_frames(self):
         """Generate sequence of frames for streaming with error handling."""
@@ -328,7 +376,7 @@ HTML_TEMPLATE = """
         }
 
         .status {
-            display: block
+            display: block;
             color: var(--owl-grey);
             font-size: 0.9rem;
             margin-top: 0.5rem;
@@ -357,6 +405,69 @@ HTML_TEMPLATE = """
             border-radius: 4px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
+
+        /* Status Box Styles */
+        .status-box {
+            background: white;
+            padding: 1rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-top: 1rem;
+        }
+
+        .status-box h2 {
+            margin: 0 0 1rem 0;
+            color: var(--owl-blue);
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .status-item {
+            padding: 0.5rem;
+            border-radius: 4px;
+            background: #f5f5f5;
+        }
+
+        .status-item h3 {
+            margin: 0;
+            font-size: 1rem;
+            color: var(--owl-blue);
+        }
+
+        .status-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin-top: 0.5rem;
+        }
+
+        .connection-status {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+
+        .status-connected {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .status-disconnected {
+            background: #f44336;
+            color: white;
+        }
+
+        .status-timestamp {
+            margin-top: 0.5rem;
+            font-size: 0.9rem;
+            color: var(--owl-grey);
+            text-align: right;
+        }
     </style>
 </head>
 <body>
@@ -380,8 +491,28 @@ HTML_TEMPLATE = """
                 <button onclick="downloadFrame()">Download Frame</button>
                 <button onclick="toggleRecording()" id="recordButton">Start Recording</button>
             </div>
-            <span class="status" id="status"></span>
-            <span class="status" id="cpuStatus"></span>
+        </div>
+
+        <!-- Status Box -->
+        <div class="status-box">
+            <h2>OWL Status</h2>
+            <div class="status-grid">
+                <div class="status-item">
+                    <h3>CPU Usage</h3>
+                    <div class="status-value" id="cpuValue">0%</div>
+                </div>
+                <div class="status-item">
+                    <h3>CPU Temperature</h3>
+                    <div class="status-value" id="tempValue">0°C</div>
+                </div>
+                <div class="status-item">
+                    <h3>Connection Status</h3>
+                    <div class="status-value">
+                        <span class="connection-status" id="connectionStatus">Connected</span>
+                    </div>
+                </div>
+            </div>
+            <div class="status-timestamp" id="statusTimestamp"></div>
         </div>
     </div>
 
@@ -474,7 +605,6 @@ HTML_TEMPLATE = """
                         button.textContent = 'Start Recording';
                         button.classList.remove('recording');
 
-                        // Download video file
                         const url = window.URL.createObjectURL(blob);
                         const a = document.createElement('a');
                         a.style.display = 'none';
@@ -500,34 +630,58 @@ HTML_TEMPLATE = """
 
         function updateStatus(message) {
             const status = document.getElementById('status');
-            status.textContent = message;
-            if (!isRecording) {
-                setTimeout(() => {
-                    status.textContent = '';
-                }, 3000);
+            if (status) {
+                status.textContent = message;
+                if (!isRecording) {
+                    setTimeout(() => {
+                        status.textContent = '';
+                    }, 3000);
+                }
             }
         }
 
-        // Update status periodically only when not recording
-        setInterval(() => {
-            const status = document.getElementById('status');
-            if (status && !isRecording) {
-                status.textContent = `Last update: ${new Date().toLocaleTimeString()}`;
-            }
-        }, 1000);
-        
-        // Fetch CPU usage every 2 seconds
-        setInterval(() => {
-        fetch('/cpu_usage')
-            .then(response => response.json())
-            .then(data => {
-                const cpuStatus = document.getElementById('cpuStatus');
-                cpuStatus.textContent = `CPU Usage: ${data.cpu_percent}%`;
-            })
-            .catch(error => {
-                console.error('Error fetching CPU usage:', error);
-            });
-        }, 2000);
+        // Function to get color based on percentage
+        function getColorForPercentage(percent, max) {
+            const normalized = percent / max;  // For temperature, max is 85
+            const hue = ((1 - normalized) * 120).toFixed(0);  // 120 is green, 0 is red
+            return `hsl(${hue}, 70%, 50%)`;
+        }
+
+        // Update system stats every 2 seconds
+        function updateSystemStats() {
+            fetch('/system_stats')
+                .then(response => response.json())
+                .then(data => {
+                    // Update CPU Usage
+                    const cpuElement = document.getElementById('cpuValue');
+                    cpuElement.textContent = `${data.cpu_percent}%`;
+                    cpuElement.style.color = getColorForPercentage(data.cpu_percent, 100);
+
+                    // Update CPU Temperature
+                    const tempElement = document.getElementById('tempValue');
+                    tempElement.textContent = `${data.cpu_temp}°C`;
+                    tempElement.style.color = getColorForPercentage(data.cpu_temp, 85);
+
+                    // Update Connection Status
+                    const statusElement = document.getElementById('connectionStatus');
+                    statusElement.textContent = data.status;
+                    statusElement.className = `connection-status status-${data.status.toLowerCase()}`;
+
+                    // Update timestamp
+                    document.getElementById('statusTimestamp').textContent = 
+                        `Last updated: ${data.timestamp}`;
+                })
+                .catch(error => {
+                    console.error('Error fetching system stats:', error);
+                    document.getElementById('connectionStatus').textContent = 'Disconnected';
+                    document.getElementById('connectionStatus').className = 
+                        'connection-status status-disconnected';
+                });
+        }
+
+        // Initial update and start interval
+        updateSystemStats();
+        setInterval(updateSystemStats, 2000);
     </script>
 </body>
 </html>
