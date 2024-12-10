@@ -58,11 +58,12 @@ button:hover {
     display: inline-block;
     width: 20px;
     height: 20px;
-    margin-right: 8px;
     border: 3px solid rgba(255,255,255,0.3);
     border-radius: 50%;
     border-top-color: white;
     animation: spin 1s ease-in-out infinite;
+    margin: 0;
+    vertical-align: middle;
 }
 
 @keyframes spin {
@@ -82,4 +83,8 @@ button:hover {
 button:disabled {
     opacity: 0.7;
     cursor: not-allowed;
+    min-width: 120px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
