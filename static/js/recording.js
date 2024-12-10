@@ -2,37 +2,45 @@ let isRecording = false;
 let recordingStartTime = null;
 const MAX_RECORDING_TIME = 30; // seconds
 let estimatedSize = 0;
-const ESTIMATED_BITRATE = 500000; // 500 kbps - adjust based on your video quality
+const ESTIMATED_BITRATE = 2000000;
+let statusInterval;
 
 function updateRecordingStatus() {
     const statusElement = document.getElementById('recordingStatus');
-    if (!statusElement) return;
+    if (!statusElement || !isRecording) return;
 
-    if (isRecording) {
-        const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
-        const remaining = MAX_RECORDING_TIME - elapsed;
-        estimatedSize = Math.floor((elapsed * ESTIMATED_BITRATE) / (8 * 1024 * 1024)); // Convert to MB
+    const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+    const remaining = MAX_RECORDING_TIME - elapsed;
+    // Updated size calculation
+    estimatedSize = Math.max(1, Math.floor((elapsed * ESTIMATED_BITRATE) / (8 * 1024 * 1024))); // Convert to MB
 
-        statusElement.innerHTML = `
-            Recording: ${remaining}s remaining
-            <br>
-            Estimated Size: ~${estimatedSize}MB
-        `;
+    statusElement.innerHTML = `
+        Recording: ${remaining}s remaining
+        <br>
+        Estimated Size: ~${estimatedSize}MB
+    `;
 
-        // Auto-stop if max time reached
-        if (elapsed >= MAX_RECORDING_TIME) {
-            toggleRecording();
-        }
+    // Auto-stop if max time reached
+    if (elapsed >= MAX_RECORDING_TIME) {
+        toggleRecording();
     }
 }
 
 function showProcessingSpinner() {
     const button = document.getElementById('recordButton');
+    const statusElement = document.getElementById('recordingStatus');
     button.disabled = true;
     button.innerHTML = `
         <div class="spinner"></div>
         Processing...
     `;
+    // Clear the status interval
+    if (statusInterval) {
+        clearInterval(statusInterval);
+        statusInterval = null;
+    }
+    // Clear the status display
+    statusElement.style.display = 'none';
 }
 
 function hideProcessingSpinner() {
@@ -57,7 +65,8 @@ function toggleRecording() {
                     button.classList.add('recording');
                     statusElement.style.display = 'block';
                     // Start status updates
-                    setInterval(updateRecordingStatus, 1000);
+                    if (statusInterval) clearInterval(statusInterval);
+                    statusInterval = setInterval(updateRecordingStatus, 1000);
                 }
             })
             .catch(error => updateStatus(`Error: ${error.message}`));
@@ -75,7 +84,8 @@ function toggleRecording() {
             .then(blob => {
                 isRecording = false;
                 hideProcessingSpinner();
-                statusElement.style.display = 'none';
+                button.classList.remove('recording');
+                estimatedSize = 0; // Reset estimated size
 
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -94,7 +104,6 @@ function toggleRecording() {
             .catch(error => {
                 isRecording = false;
                 hideProcessingSpinner();
-                statusElement.style.display = 'none';
                 button.classList.remove('recording');
                 updateStatus(`Error: ${error.message}`);
             });
