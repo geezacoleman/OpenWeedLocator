@@ -1,11 +1,14 @@
 import logging
-from pathlib import Path
 import queue
 from datetime import datetime
+import tempfile
+import os
+
 import utils.error_manager as errors
 
+# Try importing required packages
 try:
-    from flask import Flask, Response, render_template_string, jsonify, request
+    from flask import Flask, Response, render_template_string, jsonify, request, send_from_directory
 except ImportError as e:
     raise errors.DependencyError('flask', str(e))
 
@@ -37,6 +40,8 @@ class OWLDashboard:
         self.port = port
         self.frame_queue = queue.Queue(maxsize=1)
         self.last_frame_time = None
+        self.recording = False
+        self.frame_buffer = []
 
         # Setup logging
         logging.basicConfig(level=logging.INFO)
@@ -63,39 +68,95 @@ class OWLDashboard:
                 mimetype='multipart/x-mixed-replace; boundary=frame'
             )
 
-        @self.app.route('/save_frame', methods=['POST'])
-        def save_frame():
+        @self.app.route('/images/<path:filename>')
+        def serve_image(filename):
+            return send_from_directory('../images', filename)
+
+        @self.app.route('/download_frame', methods=['POST'])
+        def download_frame():
             try:
                 frame = self.frame_queue.get_nowait()
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                save_path = Path('saved_frames') / f'frame_{timestamp}.jpg'
-                save_path.parent.mkdir(exist_ok=True)
 
-                cv2.imwrite(str(save_path), frame)
-                return jsonify({
-                    'message': 'Frame saved successfully',
-                    'path': str(save_path)
-                })
+                success, buffer = cv2.imencode('.jpg', frame)
+                if not success:
+                    return jsonify({'error': 'Failed to encode image'}), 500
+
+                return Response(
+                    buffer.tobytes(),
+                    mimetype='image/jpeg',
+                    headers={
+                        'Content-Disposition': f'attachment; filename=owl_frame_{timestamp}.jpg'
+                    }
+                )
             except queue.Empty:
                 return jsonify({'error': 'No frame available'}), 404
             except Exception as e:
-                self.logger.error(f"Failed to save frame: {e}")
+                self.logger.error(f"Failed to download frame: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/start_recording', methods=['POST'])
+        def start_recording():
+            try:
+                self.frame_buffer = []  # Reset frame buffer
+                self.recording = True
+                return jsonify({'success': True})
+            except Exception as e:
+                self.logger.error(f"Failed to start recording: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/stop_recording', methods=['POST'])
+        def stop_recording():
+            try:
+                if self.recording and self.frame_buffer:
+                    self.recording = False
+
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+
+                    # Get frame dimensions from first frame
+                    height, width = self.frame_buffer[0].shape[:2]
+
+                    # Create temporary file
+                    with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_file:
+                        out = cv2.VideoWriter(temp_file.name, fourcc, 30.0, (width, height))
+                        for frame in self.frame_buffer:
+                            out.write(frame)
+                        out.release()
+
+                        # Read the temporary file
+                        with open(temp_file.name, 'rb') as f:
+                            video_data = f.read()
+
+                    # Clean up
+                    os.unlink(temp_file.name)
+                    self.frame_buffer = []
+
+                    # Send video file to browser
+                    return Response(
+                        video_data,
+                        mimetype='video/mp4',
+                        headers={
+                            'Content-Disposition': f'attachment; filename=owl_recording_{timestamp}.mp4'
+                        }
+                    )
+
+                return jsonify({'error': 'No recording in progress'}), 400
+            except Exception as e:
+                self.logger.error(f"Failed to stop recording: {e}")
                 return jsonify({'error': str(e)}), 500
 
     def update_frame(self, frame) -> None:
-        """Update the current frame with error handling.
-
-        Args:
-            frame: OpenCV/numpy array frame to be streamed
-
-        Raises:
-            StreamUpdateError: If frame update fails
-        """
+        """Update the current frame with error handling."""
         try:
             if not isinstance(frame, np.ndarray):
                 raise errors.StreamUpdateError(reason="Invalid frame format - must be numpy array")
 
-            # Clear old frames
+            # Store frame if recording
+            if self.recording:
+                self.frame_buffer.append(frame.copy())
+
+            # Clear old frames from display queue
             while not self.frame_queue.empty():
                 self.frame_queue.get_nowait()
 
@@ -117,7 +178,6 @@ class OWLDashboard:
                 frame = self.frame_queue.get(timeout=1.0)
                 self.last_frame_time = datetime.now().strftime('%H:%M:%S')
 
-                # Encode frame
                 success, buffer = cv2.imencode(
                     '.jpg',
                     frame,
@@ -149,7 +209,6 @@ class OWLDashboard:
             raise errors.StreamInitError(f"Failed to start server: {str(e)}")
 
 
-# HTML Template with OWL styling
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -160,6 +219,7 @@ HTML_TEMPLATE = """
         :root {
             --owl-blue: #022775;
             --owl-grey: #808080;
+            --recording-red: #ff4444;
         }
 
         body {
@@ -175,6 +235,18 @@ HTML_TEMPLATE = """
             padding: 1rem;
             text-align: center;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+        }
+
+        .header img {
+            height: 40px;
+            margin-right: 20px;
+        }
+
+        .header h1 {
+            margin: 0;
+            flex-grow: 1;
         }
 
         .container {
@@ -217,6 +289,17 @@ HTML_TEMPLATE = """
             opacity: 0.9;
         }
 
+        .recording {
+            background: var(--recording-red);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { background-color: var(--recording-red); }
+            50% { background-color: white; color: var(--recording-red); }
+            100% { background-color: var(--recording-red); }
+        }
+
         .status {
             color: var(--owl-grey);
             font-size: 0.9rem;
@@ -250,6 +333,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="header">
+        <img src="{{ url_for('serve_image', filename='owl-logo.png') }}" alt="OWL Logo">
         <h1>OpenWeedLocator Dashboard</h1>
     </div>
 
@@ -265,7 +349,8 @@ HTML_TEMPLATE = """
             </div>
 
             <div class="controls">
-                <button onclick="saveFrame()">Save Frame</button>
+                <button onclick="downloadFrame()">Download Frame</button>
+                <button onclick="toggleRecording()" id="recordButton">Start Recording</button>
                 <span class="status" id="status"></span>
             </div>
         </div>
@@ -276,6 +361,7 @@ HTML_TEMPLATE = """
         const zoomStep = 0.2;
         const maxZoom = 3;
         const minZoom = 1;
+        let isRecording = false;
 
         function zoomIn() {
             if (currentZoom < maxZoom) {
@@ -301,26 +387,102 @@ HTML_TEMPLATE = """
             img.style.transform = `scale(${currentZoom})`;
         }
 
-        function saveFrame() {
-            fetch('/save_frame', { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    const status = document.getElementById('status');
-                    if (data.error) {
-                        status.textContent = `Error: ${data.error}`;
-                    } else {
-                        status.textContent = 'Frame saved successfully';
-                        setTimeout(() => {
-                            status.textContent = '';
-                        }, 3000);
+        function downloadFrame() {
+            fetch('/download_frame', { method: 'POST' })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Frame not available');
                     }
+                    return response.blob();
+                })
+                .then(blob => {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = url;
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                    a.download = `owl_frame_${timestamp}.jpg`;
+
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+
+                    updateStatus('Frame downloaded successfully');
+                })
+                .catch(error => {
+                    updateStatus(`Error: ${error.message}`);
                 });
         }
 
-        // Update status periodically
+        function toggleRecording() {
+            const button = document.getElementById('recordButton');
+
+            if (!isRecording) {
+                // Start recording
+                fetch('/start_recording', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            isRecording = true;
+                            button.textContent = 'Stop Recording';
+                            button.classList.add('recording');
+                            updateStatus('Recording started...');
+                        }
+                    })
+                    .catch(error => updateStatus(`Error: ${error.message}`));
+            } else {
+                // Stop recording and download
+                fetch('/stop_recording', { method: 'POST' })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Recording failed');
+                        }
+                        return response.blob();
+                    })
+                    .then(blob => {
+                        isRecording = false;
+                        button.textContent = 'Start Recording';
+                        button.classList.remove('recording');
+
+                        // Download video file
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.style.display = 'none';
+                        a.href = url;
+                        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                        a.download = `owl_recording_${timestamp}.mp4`;
+
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+
+                        updateStatus('Recording saved and downloaded');
+                    })
+                    .catch(error => {
+                        isRecording = false;
+                        button.textContent = 'Start Recording';
+                        button.classList.remove('recording');
+                        updateStatus(`Error: ${error.message}`);
+                    });
+            }
+        }
+
+        function updateStatus(message) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            if (!isRecording) {
+                setTimeout(() => {
+                    status.textContent = '';
+                }, 3000);
+            }
+        }
+
+        // Update status periodically only when not recording
         setInterval(() => {
             const status = document.getElementById('status');
-            if (status) {
+            if (status && !isRecording) {
                 status.textContent = `Last update: ${new Date().toLocaleTimeString()}`;
             }
         }, 1000);
