@@ -1,5 +1,7 @@
 import logging
 import queue
+import psutil
+import time
 from datetime import datetime
 import tempfile
 import os
@@ -26,7 +28,7 @@ except ImportError as e:
 class OWLDashboard:
     """Manages secure dashboard interface for OWL."""
 
-    def __init__(self, port: int = 5000):
+    def __init__(self, port: int = 5000, target_fps=30):
         """Initialize dashboard with error handling.
 
         Args:
@@ -39,10 +41,13 @@ class OWLDashboard:
         self.app = Flask(__name__)
         self.port = port
         self.frame_queue = queue.Queue(maxsize=1)
+        self.frame_count = 0
         self.latest_frame = None
         self.last_frame_time = None
         self.recording = False
         self.frame_buffer = []
+        self.target_fps = target_fps
+        self.last_frame_push_time = 0
 
         # Setup logging
         logging.basicConfig(level=logging.INFO)
@@ -151,15 +156,30 @@ class OWLDashboard:
                 self.logger.error(f"Failed to stop recording: {e}")
                 return jsonify({'error': str(e)}), 500
 
+        @self.app.route('/cpu_usage', methods=['GET'])
+        def cpu_usage():
+            usage = psutil.cpu_percent(interval=0)  # non-blocking check
+            return jsonify({'cpu_percent': usage})
+
+
     def update_frame(self, frame) -> None:
         """Update the current frame with error handling."""
+        # Implement frame governor
+        current_time = time.time()
+        # Ensure we don't exceed target_fps
+        if current_time - self.last_frame_push_time < (1.0 / self.target_fps):
+            # Skip this frame
+            return
+
+        # Update last push time
+        self.last_frame_push_time = current_time
         try:
             if not isinstance(frame, np.ndarray):
                 raise errors.StreamUpdateError(reason="Invalid frame format - must be numpy array")
 
             # Store frame if recording
             if self.recording:
-                self.frame_buffer.append(frame.copy())
+                self.frame_buffer.append(frame)
 
             # Clear old frames from display queue
             while not self.frame_queue.empty():
@@ -167,7 +187,7 @@ class OWLDashboard:
 
             self.frame_queue.put(frame)
             self.last_frame_time = datetime.now()
-            self.latest_frame = frame.copy()
+            self.latest_frame = frame
 
         except queue.Full:
             self.logger.warning("Frame queue full - skipping frame")
@@ -187,7 +207,7 @@ class OWLDashboard:
                 success, buffer = cv2.imencode(
                     '.jpg',
                     frame,
-                    [cv2.IMWRITE_JPEG_QUALITY, 70]
+                    [cv2.IMWRITE_JPEG_QUALITY, 50]
                 )
 
                 if not success:
@@ -361,6 +381,7 @@ HTML_TEMPLATE = """
                 <button onclick="toggleRecording()" id="recordButton">Start Recording</button>
             </div>
             <span class="status" id="status"></span>
+            <span class="status" id="cpuStatus"></span>
         </div>
     </div>
 
@@ -494,6 +515,19 @@ HTML_TEMPLATE = """
                 status.textContent = `Last update: ${new Date().toLocaleTimeString()}`;
             }
         }, 1000);
+        
+        // Fetch CPU usage every 2 seconds
+        setInterval(() => {
+        fetch('/cpu_usage')
+            .then(response => response.json())
+            .then(data => {
+                const cpuStatus = document.getElementById('cpuStatus');
+                cpuStatus.textContent = `CPU Usage: ${data.cpu_percent}%`;
+            })
+            .catch(error => {
+                console.error('Error fetching CPU usage:', error);
+            });
+        }, 2000);
     </script>
 </body>
 </html>
