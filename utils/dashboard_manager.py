@@ -39,6 +39,7 @@ class OWLDashboard:
         self.app = Flask(__name__)
         self.port = port
         self.frame_queue = queue.Queue(maxsize=1)
+        self.latest_frame = None
         self.last_frame_time = None
         self.recording = False
         self.frame_buffer = []
@@ -75,9 +76,15 @@ class OWLDashboard:
         @self.app.route('/download_frame', methods=['POST'])
         def download_frame():
             try:
-                frame = self.frame_queue.get_nowait()
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                try:
+                    frame = self.frame_queue.get_nowait()
+                except queue.Empty:
+                    if self.latest_frame is not None:
+                        frame = self.latest_frame
+                    else:
+                        return jsonify({'error': 'No frame available'}), 404
 
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 success, buffer = cv2.imencode('.jpg', frame)
                 if not success:
                     return jsonify({'error': 'Failed to encode image'}), 500
@@ -89,8 +96,6 @@ class OWLDashboard:
                         'Content-Disposition': f'attachment; filename=owl_frame_{timestamp}.jpg'
                     }
                 )
-            except queue.Empty:
-                return jsonify({'error': 'No frame available'}), 404
             except Exception as e:
                 self.logger.error(f"Failed to download frame: {e}")
                 return jsonify({'error': str(e)}), 500
@@ -162,6 +167,7 @@ class OWLDashboard:
 
             self.frame_queue.put(frame)
             self.last_frame_time = datetime.now()
+            self.latest_frame = frame.copy()
 
         except queue.Full:
             self.logger.warning("Frame queue full - skipping frame")
@@ -241,7 +247,7 @@ HTML_TEMPLATE = """
 
         .header img {
             height: 40px;
-            margin-right: 20px;
+            margin-right: 10px;
         }
 
         .header h1 {
@@ -273,6 +279,7 @@ HTML_TEMPLATE = """
             display: flex;
             gap: 1rem;
             margin-top: 1rem;
+            justify-content: center;
         }
 
         button {
