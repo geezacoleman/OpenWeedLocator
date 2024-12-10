@@ -4,10 +4,9 @@ import psutil
 import time
 import tempfile
 import os
-import platform
-from typing import Optional
+
 from datetime import datetime
-from output_manager import get_platform_config
+from utils.output_manager import get_platform_config
 import utils.error_manager as errors
 
 # Try importing required packages
@@ -179,13 +178,13 @@ class OWLDashboard:
         def system_stats():
             return jsonify(self.get_system_stats())
 
-
     def update_frame(self, frame) -> None:
         """Update the current frame with error handling."""
         current_time = time.time()
-        self.last_frame_push_time = current_time
         if current_time - self.last_frame_push_time < (1.0 / self.target_fps):
             return
+
+        self.last_frame_push_time = current_time
 
         try:
             if not isinstance(frame, np.ndarray):
