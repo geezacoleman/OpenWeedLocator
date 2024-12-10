@@ -25,15 +25,13 @@ function updateRecordingStatus() {
         toggleRecording();
     }
 }
-
 function showProcessingSpinner() {
     const button = document.getElementById('recordButton');
     const statusElement = document.getElementById('recordingStatus');
     button.disabled = true;
-    button.innerHTML = `
-        <div class="spinner"></div>
-        Processing...
-    `;
+    // Just show the spinner
+    button.innerHTML = '<div class="spinner"></div>';
+
     // Clear the status interval
     if (statusInterval) {
         clearInterval(statusInterval);
