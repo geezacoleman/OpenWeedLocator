@@ -10,6 +10,29 @@ check_status() {
   fi
 }
 
+# Get device type and number first
+echo "[INFO] Setting up OWL device..."
+read -p "Is this a dashboard Pi? (y/n): " is_dashboard
+case "$is_dashboard" in
+  y|Y )
+    device_type="dashboard"
+    device_id="dashboard"
+    ;;
+  n|N )
+    device_type="owl"
+    read -p "Enter OWL number (e.g., 1 for owl-1): " owl_number
+    while [[ ! $owl_number =~ ^[0-9]+$ ]]; do
+      echo "Invalid input. Please enter a number."
+      read -p "Enter OWL number (e.g., 1 for owl-1): " owl_number
+    done
+    device_id="owl-${owl_number}"
+    ;;
+  * )
+    echo "[ERROR] Invalid input. Please enter y or n."
+    exit 1
+    ;;
+esac
+
 # Free up space
 echo "[INFO] Freeing up space by removing unnecessary packages..."
 sudo apt-get purge -y wolfram-engine
@@ -69,6 +92,15 @@ cd ~/owl
 pip install -r requirements.txt
 check_status "Installing dependencies from requirements.txt"
 
+# Setup authentication
+echo "[INFO] Setting up secure access..."
+if [[ $is_dashboard == "y" ]]; then
+    sudo python3 setup_auth.py $device_id --dashboard
+else
+    sudo python3 setup_auth.py $device_id
+fi
+check_status "Security setup"
+
 # Make the scripts executable
 echo "[INFO] Making scripts executable..."
 chmod a+x owl.py
@@ -98,12 +130,17 @@ pcmanfm --set-wallpaper ~/owl/images/owl-background.png
 check_status "Setting desktop background"
 
 echo "[INFO] OWL setup complete."
+echo "Device ID: $device_id"
+echo "Device Type: $device_type"
+echo "Authentication credentials have been saved."
+
 read -p "Start OWL focusing? (y/n): " choice
 case "$choice" in
   y|Y ) echo "[INFO] Starting focusing..."; ./owl.py --focus;;
   n|N ) echo "[INFO] Focusing skipped. Run './owl.py --focus' to focus the OWL at a later point";;
   * ) echo "[ERROR] Invalid input. Please enter y or n.";;
 esac
+
 read -p "Launch OWL software? (y/n): " choice
 case "$choice" in
   y|Y ) echo "[INFO] Launching OWL..."; ./owl.py --show-display;;
