@@ -1161,20 +1161,13 @@ To start with, update the system. The update may take a few minutes depending on
 packages need updating. It's good practice to do this regularly. Then you'll add the following two lines to the `bashrc`
 file.
 
->⚠️**WARNING**⚠️ using `rpi-update` will update to the latest kernel and drivers. This is to fix an issue with image component
-order. The problem should eventually be merged into normal `apt-get update && upgrade`. This notice will be removed then.
-
 Begin by updating the system:
 ```commandline
 sudo apt-get update && sudo apt-get upgrade
 ```
-Now, update to the latest firmware version to fix the issue between RGB and BGR channel ordering.
-```commandline
-sudo rpi-update
-```
 Then add the following lines to the `.bashrc` file to prepare for the creation of virtual environments.
 ```commandline
-echo "# virtualenv and virtualenvwraper" >> ~/.bashrc
+echo "# virtualenv and virtualenvwrapper" >> ~/.bashrc
 ```
 ```commandline
 echo "export VIRTUALENVWRAPPER_PYTHON=/usr/bin/python" >> ~/.bashrc
