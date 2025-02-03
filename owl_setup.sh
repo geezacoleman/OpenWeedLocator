@@ -142,8 +142,29 @@ cd ~/owl
 pip install -r requirements.txt
 check_status "Installing dependencies from requirements.txt" "OWL_DEPS"
 
-# Step 9-11: Mark boot scripts status
-STATUS_BOOT_SCRIPTS="${TICK}"
+# Step 9: Make scripts executable and set up boot configuration
+echo -e "${GREEN}[INFO] Making scripts executable...${NC}"
+chmod a+x owl.py
+check_status "Making owl.py executable" "BOOT_SCRIPTS"
+
+chmod a+x owl_boot.sh
+chmod a+x owl_boot_wrapper.sh
+check_status "Making boot scripts executable" "BOOT_SCRIPTS"
+
+echo -e "${GREEN}[INFO] Moving boot scripts...${NC}"
+sudo mv owl_boot.sh /usr/local/bin/
+sudo mv owl_boot_wrapper.sh /usr/local/bin/
+check_status "Moving boot scripts" "BOOT_SCRIPTS"
+
+# Add boot script to cron
+echo -e "${GREEN}[INFO] Adding boot script to cron...${NC}"
+(crontab -l 2>/dev/null; echo "@reboot /usr/local/bin/owl_boot_wrapper.sh > /home/launch.log 2>&1") | sudo crontab -
+check_status "Adding boot script to cron" "BOOT_SCRIPTS"
+
+# Set desktop background
+echo -e "${GREEN}[INFO] Setting desktop background...${NC}"
+pcmanfm --set-wallpaper ~/owl/images/owl-background.png
+check_status "Setting desktop background" "BOOT_SCRIPTS"
 
 # Final Summary
 echo -e "\n${GREEN}[INFO] Installation Summary:${NC}"
@@ -160,8 +181,7 @@ echo -e "$STATUS_OPENCV OpenCV Installed"
 echo -e "$STATUS_OWL_DEPS OWL Dependencies Installed"
 echo -e "$STATUS_BOOT_SCRIPTS Boot Scripts Moved"
 
-
-# Step 12: Start OWL focusing
+# Step 10: Start OWL focusing
 read -p "Start OWL focusing? (y/n): " choice
 case "$choice" in
   y|Y ) echo -e "${GREEN}[INFO] Starting focusing...${NC}"; ./owl.py --focus;;
@@ -169,7 +189,7 @@ case "$choice" in
   * ) echo -e "${RED}[ERROR] Invalid input. Please enter y or n.${NC}";;
 esac
 
-# Step 13: Launch OWL
+# Step 11: Launch OWL
 read -p "Launch OWL software? (y/n): " choice
 case "$choice" in
   y|Y ) echo -e "${GREEN}[INFO] Launching OWL...${NC}"; ./owl.py --show-display;;
