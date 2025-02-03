@@ -841,15 +841,19 @@ substantially more expensive than the options listed above.
 </details>
 
 # Software
+Installing the OWL software is straightforward and can be automated for a simple, two-line install. Alternatively, you can
+take the step-by-step alternative to see what is happening under the hood.
+
+Both begin by flashing the latest Raspbian operating system to an SD card and booting up a Raspberry Pi.
+
+Steps:
+1. Set up Raspbian on the Raspberry Pi
+2. Either the **Two-line installation** (10 mins) OR **Detailed installation** (60 mins)
 
 The project will eventually support the use of the two major embedded computing devices, the Raspberry Pi (models 3B+, 4 and 5)
 and the Jetson Nano/Jetson Xavier NX for possible green-on-green detection with deep learning algorithms. At
 present, just the details on setting up the Raspberry Pi 3B+/4/5 are provided below. There are two options for
-installation. 
-
-For the first, all you'll need to do is download the disk image file (vX.X.X-owl.img) and flash it to an
-SD card. The second method is more in depth, but takes you through the entire process from beginning to end. If you're
-looking to learn about how everything works, take some time to work through this process.
+installation.
 
 >⚠️**NOTE**⚠️ 08/05/2024 - OWL transitioned from `picamera` to `picamera2` support. The v1.0.0 disk image below (Buster) does not
 support `picamera2` and will not work on the Raspberry Pi 5 nor with the recent camera releases. We strongly recommend
@@ -858,218 +862,8 @@ using the most up to date version of Raspbian with the latest OWL software.
 >⚠️**NOTE**⚠️ 17/03/2023 - running of the OWL changed from using `greenonbrown.py` to `owl.py`. This
 ensures better cross compatibility with GoG algorithms. It improves the modularity of the system.
 
-## Quick Method
->⚠️**IMPORTANT**⚠️ v1.0.0-owl.img DOES NOT WORK WITH RASPBERRY PI 5.
-
-For this method you'll need access to:
-
-* Desktop/laptop computer
-* Micro SD card reader
-* Internet with large data capacity and high speed (WARNING: the image file is large, and downloading will take time and
-  use up a substantial quantity of your data allowance if you have are on a limited plan)
-
 <details>
-<summary><b>Quick method for software installation</b></summary>
-<br>
-
-### Step 1 - download the disk image file
-
-Download the entire disk image file (v1.0.0-owl.img)
-here: [OWL disk image](https://www.dropbox.com/s/ad6uieyk3awav9k/owl.img.zip?dl=0) (NOT COMPATIBLE WITH RASPBERRY PI 5)
-
->⚠️**NOTE**⚠️ The v1.0.0-owl.img file contains the original software and we strongly recommend updating using the process
-below. It also includes the deprecated naming of `greenonbrown.py` instead of `owl.py`. If you do not update the
-software, be aware that you will need to run `greenonbrown.py` instead.
-
-The latest, stable version will be linked above, however, all other older versions or versions with features being
-tested are available [here](#version-history).
-
-### Step 2 - flash owl.img to SD card
-
-The easiest way to flash (add the vX.X.X-owl.img file to the SD card so it can boot) the SD card is to use Balena Etcher
-or any other card flashing software. Instructions for Balena Etcher are provided here. Navigate to
-the [website](https://www.balena.io/etcher/) and download the relevant version/operating system. Install Balena Etcher
-and fire it up.
-
-![OWL - etcher](https://media.github.sydney.edu.au/user/3859/files/e184ea00-d5a0-11eb-9560-4842758686d0)
-
-* Insert the SD card using your SD card reader.
-* Select `Flash from file` on the Balena Etcher window and navigate to where you downloaded the vXX-XX-XX-owl.dmg file.
-  This can be a zip file (compressed) too.
-* Select the target, the SD card you just inserted.
-* Click `Flash`
-
-If this completes successfully, you're ready to move to the next step. If it fails, use Balena Etcher documentation to
-diagnose the issue.
-
-### Step 3 - power up
-
-Once the SD card is inserted into the slot of the Raspberry Pi, power everything up and wait for the beep. If you hear
-the beep, you're ready to go and start focusing the camera.
-
-### Step 4 - updating the disk image
-
-The disk image that you downloaded is likely to be a few versions behind the most recent. We only provide images of the
-most major updates. So to update the OWL software, just run the follow these steps.
-
-1. Have the OWL powered on with screen, keyboard and mouse connected. You should see a desktop with the OWL logo.
-2. Press CTRL + ALT + T to open a Terminal window or click the black icon with blue line and >_ symbol.
-3. Once the Terminal window is open, make sure you are working in the `owl` virtual environment by running:
-
-```
-owl@raspberrypi:~ $ workon owl
-(owl) owl@raspberrypi:~ $
-```
-
-Notice that (owl) now appears before the line in the Terminal window. This indicates you are in the `owl` virtual
-environment. This is **critical** to make sure you install everything in the `requirements.txt` file into the right
-spot.
-
-4. Once you are in the `owl` environment, enter these commands on each new line:
-
-```
-(owl) owl@raspberrypi:~ $ cd ~
-(owl) owl@raspberrypi:~ $ mv owl owl-old      # this renames the old 'owl' folder to 'owl-old'
-(owl) owl@raspberrypi:~ $ git clone https://github.com/geezacoleman/OpenWeedLocator        # download the new software
-(owl) owl@raspberrypi:~ $ mv OpenWeedLocator owl      # rename the download to 'owl'
-(owl) owl@raspberrypi:~ $ cd ~/owl
-(owl) owl@raspberrypi:~/owl $ pip install -r requirements.txt                # installs the necessary software into the (owl) environment 
-(owl) owl@raspberrypi:~/owl $ chmod a+x owl.py                  # changes owl.py to be executable
-(owl) owl@raspberrypi:~/owl $ chmod a+x owl_boot.sh                     # changes owl_boot.sh to be executable
-```
-
-Once this is complete your software will be up to date and you can move on to focusing the camera.
-
-### Step 5 - focusing the camera
-
-The final step in the process is to make sure the camera is correctly focused for the mounting height. With the latest
-software, when you run `owl.py --focus` a sharpness (i.e. least blurry) estimation is provided on the video feed. The
-algorithm determines how sharp an image is, so the higher the value the better. A single script is provided to make
-focusing as easy as possible. Simply run:
-
- ```
-(owl) owl@raspberrypi:~ $ cd ~/owl
-(owl) owl@raspberrypi:~/owl $ bash focus_owl.sh 
- ```
-
-This will automate all the steps below. If this doesn't work, follow the steps below. If you would like to focus the OWL
-again, you can always run `./owl.py --focus`.
-
-| Blurry Image | Clear Image |
-|--------------|-------------|
-|![blurry owl](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/34ae71f2-8507-4892-b49a-195e515e56dd) | ![clear owl](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/20db536b-edaf-4085-a613-6ea786747998) |
-
-#### Manual focusing
-
-With the older versions of the software, you need to stop all `owl.py` or `greenonbrown.py` background processes before
-you can restart the software with the video feed viewable on the screen. Enter the following into the terminal:
-
-```
-(owl) owl@raspberrypi:~ $ ps -C owl.py # or ps -C greenonbrown.py if you still have the older version.
-```
-
-After pressing ENTER, you should receive the following output:
-
-```
-(owl) owl@raspberrypi:~ $ ps -C owl.py
-PID TTY              TIME CMD
-515 ?            00:00:00 owl.py
-```
-
-The PID is the important part, it's the ID number for the `owl.py` program. In this case it is `515`, but it is likely
-to be different on your OWL.
-
-IMPORTANT: If the headings `PID TTY              TIME CMD` appear but a PID/line for owl.py doesn't appear it could mean
-two things. Firstly make sure you've typed `owl.py` correctly. If it doesn't have the right program to look for, it
-won't find it. The other option is that `owl.py` isn't running, which may also be the case. If you're certain it's not
-running in the background, skip the stop program step below, and move straight to launching `owl.py`.
-
-If a PID appears, you'll need to stop it operating. To stop the program, enter the following command:
-
-```
-(owl) owl@raspberrypi:~ $ sudo kill enter_your_PID_number_here
-```
-
-The program should now be stopped
-
-Now you'll need to launch `owl.py` manually with the video feed visible. To do this use the Terminal window and type the
-following commands:
-
-```
-(owl) owl@raspberrypi:~ $ ~/owl/./owl.py --show-display
-```
-
-This will bring up a video feed you can use to visualise the OWL detector and also use it to focus the camera. Once
-you're happy with the focus, press Esc to exit.
-
-### OPTIONAL Step 6 - enabling UART for status LED
-
-This is just the cherry on top and non-essential to correct operation of the OWL but to make sure the status LED you
-connected earlier blinks correctly the GPIO UART needs to be enabled.
-
-Open up a terminal console by pressing `Ctrl + T`. Type:
-
-```
-(owl) owl@raspberrypi :-$ sudo nano /boot/config.txt
-```
-
-This will open up the config.txt file. Scroll down to the bottom by holding the down arrow key and add the following
-line to the very last line of the file:
-
-```
-enable_uart=1
-```
-
-Press `ctrl + x` to exit, then type `y` to save and then `enter`.
-
-You're now ready to run!
-
-### OPTIONAL Step 7 - running original `greenonbrown.py`
-
-If you are using the v1.0.0-owl.img file and don't update the OWL software as above, you will be using the
-original `greenonbrown.py` Python script. Running it from the command line will require slightly different commands.
-Please follow this guide if this is you.
-
-In the `greenonbrown.py` file there is a parameter `headless` which determines if a video is shown. If set to `True` a
-video feed is NOT displayed and the system will operate whenever it is powered on. If it is set to `False` a video feed
-will be displayed. To change this parameter, scroll to the bottom of `greenonbrown.py` and find the
-line `headless=True`. Change as desired.
-
->⚠️**NOTE**⚠️ `headless` must be set to `True` for operation without a screen. If a screen is not attached
-but `headless=False` the Raspberry Pi will not boot correctly and the OWL software will not run.
-
-To run the software from the command line (assuming it is not currently running), follow these steps:
-
-```
-owl@raspberrypi:~ $ workon owl
-(owl) owl@raspberrypi:~ $ cd owl 
-(owl) owl@raspberrypi:~ /owl $ ./greenonbrown.py  
-```
-
->⚠️**BUG ALERT**⚠️ There is a known bug with this version where the script will not run if you are running it outside of
-the `owl` directory. If you enocunter this error, `cd` into the `owl` directory and run the code again.
-
-
-</details>  
-
-## Detailed Method
-**IMPORTANT**: *Suitable for the Raspberry Pi 5 and Bookworm Raspberry Pi OS.*
-
-This setup approach may take a little longer (aproximately 1 hour total) than the quick method, but you'll be much better
-trained in the ways of OWL and more prepared for any problem solving, upgrades or changes in the future. You'll also
-download and use the latest software that hasn't been saved in the .img file yet. In the process you'll learn about
-Python environments, install Python packages and set it all up to run on startup. To get this working you'll need access
-to:
-
-* Raspberry Pi
-* Empty SD Card (SanDisk 32GB SDXC ideally)
-* Your own computer with SD card reader
-* Power supply (if not using the OWL unit)
-* Screen and keyboard
-* WiFi/Ethernet cable
-
-<details>
-<summary><b>Detailed OWL installation procedure</b></summary>
+<summary><b>Step 1: Raspbian Installation</b></summary>
 <br>
 
 ### Step 1 - Raspberry Pi setup
@@ -1114,6 +908,15 @@ and [QEngineering](https://qengineering.eu/bookworm.html)
 
 >⚠️**NOTE**⚠️ We recommend naming the device `owl` when asked if you didn't set it during the flashing process. 
 
+</details>
+
+<details>
+<summary><b>Step 2: Quick method for software installation</b></summary>
+<br>
+
+## Step 2: Quick Method - Two-line install
+>⚠️**NOTE**⚠️: *Two line install is suitable for the Raspberry Pi 5 and Bookworm Raspberry Pi OS.*
+
 #### Two-line Install
 If you prefer a faster and simpler installation, try the following two-line install. You'll first need to clone the owl repository
 before running `owl_setup.sh`. 
@@ -1128,11 +931,54 @@ to complete
 ```commandline
 bash owl/owl_setup.sh
 ```
-Once completed successfully, your OWL is ready to go.
+Once completed successfully, your OWL is ready to go and you only need to focus the camera. You should see a table at the
+end similar to the following:
+
+## Installation Summary:
+🟢 [OK] System Upgrade
+🟢 [OK] Camera Detected
+🟢 [OK] Camera Test
+🟢 [OK] Virtual Environment Created
+🟢 [OK] OpenCV Installed
+🟢 [OK] OWL Dependencies Installed
+🟢 [OK] Boot Scripts Moved
 
 >⚠️**NOTE**⚠️ If you use this method, you can finish the installation here. The following steps just go through what is 
 > in the `owl_setup.sh` script step-by-step. We recommend the step-by-step approach if you want to become more familiar
 > with how the OWL works.
+
+### Focusing the camera
+
+The final step in the process is to make sure the camera is correctly focused for the mounting height. With the latest
+software, when you run `owl.py --focus` a sharpness (i.e. least blurry) estimation is provided on the video feed. The
+algorithm determines how sharp an image is, so the higher the value the better. 
+
+| Blurry Image | Clear Image |
+|--------------|-------------|
+|![blurry owl](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/34ae71f2-8507-4892-b49a-195e515e56dd) | ![clear owl](https://github.com/geezacoleman/OpenWeedLocator/assets/51358498/20db536b-edaf-4085-a613-6ea786747998) |
+
+
+</details>  
+
+<details>
+<summary><b>Step 2: Detailed OWL installation procedure</b></summary>
+<br>
+
+## Detailed Method
+**IMPORTANT**: *Suitable for the Raspberry Pi 5 and Bookworm Raspberry Pi OS.*
+
+This setup approach may take a little longer (aproximately 1 hour total) than the quick method, but you'll be much better
+trained in the ways of OWL and more prepared for any problem solving, upgrades or changes in the future. You'll also
+download and use the latest software that hasn't been saved in the .img file yet. In the process you'll learn about
+Python environments, install Python packages and set it all up to run on startup. To get this working you'll need access
+to:
+
+* Raspberry Pi
+* Empty SD Card (SanDisk 32GB SDXC ideally)
+* Your own computer with SD card reader
+* Power supply (if not using the OWL unit)
+* Screen and keyboard
+* WiFi/Ethernet cable
 
 #### Step-by-step install
 Instead of the two-line installation, the following procedure details all steps required.
@@ -1165,10 +1011,15 @@ Begin by updating the system:
 ```commandline
 sudo apt-get update && sudo apt-get upgrade
 ```
+You may also need to do a full system upgrade after some recent issues with releases and libcamera support.
+```commandline
+sudo apt full-upgrade
+```
 Then add the following lines to the `.bashrc` file to prepare for the creation of virtual environments.
 ```commandline
 echo "# virtualenv and virtualenvwrapper" >> ~/.bashrc
 ```
+
 ```commandline
 echo "export VIRTUALENVWRAPPER_PYTHON=/usr/bin/python" >> ~/.bashrc
 ```
