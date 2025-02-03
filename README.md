@@ -65,8 +65,6 @@ Repository DOI: [![DOI](https://zenodo.org/badge/399194159.svg)](https://zenodo.
     - [Hardware Assembly](#hardware-assembly)
     - [Single Board Computer (SBC) Options](#sbc-options)
 * [Software Installation](#software)
-    - [Quick Method](#quick-method)
-    - [Detailed Method](#detailed-method)
     - [Changing Detection Settings](#changing-detection-settings)
     - [Green-on-Green (almost) :eyes::dart::seedling:](#green-on-green)
     - [Installing on non-Raspberry Pi Computers](#non-raspberry-pi-installation)
@@ -934,7 +932,8 @@ bash owl/owl_setup.sh
 Once completed successfully, your OWL is ready to go and you only need to focus the camera. You should see a table at the
 end similar to the following:
 
-## Installation Summary:
+```bash
+Installation Summary:
 🟢 [OK] System Upgrade
 🟢 [OK] Camera Detected
 🟢 [OK] Camera Test
@@ -942,6 +941,7 @@ end similar to the following:
 🟢 [OK] OpenCV Installed
 🟢 [OK] OWL Dependencies Installed
 🟢 [OK] Boot Scripts Moved
+```
 
 >⚠️**NOTE**⚠️ If you use this method, you can finish the installation here. The following steps just go through what is 
 > in the `owl_setup.sh` script step-by-step. We recommend the step-by-step approach if you want to become more familiar
