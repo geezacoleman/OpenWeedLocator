@@ -102,18 +102,23 @@ check_status "Cleaning up" "CLEANUP"
 
 # Step 5: Set up the virtual environment
 echo -e "${GREEN}[INFO] Setting up the virtual environment...${NC}"
-echo "# virtualenv and virtualenvwrapper" >> ~/.bashrc
-echo "export VIRTUALENVWRAPPER_PYTHON=/usr/bin/python3" >> ~/.bashrc
-reload_bashrc
-check_status "Updating .bashrc for virtualenv" "VENV"
-
-# Install virtualenv and virtualenvwrapper
-echo -e "${GREEN}[INFO] Installing virtualenv and virtualenvwrapper...${NC}"
+# Install virtualenv packages first
 sudo apt-get install -y python3-virtualenv python3-virtualenvwrapper
-check_status "Installing virtualenv and virtualenvwrapper" "VENV"
+check_status "Installing virtualenv packages" "VENV"
 
-sleep 1s
+# Add config to bashrc if not already present
+if ! grep -q "virtualenv and virtualenvwrapper" ~/.bashrc; then
+    cat >> ~/.bashrc << EOF
+# virtualenv and virtualenvwrapper
+export WORKON_HOME=\$HOME/.virtualenvs
+export VIRTUALENVWRAPPER_PYTHON=/usr/bin/python3
+source /usr/share/virtualenvwrapper/virtualenvwrapper.sh
+EOF
+fi
+
 reload_bashrc
+source /usr/share/virtualenvwrapper/virtualenvwrapper.sh
+check_status "Virtualenv configuration" "VENV"
 
 # Step 6: Create and configure the virtual environment
 echo -e "${GREEN}[INFO] Creating the 'owl' virtual environment...${NC}"
