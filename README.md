@@ -1246,15 +1246,7 @@ distance. The following guide is useful for the HQ and Global Shutter cameras wh
 
 The final step in the process is to make sure the camera is correctly focused for the mounting height. With the latest
 software, when you run `owl.py --focus` a sharpness (i.e. least blurry) estimation is provided on the video feed. The
-algorithm determines how sharp an image is, so the higher the value the better. A single script is provided to make
-focusing as easy as possible. Simply run:
-
-```commandline
-cd ~/owl
-```
-```commandline
-bash focus_owl.sh 
-```
+algorithm determines how sharp an image is, so the higher the value the better.
 
 This will automate all the steps below. If this doesn't work, follow the steps below. If you would like to focus the OWL
 again, you can always run `./owl.py --focus`.
@@ -1265,11 +1257,11 @@ again, you can always run `./owl.py --focus`.
 
 #### Manual focusing
 
-With the older versions of the software, you need to stop all `owl.py` or `greenonbrown.py` background processes before
+With the older versions of the software, you need to stop all `owl.py` background processes before
 you can restart the software with the video feed viewable on the screen. Enter the following into the terminal:
 
-```
-(owl) owl@raspberrypi:~ $ ps -C owl.py # or ps -C greenonbrown.py if you still have the older version.
+```commandline
+ps -C owl.py
 ```
 
 After pressing ENTER, you should receive the following output:
@@ -1290,8 +1282,8 @@ running in the background, skip the stop program step below, and move straight t
 
 If a PID appears, you'll need to stop it operating. To stop the program, enter the following command:
 
-```
-(owl) owl@raspberrypi:~ $ sudo kill enter_your_PID_number_here
+```commandline
+sudo kill enter_your_PID_number_here
 ```
 
 The program should now be stopped
@@ -1299,8 +1291,8 @@ The program should now be stopped
 Now you'll need to launch `owl.py` manually with the video feed visible. To do this use the Terminal window and type the
 following commands:
 
-```
-(owl) owl@raspberrypi:~ $ ~/owl/./owl.py --show-display
+```commandline
+~/owl/./owl.py --show-display
 ```
 
 This will bring up a video feed you can use to visualise the OWL detector and also use it to focus the camera. Once
