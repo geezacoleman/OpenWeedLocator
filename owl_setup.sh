@@ -2,10 +2,13 @@
 
 # Define colors for status messages
 RED='\033[0;31m'    # Red for ERROR messages
+ORANGE='\033[0;33m' # Orange for warnings
 GREEN='\033[0;32m'  # Green for INFO and success messages
 NC='\033[0m'        # No color (reset)
 TICK="${GREEN}[OK]${NC}"
 CROSS="${RED}[FAIL]${NC}"
+SCRIPT_DIR=$(dirname "$(realpath "$0")")
+CURRENT_USER=${SUDO_USER:-$(whoami)}
 
 # Initialize status tracking variables
 STATUS_UPGRADE=""
@@ -25,6 +28,10 @@ ERROR_VENV=""
 ERROR_OPENCV=""
 ERROR_OWL_DEPS=""
 ERROR_BOOT_SCRIPTS=""
+
+if [ "$CURRENT_USER" != "owl" ]; then
+   echo -e "${ORANGE}[WARNING] Current user '$CURRENT_USER' differs from expected 'owl'. Some settings may not work correctly.${NC}"
+fi
 
 # Function to check the exit status of the last executed command
 check_status() {
@@ -140,7 +147,7 @@ sleep 1s
 
 # Step 8: Install OWL dependencies
 echo -e "${GREEN}[INFO] Installing the OWL Python dependencies...${NC}"
-cd ~/owl
+cd "$SCRIPT_DIR"
 pip install -r requirements.txt
 check_status "Installing dependencies from requirements.txt" "OWL_DEPS"
 
@@ -163,9 +170,10 @@ echo -e "${GREEN}[INFO] Adding boot script to cron...${NC}"
 (crontab -l 2>/dev/null; echo "@reboot /usr/local/bin/owl_boot_wrapper.sh > /home/launch.log 2>&1") | sudo crontab -
 check_status "Adding boot script to cron" "BOOT_SCRIPTS"
 
-# Set desktop background
+# set desktop background - check for wayland or X11
 echo -e "${GREEN}[INFO] Setting desktop background...${NC}"
-pcmanfm --set-wallpaper ~/owl/images/owl-background.png
+USER_UID=$(id -u $CURRENT_USER)
+sudo -u $CURRENT_USER bash -c "DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$USER_UID/bus XDG_RUNTIME_DIR=/run/user/$USER_UID pcmanfm --set-wallpaper '$SCRIPT_DIR/images/owl-background.png'"
 check_status "Setting desktop background" "BOOT_SCRIPTS"
 
 # Final Summary
