@@ -1,26 +1,51 @@
 import cv2
 import time
 
+import numpy as np
+
 from threading import Thread, Event, Condition, Lock
 from utils.log_manager import LogManager
 
-# determine availability of picamera versions
+# determine the availability of cameras
+ARENA_CAMERA = False
+PICAMERA_VERSION = None
+IMX500_CAMERA = False
+
 try:
     from picamera.array import PiRGBArray
     from picamera import PiCamera
+
     PICAMERA_VERSION = 'legacy'
+except Exception:
+    pass
 
-except Exception as e:
-    PICAMERA_VERSION = None
+try:
+    from arena_api.system import system
 
+    ARENA_CAMERA = True
+except Exception:
+    pass
+
+# First try standard picamera2
 try:
     from picamera2 import Picamera2
     from libcamera import Transform
     import libcamera
+
     PICAMERA_VERSION = 'picamera2'
 
-except Exception as e:
-    PICAMERA_VERSION = None
+    # Then check for IMX500 specific modules
+    try:
+        from picamera2.devices import IMX500
+        from picamera2.devices.imx500 import (NetworkIntrinsics, scale_boxes,
+                                              postprocess_nanodet_detection)
+
+        IMX500_CAMERA = True
+    except ImportError:
+        IMX500_CAMERA = False
+
+except Exception:
+    pass
 
 # class to support webcams
 class WebcamStream:
@@ -235,7 +260,6 @@ class PiCameraStream:
             for (arg, value) in kwargs.items():
                 setattr(self.camera, arg, value)
 
-            # Initialize the stream
             self.rawCapture = PiRGBArray(self.camera, size=resolution)
             self.stream = self.camera.capture_continuous(self.rawCapture,
                                                          format="bgr",
@@ -251,7 +275,6 @@ class PiCameraStream:
         self.thread.daemon = True  # Thread will close when main program exits
 
     def start(self):
-        # Start the thread to read frames from the video stream
         self.thread.start()
         return self
 
@@ -272,27 +295,281 @@ class PiCameraStream:
             self.camera.close()
 
     def read(self):
-        # return the frame most recently read
         return self.frame
 
     def stop(self):
-        # Signal the thread to stop
         self.stopped.set()
 
-        # Wait for the thread to finish
         self.thread.join()
+
+
+class ArenaCameraStream:
+    def __init__(self, resolution=(416, 320),
+                 white_balance_auto=True,
+                 target_brightness=None,
+                 gain_control=None,
+                 exposure_auto=True,
+                 exposure_time=None):
+        self.logger = LogManager.get_logger(__name__)
+        self.name = "ArenaCameraStream"
+        self.resolution = resolution
+        self.frame_width, self.frame_height = resolution
+        self.frame = None
+        self.stop_event = Event()
+        self.lock = Lock()
+        self.condition = Condition()
+
+        try:
+            self.arena_system = system.System()
+            self.devices = self.arena_system.get_devices()
+            if not self.devices:
+                self.logger.error("No Arena cameras found.")
+                raise ValueError("No Arena cameras found.")
+            self.device = self.devices[0]
+
+            serial_number = self.device.nodemap.get('DeviceSerialNumber').value
+            model_name = self.device.nodemap.get('ModelName').value
+            ip_address = self.device.nodemap.get('GevDeviceIPAddress').value
+            self.logger.info(f"Device control > Serial: {serial_number}, Model: {model_name}")
+            self.logger.info(f"IP address: {ip_address}")
+
+            if 'BalanceWhiteAuto' in self.device.nodemap:
+                self.device.nodemap['BalanceWhiteAuto'].value = white_balance_auto
+            if target_brightness is not None and 'TargetBrightness' in self.device.nodemap:
+                self.device.nodemap['TargetBrightness'].value = target_brightness
+            if gain_control is not None and 'GainAuto' in self.device.nodemap:
+                self.device.nodemap['GainAuto'].value = gain_control
+            if 'ExposureAuto' in self.device.nodemap:
+                self.device.nodemap['ExposureAuto'].value = exposure_auto
+            if exposure_time is not None and 'ExposureTime' in self.device.nodemap:
+                self.device.nodemap['ExposureTime'].value = exposure_time
+
+            try:
+                self.frame_width = int(self.device.nodemap['Width'].value)
+                self.frame_height = int(self.device.nodemap['Height'].value)
+            except Exception:
+                self.logger.warning("Unable to update frame dimensions from device; using default resolution.")
+
+            self.device.start_streaming()
+            self.logger.info("Arena camera streaming started.")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize Arena camera: {e}", exc_info=True)
+            raise
+
+        self.thread = Thread(target=self.update, name=self.name)
+        self.thread.daemon = True
+
+    def start(self):
+        self.thread.start()
+        return self
+
+    def update(self):
+        try:
+            while not self.stop_event.is_set():
+                buffers = self.device.get_buffers()
+                if not buffers:
+                    time.sleep(0.005)
+                    continue
+
+                buffer = buffers[0]
+                try:
+                    img_bytes = buffer.data
+                    frame = np.frombuffer(img_bytes, dtype=np.uint8)
+                    frame = frame.reshape((self.frame_height, self.frame_width, 3))
+                except Exception as conv_err:
+                    self.logger.error(f"Error converting buffer to image: {conv_err}", exc_info=True)
+                    self.device.requeue_buffer(buffer)
+                    continue
+
+                with self.lock:
+                    self.frame = frame
+                with self.condition:
+                    self.condition.notify_all()
+                self.device.requeue_buffer(buffer)
+                time.sleep(0.001)
+        except Exception as e:
+            self.logger.error(f"Exception in {self.name} update loop: {e}", exc_info=True)
+        finally:
+            try:
+                self.device.stop_streaming()
+                self.logger.info("Arena camera streaming stopped.")
+            except Exception as stop_err:
+                self.logger.error(f"Error stopping Arena camera streaming: {stop_err}", exc_info=True)
+            try:
+                self.arena_system.destroy_device(self.device)
+            except Exception as destroy_err:
+                self.logger.error(f"Error destroying Arena camera device: {destroy_err}", exc_info=True)
+
+    def read(self):
+        with self.lock:
+            return self.frame.copy() if self.frame is not None else None
+
+    def stop(self):
+        self.stop_event.set()
+        self.thread.join()
+        self.logger.info("ArenaCameraStream stopped.")
+
+
+class IMX500Stream:
+    def __init__(self, resolution=(640, 480), threshold=0.50, iou=0.65, max_detections=10,
+                 model_path=None):
+        self.logger = LogManager.get_logger(__name__)
+        self.name = "IMX500Stream"
+        self.resolution = resolution
+        self.frame_width, self.frame_height = resolution
+        self.frame = None
+        self.last_detections = []
+        self.stop_event = Event()
+        self.lock = Lock()
+        self.condition = Condition()
+
+        try:
+            # Initialize IMX500 camera and network
+            self.imx500 = IMX500(model_path)
+            self.intrinsics = self.imx500.network_intrinsics
+            if not self.intrinsics:
+                self.intrinsics = NetworkIntrinsics()
+                self.intrinsics.task = "object detection"
+            elif self.intrinsics.task != "object detection":
+                raise ValueError("Network is not configured for object detection")
+
+            # Configure detection parameters
+            self.threshold = threshold
+            self.iou = iou
+            self.max_detections = max_detections
+
+            # Initialize camera
+            self.camera = Picamera2(self.imx500.camera_num)
+            self.config = self.camera.create_preview_configuration(
+                controls={"FrameRate": self.intrinsics.inference_rate},
+                buffer_count=12
+            )
+
+            # Load default labels if not provided
+            if self.intrinsics.labels is None:
+                with open("assets/coco_labels.txt", "r") as f:
+                    self.intrinsics.labels = f.read().splitlines()
+            self.intrinsics.update_with_defaults()
+
+            # Start camera
+            self.imx500.show_network_fw_progress_bar()
+            self.camera.start(self.config)
+
+            if self.intrinsics.preserve_aspect_ratio:
+                self.imx500.set_auto_aspect_ratio()
+
+            self.logger.info("IMX500 camera initialized successfully")
+
+        except Exception as e:
+            self.logger.error(f"Failed to initialize IMX500 camera: {e}", exc_info=True)
+            raise
+
+        self.thread = Thread(target=self.update, name=self.name)
+        self.thread.daemon = True
+
+    def parse_detections(self, metadata):
+        """Parse network output into detections"""
+        bbox_normalization = self.intrinsics.bbox_normalization
+        bbox_order = self.intrinsics.bbox_order
+
+        np_outputs = self.imx500.get_outputs(metadata, add_batch=True)
+        input_w, input_h = self.imx500.get_input_size()
+
+        if np_outputs is None:
+            return self.last_detections
+
+        if self.intrinsics.postprocess == "nanodet":
+            boxes, scores, classes = postprocess_nanodet_detection(
+                outputs=np_outputs[0],
+                conf=self.threshold,
+                iou_thres=self.iou,
+                max_out_dets=self.max_detections
+            )[0]
+            boxes = scale_boxes(boxes, 1, 1, input_h, input_w, False, False)
+        else:
+            boxes, scores, classes = np_outputs[0][0], np_outputs[1][0], np_outputs[2][0]
+            if bbox_normalization:
+                boxes = boxes / input_h
+            if bbox_order == "xy":
+                boxes = boxes[:, [1, 0, 3, 2]]
+            boxes = np.array_split(boxes, 4, axis=1)
+            boxes = zip(*boxes)
+
+        return [
+            {"box": self.imx500.convert_inference_coords(box, metadata, self.camera),
+             "confidence": score,
+             "class_id": int(category)}
+            for box, score, category in zip(boxes, scores, classes)
+            if score > self.threshold
+        ]
+
+    def start(self):
+        self.thread.start()
+        return self
+
+    def update(self):
+        try:
+            while not self.stop_event.is_set():
+                metadata = self.camera.capture_metadata()
+                frame = self.camera.capture_array("main")
+                detections = self.parse_detections(metadata)
+
+                with self.lock:
+                    self.frame = frame
+                    self.last_detections = detections
+
+                with self.condition:
+                    self.condition.notify_all()
+
+                time.sleep(0.001)
+
+        except Exception as e:
+            self.logger.error(f"Exception in {self.name} update loop: {e}", exc_info=True)
+        finally:
+            try:
+                self.camera.stop()
+                self.logger.info("IMX500 camera stopped")
+            except Exception as stop_err:
+                self.logger.error(f"Error stopping IMX500 camera: {stop_err}", exc_info=True)
+
+    def read(self):
+        """Return current frame"""
+        with self.lock:
+            return self.frame.copy() if self.frame is not None else None
+
+    def detect(self):
+        """Return latest detections"""
+        with self.lock:
+            return self.last_detections.copy() if self.last_detections else []
+
+    def stop(self):
+        self.stop_event.set()
+        self.thread.join()
+        self.logger.info("IMX500 stream stopped")
 
 
 # overarching class to determine which stream to use
 class VideoStream:
     def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2, **kwargs):
-        self.CAMERA_VERSION = PICAMERA_VERSION if PICAMERA_VERSION is not None else 'webcam'
+        if ARENA_CAMERA:
+            self.CAMERA_VERSION = 'arena'
+        elif IMX500_CAMERA:
+            self.CAMERA_VERSION = 'imx500'
+        else:
+            self.CAMERA_VERSION = PICAMERA_VERSION if PICAMERA_VERSION is not None else 'webcam'
+
         self.logger = LogManager.get_logger(__name__)
         self.frame_height = None
         self.frame_width = None
 
         if self.CAMERA_VERSION == 'legacy':
             self.stream = PiCameraStream(resolution=resolution, exp_compensation=exp_compensation, **kwargs)
+
+        elif self.CAMERA_VERSION == 'arena':
+            self.stream = ArenaCameraStream(resolution=resolution, **kwargs)
+
+        elif self.CAMERA_VERSION == 'imx500':
+            self.stream = IMX500Stream(resolution=resolution, **kwargs)
 
         elif self.CAMERA_VERSION == 'picamera2':
             self.stream = PiCamera2Stream(src=src, resolution=resolution, exp_compensation=exp_compensation, **kwargs)
