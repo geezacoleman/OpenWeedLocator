@@ -996,9 +996,7 @@ sudo apt-get purge libreoffice*
 ```commandline
 sudo apt-get clean
 ```
-```commandline
-sudo apt-get autoremove
-```
+
 ##### Set up the virtual environment
 A virtual environment contains all the necessary packages in one neat spot. We'll be using `virtualenv` and 
 `virtualenvwrapper` on the Pi to create a virtual environment called `owl`.
@@ -1009,12 +1007,9 @@ file.
 
 Begin by updating the system:
 ```commandline
-sudo apt-get update && sudo apt-get upgrade
+sudo apt update && sudo apt full-upgrade
 ```
-You may also need to do a full system upgrade after some recent issues with releases and libcamera support.
-```commandline
-sudo apt full-upgrade
-```
+
 Then add the following lines to the `.bashrc` file to prepare for the creation of virtual environments.
 ```commandline
 echo "# virtualenv and virtualenvwrapper" >> ~/.bashrc
