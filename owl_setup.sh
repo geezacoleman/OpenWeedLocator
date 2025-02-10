@@ -10,6 +10,11 @@ CROSS="${RED}[FAIL]${NC}"
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 CURRENT_USER=${SUDO_USER:-$(whoami)}
 
+if [ "$SUDO_USER" ]; then
+   echo -e "${RED}[ERROR] This script should not be run with sudo. Please run as normal user.${NC}"
+   exit 1
+fi
+
 # Initialize status tracking variables
 STATUS_UPGRADE=""
 STATUS_CAMERA=""
