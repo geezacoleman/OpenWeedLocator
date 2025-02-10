@@ -6,6 +6,7 @@ GREEN='\033[0;32m'  # Green for INFO and success messages
 NC='\033[0m'        # No color (reset)
 TICK="${GREEN}[OK]${NC}"
 CROSS="${RED}[FAIL]${NC}"
+SCRIPT_DIR=$(dirname "$(realpath "$0")")
 
 # Initialize status tracking variables
 STATUS_UPGRADE=""
@@ -140,7 +141,7 @@ sleep 1s
 
 # Step 8: Install OWL dependencies
 echo -e "${GREEN}[INFO] Installing the OWL Python dependencies...${NC}"
-cd ~/owl
+cd "$SCRIPT_DIR"
 pip install -r requirements.txt
 check_status "Installing dependencies from requirements.txt" "OWL_DEPS"
 
@@ -163,10 +164,14 @@ echo -e "${GREEN}[INFO] Adding boot script to cron...${NC}"
 (crontab -l 2>/dev/null; echo "@reboot /usr/local/bin/owl_boot_wrapper.sh > /home/launch.log 2>&1") | sudo crontab -
 check_status "Adding boot script to cron" "BOOT_SCRIPTS"
 
-# Set desktop background
+# set desktop background - check for wayland or X11
 echo -e "${GREEN}[INFO] Setting desktop background...${NC}"
-pcmanfm --set-wallpaper ~/owl/images/owl-background.png
-check_status "Setting desktop background" "BOOT_SCRIPTS"
+USER_UID=$(id -u owl)
+if [ "$XDG_SESSION_TYPE" = "wayland" ]; then
+    sudo -u owl -i XDG_RUNTIME_DIR=/run/user/$USER_UID pcmanfm --set-wallpaper "$SCRIPT_DIR/images/owl-background.png"
+else
+    sudo -u owl pcmanfm --set-wallpaper "$SCRIPT_DIR/images/owl-background.png"
+fi
 
 # Final Summary
 echo -e "\n${GREEN}[INFO] Installation Summary:${NC}"
