@@ -10,6 +10,11 @@ CROSS="${RED}[FAIL]${NC}"
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 CURRENT_USER=${SUDO_USER:-$(whoami)}
 
+if [ "$SUDO_USER" ]; then
+   echo -e "${RED}[ERROR] This script should not be run with sudo. Please run as normal user.${NC}"
+   exit 1
+fi
+
 # Initialize status tracking variables
 STATUS_UPGRADE=""
 STATUS_CAMERA=""
@@ -111,11 +116,11 @@ check_status "Cleaning up" "CLEANUP"
 echo -e "${GREEN}[INFO] Setting up the virtual environment...${NC}"
 
 # Add config to bashrc if not already present
-if ! grep -q "virtualenv and virtualenvwrapper" ~/.bashrc; then
-    cat >> ~/.bashrc << EOF
+if ! grep -q "virtualenv and virtualenvwrapper" /home/$CURRENT_USER/.bashrc; then
+    cat >> /home/$CURRENT_USER/.bashrc << EOF
 # virtualenv and virtualenvwrapper
 export VIRTUALENVWRAPPER_PYTHON=/usr/bin/python3
-export WORKON_HOME=$HOME/.virtualenvs
+export WORKON_HOME=\$HOME/.virtualenvs
 source /usr/share/virtualenvwrapper/virtualenvwrapper.sh
 EOF
 fi
@@ -172,8 +177,7 @@ check_status "Adding boot script to cron" "BOOT_SCRIPTS"
 
 # set desktop background - check for wayland or X11
 echo -e "${GREEN}[INFO] Setting desktop background...${NC}"
-USER_UID=$(id -u $CURRENT_USER)
-sudo -u $CURRENT_USER bash -c "DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$USER_UID/bus XDG_RUNTIME_DIR=/run/user/$USER_UID pcmanfm --set-wallpaper '$SCRIPT_DIR/images/owl-background.png'"
+pcmanfm --set-wallpaper $SCRIPT_DIR/images/owl-background.png
 check_status "Setting desktop background" "BOOT_SCRIPTS"
 
 # Final Summary
