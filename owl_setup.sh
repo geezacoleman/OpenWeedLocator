@@ -8,7 +8,7 @@ NC='\033[0m'        # No color (reset)
 TICK="${GREEN}[OK]${NC}"
 CROSS="${RED}[FAIL]${NC}"
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
-CURRENT_USER=$(whoami)
+CURRENT_USER=${SUDO_USER:-$(whoami)}
 
 # Initialize status tracking variables
 STATUS_UPGRADE=""
@@ -30,7 +30,7 @@ ERROR_OWL_DEPS=""
 ERROR_BOOT_SCRIPTS=""
 
 if [ "$CURRENT_USER" != "owl" ]; then
-   echo -e "${ORANGE}[WARNING] Current user '$CURRENT_USER' differs from expected 'owl'. Some features like desktop background may not work correctly.${NC}"
+   echo -e "${ORANGE}[WARNING] Current user '$CURRENT_USER' differs from expected 'owl'. Some settings may not work correctly.${NC}"
 fi
 
 # Function to check the exit status of the last executed command
