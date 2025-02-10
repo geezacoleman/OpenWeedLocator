@@ -172,8 +172,7 @@ check_status "Adding boot script to cron" "BOOT_SCRIPTS"
 
 # set desktop background - check for wayland or X11
 echo -e "${GREEN}[INFO] Setting desktop background...${NC}"
-USER_UID=$(id -u $CURRENT_USER)
-sudo -u $CURRENT_USER bash -c "DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$USER_UID/bus XDG_RUNTIME_DIR=/run/user/$USER_UID pcmanfm --set-wallpaper '$SCRIPT_DIR/images/owl-background.png'"
+pcmanfm --set-wallpaper $SCRIPT_DIR/images/owl-background.png
 check_status "Setting desktop background" "BOOT_SCRIPTS"
 
 # Final Summary
