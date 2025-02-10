@@ -2,11 +2,13 @@
 
 # Define colors for status messages
 RED='\033[0;31m'    # Red for ERROR messages
+ORANGE='\033[0;33m' # Orange for warnings
 GREEN='\033[0;32m'  # Green for INFO and success messages
 NC='\033[0m'        # No color (reset)
 TICK="${GREEN}[OK]${NC}"
 CROSS="${RED}[FAIL]${NC}"
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
+CURRENT_USER=$(whoami)
 
 # Initialize status tracking variables
 STATUS_UPGRADE=""
@@ -26,6 +28,10 @@ ERROR_VENV=""
 ERROR_OPENCV=""
 ERROR_OWL_DEPS=""
 ERROR_BOOT_SCRIPTS=""
+
+if [ "$CURRENT_USER" != "owl" ]; then
+   echo -e "${ORANGE}[WARNING] Current user '$CURRENT_USER' differs from expected 'owl'. Some features like desktop background may not work correctly.${NC}"
+fi
 
 # Function to check the exit status of the last executed command
 check_status() {
@@ -166,12 +172,9 @@ check_status "Adding boot script to cron" "BOOT_SCRIPTS"
 
 # set desktop background - check for wayland or X11
 echo -e "${GREEN}[INFO] Setting desktop background...${NC}"
-USER_UID=$(id -u owl)
-if [ "$XDG_SESSION_TYPE" = "wayland" ]; then
-    sudo -u owl -i XDG_RUNTIME_DIR=/run/user/$USER_UID pcmanfm --set-wallpaper "$SCRIPT_DIR/images/owl-background.png"
-else
-    sudo -u owl pcmanfm --set-wallpaper "$SCRIPT_DIR/images/owl-background.png"
-fi
+USER_UID=$(id -u $CURRENT_USER)
+sudo -u $CURRENT_USER bash -c "DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$USER_UID/bus XDG_RUNTIME_DIR=/run/user/$USER_UID pcmanfm --set-wallpaper '$SCRIPT_DIR/images/owl-background.png'"
+check_status "Setting desktop background" "BOOT_SCRIPTS"
 
 # Final Summary
 echo -e "\n${GREEN}[INFO] Installation Summary:${NC}"
