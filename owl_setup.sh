@@ -111,11 +111,11 @@ check_status "Cleaning up" "CLEANUP"
 echo -e "${GREEN}[INFO] Setting up the virtual environment...${NC}"
 
 # Add config to bashrc if not already present
-if ! grep -q "virtualenv and virtualenvwrapper" ~/.bashrc; then
-    cat >> ~/.bashrc << EOF
+if ! grep -q "virtualenv and virtualenvwrapper" /home/$CURRENT_USER/.bashrc; then
+    cat >> /home/$CURRENT_USER/.bashrc << EOF
 # virtualenv and virtualenvwrapper
 export VIRTUALENVWRAPPER_PYTHON=/usr/bin/python3
-export WORKON_HOME=$HOME/.virtualenvs
+export WORKON_HOME=\$HOME/.virtualenvs
 source /usr/share/virtualenvwrapper/virtualenvwrapper.sh
 EOF
 fi
