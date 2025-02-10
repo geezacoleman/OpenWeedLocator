@@ -64,8 +64,8 @@ check_camera_connection() {
 
 # Step 1: Perform a normal system update and upgrade
 echo -e "${GREEN}[INFO] Updating and upgrading the system...${NC}"
-sudo apt-get update
-sudo apt-get upgrade -y
+sudo apt update
+sudo apt full-upgrade -y
 check_status "System upgrade" "UPGRADE"
 
 # Step 2: Ensure a camera is connected before proceeding
@@ -102,24 +102,26 @@ check_status "Cleaning up" "CLEANUP"
 
 # Step 5: Set up the virtual environment
 echo -e "${GREEN}[INFO] Setting up the virtual environment...${NC}"
-# Install virtualenv packages first
-sudo apt-get install -y python3-virtualenv python3-virtualenvwrapper
-check_status "Installing virtualenv packages" "VENV"
 
 # Add config to bashrc if not already present
 if ! grep -q "virtualenv and virtualenvwrapper" ~/.bashrc; then
     cat >> ~/.bashrc << EOF
 # virtualenv and virtualenvwrapper
-export WORKON_HOME=\$HOME/.virtualenvs
 export VIRTUALENVWRAPPER_PYTHON=/usr/bin/python3
+export WORKON_HOME=$HOME/.virtualenvs
 source /usr/share/virtualenvwrapper/virtualenvwrapper.sh
 EOF
 fi
 
 reload_bashrc
+sudo apt-get install -y python3-virtualenv python3-virtualenvwrapper
+check_status "Installing virtualenv packages" "VENV"
+
+reload_bashrc
 source /usr/share/virtualenvwrapper/virtualenvwrapper.sh
 check_status "Virtualenv configuration" "VENV"
 
+reload_bashrc
 # Step 6: Create and configure the virtual environment
 echo -e "${GREEN}[INFO] Creating the 'owl' virtual environment...${NC}"
 mkvirtualenv --system-site-packages -p python3 owl
