@@ -1,6 +1,22 @@
 <div class="stream-container">
     <div class="zoom-container">
         <img id="stream" class="stream zoom-image" src="{{ url_for('video_feed') }}">
+
+        <div class="toggle-container">
+            <span class="toggle-label">GPS Location</span>
+            <label class="toggle-switch">
+                <input type="checkbox" id="gps-toggle" checked>
+                <span class="toggle-slider"></span>
+            </label>
+        </div>
+
+        <div class="gps-status">
+            <svg class="gps-icon" viewBox="0 0 24 24">
+                <path fill="currentColor" d="M12,2A7,7 0 0,1 19,9C19,14.25 12,22 12,22C12,22 5,14.25 5,9A7,7 0 0,1 12,2M12,4A5,5 0 0,0 7,9C7,10 7,12 12,18.71C17,12 17,10 17,9A5,5 0 0,0 12,4M12,6.5A2.5,2.5 0 0,1 14.5,9A2.5,2.5 0 0,1 12,11.5A2.5,2.5 0 0,1 9.5,9A2.5,2.5 0 0,1 12,6.5"/>
+            </svg>
+            <span id="gps-accuracy">Searching...</span>
+        </div>
+
         <div class="zoom-controls">
             <button onclick="zoomIn()">+</button>
             <button onclick="zoomOut()">-</button>
@@ -11,6 +27,7 @@
     <div class="controls">
         <button onclick="downloadFrame()">Download Frame</button>
         <button onclick="toggleRecording()" id="recordButton">Start Recording</button>
+        <div class="recording-status" id="recordingStatus"></div>
+        <span class="status" id="status"></span>
     </div>
-    <div id="recordingStatus" class="recording-status"></div>
 </div>

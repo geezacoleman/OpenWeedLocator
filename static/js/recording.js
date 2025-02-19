@@ -11,33 +11,35 @@ function updateRecordingStatus() {
 
     const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
     const remaining = MAX_RECORDING_TIME - elapsed;
-    // Updated size calculation
-    estimatedSize = Math.max(1, Math.floor((elapsed * ESTIMATED_BITRATE) / (8 * 1024 * 1024))); // Convert to MB
+    estimatedSize = Math.max(1, Math.floor((elapsed * ESTIMATED_BITRATE) / (8 * 1024 * 1024)));
+
+    let gpsStatus = '';
+    if (window.gpsData) {
+        gpsStatus = `GPS: ±${window.gpsData.accuracy.toFixed(1)}m`;
+    }
 
     statusElement.innerHTML = `
         Recording: ${remaining}s remaining
         <br>
         Estimated Size: ~${estimatedSize}MB
+        <br>
+        ${gpsStatus}
     `;
 
-    // Auto-stop if max time reached
     if (elapsed >= MAX_RECORDING_TIME) {
         toggleRecording();
     }
 }
+
 function showProcessingSpinner() {
     const button = document.getElementById('recordButton');
     const statusElement = document.getElementById('recordingStatus');
     button.disabled = true;
-    // Just show the spinner
     button.innerHTML = '<div class="spinner"></div>';
-
-    // Clear the status interval
     if (statusInterval) {
         clearInterval(statusInterval);
         statusInterval = null;
     }
-    // Clear the status display
     statusElement.style.display = 'none';
 }
 
@@ -52,8 +54,14 @@ function toggleRecording() {
     const statusElement = document.getElementById('recordingStatus');
 
     if (!isRecording) {
-        // Start recording
-        fetch('/start_recording', { method: 'POST' })
+        const gpsData = window.gpsData || {};
+        fetch('/start_recording', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ gps: gpsData })
+        })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
@@ -62,16 +70,13 @@ function toggleRecording() {
                     button.textContent = 'Stop Recording';
                     button.classList.add('recording');
                     statusElement.style.display = 'block';
-                    // Start status updates
                     if (statusInterval) clearInterval(statusInterval);
                     statusInterval = setInterval(updateRecordingStatus, 1000);
                 }
             })
             .catch(error => updateStatus(`Error: ${error.message}`));
     } else {
-        // Stop recording and download
         showProcessingSpinner();
-
         fetch('/stop_recording', { method: 'POST' })
             .then(response => {
                 if (!response.ok) {
@@ -83,7 +88,8 @@ function toggleRecording() {
                 isRecording = false;
                 hideProcessingSpinner();
                 button.classList.remove('recording');
-                estimatedSize = 0; // Reset estimated size
+                statusElement.style.display = 'none';
+                estimatedSize = 0;
 
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
