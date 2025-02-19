@@ -158,9 +158,15 @@ class OWLDashboard:
         @self.app.route('/download_frame', methods=['POST'])
         def download_frame():
             try:
-                frame = self.frame_queue.get_nowait()
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                try:
+                    frame = self.frame_queue.get_nowait()
+                except queue.Empty:
+                    if self.latest_frame is not None:
+                        frame = self.latest_frame
+                    else:
+                        return jsonify({'error': 'No frame available'}), 404
 
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 success, buffer = cv2.imencode('.jpg', frame)
                 if not success:
                     return jsonify({'error': 'Failed to encode image'}), 500
@@ -181,8 +187,6 @@ class OWLDashboard:
                         'Content-Disposition': f'attachment; filename={filename}'
                     }
                 )
-            except queue.Empty:
-                return jsonify({'error': 'No frame available'}), 404
             except Exception as e:
                 self.logger.error(f"Failed to download frame: {e}")
                 return jsonify({'error': str(e)}), 500
