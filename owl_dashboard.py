@@ -90,11 +90,11 @@ class OWLDashboard:
 
             lat_deg = int(lat)
             lat_min = int((lat - lat_deg) * 60)
-            lat_sec = int(((lat - lat_deg) * 60 - lat_min) * 60 * 100)
+            lat_sec = int((((lat - lat_deg) * 60) - lat_min) * 60 * 100)
 
             lon_deg = int(lon)
             lon_min = int((lon - lon_deg) * 60)
-            lon_sec = int(((lon - lon_deg) * 60 - lon_min) * 60 * 100)
+            lon_sec = int((((lon - lon_deg) * 60) - lon_min) * 60 * 100)
 
             exif_dict = {
                 "GPS": {
@@ -107,14 +107,11 @@ class OWLDashboard:
                 }
             }
 
-            # Convert to bytes and add to image
             im = Image.open(BytesIO(image_data))
             exif_bytes = piexif.dump(exif_dict)
-            im.save(BytesIO(), "jpeg", exif=exif_bytes)
-
-            # Get the modified image bytes
             img_byte_arr = BytesIO()
-            im.save(img_byte_arr, format='JPEG')
+
+            im.save(img_byte_arr, format='JPEG', exif=exif_bytes)
             return img_byte_arr.getvalue()
 
         except Exception as e:
@@ -150,6 +147,7 @@ class OWLDashboard:
                     'accuracy': data['accuracy'],
                     'timestamp': data['timestamp']
                 }
+                print(self.gps_data)
                 return jsonify({'success': True})
             except Exception as e:
                 self.logger.error(f"Failed to update GPS data: {e}")
