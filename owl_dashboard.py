@@ -4,7 +4,10 @@ import psutil
 import time
 import tempfile
 import os
-
+import piexif
+import json
+from PIL import Image
+from io import BytesIO
 from datetime import datetime
 from utils.output_manager import get_platform_config
 import utils.error_manager as errors
@@ -48,6 +51,8 @@ class OWLDashboard:
         self.target_fps = target_fps
         self.last_frame_push_time = 0
 
+        self.gps_data = None
+
         # System monitoring
         self.last_cpu_check = 0
         self.cached_cpu_usage = 0
@@ -73,6 +78,49 @@ class OWLDashboard:
 
         self.logger.info("Dashboard initialized successfully")
 
+    def _add_gps_to_image(self, image_data: bytes) -> bytes:
+        """Add GPS data to image EXIF if available."""
+        if not self.gps_data:
+            return image_data
+
+        try:
+            # Convert lat/lon to EXIF format
+            lat = float(self.gps_data['latitude'])
+            lon = float(self.gps_data['longitude'])
+
+            lat_deg = int(lat)
+            lat_min = int((lat - lat_deg) * 60)
+            lat_sec = int(((lat - lat_deg) * 60 - lat_min) * 60 * 100)
+
+            lon_deg = int(lon)
+            lon_min = int((lon - lon_deg) * 60)
+            lon_sec = int(((lon - lon_deg) * 60 - lon_min) * 60 * 100)
+
+            exif_dict = {
+                "GPS": {
+                    piexif.GPSIFD.GPSLatitudeRef: 'N' if lat >= 0 else 'S',
+                    piexif.GPSIFD.GPSLatitude: [(lat_deg, 1), (lat_min, 1), (lat_sec, 100)],
+                    piexif.GPSIFD.GPSLongitudeRef: 'E' if lon >= 0 else 'W',
+                    piexif.GPSIFD.GPSLongitude: [(lon_deg, 1), (lon_min, 1), (lon_sec, 100)],
+                    piexif.GPSIFD.GPSAltitude: (0, 1),
+                    piexif.GPSIFD.GPSTimeStamp: [(0, 1), (0, 1), (0, 1)],
+                }
+            }
+
+            # Convert to bytes and add to image
+            im = Image.open(BytesIO(image_data))
+            exif_bytes = piexif.dump(exif_dict)
+            im.save(BytesIO(), "jpeg", exif=exif_bytes)
+
+            # Get the modified image bytes
+            img_byte_arr = BytesIO()
+            im.save(img_byte_arr, format='JPEG')
+            return img_byte_arr.getvalue()
+
+        except Exception as e:
+            self.logger.error(f"Failed to add GPS data to image: {e}")
+            return image_data
+
     def _setup_routes(self):
         @self.app.route('/')
         def index():
@@ -92,30 +140,49 @@ class OWLDashboard:
             """Serve static files (CSS, JS, images)"""
             return send_from_directory(self.app.static_folder, filename)
 
+        @self.app.route('/update_gps', methods=['POST'])
+        def update_gps():
+            try:
+                data = request.json
+                self.gps_data = {
+                    'latitude': data['latitude'],
+                    'longitude': data['longitude'],
+                    'accuracy': data['accuracy'],
+                    'timestamp': data['timestamp']
+                }
+                return jsonify({'success': True})
+            except Exception as e:
+                self.logger.error(f"Failed to update GPS data: {e}")
+                return jsonify({'error': str(e)}), 500
+
         @self.app.route('/download_frame', methods=['POST'])
         def download_frame():
-            """Handle frame download requests"""
             try:
-                try:
-                    frame = self.frame_queue.get_nowait()
-                except queue.Empty:
-                    if self.latest_frame is not None:
-                        frame = self.latest_frame
-                    else:
-                        return jsonify({'error': 'No frame available'}), 404
-
+                frame = self.frame_queue.get_nowait()
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
                 success, buffer = cv2.imencode('.jpg', frame)
                 if not success:
                     return jsonify({'error': 'Failed to encode image'}), 500
 
+                # Add GPS data to image if available
+                image_data = self._add_gps_to_image(buffer.tobytes())
+
+                # Create filename with GPS data if available
+                filename = f'owl_frame_{timestamp}'
+                if self.gps_data:
+                    filename += f"_lat{self.gps_data['latitude']:.6f}_lon{self.gps_data['longitude']:.6f}"
+                filename += '.jpg'
+
                 return Response(
-                    buffer.tobytes(),
+                    image_data,
                     mimetype='image/jpeg',
                     headers={
-                        'Content-Disposition': f'attachment; filename=owl_frame_{timestamp}.jpg'
+                        'Content-Disposition': f'attachment; filename={filename}'
                     }
                 )
+            except queue.Empty:
+                return jsonify({'error': 'No frame available'}), 404
             except Exception as e:
                 self.logger.error(f"Failed to download frame: {e}")
                 return jsonify({'error': str(e)}), 500

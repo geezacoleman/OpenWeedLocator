@@ -16,3 +16,13 @@ window.addEventListener('beforeunload', function() {
         clearInterval(updateInterval);
     }
 });
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Existing initialization
+    startUpdateInterval();
+
+    // Initialize GPS
+    if (typeof initGPS === 'function') {
+        initGPS();
+    }
+});
