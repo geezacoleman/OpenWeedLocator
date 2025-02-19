@@ -5,6 +5,46 @@ let estimatedSize = 0;
 const ESTIMATED_BITRATE = 2000000;
 let statusInterval;
 
+function updateStatus(message) {
+    const status = document.getElementById('status');
+    if (status) {
+        status.textContent = message;
+        if (!isRecording) {
+            setTimeout(() => {
+                status.textContent = '';
+            }, 3000);
+        }
+    }
+}
+
+function downloadFrame() {
+    fetch('/download_frame', { method: 'POST' })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Frame not available');
+            }
+            return response.blob();
+        })
+        .then(blob => {
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            a.download = `owl_frame_${timestamp}.jpg`;
+
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+
+            updateStatus('Frame downloaded successfully');
+        })
+        .catch(error => {
+            updateStatus(`Error: ${error.message}`);
+        });
+}
+
 function updateRecordingStatus() {
     const statusElement = document.getElementById('recordingStatus');
     if (!statusElement || !isRecording) return;
