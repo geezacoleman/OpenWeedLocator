@@ -147,7 +147,7 @@ class OWLDashboard:
                     'accuracy': data['accuracy'],
                     'timestamp': data['timestamp']
                 }
-                print(self.gps_data)
+                self.owl_instance.update_gps(self.gps_data)
                 return jsonify({'success': True})
             except Exception as e:
                 self.logger.error(f"Failed to update GPS data: {e}")
