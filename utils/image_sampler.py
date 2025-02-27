@@ -1,11 +1,52 @@
 import cv2
 import os
 import numpy as np
-
 from datetime import datetime
 from multiprocessing import Process, Queue
 from multiprocessing.queues import Empty
 from utils.log_manager import LogManager
+from io import BytesIO
+from PIL import Image
+
+try:
+    import piexif
+except ImportError as e:
+    from utils.error_manager import DependencyError
+    raise DependencyError('piexif', str(e))
+
+logger = LogManager.get_logger(__name__)
+
+def add_gps_exif(pil_image, gps_data):
+    """
+    Convert a PIL Image to JPEG bytes embedding GPS EXIF data if available."""
+    buf = BytesIO()
+    if not gps_data or 'latitude' not in gps_data or 'longitude' not in gps_data:
+        pil_image.save(buf, format='JPEG')
+        return buf.getvalue()
+    try:
+        lat = float(gps_data.get('latitude'))
+        lon = float(gps_data.get('longitude'))
+        lat_deg = int(lat)
+        lat_min = int((lat - lat_deg) * 60)
+        lat_sec = int((((lat - lat_deg) * 60) - lat_min) * 60 * 100)
+        lon_deg = int(lon)
+        lon_min = int((lon - lon_deg) * 60)
+        lon_sec = int((((lon - lon_deg) * 60) - lon_min) * 60 * 100)
+
+        exif_dict = {
+            "GPS": {
+                piexif.GPSIFD.GPSLatitudeRef: 'N' if lat >= 0 else 'S',
+                piexif.GPSIFD.GPSLatitude: [(lat_deg, 1), (lat_min, 1), (lat_sec, 100)],
+                piexif.GPSIFD.GPSLongitudeRef: 'E' if lon >= 0 else 'W',
+                piexif.GPSIFD.GPSLongitude: [(lon_deg, 1), (lon_min, 1), (lon_sec, 100)]
+            }
+        }
+        exif_bytes = piexif.dump(exif_dict)
+        pil_image.save(buf, format='JPEG', exif=exif_bytes)
+    except Exception as e:
+        logger.error(f"Failed to embed GPS EXIF data: {e}")
+        pil_image.save(buf, format='JPEG')
+    return buf.getvalue()
 
 
 class ImageRecorder:
@@ -33,43 +74,46 @@ class ImageRecorder:
     def save_images(self):
         while self.running or not self.queue.empty():
             try:
-                frame, frame_id, boxes, centres = self.queue.get(timeout=3)
-
+                frame, frame_id, boxes, centres, gps_data = self.queue.get(timeout=3)
             except Empty:
                 if not self.running:
                     break
                 continue
-
             except KeyboardInterrupt:
                 self.logger.info("[INFO] KeyboardInterrupt received in save_images. Exiting.")
                 break
 
-            # Process and save images based on mode
-            self.process_frame(frame, frame_id, boxes, centres)
+            self.process_frame(frame, frame_id, boxes, centres, gps_data)
 
-    def process_frame(self, frame, frame_id, boxes, centres):
+    def process_frame(self, frame, frame_id, boxes, centres, gps_data):
         timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H%M%S.%f')[:-3] + 'Z'
         if self.mode == 'whole':
-            self.save_frame(frame, frame_id, timestamp)
+            self.save_frame(frame, frame_id, timestamp, gps_data)
         elif self.mode == 'bbox':
-            self.save_bboxes(frame, frame_id, boxes, timestamp)
+            self.save_bboxes(frame, frame_id, boxes, timestamp, gps_data)
         elif self.mode == 'square':
-            self.save_squares(frame, frame_id, centres, timestamp)
+            self.save_squares(frame, frame_id, centres, timestamp, gps_data)
 
-    def save_frame(self, frame, frame_id, timestamp):
-        filename = f"{timestamp}_frame_{frame_id}.png"
+    def save_frame(self, frame, frame_id, timestamp, gps_data):
+        filename = f"{timestamp}_frame_{frame_id}.jpg"
         filepath = os.path.join(self.save_directory, filename)
-        cv2.imwrite(filepath, frame)
+        image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        image_bytes = add_gps_exif(image, gps_data)
+        with open(filepath, 'wb') as f:
+            f.write(image_bytes)
 
-    def save_bboxes(self, frame, frame_id, boxes, timestamp):
+    def save_bboxes(self, frame, frame_id, boxes, timestamp, gps_data):
         for contour_id, box in enumerate(boxes):
             startX, startY, width, height = box
             cropped_image = frame[startY:startY+height, startX:startX+width]
-            filename = f"{timestamp}_frame_{frame_id}_n_{str(contour_id)}.png"
+            filename = f"{timestamp}_frame_{frame_id}_n_{str(contour_id)}.jpg"
             filepath = os.path.join(self.save_directory, filename)
-            cv2.imwrite(filepath, cropped_image)
+            image = Image.fromarray(cv2.cvtColor(cropped_image, cv2.COLOR_BGR2RGB))
+            image_bytes = add_gps_exif(image, gps_data)
+            with open(filepath, 'wb') as f:
+                f.write(image_bytes)
 
-    def save_squares(self, frame, frame_id, centres, timestamp):
+    def save_squares(self, frame, frame_id, centres, timestamp, gps_data):
         side_length = min(200, frame.shape[0])
         halfLength = side_length // 2
         for contour_id, centre in enumerate(centres):
@@ -82,13 +126,16 @@ class ImageRecorder:
             if endY > frame.shape[0]:
                 startY = frame.shape[0] - side_length
             square_image = frame[startY:endY, startX:endX]
-            filename = f"{timestamp}_frame_{frame_id}_n_{str(contour_id)}.png"
+            filename = f"{timestamp}_frame_{frame_id}_n_{str(contour_id)}.jpg"
             filepath = os.path.join(self.save_directory, filename)
-            cv2.imwrite(filepath, square_image)
+            image = Image.fromarray(cv2.cvtColor(square_image, cv2.COLOR_BGR2RGB))
+            image_bytes = add_gps_exif(image, gps_data)
+            with open(filepath, 'wb') as f:
+                f.write(image_bytes)
 
-    def add_frame(self, frame, frame_id, boxes, centres):
+    def add_frame(self, frame, frame_id, boxes, centres, gps_data=None):
         if not self.queue.full():
-            self.queue.put((frame, frame_id, boxes, centres))
+            self.queue.put((frame, frame_id, boxes, centres, gps_data))
         else:
             self.logger.info("[INFO] Queue is full, spinning up new process. Frame skipped.")
 

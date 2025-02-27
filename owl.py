@@ -125,6 +125,16 @@ class Owl:
             self.dashboard = OWLDashboard(port=self.config.getint('System', 'dashboard_port', fallback=5000))
             threading.Thread(target=self.dashboard.run, daemon=True).start()
 
+        # load GPS source from config
+        self.gps_source = self.config.get('GPS', 'gps_source', fallback='none').lower()
+        if self.dashboard:
+            self.gps_source = 'dashboard'
+        self.gps_port = self.config.get('GPS', 'gps_port', fallback='/dev/ttyUSB0')
+        self.gps_baudrate = self.config.getint('GPS', 'gps_baudrate', fallback=9600)
+
+        # store the last known GPS data
+        self.gps_data = None
+
         if self.focus:
             self.show_display = True
 
@@ -452,13 +462,24 @@ class Owl:
                     # only record every sampleFreq number of frames. If sample_frequency = 60, this will activate every 60th frame
                     if frame_count % self.sample_frequency == 0:
                         if self.sample_method == 'whole':
-                            self.image_recorder.add_frame(frame=frame, frame_id=frame_count, boxes=None, centres=None)
+                            self.image_recorder.add_frame(frame=frame,
+                                                          frame_id=frame_count,
+                                                          boxes=None,
+                                                          centres=None,
+                                                          gps_data=self.gps_data)
 
                         elif self.sample_method != 'whole' and not self.disable_detection:
-                            self.image_recorder.add_frame(frame=frame, frame_id=frame_count, boxes=boxes,
-                                                          centres=weed_centres)
+                            self.image_recorder.add_frame(frame=frame,
+                                                          frame_id=frame_count,
+                                                          boxes=boxes,
+                                                          centres=weed_centres,
+                                                          gps_data=self.gps_data)
                         else:
-                            self.image_recorder.add_frame(frame=frame, frame_id=frame_count, boxes=None, centres=None)
+                            self.image_recorder.add_frame(frame=frame,
+                                                          frame_id=frame_count,
+                                                          boxes=None,
+                                                          centres=None,
+                                                          gps_data=self.gps_data)
 
                         if self.controller:
                             self.status_indicator.image_write_indicator()
@@ -707,6 +728,11 @@ class Owl:
             self.status_indicator.error(1)
             self.stop()
             raise errors.CameraInitError(str(e)) from e
+
+    def update_gps(self, new_gps_data):
+        """Update GPS data from the selected source (dashboard or (to be implemented) GPS hat)."""
+        if new_gps_data and 'latitude' in new_gps_data and 'longitude' in new_gps_data:
+            self.gps_data = new_gps_data
 
     def _log_system_info(self):
         """Log system information on startup"""
