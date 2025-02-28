@@ -16,7 +16,7 @@ HOME_DIR=$(getent passwd "$CURRENT_USER" | cut -d: -f6)
 DEVICE_ID=${DEVICE_ID:-"owl-1"}
 WEB_PORT=5000
 VENV_DIR="$HOME_DIR/.virtualenvs/owl"
-REPO_URL="https://github.com/your-repo/OpenWeedLocator.git"  # Adjust to your repo
+AUTH_SCRIPT="$HOME_DIR/owl/dev/setup_auth.py"
 
 echo -e "${GREEN}[INFO] Setting up OWL Web Interface and Access Point...${NC}"
 
@@ -31,6 +31,12 @@ if [ ! -d "$VENV_DIR" ]; then
     exit 1
 fi
 
+# Check if setup_auth.py exists locally
+if [ ! -f "$AUTH_SCRIPT" ]; then
+    echo -e "${RED}[ERROR] Authentication setup script not found at $AUTH_SCRIPT. Please ensure it exists.${NC}"
+    exit 1
+fi
+
 # Function to check status
 check_status() {
     if [ $? -ne 0 ]; then
@@ -41,8 +47,8 @@ check_status() {
     fi
 }
 
-# 1. Install Web and AP Dependencies
-echo -e "${GREEN}[INFO] Installing web and AP dependencies...${NC}"
+# 1. Install Web Dependencies
+echo -e "${GREEN}[INFO] Installing webserver dependencies...${NC}"
 sudo apt update
 sudo apt install -y nginx apache2-utils avahi-daemon ufw network-manager
 check_status "Installing dependencies"
@@ -53,39 +59,7 @@ pip install --upgrade pip
 pip install flask
 check_status "Installing Flask in virtualenv"
 
-# 2. Set Up WiFi Access Point (Maker Medic style, programmatic)
-echo -e "${GREEN}[INFO] Setting up WiFi Access Point...${NC}"
-read -p "Enter AP SSID (default: OWL-AP-${DEVICE_ID}): " AP_SSID
-AP_SSID=${AP_SSID:-"OWL-AP-${DEVICE_ID}"}
-
-# Secure password entry
-while true; do
-    echo -n "Enter AP password (min 8 chars): "
-    read -s AP_PASS
-    echo
-    if [ ${#AP_PASS} -lt 8 ]; then
-        echo -e "${ORANGE}[WARNING] Password must be at least 8 characters. Please try again.${NC}"
-    else
-        echo -n "Confirm AP password: "
-        read -s AP_PASS_CONFIRM
-        echo
-        if [ "$AP_PASS" != "$AP_PASS_CONFIRM" ]; then
-            echo -e "${ORANGE}[WARNING] Passwords do not match. Please try again.${NC}"
-        else
-            break
-        fi
-    fi
-done
-
-sudo nmcli con add type wifi ifname wlan0 con-name "OWL-AP" autoconnect yes \
-    ssid "$AP_SSID" mode ap ipv4.method manual \
-    ipv4.addresses 192.168.50.1/24 \
-    wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$AP_PASS"
-check_status "Configuring NetworkManager AP"
-sudo nmcli con up "OWL-AP"
-check_status "Activating OWL-AP connection"
-
-# 3. Set Up OWL Web Service
+# 2. Set Up OWL Web Service
 echo -e "${GREEN}[INFO] Configuring OWL web service...${NC}"
 cat > /tmp/owl-web.service << EOF
 [Unit]
@@ -96,7 +70,7 @@ After=network.target
 Type=simple
 User=$CURRENT_USER
 WorkingDirectory=$SCRIPT_DIR
-ExecStart=$VENV_DIR/bin/python $SCRIPT_DIR/owl_web_interface.py --port $WEB_PORT
+ExecStart=$VENV_DIR/bin/python $SCRIPT_DIR/owl_web_server.py --port $WEB_PORT
 Restart=on-failure
 RestartSec=5
 
@@ -109,14 +83,12 @@ sudo systemctl enable owl-web.service
 sudo systemctl restart owl-web.service
 check_status "Setting up OWL web service"
 
-# 4. Run Authentication Setup
+# 3. Run Authentication Setup (local file)
 echo -e "${GREEN}[INFO] Setting up authentication and HTTPS...${NC}"
-wget -O /tmp/setup_auth.py "$REPO_URL/raw/main/setup_auth.py"
-python3 /tmp/setup_auth.py "$DEVICE_ID" --dashboard --home-dir "$HOME_DIR"
+python3 "$AUTH_SCRIPT" "$DEVICE_ID" --dashboard --home-dir "$HOME_DIR"
 check_status "Running authentication setup"
-rm /tmp/setup_auth.py
 
-# 5. Configure Firewall
+# 4. Configure Firewall
 echo -e "${GREEN}[INFO] Configuring firewall...${NC}"
 sudo ufw allow 22/tcp comment "SSH"
 sudo ufw limit 22/tcp comment "Rate limit SSH"
@@ -125,12 +97,51 @@ sudo ufw allow 443/tcp comment "HTTPS"
 sudo ufw --force enable
 check_status "Configuring UFW"
 
-# Done
-echo -e "${GREEN}[INFO] Setup Complete${NC}"
-echo -e "${GREEN}[INFO] Connect to WiFi: $AP_SSID (Password: [hidden]) ${NC}"
-echo -e "${GREEN}[INFO] Access the dashboard at: https://owl.local${NC}"
-echo -e "${GREEN}[INFO] SSH available on port 22 (rate-limited)${NC}"
-echo -e "${GREEN}[INFO] Check status with:${NC}"
-echo "  - sudo systemctl status owl-web.service"
-echo "  - nmcli con show"
-echo "  - sudo ufw status"
+# 5. Set Up WiFi Access Point (last step, with warning)
+echo -e "${ORANGE}[WARNING] The next step will configure the OWL as a WiFi Access Point.${NC}"
+echo -e "${ORANGE}[WARNING] This will disconnect your current internet connection (e.g., phone hotspot).${NC}"
+echo -e "${GREEN}[INFO] After setup, reconnect to the OWL-AP network or use SSH/Ethernet to continue.${NC}"
+read -p "Proceed with AP setup? (y/N): " confirm
+if [[ "$confirm" =~ ^[Yy]$ ]]; then
+    echo -e "${GREEN}[INFO] Setting up WiFi Access Point...${NC}"
+    read -p "Enter AP SSID (default: OWL-AP-${DEVICE_ID}): " AP_SSID
+    AP_SSID=${AP_SSID:-"OWL-AP-${DEVICE_ID}"}
+
+    # Secure password entry
+    while true; do
+        echo -n "Enter AP password (min 8 chars): "
+        read -s AP_PASS
+        echo
+        if [ ${#AP_PASS} -lt 8 ]; then
+            echo -e "${ORANGE}[WARNING] Password must be at least 8 characters. Please try again.${NC}"
+        else
+            echo -n "Confirm AP password: "
+            read -s AP_PASS_CONFIRM
+            echo
+            if [ "$AP_PASS" != "$AP_PASS_CONFIRM" ]; then
+                echo -e "${ORANGE}[WARNING] Passwords do not match. Please try again.${NC}"
+            else
+                break
+            fi
+        fi
+    done
+
+    sudo nmcli con add type wifi ifname wlan0 con-name "OWL-AP" autoconnect yes \
+        ssid "$AP_SSID" mode ap ipv4.method manual \
+        ipv4.addresses 192.168.50.1/24 \
+        wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$AP_PASS"
+    check_status "Configuring NetworkManager AP"
+    sudo nmcli con up "OWL-AP"
+    check_status "Activating OWL-AP connection"
+
+    echo -e "${GREEN}[INFO] Access Point Setup Complete${NC}"
+    echo -e "${GREEN}[INFO] Connect to WiFi: $AP_SSID (Password: [hidden]) and access https://owl.local${NC}"
+    echo -e "${GREEN}[INFO] Alternatively, use SSH (port 22) or Ethernet to continue setup.${NC}"
+    echo -e "${GREEN}[INFO] Check status with:${NC}"
+    echo "  - sudo systemctl status owl-web.service"
+    echo "  - nmcli con show"
+    echo "  - sudo ufw status"
+else
+    echo -e "${GREEN}[INFO] AP setup skipped. Complete setup via SSH or Ethernet if needed.${NC}"
+    echo -e "${GREEN}[INFO] Current setup complete without AP. Access via existing network at https://owl.local${NC}"
+fi

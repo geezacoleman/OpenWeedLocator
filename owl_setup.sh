@@ -45,7 +45,7 @@ check_status "Removing unnecessary packages"
 
 # Update the system and firmware
 echo "[INFO] Updating the system and firmware..."
-sudo apt-get update && sudo apt-get upgrade -y
+sudo apt-get update && sudo apt full-upgrade -y
 check_status "System update and upgrade"
 
 # Set up the virtual environment
