@@ -60,7 +60,6 @@ except ImportError as e:
 try:
    import imutils
    from imutils.video import FPS
-   from owl_dashboard import OWLDashboard
    from utils.input_manager import UteController, AdvancedController, get_rpi_version
    from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator
    from utils.directory_manager import DirectorySetup
@@ -119,22 +118,6 @@ class Owl:
         self.show_display = show_display
         self.focus = focus
 
-        # initialize dashboard if enabled
-        self.dashboard = None
-        if self.config.getboolean('System', 'enable_dashboard', fallback=False):
-            self.dashboard = OWLDashboard(port=self.config.getint('System', 'dashboard_port', fallback=5000))
-            threading.Thread(target=self.dashboard.run, daemon=True).start()
-
-        # load GPS source from config
-        self.gps_source = self.config.get('GPS', 'gps_source', fallback='none').lower()
-        if self.dashboard:
-            self.gps_source = 'dashboard'
-        self.gps_port = self.config.get('GPS', 'gps_port', fallback='/dev/ttyUSB0')
-        self.gps_baudrate = self.config.getint('GPS', 'gps_baudrate', fallback=9600)
-
-        # store the last known GPS data
-        self.gps_data = None
-
         if self.focus:
             self.show_display = True
 
@@ -185,9 +168,40 @@ class Owl:
             raise
 
         ### Data collection only ###
-        # WARNING: initialise option disable detection for data collection
-        self.disable_detection = False
+        self.detection_enable = Value('b', self.config.getboolean('DataCollection', 'detection_enable', fallback=False))
+        self.image_sample_enable = Value('b', self.config.getboolean('DataCollection', 'image_sample_enable', fallback=False))
+
+        # a local version of these is set and auto updated to avoid the more expensive multiprocessing in the main loop
+        self._detection_enable = self.detection_enable.value
+        self._image_sample_enable = self.image_sample_enable.value
+        self._STATE_CHECK_INTERVAL = 0.2
+        self.stop_state_update = threading.Event()
+        threading.Thread(target=self.update_state, daemon=True).start()
+
         self.save_directory = None
+
+        # Web server (only if enabled)
+        self.web_server = None
+        if self.config.getboolean('System', 'dashboard_enable', fallback=False):
+            from web.owl_web_server import OWLWebServer
+            self.web_server = OWLWebServer(
+                port=self.config.getint('System', 'dashboard_port', fallback=5000),
+                owl_home=os.path.expanduser("~/owl"),
+                detection_enable=self.detection_enable,
+                recording_enable=self.image_sample_enable
+            )
+            threading.Thread(target=self.web_server.run, daemon=True).start()
+            self.logger.info("Web server started")
+
+        # GPS setup (only if enabled in config)
+        self.gps_source = self.config.get('System', 'gps_source', fallback='none').lower()
+        self.gps_data = None
+
+        if self.gps_source != "none":
+            if self.web_server:  # Override with dashboard if enabled
+                self.gps_source = 'dashboard'
+            self.gps_port = self.config.get('System', 'gps_port', fallback='/dev/ttyUSB0')
+            self.gps_baudrate = self.config.getint('System', 'gps_baudrate', fallback=9600)
 
         # if a controller is connected, sample images must be true to set up directories correctly
         self.controller_type = self.config.get('Controller', 'controller_type').strip("'\" ").lower()
@@ -196,15 +210,14 @@ class Owl:
             self.logger.error(f"Invalid controller type: {self.controller_type}")
             raise errors.ControllerTypeError(self.config.get('Controller', 'controller_type'))
 
-        if self.controller_type != 'none':
-            self.sample_images = True
-        else:
-            self.sample_images = self.config.getboolean('DataCollection', 'sample_images')
+        with self.image_sample_enable.get_lock():
+            if self.controller_type != 'none':
+                self.image_sample_enable.value = True
+            self._image_sample_enable = self.image_sample_enable.value
 
-        # if controller is 'none' but sample_images is True, then it will set it up still
-        if self.sample_images:
+        # if controller is 'none' but _image_sample_enable is True, then it will set everything up
+        if self._image_sample_enable:
             self.sample_method = self.config.get('DataCollection', 'sample_method')
-            self.disable_detection = self.config.getboolean('DataCollection', 'disable_detection')
             self.sample_frequency = self.config.getint('DataCollection', 'sample_frequency')
             self.save_directory = self.config.get('DataCollection', 'save_directory')
             self.camera_name = self.config.get('DataCollection', 'camera_name')
@@ -216,71 +229,43 @@ class Owl:
         ############################
 
         # initialise controller buttons and async management
-        if self.controller_type != 'none':
-            self.detection_state = Value('b', False)
-            self.sample_state = Value('b', False)
-            self.stop_flag = Value('b', False)
+        if self.controller_type == 'ute':
+            self.status_indicator = UteStatusIndicator(save_directory=self.save_directory, record_led_pin='BOARD38',
+                                                       storage_led_pin='BOARD40')
+            controller = UteController(
+                detection_state=self.detection_enable,
+                sample_state=self.image_sample_enable,
+                stop_flag=Value('b', False),
+                owl_instance=self,
+                status_indicator=self.status_indicator,
+                switch_purpose=self.config.get('Controller', 'switch_purpose', fallback='recording').strip("'\" ").lower(),
+                switch_board_pin=f"BOARD{self.config.getint('Controller', 'switch_pin', fallback=37)}"
+            )
+            self.controller_process = Process(target=controller.run)
+            self.controller_process.start()
 
-            # 'ute controller' that fits in a cupholder. Only one switch to toggle recording OR detection on/off.
-            if self.controller_type == 'ute':
-                self.status_indicator = UteStatusIndicator(
-                    save_directory=self.save_directory,
-                    record_led_pin='BOARD38',
-                    storage_led_pin='BOARD40')
-
-                self.switch_purpose = self.config.get('Controller', 'switch_purpose').strip("'\" ").lower()
-                self.switch_pin = self.config.getint('Controller', 'switch_pin')
-
-                self.controller = UteController(
-                    detection_state=self.detection_state,
-                    sample_state=self.sample_state,
-                    stop_flag=self.stop_flag,
-                    owl_instance=self,
-                    status_indicator=self.status_indicator,
-                    switch_board_pin=f'BOARD{self.switch_pin}',
-                    switch_purpose=self.switch_purpose
-                )
-
-            # The 'advanced' controller. Controls multiple inputs.
-            elif self.controller_type == 'advanced':
-                self.status_indicator = AdvancedStatusIndicator(save_directory=self.save_directory,
-                                                                status_led_pin='BOARD37')
-
-                self.sensitivity_state = Value('b', False)
-                self.detection_mode_state = Value('i', 1)  # Default to off (1)
-
-                recording_pin = self.config.getint('Controller', 'recording_pin')
-                sensitivity_pin = self.config.getint('Controller', 'sensitivity_pin')
-                detection_mode_pin_up = self.config.getint('Controller', 'detection_mode_pin_up')
-                detection_mode_pin_down = self.config.getint('Controller', 'detection_mode_pin_down')
-                low_sensitivity_config = self.config.get('Controller', 'low_sensitivity_config').strip("'\" ")
-                high_sensitivity_config = self.config.get('Controller', 'high_sensitivity_config').strip("'\" ")
-
-                self.controller = AdvancedController(
-                    recording_state=self.sample_state,
-                    sensitivity_state=self.sensitivity_state,
-                    detection_mode_state=self.detection_mode_state,
-                    stop_flag=self.stop_flag,
-                    owl_instance=self,
-                    status_indicator=self.status_indicator,
-                    low_sensitivity_config=low_sensitivity_config,
-                    high_sensitivity_config=high_sensitivity_config,
-                    recording_bpin=f'BOARD{recording_pin}',
-                    sensitivity_bpin=f'BOARD{sensitivity_pin}',
-                    detection_mode_bpin_up=f'BOARD{detection_mode_pin_up}',
-                    detection_mode_bpin_down=f'BOARD{detection_mode_pin_down}'
-                )
-
-            else:
-                raise ValueError(f"Invalid controller type: {self.controller_type}. "
-                                 f"Select from None, Advanced or Ute in the config file.")
-
-            self.controller_process = Process(target=self.controller.run)
+        elif self.controller_type == 'advanced':
+            self.status_indicator = AdvancedStatusIndicator(save_directory=self.save_directory, status_led_pin='BOARD37')
+            controller = AdvancedController(
+                recording_state=self.image_sample_enable,
+                sensitivity_state=Value('b', False),
+                detection_mode_state=Value('i', 1),
+                stop_flag=Value('b', False),
+                owl_instance=self,
+                status_indicator=self.status_indicator,
+                low_sensitivity_config=self.config.get('Controller', 'low_sensitivity_config', fallback='').strip("'\" "),
+                high_sensitivity_config=self.config.get('Controller', 'high_sensitivity_config', fallback='').strip("'\" "),
+                recording_bpin=f"BOARD{self.config.getint('Controller', 'recording_pin', fallback=38)}",
+                sensitivity_bpin=f"BOARD{self.config.getint('Controller', 'sensitivity_pin', fallback=40)}",
+                detection_mode_bpin_up=f"BOARD{self.config.getint('Controller', 'detection_mode_pin_up', fallback=36)}",
+                detection_mode_bpin_down=f"BOARD{self.config.getint('Controller', 'detection_mode_pin_down', fallback=35)}"
+            )
+            self.controller_process = Process(target=controller.run)
             self.controller_process.start()
 
         else:
             self.controller = None
-            if self.sample_images:
+            if self.image_sample_enable.value:
                 self.status_indicator = HeadlessStatusIndicator(save_directory=self.save_directory)
                 self.status_indicator.start_storage_indicator()
 
@@ -382,12 +367,6 @@ class Owl:
 
             while True:
                 frame = self.cam.read()
-                if self.dashboard:
-                    self.dashboard.update_frame(frame)
-
-                if self.focus:
-                    grey = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2GRAY)
-                    blurriness = fft_blur(grey, size=30)
 
                 if frame is None:
                     if log_fps:
@@ -399,6 +378,13 @@ class Owl:
                         self.logger.info("[INFO] Frame is None. Stopped.")
                         self.stop()
                         break
+
+                if self.focus:
+                    grey = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2GRAY)
+                    blurriness = fft_blur(grey, size=30)
+
+                if self.web_server:
+                    self.web_server.update_frame(frame)
 
                 # retrieve the trackbar positions for thresholds
                 if self.show_display:
@@ -412,7 +398,7 @@ class Owl:
                     self.brightness_max = cv2.getTrackbarPos("Bright-Max", self.window_name)
 
                 # pass image, thresholds to green_on_brown function
-                if not self.disable_detection:
+                if self._detection_enable:
                     if algorithm == 'gog':
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
                             frame,
@@ -458,36 +444,33 @@ class Owl:
 
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often
-                if self.sample_images:
-                    # only record every sampleFreq number of frames. If sample_frequency = 60, this will activate every 60th frame
+                if self._image_sample_enable:
+                    # only record every sampleFreq number of frames.
+                    # If sample_frequency = 60, this will activate every 60th frame
                     if frame_count % self.sample_frequency == 0:
-                        if self.sample_method == 'whole':
-                            self.image_recorder.add_frame(frame=frame,
-                                                          frame_id=frame_count,
-                                                          boxes=None,
-                                                          centres=None,
-                                                          gps_data=self.gps_data)
+                        save_boxes = None
+                        save_centres = None
+                        if self.sample_method != 'whole' and self._detection_enable:
+                            save_boxes = boxes  # Assuming 'boxes' from detection
+                            save_centres = weed_centres  # Assuming 'weed_centres' from detection
 
-                        elif self.sample_method != 'whole' and not self.disable_detection:
-                            self.image_recorder.add_frame(frame=frame,
-                                                          frame_id=frame_count,
-                                                          boxes=boxes,
-                                                          centres=weed_centres,
-                                                          gps_data=self.gps_data)
-                        else:
-                            self.image_recorder.add_frame(frame=frame,
-                                                          frame_id=frame_count,
-                                                          boxes=None,
-                                                          centres=None,
-                                                          gps_data=self.gps_data)
+                        self.image_recorder.add_frame(frame=frame,
+                                                      frame_id=frame_count,
+                                                      boxes=save_boxes,
+                                                      centres=save_centres,
+                                                      gps_data=self.gps_data)
 
                         if self.controller:
                             self.status_indicator.image_write_indicator()
 
                         if self.status_indicator.DRIVE_FULL:
-                            self.sample_images = False
+                            with self.image_sample_enable.get_lock():
+                                self.image_sample_enable.value = False
+                            self._image_sample_enable = False
                             self.image_recorder.stop()
                             self.status_indicator.error(5)
+                            self.stop_state_update.set()
+                            self.logger.info("Drive full: Image sampling disabled permanently and state update stopped")
 
                 frame_count = frame_count + 1 if frame_count < 900 else 1
 
@@ -501,7 +484,7 @@ class Owl:
                     fps.update()
 
                 if self.show_display:
-                    if self.disable_detection:
+                    if not self._detection_enable:
                         image_out = frame.copy()
 
                     if self.record_video:
@@ -728,6 +711,15 @@ class Owl:
             self.status_indicator.error(1)
             self.stop()
             raise errors.CameraInitError(str(e)) from e
+
+    def update_state(self):
+        """Update local state caches from shared multiprocessing Values every INTERVAL secs"""
+        while not self.stop_state_update.is_set():
+            with self.detection_enable.get_lock():
+                self._detection_enable = self.detection_enable.value
+            with self.image_sample_enable.get_lock():
+                self._image_sample_enable = self.image_sample_enable.value
+            time.sleep(self._STATE_CHECK_INTERVAL)
 
     def update_gps(self, new_gps_data):
         """Update GPS data from the selected source (dashboard or (to be implemented) GPS hat)."""

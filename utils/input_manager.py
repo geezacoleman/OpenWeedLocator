@@ -15,7 +15,7 @@ def is_raspberry_pi() -> bool:
 # Determine if we're in testing mode and import GPIO if needed
 testing = not is_raspberry_pi()
 if not testing:
-    from gpiozero import Button, LED
+    from gpiozero import Button
 else:
     platform_name = platform.system() if platform.system() == "Windows" else "unrecognized"
     logger.warning(
@@ -31,7 +31,7 @@ class UteController:
                  switch_board_pin='BOARD37',
                  bounce_time=1.0):
 
-        self.switch = Button(switch_board_pin, bounce_time=bounce_time)
+        self.switch = Button(switch_board_pin, bounce_time=bounce_time) if not testing else None
         self.switch_purpose = switch_purpose
 
         self.detection_state = detection_state
@@ -51,21 +51,18 @@ class UteController:
         self.update_state()
 
     def update_state(self):
-        is_active = self.switch.is_pressed
+        is_active = self.switch.is_pressed if self.switch else False
 
         if self.switch_purpose == 'detection':
             with self.detection_state.get_lock():
                 self.detection_state.value = is_active
-            self.owl.disable_detection = not is_active
             if is_active:
                 self.status_indicator.enable_weed_detection()
             else:
                 self.status_indicator.disable_weed_detection()
-
         elif self.switch_purpose == 'recording':
             with self.sample_state.get_lock():
                 self.sample_state.value = is_active
-            self.owl.sample_images = is_active
             if is_active:
                 self.status_indicator.enable_image_recording()
             else:
@@ -110,10 +107,10 @@ class AdvancedController:
                  sensitivity_bpin='BOARD40',
                  bounce_time=1.0):
 
-        self.recording_switch = Button(recording_bpin, bounce_time=bounce_time)
-        self.sensitivity_switch = Button(sensitivity_bpin, bounce_time=bounce_time)
-        self.detection_mode_switch_up = Button(detection_mode_bpin_up, bounce_time=bounce_time)
-        self.detection_mode_switch_down = Button(detection_mode_bpin_down, bounce_time=bounce_time)
+        self.recording_switch = Button(recording_bpin, bounce_time=bounce_time) if not testing else None
+        self.sensitivity_switch = Button(sensitivity_bpin, bounce_time=bounce_time) if not testing else None
+        self.detection_mode_switch_up = Button(detection_mode_bpin_up, bounce_time=bounce_time) if not testing else None
+        self.detection_mode_switch_down = Button(detection_mode_bpin_down, bounce_time=bounce_time) if not testing else None
 
         self.recording_state = recording_state
         self.sensitivity_state = sensitivity_state
@@ -129,15 +126,18 @@ class AdvancedController:
         self.low_sensitivity_settings = self._read_config(low_sensitivity_config)
         self.high_sensitivity_settings = self._read_config(high_sensitivity_config)
 
-        # Set up switch handlers
-        self.recording_switch.when_pressed = self.update_recording_state
-        self.recording_switch.when_released = self.update_recording_state
-        self.sensitivity_switch.when_pressed = self.update_sensitivity_state
-        self.sensitivity_switch.when_released = self.update_sensitivity_state
-        self.detection_mode_switch_up.when_pressed = lambda: self.set_detection_mode(2)  # All solenoids on
-        self.detection_mode_switch_up.when_released = lambda: self.set_detection_mode(1)  # Off
-        self.detection_mode_switch_down.when_pressed = lambda: self.set_detection_mode(0)  # Detection on
-        self.detection_mode_switch_down.when_released = lambda: self.set_detection_mode(1)  # Off
+        if self.recording_switch:
+            self.recording_switch.when_pressed = self.update_recording_state
+            self.recording_switch.when_released = self.update_recording_state
+        if self.sensitivity_switch:
+            self.sensitivity_switch.when_pressed = self.update_sensitivity_state
+            self.sensitivity_switch.when_released = self.update_sensitivity_state
+        if self.detection_mode_switch_up:
+            self.detection_mode_switch_up.when_pressed = lambda: self.set_detection_mode(2)
+            self.detection_mode_switch_up.when_released = lambda: self.set_detection_mode(1)
+        if self.detection_mode_switch_down:
+            self.detection_mode_switch_down.when_pressed = lambda: self.set_detection_mode(0)
+            self.detection_mode_switch_down.when_released = lambda: self.set_detection_mode(1)
 
         # Initialize states based on initial switch positions
         self.update_state()
@@ -155,14 +155,13 @@ class AdvancedController:
 
     def update_recording_state(self):
         self.status_indicator.generic_notification()
+        is_pressed = self.recording_switch.is_pressed if self.recording_switch else False
         with self.recording_state.get_lock():
-            self.recording_state.value = self.recording_switch.is_pressed
-        if self.recording_state.value:
+            self.recording_state.value = is_pressed
+        if is_pressed:
             self.status_indicator.enable_image_recording()
-            self.owl.sample_images = True
         else:
             self.status_indicator.disable_image_recording()
-            self.owl.sample_images = False
 
     def update_sensitivity_state(self):
         with self.sensitivity_state.get_lock():
@@ -198,20 +197,20 @@ class AdvancedController:
         try:
             with self.detection_mode_state.get_lock():
                 self.detection_mode_state.value = mode
-
             self.status_indicator.generic_notification()
+            with self.owl.detection_enable.get_lock():
+                if mode == 0:  # Detection on
+                    self.owl.detection_enable.value = True
+                    self.status_indicator.enable_weed_detection()
+                elif mode == 2:  # All solenoids on
+                    self.owl.detection_enable.value = False
+                    self.status_indicator.disable_weed_detection()
+                    self.owl.relay_controller.relay.all_on()
+                else:  # Off
+                    self.owl.detection_enable.value = False
+                    self.status_indicator.disable_weed_detection()
+                    self.owl.relay_controller.relay.all_off()
 
-            if mode == 0:  # Detection on
-                self.status_indicator.enable_weed_detection()
-                self.owl.disable_detection = False
-            elif mode == 2:  # All solenoids on
-                self.status_indicator.disable_weed_detection()
-                self.owl.relay_controller.relay.all_on()
-                self.owl.disable_detection = True
-            else:  # Off or any unexpected value
-                self.status_indicator.disable_weed_detection()
-                self.owl.relay_controller.relay.all_off()
-                self.owl.disable_detection = True
         except KeyboardInterrupt:
             logger.info("[INFO] KeyboardInterrupt received in set_detection_mode. Exiting.")
             raise

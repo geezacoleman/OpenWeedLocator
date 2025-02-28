@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenWeedLocator Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
+</head>
+<body>
+    <div class="header">
+        <img src="{{ url_for('static', filename='img/owl-logo.png') }}" alt="OWL Logo">
+        <h1>OpenWeedLocator Dashboard</h1>
+    </div>
+
+    <div class="container">
+        <!-- Navigation Tabs -->
+        <div class="nav-tabs">
+            <div class="nav-tab active" data-tab="dashboard">Dashboard</div>
+            <div class="nav-tab" data-tab="stream">Camera Stream</div>
+        </div>
+
+        <!-- Dashboard Tab -->
+        <div id="dashboard" class="tab-content active">
+            <div class="card status-box">
+                <h2>System Status</h2>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <h3>CPU Usage</h3>
+                        <div class="status-value" id="cpuValue">0%</div>
+                    </div>
+                    <div class="status-item">
+                        <h3>CPU Temperature</h3>
+                        <div class="status-value" id="tempValue">0°C</div>
+                    </div>
+                    <div class="status-item">
+                        <h3>Detection</h3>
+                        <div class="status-value" id="detectionStatus">Enabled</div>
+                    </div>
+                    <div class="status-item">
+                        <h3>Recording</h3>
+                        <div class="status-value" id="recordingStatusText">Stopped</div>
+                    </div>
+                </div>
+                <div class="status-timestamp" id="statusTimestamp"></div>
+            </div>
+        </div>
+
+        <!-- Camera Stream Tab -->
+        <div id="stream" class="tab-content">
+            <div class="stream-container">
+                <div class="zoom-container">
+                    <img id="stream-img" class="stream zoom-image" src="{{ url_for('video_feed') }}">
+
+                    <div class="toggle-container">
+                        <span class="toggle-label">GPS Location</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="gps-toggle" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="gps-status">
+                        <svg class="gps-icon" viewBox="0 0 24 24">
+                            <path fill="currentColor" d="M12,2A7,7 0 0,1 19,9C19,14.25 12,22 12,22C12,22 5,14.25 5,9A7,7 0 0,1 12,2M12,4A5,5 0 0,0 7,9C7,10 7,12 12,18.71C17,12 17,10 17,9A5,5 0 0,0 12,4M12,6.5A2.5,2.5 0 0,1 14.5,9A2.5,2.5 0 0,1 12,11.5A2.5,2.5 0 0,1 9.5,9A2.5,2.5 0 0,1 12,6.5"/>
+                        </svg>
+                        <span id="gps-accuracy">Searching...</span>
+                    </div>
+
+                    <div class="zoom-controls">
+                        <button>+</button>
+                        <button>-</button>
+                        <button>Reset</button>
+                    </div>
+                </div>
+
+                <div class="controls">
+                    <button id="start-detection" class="btn-success">Start Detection</button>
+                    <button id="stop-detection" class="btn-danger">Stop Detection</button>
+                    <button id="recordButton" class="btn-primary">Start Recording</button>
+                    <button id="downloadFrame" class="btn-secondary">Download Frame</button>
+                    <div class="recording-status" id="recordingStatus"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>OpenWeedLocator © 2025 | <a href="https://github.com/geezacoleman/OpenWeedLocator" target="_blank">GitHub</a></p>
+    </footer>
+
+    <div id="notifications"></div>
+</body>
+</html>
