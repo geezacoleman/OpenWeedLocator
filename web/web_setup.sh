@@ -13,7 +13,9 @@ CROSS="${RED}[FAIL]${NC}"
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 CURRENT_USER=${SUDO_USER:-$(whoami)}
 HOME_DIR=$(getent passwd "$CURRENT_USER" | cut -d: -f6)
-DEVICE_ID=${DEVICE_ID:-"owl-1"}
+read -p "Enter OWL device number (default: 1): " OWL_NUMBER
+OWL_NUMBER=${OWL_NUMBER:-"1"}
+DEVICE_ID="owl-${OWL_NUMBER}"
 WEB_PORT=5000
 VENV_DIR="$HOME_DIR/.virtualenvs/owl"
 AUTH_SCRIPT="$HOME_DIR/owl/dev/setup_auth.py"
