@@ -12,7 +12,7 @@ class ConfigValidator:
 
     REQUIRED_CONFIG = {
         'System': {
-            'required_keys': {'algorithm', 'relay_num', 'actuation_duration', 'delay'},
+            'required_keys': {'algorithm', 'relay_num', 'actuation_duration', 'delay', 'dashboard_enable'},
             'optional_keys': {'input_file_or_directory'}
         },
         'Controller': {
@@ -64,8 +64,8 @@ class ConfigValidator:
             'optional_keys': {'invert_hue'}
         },
         'DataCollection': {
-            'required_keys': {'sample_images', 'sample_method', 'save_directory'},
-            'optional_keys': {'sample_frequency', 'disable_detection', 'log_fps', 'camera_name'}
+            'required_keys': {'image_sample_enable', 'sample_method', 'save_directory'},
+            'optional_keys': {'sample_frequency', 'detection_enable', 'log_fps', 'camera_name'}
         },
         'Relays': {
             'required_keys': {'0', '1', '2', '3'},
