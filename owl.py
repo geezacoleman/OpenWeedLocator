@@ -232,7 +232,7 @@ class Owl:
         if self.controller_type == 'ute':
             self.status_indicator = UteStatusIndicator(save_directory=self.save_directory, record_led_pin='BOARD38',
                                                        storage_led_pin='BOARD40')
-            controller = UteController(
+            self.controller = UteController(
                 detection_state=self.detection_enable,
                 sample_state=self.image_sample_enable,
                 stop_flag=Value('b', False),
@@ -241,12 +241,12 @@ class Owl:
                 switch_purpose=self.config.get('Controller', 'switch_purpose', fallback='recording').strip("'\" ").lower(),
                 switch_board_pin=f"BOARD{self.config.getint('Controller', 'switch_pin', fallback=37)}"
             )
-            self.controller_process = Process(target=controller.run)
+            self.controller_process = Process(target=self.controller.run)
             self.controller_process.start()
 
         elif self.controller_type == 'advanced':
             self.status_indicator = AdvancedStatusIndicator(save_directory=self.save_directory, status_led_pin='BOARD37')
-            controller = AdvancedController(
+            self.controller = AdvancedController(
                 recording_state=self.image_sample_enable,
                 sensitivity_state=Value('b', False),
                 detection_mode_state=Value('i', 1),
@@ -260,7 +260,7 @@ class Owl:
                 detection_mode_bpin_up=f"BOARD{self.config.getint('Controller', 'detection_mode_pin_up', fallback=36)}",
                 detection_mode_bpin_down=f"BOARD{self.config.getint('Controller', 'detection_mode_pin_down', fallback=35)}"
             )
-            self.controller_process = Process(target=controller.run)
+            self.controller_process = Process(target=self.controller.run)
             self.controller_process.start()
 
         else:
