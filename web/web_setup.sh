@@ -47,19 +47,20 @@ check_status() {
     fi
 }
 
-# 1. Install Web Dependencies
-echo -e "${GREEN}[INFO] Installing webserver dependencies...${NC}"
+# 1. Install Web Dependencies (requires internet)
+echo -e "${GREEN}[INFO] Installing web dependencies...${NC}"
 sudo apt update
 sudo apt install -y nginx apache2-utils avahi-daemon ufw network-manager
 check_status "Installing dependencies"
 
-# Activate virtualenv and install Flask
+# 2. Activate virtualenv and install Flask
 source "$VENV_DIR/bin/activate"
+echo -e "${GREEN}[INFO] Installing Flask in virtualenv...${NC}"
 pip install --upgrade pip
-pip install flask
+pip install flask send2trash==2.0.0
 check_status "Installing Flask in virtualenv"
 
-# 2. Set Up OWL Web Service
+# 3. Set Up OWL Web Service
 echo -e "${GREEN}[INFO] Configuring OWL web service...${NC}"
 cat > /tmp/owl-web.service << EOF
 [Unit]
@@ -83,12 +84,16 @@ sudo systemctl enable owl-web.service
 sudo systemctl restart owl-web.service
 check_status "Setting up OWL web service"
 
-# 3. Run Authentication Setup (local file)
+# 4. Run Authentication Setup (local file)
 echo -e "${GREEN}[INFO] Setting up authentication and HTTPS...${NC}"
-python3 "$AUTH_SCRIPT" "$DEVICE_ID" --dashboard --home-dir "$HOME_DIR"
+echo -e "${GREEN}[INFO] Creating SSL directory if it doesn't exist...${NC}"
+sudo mkdir -p /etc/nginx/ssl
+sudo chown $CURRENT_USER:$CURRENT_USER /etc/nginx/ssl
+sudo chmod 700 /etc/nginx/ssl
+sudo python3 "$AUTH_SCRIPT" "$DEVICE_ID" --dashboard --home-dir "$HOME_DIR"
 check_status "Running authentication setup"
 
-# 4. Configure Firewall
+# 5. Configure Firewall
 echo -e "${GREEN}[INFO] Configuring firewall...${NC}"
 sudo ufw allow 22/tcp comment "SSH"
 sudo ufw limit 22/tcp comment "Rate limit SSH"
@@ -97,7 +102,7 @@ sudo ufw allow 443/tcp comment "HTTPS"
 sudo ufw --force enable
 check_status "Configuring UFW"
 
-# 5. Set Up WiFi Access Point (last step, with warning)
+# 6. Set Up WiFi Access Point (last step, with warning)
 echo -e "${ORANGE}[WARNING] The next step will configure the OWL as a WiFi Access Point.${NC}"
 echo -e "${ORANGE}[WARNING] This will disconnect your current internet connection (e.g., phone hotspot).${NC}"
 echo -e "${GREEN}[INFO] After setup, reconnect to the OWL-AP network or use SSH/Ethernet to continue.${NC}"
