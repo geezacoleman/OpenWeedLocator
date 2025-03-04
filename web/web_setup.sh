@@ -62,30 +62,6 @@ pip install --upgrade pip
 pip install flask send2trash==2.0.0
 check_status "Installing Flask in virtualenv"
 
-# 3. Set Up OWL Web Service
-echo -e "${GREEN}[INFO] Configuring OWL web service...${NC}"
-cat > /tmp/owl-web.service << EOF
-[Unit]
-Description=OWL Web Interface
-After=network.target
-
-[Service]
-Type=simple
-User=$CURRENT_USER
-WorkingDirectory=$SCRIPT_DIR
-ExecStart=$VENV_DIR/bin/python $SCRIPT_DIR/owl_web_server.py --port $WEB_PORT
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-sudo mv /tmp/owl-web.service /etc/systemd/system/owl-web.service
-sudo systemctl daemon-reload
-sudo systemctl enable owl-web.service
-sudo systemctl restart owl-web.service
-check_status "Setting up OWL web service"
-
 # 4. Run Authentication Setup (local file)
 echo -e "${GREEN}[INFO] Setting up authentication and HTTPS...${NC}"
 echo -e "${GREEN}[INFO] Creating SSL directory if it doesn't exist...${NC}"
@@ -95,13 +71,31 @@ sudo chmod 700 /etc/nginx/ssl
 sudo python3 "$AUTH_SCRIPT" "$DEVICE_ID" --dashboard --home-dir "$HOME_DIR"
 check_status "Running authentication setup"
 
+# 3. Enable Dashboard in OWL Config
+echo -e "${GREEN}[INFO] Enabling dashboard in OWL configuration...${NC}"
+CONFIG_FILE="$HOME_DIR/owl/config/DAY_SENSITIVITY_2.ini"
+if grep -q "\[System\]" "$CONFIG_FILE"; then
+    # System section exists, check if dashboard_enable exists
+    if grep -q "dashboard_enable" "$CONFIG_FILE"; then
+        # Replace the value
+        sed -i "s/dashboard_enable = .*/dashboard_enable = True/" "$CONFIG_FILE"
+    else
+        # Add the setting under System section
+        sed -i "/\[System\]/a dashboard_enable = True\ndashboard_port = $WEB_PORT" "$CONFIG_FILE"
+    fi
+else
+    # System section doesn't exist, add it
+    echo -e "\n[System]\ndashboard_enable = True\ndashboard_port = $WEB_PORT" >> "$CONFIG_FILE"
+fi
+check_status "Enabling dashboard in OWL configuration"
+
 # 5. Configure Firewall
 echo -e "${GREEN}[INFO] Configuring firewall...${NC}"
 sudo ufw allow 22/tcp comment "SSH"
 sudo ufw limit 22/tcp comment "Rate limit SSH"
 sudo ufw allow 80/tcp comment "HTTP redirect"
 sudo ufw allow 443/tcp comment "HTTPS"
-sudo ufw --force enable
+sudo ufw enable
 check_status "Configuring UFW"
 
 # 6. Set Up WiFi Access Point (last step, with warning)
