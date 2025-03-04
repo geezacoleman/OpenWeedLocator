@@ -59,7 +59,7 @@ check_status "Installing dependencies"
 source "$VENV_DIR/bin/activate"
 echo -e "${GREEN}[INFO] Installing Flask in virtualenv...${NC}"
 pip install --upgrade pip
-pip install flask send2trash==2.0.0
+pip install flask
 check_status "Installing Flask in virtualenv"
 
 # 4. Run Authentication Setup (local file)
