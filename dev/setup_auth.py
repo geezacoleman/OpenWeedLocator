@@ -66,6 +66,7 @@ class OWLAuthSetup:
         commands = [
             ["sudo", "tee", "/etc/hostname"],
             ["sudo", "sed", "-i", f"s/127.0.0.1.*/127.0.0.1 localhost {hostname}/", "/etc/hosts"],
+            ["sudo", "sed", "-i", f"s/127.0.1.1.*/127.0.1.1 {hostname}/", "/etc/hosts"],  # Add for consistency
             ["sudo", "hostnamectl", "set-hostname", hostname]
         ]
         for cmd in commands:
@@ -79,15 +80,20 @@ class OWLAuthSetup:
         if self.is_dashboard:
             self._run_command(["sudo", "systemctl", "enable", "avahi-daemon"])
             self._run_command(["sudo", "systemctl", "restart", "avahi-daemon"])
+            self._run_command(["sudo", "systemctl", "restart", "networking"])  # Ensure network sync
         return True
 
     def install_dependencies(self) -> bool:
         self.logger.info("Installing dependencies")
-        pkgs = ["nginx", "apache2-utils"]
+        pkgs = ["nginx", "apache2-utils", "ufw"]
         if self.is_dashboard:
             pkgs.append("avahi-daemon")
         return self._run_command(["sudo", "apt", "update"]) and \
-               self._run_command(["sudo", "apt", "install", "-y"] + pkgs)
+            self._run_command(["sudo", "apt", "install", "-y"] + pkgs) and \
+            self._run_command(["sudo", "ufw", "allow", "22/tcp"]) and \
+            self._run_command(["sudo", "ufw", "allow", "80/tcp"]) and \
+            self._run_command(["sudo", "ufw", "allow", "443/tcp"]) and \
+            self._run_command(["sudo", "ufw", "--force", "enable"])
 
     def generate_ssl_cert(self) -> bool:
         self.logger.info("Generating SSL certificate")
@@ -145,43 +151,53 @@ class OWLAuthSetup:
     def create_nginx_config(self, auth_details: dict) -> bool:
         self.logger.info("Creating nginx configuration")
         config = f"""
-limit_req_zone $binary_remote_addr zone=authlimit:10m rate=5r/m;
-server {{
-    listen 443 ssl;
-    server_name {self.default_url};
-    allow 192.168.50.0/24;
-    deny all;
+    limit_req_zone $binary_remote_addr zone=authlimit:10m rate=5r/m;
 
-    ssl_certificate {self.ssl_dir}/nginx-{self.device_id}.crt;
-    ssl_certificate_key {self.ssl_dir}/nginx-{self.device_id}.key;
+    server {{
+        listen 443 ssl;
+        server_name {self.default_url} 192.168.50.1;
+        allow 192.168.50.0/24;
+        deny all;
 
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers on;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
-    add_header Strict-Transport-Security "max-age=31536000" always;
+        ssl_certificate {self.ssl_dir}/nginx-{self.device_id}.crt;
+        ssl_certificate_key {self.ssl_dir}/nginx-{self.device_id}.key;
 
-    auth_basic "OWL Access";
-    auth_basic_user_file {auth_details['auth_file']};
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_prefer_server_ciphers on;
+        ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
+        add_header Strict-Transport-Security "max-age=31536000" always;
 
-    location / {{
-        limit_req zone=authlimit burst=10;
-        autoindex off;
-        proxy_pass http://localhost:5000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 86400;
+        auth_basic "OWL Access";
+        auth_basic_user_file {auth_details['auth_file']};
+
+        location / {{
+            limit_req zone=authlimit burst=10;
+            autoindex off;
+            proxy_pass http://localhost:5000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_read_timeout 86400;
+        }}
+
+        location /video_feed {{
+            proxy_pass http://localhost:5000/video_feed;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_buffering off;  # Critical for MJPEG streaming
+            proxy_cache off;
+            chunked_transfer_encoding off;
+        }}
     }}
-}}
 
-server {{
-    listen 80;
-    server_name {self.default_url};
-    return 301 https://$server_name$request_uri;
-}}
-"""
+    server {{
+        listen 80;
+        server_name {self.default_url} 192.168.50.1;
+        return 301 https://$server_name$request_uri;
+    }}
+    """
         try:
             config_path = self.nginx_dir / f"sites-available/{self.device_id}"
             enabled_path = self.nginx_dir / f"sites-enabled/{self.device_id}"
@@ -192,7 +208,7 @@ server {{
                 enabled_path.unlink()
             os.symlink(config_path, enabled_path)
             return self._run_command(["sudo", "nginx", "-t"]) and \
-                   self._run_command(["sudo", "systemctl", "reload", "nginx"])
+                self._run_command(["sudo", "systemctl", "reload", "nginx"])
         except Exception as e:
             self.logger.error(f"Failed to configure nginx: {e}")
             return False
@@ -222,7 +238,8 @@ server {{
             "status": "failed",
             "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
-        self.logger.info(f"Setting up secure access for {'Dashboard' if self.is_dashboard else 'OWL'}: {self.device_id}")
+        self.logger.info(
+            f"Setting up secure access for {'Dashboard' if self.is_dashboard else 'OWL'}: {self.device_id}")
 
         try:
             if not self.install_dependencies():
@@ -238,6 +255,11 @@ server {{
                 raise Exception("Failed to configure nginx")
             if not self.save_credentials(auth_details):
                 raise Exception("Failed to save credentials")
+
+            # Restart services to apply changes
+            self._run_command(["sudo", "systemctl", "restart", "nginx"])
+            self._run_command(["sudo", "systemctl", "restart", "avahi-daemon"])
+            self._run_command(["sudo", "systemctl", "restart", "ssh"])
 
             results["status"] = "success"
             results["credentials"] = {
