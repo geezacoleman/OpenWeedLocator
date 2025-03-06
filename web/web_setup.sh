@@ -31,8 +31,8 @@ OWL_NUMBER=${OWL_NUMBER:-"1"}
 DEVICE_ID="owl-${OWL_NUMBER}"
 
 # Prompt for AP SSID
-read -p "Enter AP SSID (default: OWL-AP-${DEVICE_ID}): " AP_SSID
-AP_SSID=${AP_SSID:-"OWL-AP-${DEVICE_ID}"}
+read -p "Enter AP SSID (default: owl-ap-${OWL_NUMBER}): " AP_SSID
+AP_SSID=${AP_SSID:-"owl-${DEVICE_ID}-ap"}
 
 # Secure password entry
 while true; do
