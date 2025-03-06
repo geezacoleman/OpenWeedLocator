@@ -92,15 +92,6 @@ cd ~/owl
 pip install -r requirements.txt
 check_status "Installing dependencies from requirements.txt"
 
-# Setup authentication
-echo "[INFO] Setting up secure access..."
-if [[ $is_dashboard == "y" ]]; then
-    sudo python3 setup_auth.py $device_id --dashboard
-else
-    sudo python3 setup_auth.py $device_id
-fi
-check_status "Security setup"
-
 # Make the scripts executable
 echo "[INFO] Making scripts executable..."
 chmod a+x owl.py
