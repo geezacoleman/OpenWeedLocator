@@ -208,13 +208,21 @@ class OWLWebServer:
             return send_from_directory(self.app.static_folder, filename)
 
     def _generate_frames(self):
-        if not hasattr(self, 'cam'):
-            self._connect_to_owl_camera()
         while True:
             try:
-                frame = self._get_current_frame()
+                frame = None
+                try:
+                    if not self.frame_queue.empty():
+                        frame = self.frame_queue.get_nowait()
+                        self.latest_frame = frame
+                    elif self.latest_frame is not None:
+                        frame = self.latest_frame.copy()
+                except queue.Empty:
+                    pass
+
                 if frame is None:
                     frame = self._generate_placeholder_frame()
+
                 h, w = frame.shape[:2]
                 if w > 800:
                     scale = 800 / w
@@ -226,6 +234,7 @@ class OWLWebServer:
                 frame_bytes = buffer.tobytes()
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+
                 time.sleep(1 / 20)
             except Exception as e:
                 self.logger.error(f"Error generating frame: {e}")
@@ -247,14 +256,15 @@ class OWLWebServer:
 
     def _get_current_frame(self):
         try:
-            if hasattr(self, 'cam') and self.cam and self.cam.isOpened():
-                ret, frame = self.cam.read()
-                if ret:
-                    if self.recording:
-                        self.frame_buffer.append(frame.copy())
-                    return frame
+            try:
+                if not self.frame_queue.empty():
+                    return self.frame_queue.get_nowait()
+                elif self.latest_frame is not None:
+                    return self.latest_frame.copy()
+            except queue.Empty:
+                pass
         except Exception as e:
-            self.logger.error(f"Error getting frame from camera: {e}")
+            self.logger.error(f"Error getting frame: {e}")
         return None
 
     def update_frame(self, frame):
