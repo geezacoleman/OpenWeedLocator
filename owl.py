@@ -211,7 +211,7 @@ class Owl:
             raise errors.ControllerTypeError(self.config.get('Controller', 'controller_type'))
 
         with self.image_sample_enable.get_lock():
-            if self.controller_type != 'none':
+            if self.controller_type != 'none' or self.web_server:
                 self.image_sample_enable.value = True
             self._image_sample_enable = self.image_sample_enable.value
 
