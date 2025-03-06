@@ -66,10 +66,8 @@ echo -e "${GREEN}[INFO] Running OWLAuthSetup...${NC}"
 sudo python3 "${HOME_DIR}/owl/dev/setup_auth.py" "${DEVICE_ID}" --dashboard --home-dir "${HOME_DIR}"
 check_status "Running OWLAuthSetup"
 
-# setup DHCP for Ip address assignment
-echo -e "${GREEN}[INFO] Configuring DHCP server (dnsmasq)...${NC}"
+# final download before stopping internet connection
 sudo apt-get install -y dnsmasq
-sudo systemctl stop dnsmasq
 
 # Configure WiFi AP
 echo -e "${GREEN}[INFO] Configuring WiFi Access Point...${NC}"
@@ -80,6 +78,7 @@ sudo nmcli con add type wifi ifname wlan0 con-name "$CON_NAME" autoconnect yes \
     wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$AP_PASS"
 check_status "Configuring NetworkManager AP"
 sudo nmcli con up "$CON_NAME"
+sleep 5
 if nmcli con show --active | grep -q "$CON_NAME"; then
     echo -e "${TICK} AP is active."
 else
@@ -88,8 +87,11 @@ else
 fi
 
 # Configure dnsmasq
+echo -e "${GREEN}[INFO] Downl DHCP server (dnsmasq)...${NC}"
+sudo systemctl stop dnsmasq
 cat << EOF | sudo tee /etc/dnsmasq.d/owl.conf
 interface=wlan0
+listen-address=192.168.50.1
 dhcp-range=192.168.50.10,192.168.50.100,24h
 dhcp-option=option:router,192.168.50.1
 dhcp-option=option:dns-server,192.168.50.1
