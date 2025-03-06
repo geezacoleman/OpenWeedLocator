@@ -63,18 +63,45 @@ check_status "Installing dependencies"
 
 # Configure WiFi AP
 echo -e "${GREEN}[INFO] Configuring WiFi Access Point...${NC}"
-sudo nmcli con add type wifi ifname wlan0 con-name "owl-ap" autoconnect yes \
+CON_NAME="OWL-AP-${DEVICE_ID}"
+sudo nmcli con add type wifi ifname wlan0 con-name "$CON_NAME" autoconnect yes \
     ssid "$AP_SSID" mode ap ipv4.method manual \
     ipv4.addresses 192.168.50.1/24 \
     wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$AP_PASS"
 check_status "Configuring NetworkManager AP"
-sudo nmcli con up "owl-ap"
-check_status "Activating OWL-AP connection"
-
+sudo nmcli con up "$CON_NAME"
+if nmcli con show --active | grep -q "$CON_NAME"; then
+    echo -e "${TICK} AP is active."
+else
+    echo -e "${CROSS} Failed to activate AP."
+    exit 1
+fi
 # Run OWLAuthSetup
 echo -e "${GREEN}[INFO] Running OWLAuthSetup...${NC}"
 sudo python3 "${HOME_DIR}/owl/dev/setup_auth.py" "${DEVICE_ID}" --dashboard --home-dir "${HOME_DIR}"
 check_status "Running OWLAuthSetup"
+
+# setup DHCP for Ip address assignment
+echo -e "${GREEN}[INFO] Configuring DHCP server (dnsmasq)...${NC}"
+sudo apt-get install -y dnsmasq
+sudo systemctl stop dnsmasq
+
+# Configure dnsmasq
+cat << EOF | sudo tee /etc/dnsmasq.d/owl.conf
+interface=wlan0
+dhcp-range=192.168.50.10,192.168.50.100,24h
+dhcp-option=option:router,192.168.50.1
+dhcp-option=option:dns-server,192.168.50.1
+address=/owl.local/192.168.50.1
+domain=local
+bogus-priv
+domain-needed
+EOF
+
+# Ensure dnsmasq starts after AP is ready
+sudo systemctl enable dnsmasq
+sudo systemctl restart dnsmasq
+check_status "Configuring DHCP server"
 
 # Restart services
 echo -e "${GREEN}[INFO] Restarting services...${NC}"
@@ -88,6 +115,5 @@ echo -e "${GREEN}[INFO] Setup complete!${NC}"
 echo -e "${GREEN}[INFO] Connect to WiFi: ${AP_SSID} (Password: [hidden]) and access https://owl.local or https://192.168.50.1${NC}"
 echo -e "${GREEN}[INFO] SSH access: ssh ${CURRENT_USER}@192.168.50.1${NC}"
 echo -e "${GREEN}[INFO] Check status with:${NC}"
-echo "  - sudo systemctl status owl-web.service"
 echo "  - nmcli con show"
 echo "  - sudo ufw status"

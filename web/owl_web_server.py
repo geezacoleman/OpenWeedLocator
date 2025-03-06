@@ -58,7 +58,7 @@ class OWLWebServer:
                          template_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates'))
 
         # Video frame handling
-        self.frame_queue = queue.Queue(maxsize=1)
+        self.frame_queue = queue.Queue(maxsize=5)
         self.latest_frame = None
         self.recording = False
         self.frame_buffer = []
@@ -244,16 +244,6 @@ class OWLWebServer:
             gps_text = f"GPS: {self.gps_data['latitude']:.6f}, {self.gps_data['longitude']:.6f}"
             cv2.putText(frame, gps_text, (10, height - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         return frame
-
-    def _connect_to_owl_camera(self):
-        try:
-            self.cam = cv2.VideoCapture(0)
-            if not self.cam.isOpened():
-                self.cam = None
-                self.logger.warning("Failed to connect to camera")
-        except Exception as e:
-            self.logger.error(f"Error connecting to camera: {e}")
-            self.cam = None
 
     def _get_current_frame(self):
         try:
