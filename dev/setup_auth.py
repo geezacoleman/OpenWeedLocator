@@ -80,7 +80,7 @@ class OWLAuthSetup:
         if self.is_dashboard:
             self._run_command(["sudo", "systemctl", "enable", "avahi-daemon"])
             self._run_command(["sudo", "systemctl", "restart", "avahi-daemon"])
-            self._run_command(["sudo", "systemctl", "restart", "networking"])  # Ensure network sync
+            self._run_command(["sudo", "systemctl", "restart", "NetworkManager"])
         return True
 
     def install_dependencies(self) -> bool:
@@ -96,6 +96,12 @@ class OWLAuthSetup:
             self._run_command(["sudo", "ufw", "--force", "enable"])
 
     def generate_ssl_cert(self) -> bool:
+        self.logger.info("Setting up SSL directories")
+        if not os.path.exists(self.ssl_dir):
+            self.logger.info(f"Creating SSL directory: {self.ssl_dir}")
+            os.makedirs(self.ssl_dir, exist_ok=True)
+            os.chmod(self.ssl_dir, 0o750)
+
         self.logger.info("Generating SSL certificate")
         cmd = [
             "sudo", "openssl", "req", "-x509", "-nodes", "-days", "365", "-newkey", "rsa:4096",
