@@ -36,17 +36,31 @@ class OWLAuthSetup:
 
     def _create_directories(self):
         self.logger.info("Creating directories")
-        for dir_path in [self.ssl_dir, self.auth_dir, self.nginx_dir / "sites-available", self.nginx_dir / "sites-enabled"]:
-            os.makedirs(dir_path, exist_ok=True)
-            os.chmod(dir_path, 0o750)
+        for dir_path in [self.ssl_dir, self.auth_dir, self.nginx_dir / "sites-available",
+                         self.nginx_dir / "sites-enabled"]:
+            if not dir_path.exists():
+                self._run_command(["sudo", "mkdir", "-p", str(dir_path)])
+
+            self._run_command(["sudo", "chmod", "750", str(dir_path)])
 
     def _run_command(self, command: list) -> bool:
-        self.logger.info(f"Running command: {' '.join(command)}")
+        safe_command = []
+        for item in command:
+            if isinstance(item, str) and len(item) > 8 and any(
+                    pwd_flag in str(command) for pwd_flag in ['password', 'psk', 'passwd']):
+                safe_command.append('********')
+            else:
+                safe_command.append(item)
+
+        self.logger.info(f"Running command: {' '.join(str(x) for x in safe_command)}")
+
         try:
             subprocess.run(command, check=True, text=True, capture_output=True)
             return True
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"Command failed: {' '.join(command)}\nError: {e.stderr}")
+            safe_stderr = e.stderr.replace(str(command[-1]), "********") if any(
+                pwd_flag in str(command) for pwd_flag in ['password', 'psk', 'passwd']) else e.stderr
+            self.logger.error(f"Command failed: {' '.join(str(x) for x in safe_command)}\nError: {safe_stderr}")
             return False
 
     def _cleanup(self):
@@ -96,12 +110,6 @@ class OWLAuthSetup:
             self._run_command(["sudo", "ufw", "--force", "enable"])
 
     def generate_ssl_cert(self) -> bool:
-        self.logger.info("Setting up SSL directories")
-        if not os.path.exists(self.ssl_dir):
-            self.logger.info(f"Creating SSL directory: {self.ssl_dir}")
-            os.makedirs(self.ssl_dir, exist_ok=True)
-            os.chmod(self.ssl_dir, 0o750)
-
         self.logger.info("Generating SSL certificate")
         cmd = [
             "sudo", "openssl", "req", "-x509", "-nodes", "-days", "365", "-newkey", "rsa:4096",

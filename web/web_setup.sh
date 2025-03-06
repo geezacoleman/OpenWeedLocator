@@ -32,7 +32,7 @@ DEVICE_ID="owl-${OWL_NUMBER}"
 
 # Prompt for AP SSID
 read -p "Enter AP SSID (default: owl-ap-${OWL_NUMBER}): " AP_SSID
-AP_SSID=${AP_SSID:-"owl-${DEVICE_ID}-ap"}
+AP_SSID=${AP_SSID:-"owl-ap"}
 
 # Secure password entry
 while true; do
