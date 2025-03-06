@@ -35,19 +35,39 @@ class OWLAuthSetup:
         self.logger.info("Initializing OWL authentication setup")
 
     def _create_directories(self):
-        self.logger.info("Creating directories")
+        self.logger.info("Creating necessary directories")
 
-        for dir_path in [self.ssl_dir, self.auth_dir, self.nginx_dir / "sites-available",
-                         self.nginx_dir / "sites-enabled"]:
+        directories = [
+            self.ssl_dir,
+            self.auth_dir,
+            self.nginx_dir / "sites-available",
+            self.nginx_dir / "sites-enabled"
+        ]
+
+        for dir_path in directories:
             try:
-                if not os.path.exists(dir_path):
-                    command = ["sudo", "mkdir", "-p", str(dir_path)]
-                    subprocess.run(command, check=True, text=True)
-                subprocess.run(["sudo", "chown", "www-data:www-data", str(dir_path)], check=True, text=True)
-                subprocess.run(["sudo", "chmod", "755", str(dir_path)], check=True, text=True)
-                self.logger.info(f"Created directory: {dir_path}")
+                cmd_create = ["sudo", "mkdir", "-p", str(dir_path)]
+                result = subprocess.run(cmd_create, capture_output=True, text=True)
+                if result.returncode != 0:
+                    self.logger.error(f"Failed to create directory {dir_path}: {result.stderr}")
+                    raise Exception(f"Directory creation failed: {result.stderr}")
+
+                cmd_ownership = ["sudo", "chown", "www-data:www-data", str(dir_path)]
+                result = subprocess.run(cmd_ownership, capture_output=True, text=True)
+                if result.returncode != 0:
+                    self.logger.error(f"Failed to set ownership on {dir_path}: {result.stderr}")
+                    raise Exception(f"Setting ownership failed: {result.stderr}")
+
+                cmd_permissions = ["sudo", "chmod", "750", str(dir_path)]
+                result = subprocess.run(cmd_permissions, capture_output=True, text=True)
+                if result.returncode != 0:
+                    self.logger.error(f"Failed to set permissions on {dir_path}: {result.stderr}")
+                    raise Exception(f"Setting permissions failed: {result.stderr}")
+
+                self.logger.info(f"Successfully created and configured directory: {dir_path}")
+
             except Exception as e:
-                self.logger.error(f"Failed to create directory {dir_path}: {e}")
+                self.logger.error(f"Error setting up directory {dir_path}: {str(e)}")
                 raise
 
     def _run_command(self, command: list) -> bool:
@@ -117,20 +137,41 @@ class OWLAuthSetup:
             self._run_command(["sudo", "ufw", "--force", "enable"])
 
     def generate_ssl_cert(self) -> bool:
+        """Generate SSL certificate with proper permissions."""
         self.logger.info("Generating SSL certificate")
-        cmd = [
-            "sudo", "openssl", "req", "-x509", "-nodes", "-days", "365", "-newkey", "rsa:4096",
-            "-keyout", f"{self.ssl_dir}/nginx-{self.device_id}.key",
-            "-out", f"{self.ssl_dir}/nginx-{self.device_id}.crt",
-            "-subj", f"/CN={self.default_url}"
-        ]
-        success = self._run_command(cmd)
-        if success:
-            self._run_command(["sudo", "chmod", "600", f"{self.ssl_dir}/nginx-{self.device_id}.key"])
-            self._run_command(["sudo", "chmod", "644", f"{self.ssl_dir}/nginx-{self.device_id}.crt"])
-        return success
+
+        # Ensure ssl directory exists with proper permissions
+        ssl_key = f"{self.ssl_dir}/nginx-{self.device_id}.key"
+        ssl_crt = f"{self.ssl_dir}/nginx-{self.device_id}.crt"
+
+        try:
+            # Create certificate and key with direct sudo permission
+            cmd = [
+                "sudo", "openssl", "req", "-x509", "-nodes", "-days", "365", "-newkey", "rsa:4096",
+                "-keyout", ssl_key,
+                "-out", ssl_crt,
+                "-subj", f"/CN={self.default_url}"
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                self.logger.error(f"Failed to generate SSL certificate: {result.stderr}")
+                return False
+
+            subprocess.run(["sudo", "chmod", "600", ssl_key], check=True)
+            subprocess.run(["sudo", "chmod", "644", ssl_crt], check=True)
+            subprocess.run(["sudo", "chown", "www-data:www-data", ssl_key], check=True)
+            subprocess.run(["sudo", "chown", "www-data:www-data", ssl_crt], check=True)
+
+            self.logger.info("SSL certificate generated successfully")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to generate SSL certificate: {str(e)}")
+            return False
 
     def setup_auth(self) -> dict:
+        """Set up authentication with proper permissions."""
         self.logger.info("Setting up authentication")
         auth_file = self.auth_dir / f".htpasswd-{self.device_id}"
         auth_details = {"users": [], "auth_file": str(auth_file)}
@@ -144,6 +185,7 @@ class OWLAuthSetup:
                         print("At least one user is required")
                         continue
                     break
+
                 password = getpass.getpass("Enter password (or press Enter for random): ")
                 if not password:
                     password = secrets.token_urlsafe(12)
@@ -151,17 +193,29 @@ class OWLAuthSetup:
                 while len(password) < 8:
                     print("Password must be at least 8 characters")
                     password = getpass.getpass("Enter password: ")
+
                 confirm = getpass.getpass("Confirm password: ")
                 if password != confirm:
                     print("Passwords do not match")
                     continue
-                cmd = ["sudo", "htpasswd", "-bc" if not auth_details["users"] else "-b", str(auth_file), username, password]
-                if self._run_command(cmd):
+
+                flag = "-bc" if not auth_details["users"] else "-b"
+
+                cmd = ["sudo", "htpasswd", flag, str(auth_file), username, password]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+
+                if result.returncode == 0:
                     auth_details["users"].append({"username": username, "password": password})
+                    self.logger.info(f"Added user: {username}")
                 else:
-                    raise Exception("Failed to add user to htpasswd")
-            self._run_command(["sudo", "chmod", "640", str(auth_file)])
+                    self.logger.error(f"Failed to add user to htpasswd: {result.stderr}")
+                    print(f"Error adding user: {result.stderr}")
+
+            subprocess.run(["sudo", "chmod", "640", str(auth_file)], check=True)
+            subprocess.run(["sudo", "chown", "www-data:www-data", str(auth_file)], check=True)
+
             return auth_details
+
         except KeyboardInterrupt:
             self.logger.error("Authentication setup cancelled")
             return {}
