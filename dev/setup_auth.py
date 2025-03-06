@@ -36,12 +36,19 @@ class OWLAuthSetup:
 
     def _create_directories(self):
         self.logger.info("Creating directories")
+
         for dir_path in [self.ssl_dir, self.auth_dir, self.nginx_dir / "sites-available",
                          self.nginx_dir / "sites-enabled"]:
-            if not dir_path.exists():
-                self._run_command(["sudo", "mkdir", "-p", str(dir_path)])
-
-            self._run_command(["sudo", "chmod", "750", str(dir_path)])
+            try:
+                if not os.path.exists(dir_path):
+                    command = ["sudo", "mkdir", "-p", str(dir_path)]
+                    subprocess.run(command, check=True, text=True)
+                subprocess.run(["sudo", "chown", "www-data:www-data", str(dir_path)], check=True, text=True)
+                subprocess.run(["sudo", "chmod", "755", str(dir_path)], check=True, text=True)
+                self.logger.info(f"Created directory: {dir_path}")
+            except Exception as e:
+                self.logger.error(f"Failed to create directory {dir_path}: {e}")
+                raise
 
     def _run_command(self, command: list) -> bool:
         safe_command = []
