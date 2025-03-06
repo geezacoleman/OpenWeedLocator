@@ -61,6 +61,16 @@ sudo apt update
 sudo apt install -y nginx apache2-utils avahi-daemon ufw
 check_status "Installing dependencies"
 
+# Run OWLAuthSetup
+echo -e "${GREEN}[INFO] Running OWLAuthSetup...${NC}"
+sudo python3 "${HOME_DIR}/owl/dev/setup_auth.py" "${DEVICE_ID}" --dashboard --home-dir "${HOME_DIR}"
+check_status "Running OWLAuthSetup"
+
+# setup DHCP for Ip address assignment
+echo -e "${GREEN}[INFO] Configuring DHCP server (dnsmasq)...${NC}"
+sudo apt-get install -y dnsmasq
+sudo systemctl stop dnsmasq
+
 # Configure WiFi AP
 echo -e "${GREEN}[INFO] Configuring WiFi Access Point...${NC}"
 CON_NAME="OWL-AP-${DEVICE_ID}"
@@ -76,15 +86,6 @@ else
     echo -e "${CROSS} Failed to activate AP."
     exit 1
 fi
-# Run OWLAuthSetup
-echo -e "${GREEN}[INFO] Running OWLAuthSetup...${NC}"
-sudo python3 "${HOME_DIR}/owl/dev/setup_auth.py" "${DEVICE_ID}" --dashboard --home-dir "${HOME_DIR}"
-check_status "Running OWLAuthSetup"
-
-# setup DHCP for Ip address assignment
-echo -e "${GREEN}[INFO] Configuring DHCP server (dnsmasq)...${NC}"
-sudo apt-get install -y dnsmasq
-sudo systemctl stop dnsmasq
 
 # Configure dnsmasq
 cat << EOF | sudo tee /etc/dnsmasq.d/owl.conf
