@@ -93,10 +93,10 @@ wpa_key_mgmt=WPA-PSK
 rsn_pairwise=CCMP
 EOF
 sudo sed -i 's|#DAEMON_CONF=""|DAEMON_CONF="/etc/hostapd/hostapd.conf"|' /etc/default/hostapd
-sudo systemctl unmask hostapd  # Ensure hostapd isn’t masked
+sudo systemctl unmask hostapd
 sudo systemctl enable hostapd
 sudo systemctl restart hostapd
-sleep 5  # Wait for AP to stabilize
+sleep 5
 check_status "Configured and started hostapd"
 
 # Configure dnsmasq
