@@ -35,7 +35,7 @@ class OWLAuthSetup:
         self.logger.info("Initializing OWL authentication setup")
 
     def _create_directories(self):
-        self.logger.info("Creating necessary directories")
+        self.logger.info("Ensuring necessary directories exist")
 
         directories = [
             self.ssl_dir,
@@ -46,28 +46,16 @@ class OWLAuthSetup:
 
         for dir_path in directories:
             try:
-                cmd_create = ["sudo", "mkdir", "-p", str(dir_path)]
-                result = subprocess.run(cmd_create, capture_output=True, text=True)
-                if result.returncode != 0:
-                    self.logger.error(f"Failed to create directory {dir_path}: {result.stderr}")
-                    raise Exception(f"Directory creation failed: {result.stderr}")
+                os.makedirs(dir_path, exist_ok=True)
+                self.logger.info(f"Created directory: {dir_path}")
 
-                cmd_ownership = ["sudo", "chown", "www-data:www-data", str(dir_path)]
-                result = subprocess.run(cmd_ownership, capture_output=True, text=True)
-                if result.returncode != 0:
-                    self.logger.error(f"Failed to set ownership on {dir_path}: {result.stderr}")
-                    raise Exception(f"Setting ownership failed: {result.stderr}")
-
-                cmd_permissions = ["sudo", "chmod", "750", str(dir_path)]
-                result = subprocess.run(cmd_permissions, capture_output=True, text=True)
-                if result.returncode != 0:
-                    self.logger.error(f"Failed to set permissions on {dir_path}: {result.stderr}")
-                    raise Exception(f"Setting permissions failed: {result.stderr}")
-
-                self.logger.info(f"Successfully created and configured directory: {dir_path}")
+                if dir_path.exists():
+                    subprocess.run(["sudo", "chown", "www-data:www-data", str(dir_path)], check=True)
+                    subprocess.run(["sudo", "chmod", "750", str(dir_path)], check=True)
+                    self.logger.info(f"Set ownership and permissions for: {dir_path}")
 
             except Exception as e:
-                self.logger.error(f"Error setting up directory {dir_path}: {str(e)}")
+                self.logger.error(f"Error ensuring directory {dir_path}: {str(e)}")
                 raise
 
     def _run_command(self, command: list) -> bool:
