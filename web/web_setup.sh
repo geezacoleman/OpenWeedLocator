@@ -55,16 +55,16 @@ sudo apt update
 sudo apt install -y hostapd dnsmasq dhcpcd nginx apache2-utils avahi-daemon ufw
 check_status "Installing dependencies"
 
+# Run OWLAuthSetup (Handles SSL, Authentication, etc.)
+echo -e "${GREEN}[INFO] Running OWLAuthSetup...${NC}"
+sudo python3 "${HOME_DIR}/owl/dev/setup_auth.py" "${DEVICE_ID}" --dashboard --home-dir "${HOME_DIR}"
+check_status "Running OWLAuthSetup"
+
 # Disable NetworkManager to avoid conflicts
 echo -e "${GREEN}[INFO] Disabling NetworkManager...${NC}"
 sudo systemctl stop NetworkManager
 sudo systemctl disable NetworkManager
 check_status "Disabled NetworkManager"
-
-# Run OWLAuthSetup (Handles SSL, Authentication, etc.)
-echo -e "${GREEN}[INFO] Running OWLAuthSetup...${NC}"
-sudo python3 "${HOME_DIR}/owl/dev/setup_auth.py" "${DEVICE_ID}" --dashboard --home-dir "${HOME_DIR}"
-check_status "Running OWLAuthSetup"
 
 # Configure static IP for wlan0 with dhcpcd
 echo -e "${GREEN}[INFO] Configuring network interface...${NC}"
@@ -101,7 +101,7 @@ check_status "Configured and started hostapd"
 
 # Configure dnsmasq
 echo -e "${GREEN}[INFO] Setting up DHCP server (dnsmasq)...${NC}"
-cat << EOF | sudo tee /etc/dnsmasq.d/owl.conf
+cat << EOF | sudo tee /etc/dnsmasq.conf
 interface=wlan0
 dhcp-range=192.168.50.10,192.168.50.100,24h
 dhcp-option=option:router,192.168.50.1
