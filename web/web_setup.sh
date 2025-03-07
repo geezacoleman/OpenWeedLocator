@@ -4,16 +4,13 @@ set -e
 # Define colors for status messages
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-ORANGE='\033[0;33m'
 NC='\033[0m'
 TICK="${GREEN}[OK]${NC}"
 CROSS="${RED}[FAIL]${NC}"
 
-# Script directory
-SCRIPT_DIR=$(dirname "$(realpath "$0")")
+# Get current user and home directory
 CURRENT_USER=${SUDO_USER:-$(whoami)}
 HOME_DIR=$(getent passwd "$CURRENT_USER" | cut -d: -f6)
-echo "${HOME_DIR}"
 
 # Function to check status
 check_status() {
@@ -29,10 +26,7 @@ check_status() {
 read -p "Enter OWL device number (default: 1): " OWL_NUMBER
 OWL_NUMBER=${OWL_NUMBER:-"1"}
 DEVICE_ID="owl-${OWL_NUMBER}"
-
-# Prompt for AP SSID
-read -p "Enter AP SSID (default: owl-ap-${OWL_NUMBER}): " AP_SSID
-AP_SSID=${AP_SSID:-"owl-ap"}
+AP_SSID="owl-ap-${OWL_NUMBER}"
 
 # Secure password entry
 while true; do
@@ -40,13 +34,13 @@ while true; do
     read -s AP_PASS
     echo
     if [ ${#AP_PASS} -lt 8 ]; then
-        echo -e "${ORANGE}[WARNING] Password must be at least 8 characters. Please try again.${NC}"
+        echo -e "${RED}[WARNING] Password must be at least 8 characters. Please try again.${NC}"
     else
         echo -n "Confirm AP password: "
         read -s AP_PASS_CONFIRM
         echo
         if [ "$AP_PASS" != "$AP_PASS_CONFIRM" ]; then
-            echo -e "${ORANGE}[WARNING] Passwords do not match. Please try again.${NC}"
+            echo -e "${RED}[WARNING] Passwords do not match. Please try again.${NC}"
         else
             break
         fi
@@ -58,40 +52,57 @@ echo -e "${GREEN}[INFO] Setting up OWL Web Interface and Access Point...${NC}"
 # Install dependencies
 echo -e "${GREEN}[INFO] Installing dependencies...${NC}"
 sudo apt update
-sudo apt install -y nginx apache2-utils avahi-daemon ufw
+sudo apt install -y hostapd dnsmasq dhcpcd nginx apache2-utils avahi-daemon ufw
 check_status "Installing dependencies"
 
-# Run OWLAuthSetup
+# Disable NetworkManager to avoid conflicts
+echo -e "${GREEN}[INFO] Disabling NetworkManager...${NC}"
+sudo systemctl stop NetworkManager
+sudo systemctl disable NetworkManager
+check_status "Disabled NetworkManager"
+
+# Run OWLAuthSetup (Handles SSL, Authentication, etc.)
 echo -e "${GREEN}[INFO] Running OWLAuthSetup...${NC}"
 sudo python3 "${HOME_DIR}/owl/dev/setup_auth.py" "${DEVICE_ID}" --dashboard --home-dir "${HOME_DIR}"
 check_status "Running OWLAuthSetup"
 
-# final download before stopping internet connection
-sudo apt-get install -y dnsmasq
+# Configure static IP for wlan0 with dhcpcd
+echo -e "${GREEN}[INFO] Configuring network interface...${NC}"
+cat << EOF | sudo tee -a /etc/dhcpcd.conf
+interface wlan0
+static ip_address=192.168.50.1/24
+nohook wpa_supplicant
+EOF
+sudo systemctl restart dhcpcd
+check_status "Configured dhcpcd"
 
-# Configure WiFi AP
-echo -e "${GREEN}[INFO] Configuring WiFi Access Point...${NC}"
-CON_NAME="OWL-AP-${DEVICE_ID}"
-sudo nmcli con add type wifi ifname wlan0 con-name "$CON_NAME" autoconnect yes \
-    ssid "$AP_SSID" mode ap ipv4.method manual \
-    ipv4.addresses 192.168.50.1/24 \
-    wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$AP_PASS"
-check_status "Configuring NetworkManager AP"
-sudo nmcli con up "$CON_NAME"
-sleep 5
-if nmcli con show --active | grep -q "$CON_NAME"; then
-    echo -e "${TICK} AP is active."
-else
-    echo -e "${CROSS} Failed to activate AP."
-    exit 1
-fi
+# Configure hostapd
+echo -e "${GREEN}[INFO] Setting up Wi-Fi Access Point...${NC}"
+cat << EOF | sudo tee /etc/hostapd/hostapd.conf
+interface=wlan0
+ssid=${AP_SSID}
+hw_mode=g
+channel=7
+wmm_enabled=0
+macaddr_acl=0
+auth_algs=1
+ignore_broadcast_ssid=0
+wpa=2
+wpa_passphrase=${AP_PASS}
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+EOF
+sudo sed -i 's|#DAEMON_CONF=""|DAEMON_CONF="/etc/hostapd/hostapd.conf"|' /etc/default/hostapd
+sudo systemctl unmask hostapd  # Ensure hostapd isn’t masked
+sudo systemctl enable hostapd
+sudo systemctl restart hostapd
+sleep 5  # Wait for AP to stabilize
+check_status "Configured and started hostapd"
 
 # Configure dnsmasq
-echo -e "${GREEN}[INFO] Downl DHCP server (dnsmasq)...${NC}"
-sudo systemctl stop dnsmasq
+echo -e "${GREEN}[INFO] Setting up DHCP server (dnsmasq)...${NC}"
 cat << EOF | sudo tee /etc/dnsmasq.d/owl.conf
 interface=wlan0
-listen-address=192.168.50.1
 dhcp-range=192.168.50.10,192.168.50.100,24h
 dhcp-option=option:router,192.168.50.1
 dhcp-option=option:dns-server,192.168.50.1
@@ -100,23 +111,20 @@ domain=local
 bogus-priv
 domain-needed
 EOF
-
-# Ensure dnsmasq starts after AP is ready
 sudo systemctl enable dnsmasq
 sudo systemctl restart dnsmasq
-check_status "Configuring DHCP server"
+check_status "Configured and started dnsmasq"
 
-# Restart services
-echo -e "${GREEN}[INFO] Restarting services...${NC}"
-sudo systemctl restart nginx
-sudo systemctl restart avahi-daemon
-sudo systemctl restart ssh
-check_status "Restarting services"
+# Restart additional services
+echo -e "${GREEN}[INFO] Restarting additional services...${NC}"
+sudo systemctl restart nginx avahi-daemon ssh
+check_status "Restarted services"
 
-# Display access information
 echo -e "${GREEN}[INFO] Setup complete!${NC}"
-echo -e "${GREEN}[INFO] Connect to WiFi: ${AP_SSID} (Password: [hidden]) and access https://owl.local or https://192.168.50.1${NC}"
-echo -e "${GREEN}[INFO] SSH access: ssh ${CURRENT_USER}@192.168.50.1${NC}"
+echo -e "${GREEN}[INFO] Connect to WiFi: ${AP_SSID} (Password: [hidden])${NC}"
+echo -e "${GREEN}[INFO] Access OWL securely at: https://owl.local or https://192.168.50.1${NC}"
+echo -e "${GREEN}[INFO] Note: You may need to accept the self-signed certificate warning in your browser.${NC}"
 echo -e "${GREEN}[INFO] Check status with:${NC}"
-echo "  - nmcli con show"
+echo "  - sudo systemctl status hostapd"
+echo "  - sudo systemctl status dnsmasq"
 echo "  - sudo ufw status"
