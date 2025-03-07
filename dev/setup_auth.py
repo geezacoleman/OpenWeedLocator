@@ -109,7 +109,6 @@ class OWLAuthSetup:
         if self.is_dashboard:
             self._run_command(["sudo", "systemctl", "enable", "avahi-daemon"])
             self._run_command(["sudo", "systemctl", "restart", "avahi-daemon"])
-            self._run_command(["sudo", "systemctl", "restart", "NetworkManager"])
         return True
 
     def install_dependencies(self) -> bool:
@@ -121,6 +120,8 @@ class OWLAuthSetup:
             self._run_command(["sudo", "apt", "install", "-y"] + pkgs) and \
             self._run_command(["sudo", "ufw", "allow", "22/tcp"]) and \
             self._run_command(["sudo", "ufw", "allow", "80/tcp"]) and \
+            self._run_command(["sudo", "ufw", "allow", "53/udp"]) and \
+            self._run_command(["sudo", "ufw", "allow", "67/udp"]) and \
             self._run_command(["sudo", "ufw", "allow", "443/tcp"]) and \
             self._run_command(["sudo", "ufw", "--force", "enable"])
 
@@ -236,19 +237,25 @@ class OWLAuthSetup:
         location / {{
             limit_req zone=authlimit burst=10;
             autoindex off;
-            proxy_pass http://localhost:5000;
+            proxy_pass http://127.0.0.1:5000;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection "upgrade";
             proxy_read_timeout 86400;
+            proxy_connect_timeout 90;
+            proxy_send_timeout 90;
         }}
 
         location /video_feed {{
-            proxy_pass http://localhost:5000/video_feed;
+            proxy_pass http://127.0.0.1:5000/video_feed;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
             proxy_buffering off;  # Critical for MJPEG streaming
             proxy_cache off;
             chunked_transfer_encoding off;
@@ -264,16 +271,90 @@ class OWLAuthSetup:
         try:
             config_path = self.nginx_dir / f"sites-available/{self.device_id}"
             enabled_path = self.nginx_dir / f"sites-enabled/{self.device_id}"
+
+            # Ensure default site is not conflicting
+            default_site = self.nginx_dir / "sites-enabled/default"
+            if default_site.exists():
+                self.logger.info("Removing default nginx site configuration")
+                default_site.unlink()
+
             with open(config_path, 'w') as f:
                 f.write(config)
+
+            # Ensure proper permissions
+            self._run_command(["sudo", "chown", "root:root", str(config_path)])
+            self._run_command(["sudo", "chmod", "644", str(config_path)])
+
             if enabled_path.exists():
                 self.logger.warning(f"Overwriting existing symlink at {enabled_path}")
                 enabled_path.unlink()
+
             os.symlink(config_path, enabled_path)
-            return self._run_command(["sudo", "nginx", "-t"]) and \
-                self._run_command(["sudo", "systemctl", "reload", "nginx"])
+
+            # Test configuration and reload nginx
+            if not self._run_command(["sudo", "nginx", "-t"]):
+                self.logger.error("nginx configuration test failed")
+                return False
+
+            return self._run_command(["sudo", "systemctl", "reload", "nginx"])
         except Exception as e:
             self.logger.error(f"Failed to configure nginx: {e}")
+            return False
+
+    def optimize_nginx(self) -> bool:
+        """Add performance optimizations for nginx."""
+        self.logger.info("Adding nginx performance optimizations")
+
+        try:
+            # Create the conf.d directory if it doesn't exist
+            conf_d_path = self.nginx_dir / "conf.d"
+            os.makedirs(conf_d_path, exist_ok=True)
+
+            # Create performance configuration file
+            perf_config = """# Nginx performance optimizations
+    proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=owl_cache:10m max_size=100m inactive=60m;
+    proxy_temp_path /var/cache/nginx/temp;
+
+    # Compression settings
+    gzip on;
+    gzip_comp_level 5;
+    gzip_min_length 256;
+    gzip_proxied any;
+    gzip_vary on;
+    gzip_types
+      application/javascript
+      application/json
+      text/css
+      text/plain;
+
+    # Connection optimization
+    keepalive_timeout 65;
+    keepalive_requests 100;
+    client_body_timeout 10;
+    client_header_timeout 10;
+    send_timeout 10;
+    """
+
+            perf_config_path = conf_d_path / "performance.conf"
+            with open(perf_config_path, "w") as f:
+                f.write(perf_config)
+
+            self._run_command(["sudo", "chown", "root:root", str(perf_config_path)])
+            self._run_command(["sudo", "chmod", "644", str(perf_config_path)])
+
+            # Create cache directories
+            cache_dir = "/var/cache/nginx"
+            temp_dir = "/var/cache/nginx/temp"
+
+            self._run_command(["sudo", "mkdir", "-p", cache_dir])
+            self._run_command(["sudo", "mkdir", "-p", temp_dir])
+            self._run_command(["sudo", "chown", "-R", "www-data:www-data", cache_dir])
+
+            self.logger.info("nginx performance optimizations added")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"nginx optimization failed: {e}")
             return False
 
     def save_credentials(self, auth_details: dict) -> bool:
@@ -311,6 +392,8 @@ class OWLAuthSetup:
                 raise Exception("Failed to set up hostname")
             if not self.generate_ssl_cert():
                 raise Exception("Failed to generate SSL certificate")
+            if not self.optimize_nginx():
+                raise Exception("Failed to add nginx performance optimizations")
             auth_details = self.setup_auth()
             if not auth_details:
                 raise Exception("Failed to set up authentication")
@@ -322,6 +405,7 @@ class OWLAuthSetup:
             # Restart services to apply changes
             self._run_command(["sudo", "systemctl", "restart", "nginx"])
             self._run_command(["sudo", "systemctl", "restart", "avahi-daemon"])
+            self._run_command(["sudo", "systemctl", "restart", "dnsmasq"])
             self._run_command(["sudo", "systemctl", "restart", "ssh"])
 
             results["status"] = "success"
