@@ -102,18 +102,70 @@ check_status "Configured and started hostapd"
 # Configure dnsmasq
 echo -e "${GREEN}[INFO] Setting up DHCP server (dnsmasq)...${NC}"
 cat << EOF | sudo tee /etc/dnsmasq.conf
+# OWL DHCP and DNS Configuration
 interface=wlan0
-dhcp-range=192.168.50.10,192.168.50.100,24h
+dhcp-range=192.168.50.10,192.168.50.100,255.255.255.0,24h
 dhcp-option=option:router,192.168.50.1
 dhcp-option=option:dns-server,192.168.50.1
-address=/owl.local/192.168.50.1
+
+# Domain name handling
 domain=local
+expand-hosts
+local=/local/
+
+# Add specific local domain mapping
+address=/owl.local/192.168.50.1
+
+# Forward .local queries to Avahi for mDNS resolution
+server=/local/127.0.0.1#5353
+
+# General settings
 bogus-priv
 domain-needed
+no-resolv
 EOF
 sudo systemctl enable dnsmasq
 sudo systemctl restart dnsmasq
 check_status "Configured and started dnsmasq"
+
+# Make sure to update /etc/hosts explicitly
+echo -e "${GREEN}[INFO] Updating hosts file...${NC}"
+if ! grep -q "owl.local" /etc/hosts; then
+    echo "192.168.50.1 owl.local" | sudo tee -a /etc/hosts
+    check_status "Updated hosts file"
+fi
+
+# Configure Avahi
+echo -e "${GREEN}[INFO] Configuring Avahi for mDNS...${NC}"
+cat << EOF | sudo tee /etc/avahi/avahi-daemon.conf
+[server]
+host-name=owl
+domain-name=local
+use-ipv4=yes
+use-ipv6=no
+enable-dbus=yes
+allow-interfaces=wlan0
+ratelimit-interval-usec=1000000
+ratelimit-burst=1000
+
+[publish]
+publish-addresses=yes
+publish-hinfo=no
+publish-workstation=no
+publish-domain=yes
+
+[reflector]
+enable-reflector=no
+
+[rlimits]
+rlimit-core=0
+rlimit-data=8388608
+rlimit-fsize=0
+rlimit-nofile=768
+rlimit-stack=8388608
+EOF
+sudo systemctl restart avahi-daemon
+check_status "Configured Avahi"
 
 # Restart additional services
 echo -e "${GREEN}[INFO] Restarting additional services...${NC}"

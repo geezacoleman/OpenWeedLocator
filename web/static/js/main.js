@@ -1,6 +1,6 @@
 /**
- * OWL Web Interface
- * Simplified JavaScript for monitoring, GPS, and detection/recording control
+ * OWL Web Interface - Optimized Version
+ * Improved JavaScript for monitoring, GPS, and detection/recording control
  */
 
 let isGpsEnabled = true;
@@ -10,8 +10,10 @@ let isRecording = false;
 let recordingStartTime = null;
 let zoomLevel = 1;
 let updateInterval = null;
+let pendingRequests = {};
 const MAX_RECORDING_TIME = 30; // seconds
 const ESTIMATED_BITRATE = 2000000; // bits per second
+const SYSTEM_UPDATE_INTERVAL = 5000; // Reduced polling frequency
 const zoomStep = 0.2;
 const maxZoom = 3;
 const minZoom = 1;
@@ -20,15 +22,10 @@ document.addEventListener('DOMContentLoaded', function() {
     initTabs();
     initZoom();
     initGPS();
+    initControlButtons();
 
     // Start periodic updates
     startUpdateInterval();
-
-    // Set up button handlers
-    document.getElementById('downloadFrame')?.addEventListener('click', downloadFrame);
-    document.getElementById('recordButton')?.addEventListener('click', toggleRecording);
-    document.getElementById('start-detection')?.addEventListener('click', startDetection);
-    document.getElementById('stop-detection')?.addEventListener('click', stopDetection);
 });
 
 /**
@@ -48,6 +45,46 @@ function initTabs() {
     });
     const firstTab = document.querySelector('.nav-tab');
     if (firstTab) firstTab.click();
+}
+
+/**
+ * Initialize control buttons with debouncing
+ */
+function initControlButtons() {
+    const buttons = {
+        'downloadFrame': downloadFrame,
+        'recordButton': toggleRecording,
+        'start-detection': startDetection,
+        'stop-detection': stopDetection
+    };
+
+    Object.entries(buttons).forEach(([id, handler]) => {
+        const button = document.getElementById(id);
+        if (button) {
+            button.addEventListener('click', function(e) {
+                e.preventDefault();
+
+                // Prevent multiple clicks
+                if (this.classList.contains('disabled')) return;
+
+                // Visual feedback
+                this.classList.add('disabled');
+                const originalText = this.textContent;
+                this.innerHTML = '<div class="spinner-small"></div>';
+
+                // Execute handler with debouncing
+                handler.call(this);
+
+                // Reset button after 2 seconds regardless of response
+                setTimeout(() => {
+                    if (id !== 'recordButton' || !isRecording) {
+                        this.innerHTML = originalText;
+                    }
+                    this.classList.remove('disabled');
+                }, 2000);
+            });
+        }
+    });
 }
 
 /**
@@ -87,14 +124,59 @@ function updateZoom() {
 }
 
 /**
- * Download current frame
+ * API request with timeout and abort controller
+ */
+function apiRequest(url, options = {}, timeout = 10000) {
+    // Cancel any pending request to the same endpoint
+    if (pendingRequests[url]) {
+        pendingRequests[url].abort();
+    }
+
+    // Create new abort controller
+    const controller = new AbortController();
+    pendingRequests[url] = controller;
+
+    // Set up timeout
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+    // Merge options with signal
+    const fetchOptions = {
+        ...options,
+        signal: controller.signal,
+        cache: 'no-store', // Prevent caching
+        headers: {
+            ...options.headers,
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache'
+        }
+    };
+
+    // Make request
+    return fetch(url, fetchOptions)
+        .then(response => {
+            clearTimeout(timeoutId);
+            delete pendingRequests[url];
+            if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+            return response;
+        })
+        .catch(error => {
+            clearTimeout(timeoutId);
+            delete pendingRequests[url];
+            if (error.name === 'AbortError') {
+                throw new Error('Request timed out');
+            }
+            throw error;
+        });
+}
+
+/**
+ * Download current frame with optimized handling
  */
 function downloadFrame() {
-    fetch('/api/download_frame', { method: 'POST' })
-        .then(response => {
-            if (!response.ok) throw new Error('Frame not available');
-            return response.blob();
-        })
+    showNotification('Info', 'Downloading current frame...', 'info');
+
+    apiRequest('/api/download_frame', { method: 'POST' })
+        .then(response => response.blob())
         .then(blob => {
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -108,11 +190,14 @@ function downloadFrame() {
             document.body.removeChild(a);
             showNotification('Success', 'Frame downloaded successfully', 'success');
         })
-        .catch(error => showNotification('Error', error.message, 'error'));
+        .catch(error => {
+            showNotification('Error', error.message || 'Failed to download frame', 'error');
+            console.error('Download frame error:', error);
+        });
 }
 
 /**
- * Toggle recording state
+ * Toggle recording state with optimized handling
  */
 function toggleRecording() {
     const button = document.getElementById('recordButton');
@@ -120,7 +205,9 @@ function toggleRecording() {
     if (!button || !statusElement) return;
 
     if (!isRecording) {
-        fetch('/api/recording/start', { method: 'POST' })
+        showNotification('Info', 'Starting recording...', 'info');
+
+        apiRequest('/api/recording/start', { method: 'POST' })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
@@ -136,15 +223,17 @@ function toggleRecording() {
                     throw new Error(data.message || 'Failed to start recording');
                 }
             })
-            .catch(error => showNotification('Error', error.message, 'error'));
+            .catch(error => {
+                showNotification('Error', error.message || 'Failed to start recording', 'error');
+                console.error('Recording start error:', error);
+            });
     } else {
         button.disabled = true;
         button.innerHTML = '<div class="spinner"></div>';
-        fetch('/api/recording/stop', { method: 'POST' })
-            .then(response => {
-                if (!response.ok) throw new Error('Recording failed');
-                return response.blob();
-            })
+        showNotification('Info', 'Stopping recording and downloading...', 'info');
+
+        apiRequest('/api/recording/stop', { method: 'POST' }, 30000) // Longer timeout for video processing
+            .then(response => response.blob())
             .then(blob => {
                 isRecording = false;
                 button.disabled = false;
@@ -155,6 +244,8 @@ function toggleRecording() {
                     clearInterval(window.recordingInterval);
                     window.recordingInterval = null;
                 }
+
+                // Download the video file
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.style.display = 'none';
@@ -165,6 +256,7 @@ function toggleRecording() {
                 a.click();
                 window.URL.revokeObjectURL(url);
                 document.body.removeChild(a);
+
                 showNotification('Success', 'Recording saved and downloaded', 'success');
             })
             .catch(error => {
@@ -177,7 +269,8 @@ function toggleRecording() {
                     clearInterval(window.recordingInterval);
                     window.recordingInterval = null;
                 }
-                showNotification('Error', error.message, 'error');
+                showNotification('Error', error.message || 'Failed to save recording', 'error');
+                console.error('Recording stop error:', error);
             });
     }
 }
@@ -188,35 +281,60 @@ function toggleRecording() {
 function updateRecordingStatus() {
     const statusElement = document.getElementById('recordingStatus');
     if (!statusElement || !isRecording) return;
+
     const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
     const remaining = MAX_RECORDING_TIME - elapsed;
     const estimatedSize = Math.max(1, Math.floor((elapsed * ESTIMATED_BITRATE) / (8 * 1024 * 1024)));
+
     let gpsStatus = gpsData ? `GPS: ±${gpsData.accuracy.toFixed(1)}m` : '';
     statusElement.innerHTML = `Recording: ${remaining}s remaining<br>Estimated Size: ~${estimatedSize}MB${gpsStatus ? '<br>' + gpsStatus : ''}`;
+
     if (elapsed >= MAX_RECORDING_TIME) toggleRecording();
 }
 
 /**
- * Start/stop detection
+ * Start/stop detection with optimized handling
  */
 function startDetection() {
-    fetch('/api/detection/start', { method: 'POST' })
+    showNotification('Info', 'Starting detection...', 'info');
+
+    apiRequest('/api/detection/start', { method: 'POST' })
         .then(response => response.json())
         .then(data => {
-            if (data.success) showNotification('Success', data.message, 'success');
-            else showNotification('Error', data.message, 'error');
+            if (data.success) {
+                showNotification('Success', data.message || 'Detection started', 'success');
+                // Update UI immediately without waiting for next poll
+                const detectionElement = document.getElementById('detectionStatus');
+                if (detectionElement) detectionElement.textContent = 'Enabled';
+            } else {
+                throw new Error(data.message || 'Failed to start detection');
+            }
         })
-        .catch(error => showNotification('Error', error.message, 'error'));
+        .catch(error => {
+            showNotification('Error', error.message || 'Failed to start detection', 'error');
+            console.error('Detection start error:', error);
+        });
 }
 
 function stopDetection() {
-    fetch('/api/detection/stop', { method: 'POST' })
+    showNotification('Info', 'Stopping detection...', 'info');
+
+    apiRequest('/api/detection/stop', { method: 'POST' })
         .then(response => response.json())
         .then(data => {
-            if (data.success) showNotification('Success', data.message, 'success');
-            else showNotification('Error', data.message, 'error');
+            if (data.success) {
+                showNotification('Success', data.message || 'Detection stopped', 'success');
+                // Update UI immediately without waiting for next poll
+                const detectionElement = document.getElementById('detectionStatus');
+                if (detectionElement) detectionElement.textContent = 'Disabled';
+            } else {
+                throw new Error(data.message || 'Failed to stop detection');
+            }
         })
-        .catch(error => showNotification('Error', error.message, 'error'));
+        .catch(error => {
+            showNotification('Error', error.message || 'Failed to stop detection', 'error');
+            console.error('Detection stop error:', error);
+        });
 }
 
 /**
@@ -233,14 +351,20 @@ function initGPS() {
 }
 
 /**
- * GPS functions
+ * GPS functions with optimized handling
  */
 function startGPS() {
     if (!('geolocation' in navigator)) {
         updateGPSStatus(null, 'GPS not available');
         return;
     }
-    const options = { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 };
+
+    const options = {
+        enableHighAccuracy: true,
+        timeout: 5000,
+        maximumAge: 10000  // Accept locations up to 10 seconds old to reduce power consumption
+    };
+
     gpsWatchId = navigator.geolocation.watchPosition(handleGPSSuccess, handleGPSError, options);
 }
 
@@ -265,12 +389,23 @@ function handleGPSSuccess(position) {
         accuracy: position.coords.accuracy,
         timestamp: new Date().toISOString()
     };
+
     updateGPSStatus(gpsData.accuracy);
-    fetch('/api/update_gps', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(gpsData)
-    });
+
+    // Only send GPS updates to server if it changed significantly
+    if (!window.lastGpsSent ||
+        Math.abs(window.lastGpsSent.latitude - gpsData.latitude) > 0.0001 ||
+        Math.abs(window.lastGpsSent.longitude - gpsData.longitude) > 0.0001 ||
+        Math.abs(window.lastGpsSent.accuracy - gpsData.accuracy) > 1) {
+
+        window.lastGpsSent = {...gpsData};
+
+        apiRequest('/api/update_gps', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(gpsData)
+        }).catch(error => console.error('GPS update error:', error));
+    }
 }
 
 function handleGPSError(error) {
@@ -312,14 +447,14 @@ function updateGPSStatus(accuracy, errorMessage = null) {
 function startUpdateInterval() {
     if (updateInterval) clearInterval(updateInterval);
     updateSystemStats();
-    updateInterval = setInterval(updateSystemStats, 3000);
+    updateInterval = setInterval(updateSystemStats, SYSTEM_UPDATE_INTERVAL);
 }
 
 /**
- * Update system statistics
+ * Update system statistics with optimized handling
  */
 function updateSystemStats() {
-    fetch('/api/system_stats')
+    apiRequest('/api/system_stats')
         .then(response => response.json())
         .then(data => {
             const cpuElement = document.getElementById('cpuValue');
@@ -331,17 +466,17 @@ function updateSystemStats() {
             const tempElement = document.getElementById('tempValue');
             if (tempElement) {
                 tempElement.textContent = `${data.cpu_temp}°C`;
-                cpuElement.style.color = getColorForValue(data.cpu_temp, 85);
+                tempElement.style.color = getColorForValue(data.cpu_temp, 85);
             }
 
             const detectionElement = document.getElementById('detectionStatus');
             if (detectionElement) {
-                detectionElement.textContent = data.detection_enabled ? 'Enabled' : 'Disabled';
+                detectionElement.textContent = data.detection_enable ? 'Enabled' : 'Disabled';
             }
 
             const recordingTextElement = document.getElementById('recordingStatusText');
             if (recordingTextElement) {
-                recordingTextElement.textContent = data.recording_enabled ? 'Recording' : 'Stopped';
+                recordingTextElement.textContent = data.recording_enable ? 'Recording' : 'Stopped';
             }
 
             const timestampElement = document.getElementById('statusTimestamp');
@@ -362,11 +497,17 @@ function getColorForValue(value, max) {
 }
 
 /**
- * Show notification
+ * Show notification with improved handling
  */
-function showNotification(title, message, type = 'info') {
+function showNotification(title, message, type = 'info', duration = 5000) {
     const container = document.getElementById('notifications');
     if (!container) return;
+
+    // Limit number of notifications
+    const existingNotifications = container.querySelectorAll('.notification');
+    if (existingNotifications.length > 5) {
+        container.removeChild(existingNotifications[0]);
+    }
 
     const notification = document.createElement('div');
     notification.className = `notification ${type}`;
@@ -381,20 +522,59 @@ function showNotification(title, message, type = 'info') {
     const closeButton = notification.querySelector('.notification-close');
     closeButton.addEventListener('click', function() {
         notification.style.animation = 'slide-out 0.3s forwards';
-        setTimeout(() => container.removeChild(notification), 300);
+        setTimeout(() => {
+            if (notification.parentNode === container) {
+                container.removeChild(notification);
+            }
+        }, 300);
     });
 
     setTimeout(() => {
         if (notification.parentNode === container) {
             notification.style.animation = 'slide-out 0.3s forwards';
-            setTimeout(() => container.removeChild(notification), 300);
+            setTimeout(() => {
+                if (notification.parentNode === container) {
+                    container.removeChild(notification);
+                }
+            }, 300);
         }
-    }, 5000);
+    }, duration);
 }
+
+// Add CSS for the spinner
+const style = document.createElement('style');
+style.textContent = `
+.spinner-small {
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: #fff;
+    display: inline-block;
+    animation: spin 1s ease-in-out infinite;
+    margin-right: 5px;
+    vertical-align: middle;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+`;
+document.head.appendChild(style);
 
 // Cleanup on unload
 window.addEventListener('unload', () => {
     if (gpsWatchId !== null) navigator.geolocation.clearWatch(gpsWatchId);
     if (updateInterval) clearInterval(updateInterval);
     if (window.recordingInterval) clearInterval(window.recordingInterval);
+
+    // Abort any pending requests
+    Object.values(pendingRequests).forEach(controller => {
+        try { controller.abort(); } catch (e) {}
+    });
 });
