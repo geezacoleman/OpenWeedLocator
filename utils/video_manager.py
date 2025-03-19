@@ -338,6 +338,7 @@ class ArenaCameraStream:
 
             # Configure the stream
             self._configure_stream()
+            self.logger.info('Stream configured successfully')
 
             # Configure camera settings
             self._configure_camera_settings(
@@ -347,6 +348,7 @@ class ArenaCameraStream:
                 exposure_auto=exposure_auto,
                 exposure_time=exposure_time
             )
+            self.logger.info('Camera configured successfully')
 
             # Get actual resolution from camera
             try:
@@ -422,6 +424,7 @@ class ArenaCameraStream:
             self.logger.info(f"Setting white balance auto to: {wb_value}")
             nodemap['BalanceWhiteAuto'].value = wb_value
             self.logger.info(f"White balance auto set to: {nodemap['BalanceWhiteAuto'].value}")
+        self.logger.info('AWB configured successfully')
 
         # Set target brightness if provided
         if target_brightness is not None and 'TargetBrightness' in nodemap:
@@ -433,6 +436,7 @@ class ArenaCameraStream:
                 target_brightness = node.min
             node.value = target_brightness
             self.logger.info(f"Target brightness set to: {target_brightness}")
+        self.logger.info('Target brightness configured successfully')
 
         # Set gain control if provided
         if gain_control is not None and 'GainAuto' in nodemap:
@@ -444,6 +448,7 @@ class ArenaCameraStream:
             self.logger.info(f"Setting gain auto to: {gain_value}")
             nodemap['GainAuto'].value = gain_value
             self.logger.info(f"Gain auto set to: {nodemap['GainAuto'].value}")
+        self.logger.info('Gain configured successfully')
 
         # Set exposure mode
         if 'ExposureAuto' in nodemap:
@@ -452,6 +457,8 @@ class ArenaCameraStream:
             self.logger.info(f"Setting exposure auto to: {exp_value}")
             nodemap['ExposureAuto'].value = exp_value
             self.logger.info(f"Exposure auto set to: {nodemap['ExposureAuto'].value}")
+        self.logger.info('Auto Exposure configured successfully')
+
 
         # Set exposure time if provided and exposure auto is off
         if exposure_time is not None and not exposure_auto and 'ExposureTime' in nodemap:
