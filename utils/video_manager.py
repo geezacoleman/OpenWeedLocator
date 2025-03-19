@@ -321,25 +321,22 @@ class ArenaCameraStream:
         self.condition = Condition()
 
         try:
-            # Create devices with retries
             self.devices = self._create_devices_with_tries()
             if not self.devices:
                 self.logger.error("No Arena cameras found.")
                 raise ValueError("No Arena cameras found.")
 
-            # Select the first device
-            print(self.devices)
-            print('starting device')
             self.device = system.select_device(self.devices)
-            print('device success')
+            self.nodemap = self.device.nodemap
+            self.tl_stream_nodemap = self.device.tl_stream_nodemap
 
-            # Get device info
-            nodemap = self.device.nodemap
-            print(system.device_infos)
+            # Get and log device info
+            device_info = self._get_device_info()
+            self.logger.info(
+                f"Device control > Serial: {device_info.get('serial', 'N/A')}, Model: {device_info.get('model', 'N/A')}")
 
-            # Configure the stream
+            # Configure stream settings
             self._configure_stream()
-            self.logger.info('Stream configured successfully')
 
             # Configure camera settings
             self._configure_camera_settings(
@@ -349,17 +346,9 @@ class ArenaCameraStream:
                 exposure_auto=exposure_auto,
                 exposure_time=exposure_time
             )
-            self.logger.info('Camera configured successfully')
 
             # Get actual resolution from camera
-            try:
-                nodes = nodemap.get_node(['Width', 'Height'])
-                self.frame_width = int(nodes['Width'].value)
-                self.frame_height = int(nodes['Height'].value)
-                self.logger.info(f"Camera resolution: {self.frame_width}x{self.frame_height}")
-            except Exception as e:
-                self.logger.warning(f"Unable to update frame dimensions from device: {e}")
-                self.logger.warning("Using default resolution.")
+            self._update_resolution()
 
             # Start streaming
             self.device.start_stream()
@@ -372,19 +361,13 @@ class ArenaCameraStream:
         self.thread.daemon = True
 
     def _create_devices_with_tries(self):
-        """
-        Try to create devices multiple times before giving up.
-        This allows time for the device to be recognized.
-        """
         tries = 0
         tries_max = 6
         sleep_time_secs = 10
-        while tries < tries_max:  # Wait for device for 60 seconds
+        while tries < tries_max:
             devices = system.create_device()
             if not devices:
-                self.logger.info(
-                    f'Try {tries + 1} of {tries_max}: waiting for {sleep_time_secs} '
-                    f'secs for a device to be connected!')
+                self.logger.info(f'Try {tries + 1} of {tries_max}: waiting for {sleep_time_secs} secs for a device')
                 for sec_count in range(sleep_time_secs):
                     time.sleep(1)
                 tries += 1
@@ -395,86 +378,100 @@ class ArenaCameraStream:
         self.logger.error('No device found after multiple attempts.')
         return None
 
+    def _get_device_info(self):
+        device_info = {}
+        try:
+            nodes = self.nodemap.get_node(['DeviceSerialNumber', 'ModelName'])
+            if 'DeviceSerialNumber' in nodes:
+                device_info['serial'] = nodes['DeviceSerialNumber'].value
+            if 'ModelName' in nodes:
+                device_info['model'] = nodes['ModelName'].value
+        except Exception as e:
+            self.logger.warning(f"Error getting device info: {e}")
+        return device_info
+
+    def _update_resolution(self):
+        try:
+            nodes = self.nodemap.get_node(['Width', 'Height'])
+            if nodes['Width'] and nodes['Height']:
+                self.frame_width = int(nodes['Width'].value)
+                self.frame_height = int(nodes['Height'].value)
+                self.logger.info(f"Camera resolution: {self.frame_width}x{self.frame_height}")
+        except Exception as e:
+            self.logger.warning(f"Unable to update frame dimensions: {e}")
+
     def _configure_stream(self):
-        """Configure the stream settings for optimal performance"""
-        tl_stream_nodemap = self.device.tl_stream_nodemap
-        print('here')
+        try:
+            # Set buffer handling mode
+            buffer_handling_node = self.tl_stream_nodemap.get_node('StreamBufferHandlingMode')
+            if buffer_handling_node and buffer_handling_node.is_writable:
+                buffer_handling_node.value = "NewestOnly"
 
-        # Set buffer handling mode to NewestOnly to ensure we get the most recent frame
-        if 'StreamBufferHandlingMode' in tl_stream_nodemap:
-            tl_stream_nodemap['StreamBufferHandlingMode'].value = "NewestOnly"
-        print('here2')
+            # Set auto negotiate packet size
+            auto_negotiate_node = self.tl_stream_nodemap.get_node('StreamAutoNegotiatePacketSize')
+            if auto_negotiate_node and auto_negotiate_node.is_writable:
+                auto_negotiate_node.value = True
 
-        # Enable stream auto negotiate packet size for optimal performance
-        if 'StreamAutoNegotiatePacketSize' in tl_stream_nodemap:
-            tl_stream_nodemap['StreamAutoNegotiatePacketSize'].value = True
-        print('here3')
+            # Set packet resend
+            packet_resend_node = self.tl_stream_nodemap.get_node('StreamPacketResendEnable')
+            if packet_resend_node and packet_resend_node.is_writable:
+                packet_resend_node.value = True
 
-        # Enable stream packet resend for reliability
-        if 'StreamPacketResendEnable' in tl_stream_nodemap:
-            tl_stream_nodemap['StreamPacketResendEnable'].value = True
-        print('here4')
-
-        self.logger.info("Stream configured for optimal performance")
+            self.logger.info("Stream configured for optimal performance")
+        except Exception as e:
+            self.logger.warning(f"Error configuring stream: {e}")
 
     def _configure_camera_settings(self, white_balance_auto, target_brightness,
                                    gain_control, exposure_auto, exposure_time):
-        """Configure camera settings based on provided parameters"""
-        nodemap = self.device.nodemap
+        try:
+            # Configure white balance
+            wb_node = self.nodemap.get_node('BalanceWhiteAuto')
+            if wb_node and wb_node.is_writable:
+                wb_node.value = 'Continuous' if white_balance_auto else 'Off'
+                self.logger.info(f"White balance mode: {wb_node.value}")
 
-        # Set white balance mode
-        if 'BalanceWhiteAuto' in nodemap:
-            # Convert boolean to proper enum string value
-            wb_value = 'Continuous' if white_balance_auto else 'Off'
-            self.logger.info(f"Setting white balance auto to: {wb_value}")
-            nodemap['BalanceWhiteAuto'].value = wb_value
-            self.logger.info(f"White balance auto set to: {nodemap['BalanceWhiteAuto'].value}")
-        self.logger.info('AWB configured successfully')
+            # Configure target brightness
+            if target_brightness is not None:
+                brightness_node = self.nodemap.get_node('TargetBrightness')
+                if brightness_node and brightness_node.is_writable:
+                    # Ensure value is within valid range
+                    if target_brightness > brightness_node.max:
+                        target_brightness = brightness_node.max
+                    elif target_brightness < brightness_node.min:
+                        target_brightness = brightness_node.min
+                    brightness_node.value = target_brightness
+                    self.logger.info(f"Target brightness: {brightness_node.value}")
 
-        # Set target brightness if provided
-        if target_brightness is not None and 'TargetBrightness' in nodemap:
-            node = nodemap['TargetBrightness']
-            # Ensure value is within valid range
-            if target_brightness > node.max:
-                target_brightness = node.max
-            elif target_brightness < node.min:
-                target_brightness = node.min
-            node.value = target_brightness
-            self.logger.info(f"Target brightness set to: {target_brightness}")
-        self.logger.info('Target brightness configured successfully')
+            # Configure gain
+            if gain_control is not None:
+                gain_node = self.nodemap.get_node('GainAuto')
+                if gain_node and gain_node.is_writable:
+                    if isinstance(gain_control, bool):
+                        gain_node.value = 'Continuous' if gain_control else 'Off'
+                    else:
+                        gain_node.value = gain_control
+                    self.logger.info(f"Gain mode: {gain_node.value}")
 
-        # Set gain control if provided
-        if gain_control is not None and 'GainAuto' in nodemap:
-            # GainAuto typically expects a string enum value, not an integer
-            gain_value = gain_control
-            # If gain_control is a boolean, convert to string enum
-            if isinstance(gain_control, bool):
-                gain_value = 'Continuous' if gain_control else 'Off'
-            self.logger.info(f"Setting gain auto to: {gain_value}")
-            nodemap['GainAuto'].value = gain_value
-            self.logger.info(f"Gain auto set to: {nodemap['GainAuto'].value}")
-        self.logger.info('Gain configured successfully')
+            # Configure exposure
+            exposure_auto_node = self.nodemap.get_node('ExposureAuto')
+            if exposure_auto_node and exposure_auto_node.is_writable:
+                exposure_auto_node.value = 'Continuous' if exposure_auto else 'Off'
+                self.logger.info(f"Exposure mode: {exposure_auto_node.value}")
 
-        # Set exposure mode
-        if 'ExposureAuto' in nodemap:
-            # Convert boolean to proper enum string value
-            exp_value = 'Continuous' if exposure_auto else 'Off'
-            self.logger.info(f"Setting exposure auto to: {exp_value}")
-            nodemap['ExposureAuto'].value = exp_value
-            self.logger.info(f"Exposure auto set to: {nodemap['ExposureAuto'].value}")
-        self.logger.info('Auto Exposure configured successfully')
+                # Set exposure time if auto is off and time is provided
+                if not exposure_auto and exposure_time is not None:
+                    exposure_time_node = self.nodemap.get_node('ExposureTime')
+                    if exposure_time_node and exposure_time_node.is_writable:
+                        # Ensure value is within valid range
+                        if exposure_time > exposure_time_node.max:
+                            exposure_time = exposure_time_node.max
+                        elif exposure_time < exposure_time_node.min:
+                            exposure_time = exposure_time_node.min
+                        exposure_time_node.value = exposure_time
+                        self.logger.info(f"Exposure time: {exposure_time_node.value}")
 
-
-        # Set exposure time if provided and exposure auto is off
-        if exposure_time is not None and not exposure_auto and 'ExposureTime' in nodemap:
-            node = nodemap['ExposureTime']
-            # Ensure value is within valid range
-            if exposure_time > node.max:
-                exposure_time = node.max
-            elif exposure_time < node.min:
-                exposure_time = node.min
-            node.value = exposure_time
-            self.logger.info(f"Exposure time set to: {exposure_time}")
+        except Exception as e:
+            self.logger.warning(f"Error configuring camera settings: {e}")
 
     def start(self):
         self.thread.start()
@@ -484,55 +481,45 @@ class ArenaCameraStream:
         try:
             while not self.stop_event.is_set():
                 try:
-                    # Get one buffer
                     buffer = self.device.get_buffer()
 
-                    # Get data from the buffer and convert to numpy array
+                    # Process buffer data
                     try:
-                        # Create a numpy array from buffer data
-                        # Note: buffer.data returns a bytes object of the image data
                         img_array = np.frombuffer(buffer.data, dtype=np.uint8)
-
-                        # Reshape array to match image dimensions and pixel format
-                        # For RGB8 pixel format, it's 3 bytes per pixel
                         frame = img_array.reshape((buffer.height, buffer.width, 3))
 
-                        # Update the frame
                         with self.lock:
                             self.frame = frame
 
-                        # Notify waiting threads
                         with self.condition:
                             self.condition.notify_all()
 
-                    except Exception as conv_err:
-                        self.logger.error(f"Error converting buffer to image: {conv_err}", exc_info=True)
+                    except Exception as e:
+                        self.logger.error(f"Error converting buffer to image: {e}")
 
-                    # Always requeue the buffer to avoid running out of buffers
+                    # Requeue buffer
                     self.device.requeue_buffer(buffer)
 
-                except Exception as buffer_err:
-                    self.logger.error(f"Error getting buffer: {buffer_err}", exc_info=True)
-                    time.sleep(0.01)  # Small delay to avoid tight loop in case of persistent errors
+                except Exception as e:
+                    self.logger.error(f"Error getting buffer: {e}")
+                    time.sleep(0.01)
 
-                # Small delay to prevent CPU from being maxed out
                 time.sleep(0.001)
 
         except Exception as e:
-            self.logger.error(f"Exception in {self.name} update loop: {e}", exc_info=True)
+            self.logger.error(f"Exception in update loop: {e}")
         finally:
             try:
                 self.device.stop_stream()
-                self.logger.info("Arena camera streaming stopped.")
-            except Exception as stop_err:
-                self.logger.error(f"Error stopping Arena camera streaming: {stop_err}", exc_info=True)
+                self.logger.info("Camera streaming stopped")
+            except Exception as e:
+                self.logger.error(f"Error stopping stream: {e}")
 
-            # Clean up resources
             try:
                 system.destroy_device()
-                self.logger.info("Arena camera device destroyed.")
-            except Exception as destroy_err:
-                self.logger.error(f"Error destroying Arena camera device: {destroy_err}", exc_info=True)
+                self.logger.info("Camera device destroyed")
+            except Exception as e:
+                self.logger.error(f"Error destroying device: {e}")
 
     def read(self):
         with self.lock:
@@ -541,7 +528,7 @@ class ArenaCameraStream:
     def stop(self):
         self.stop_event.set()
         self.thread.join()
-        self.logger.info("ArenaCameraStream stopped.")
+        self.logger.info("ArenaCameraStream stopped")
 
 
 class IMX500Stream:
