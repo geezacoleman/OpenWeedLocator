@@ -21,6 +21,7 @@ except Exception:
 
 try:
     from arena_api.system import system
+    from arena_api.buffer import *
 
     ARENA_CAMERA = True
 except Exception:
@@ -327,7 +328,10 @@ class ArenaCameraStream:
                 raise ValueError("No Arena cameras found.")
 
             # Select the first device
+            print(self.devices)
+            print('starting device')
             self.device = system.select_device(self.devices)
+            print('device success')
 
             # Get device info
             nodemap = self.device.nodemap
