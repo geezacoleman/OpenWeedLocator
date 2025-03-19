@@ -417,7 +417,10 @@ class ArenaCameraStream:
 
         # Set white balance mode
         if 'BalanceWhiteAuto' in nodemap:
-            nodemap['BalanceWhiteAuto'].value = 'Continuous' if white_balance_auto else 'Off'
+            # Convert boolean to proper enum string value
+            wb_value = 'Continuous' if white_balance_auto else 'Off'
+            self.logger.info(f"Setting white balance auto to: {wb_value}")
+            nodemap['BalanceWhiteAuto'].value = wb_value
             self.logger.info(f"White balance auto set to: {nodemap['BalanceWhiteAuto'].value}")
 
         # Set target brightness if provided
@@ -433,12 +436,21 @@ class ArenaCameraStream:
 
         # Set gain control if provided
         if gain_control is not None and 'GainAuto' in nodemap:
-            nodemap['GainAuto'].value = gain_control
-            self.logger.info(f"Gain auto set to: {gain_control}")
+            # GainAuto typically expects a string enum value, not an integer
+            gain_value = gain_control
+            # If gain_control is a boolean, convert to string enum
+            if isinstance(gain_control, bool):
+                gain_value = 'Continuous' if gain_control else 'Off'
+            self.logger.info(f"Setting gain auto to: {gain_value}")
+            nodemap['GainAuto'].value = gain_value
+            self.logger.info(f"Gain auto set to: {nodemap['GainAuto'].value}")
 
         # Set exposure mode
         if 'ExposureAuto' in nodemap:
-            nodemap['ExposureAuto'].value = 'Continuous' if exposure_auto else 'Off'
+            # Convert boolean to proper enum string value
+            exp_value = 'Continuous' if exposure_auto else 'Off'
+            self.logger.info(f"Setting exposure auto to: {exp_value}")
+            nodemap['ExposureAuto'].value = exp_value
             self.logger.info(f"Exposure auto set to: {nodemap['ExposureAuto'].value}")
 
         # Set exposure time if provided and exposure auto is off
@@ -460,28 +472,38 @@ class ArenaCameraStream:
         try:
             while not self.stop_event.is_set():
                 try:
+                    # Get one buffer
                     buffer = self.device.get_buffer()
 
+                    # Get data from the buffer and convert to numpy array
                     try:
+                        # Create a numpy array from buffer data
+                        # Note: buffer.data returns a bytes object of the image data
                         img_array = np.frombuffer(buffer.data, dtype=np.uint8)
 
+                        # Reshape array to match image dimensions and pixel format
+                        # For RGB8 pixel format, it's 3 bytes per pixel
                         frame = img_array.reshape((buffer.height, buffer.width, 3))
 
+                        # Update the frame
                         with self.lock:
                             self.frame = frame
 
+                        # Notify waiting threads
                         with self.condition:
                             self.condition.notify_all()
 
                     except Exception as conv_err:
                         self.logger.error(f"Error converting buffer to image: {conv_err}", exc_info=True)
 
+                    # Always requeue the buffer to avoid running out of buffers
                     self.device.requeue_buffer(buffer)
 
                 except Exception as buffer_err:
                     self.logger.error(f"Error getting buffer: {buffer_err}", exc_info=True)
-                    time.sleep(0.01)
+                    time.sleep(0.01)  # Small delay to avoid tight loop in case of persistent errors
 
+                # Small delay to prevent CPU from being maxed out
                 time.sleep(0.001)
 
         except Exception as e:
@@ -493,6 +515,7 @@ class ArenaCameraStream:
             except Exception as stop_err:
                 self.logger.error(f"Error stopping Arena camera streaming: {stop_err}", exc_info=True)
 
+            # Clean up resources
             try:
                 system.destroy_device()
                 self.logger.info("Arena camera device destroyed.")
