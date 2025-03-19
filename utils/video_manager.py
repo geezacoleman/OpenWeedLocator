@@ -398,18 +398,22 @@ class ArenaCameraStream:
     def _configure_stream(self):
         """Configure the stream settings for optimal performance"""
         tl_stream_nodemap = self.device.tl_stream_nodemap
+        print('here')
 
         # Set buffer handling mode to NewestOnly to ensure we get the most recent frame
         if 'StreamBufferHandlingMode' in tl_stream_nodemap:
             tl_stream_nodemap['StreamBufferHandlingMode'].value = "NewestOnly"
+        print('here2')
 
         # Enable stream auto negotiate packet size for optimal performance
         if 'StreamAutoNegotiatePacketSize' in tl_stream_nodemap:
             tl_stream_nodemap['StreamAutoNegotiatePacketSize'].value = True
+        print('here3')
 
         # Enable stream packet resend for reliability
         if 'StreamPacketResendEnable' in tl_stream_nodemap:
             tl_stream_nodemap['StreamPacketResendEnable'].value = True
+        print('here4')
 
         self.logger.info("Stream configured for optimal performance")
 
