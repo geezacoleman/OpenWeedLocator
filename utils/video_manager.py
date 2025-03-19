@@ -22,6 +22,7 @@ except Exception:
 try:
     from arena_api.system import system
     from arena_api.buffer import *
+    import ctypes
 
     ARENA_CAMERA = True
 except Exception:
@@ -381,11 +382,11 @@ class ArenaCameraStream:
     def _get_device_info(self):
         device_info = {}
         try:
-            nodes = self.nodemap.get_node(['DeviceSerialNumber', 'ModelName'])
+            nodes = self.nodemap.get_node(['DeviceSerialNumber', 'DeviceModelName'])
             if 'DeviceSerialNumber' in nodes:
                 device_info['serial'] = nodes['DeviceSerialNumber'].value
-            if 'ModelName' in nodes:
-                device_info['model'] = nodes['ModelName'].value
+            if 'DeviceModelName' in nodes:
+                device_info['model'] = nodes['DeviceModelName'].value
         except Exception as e:
             self.logger.warning(f"Error getting device info: {e}")
         return device_info
@@ -479,26 +480,56 @@ class ArenaCameraStream:
 
     def update(self):
         try:
+            curr_frame_time = 0
+            prev_frame_time = 0
+
             while not self.stop_event.is_set():
                 try:
+                    curr_frame_time = time.time()
+
+                    # Get buffer from device
                     buffer = self.device.get_buffer()
 
                     # Process buffer data
                     try:
-                        img_array = np.frombuffer(buffer.data, dtype=np.uint8)
-                        frame = img_array.reshape((buffer.height, buffer.width, 3))
+                        # Copy the buffer to avoid running out of buffers
+                        item = BufferFactory.copy(buffer)
 
+                        # Calculate bytes per pixel
+                        buffer_bytes_per_pixel = 3  # Assuming RGB8 format
+
+                        # Access buffer data using cpointer approach from the example
+                        array = (ctypes.c_ubyte * buffer_bytes_per_pixel * item.width * item.height).from_address(
+                            ctypes.addressof(item.pbytes))
+
+                        # Create a reshaped NumPy array
+                        frame = np.ndarray(buffer=array, dtype=np.uint8,
+                                           shape=(item.height, item.width, buffer_bytes_per_pixel))
+
+                        # Update the frame
                         with self.lock:
-                            self.frame = frame
+                            self.frame = frame.copy()  # Make a copy to prevent reference issues
 
                         with self.condition:
                             self.condition.notify_all()
 
-                    except Exception as e:
-                        self.logger.error(f"Error converting buffer to image: {e}")
+                        # Calculate FPS for debugging
+                        if prev_frame_time > 0:
+                            fps = 1 / (curr_frame_time - prev_frame_time)
+                            if fps < 10:  # Only log if FPS is low
+                                self.logger.debug(f"Frame rate: {fps:.2f} FPS")
 
-                    # Requeue buffer
+                        # Cleanup copied buffer
+                        BufferFactory.destroy(item)
+
+                    except Exception as e:
+                        self.logger.error(f"Error converting buffer to image: {e}", exc_info=True)
+
+                    # Always requeue the original buffer
                     self.device.requeue_buffer(buffer)
+
+                    # Update previous frame time
+                    prev_frame_time = curr_frame_time
 
                 except Exception as e:
                     self.logger.error(f"Error getting buffer: {e}")
