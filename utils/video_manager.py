@@ -335,10 +335,7 @@ class ArenaCameraStream:
 
             # Get device info
             nodemap = self.device.nodemap
-            if 'DeviceSerialNumber' in nodemap and 'ModelName' in nodemap:
-                serial_number = nodemap['DeviceSerialNumber'].value
-                model_name = nodemap['ModelName'].value
-                self.logger.info(f"Device control > Serial: {serial_number}, Model: {model_name}")
+            print(system.device_infos)
 
             # Configure the stream
             self._configure_stream()
