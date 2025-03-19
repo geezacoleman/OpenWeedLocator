@@ -312,6 +312,7 @@ class ArenaCameraStream:
                  gain_control=None,
                  exposure_auto=True,
                  exposure_time=None):
+
         self.logger = LogManager.get_logger(__name__)
         self.name = "ArenaCameraStream"
         self.resolution = resolution
@@ -393,11 +394,12 @@ class ArenaCameraStream:
 
     def _update_resolution(self):
         try:
-            nodes = self.nodemap.get_node(['Width', 'Height'])
-            if nodes['Width'] and nodes['Height']:
-                self.frame_width = int(nodes['Width'].value)
-                self.frame_height = int(nodes['Height'].value)
-                self.logger.info(f"Camera resolution: {self.frame_width}x{self.frame_height}")
+            nodes = self.nodemap.get_node(['Width', 'Height', 'PixelFormat'])
+            nodes['Width'].value = self.frame_width
+            nodes['Height'].value = self.frame_height
+            nodes['PixelFormat'].value = 'BGR8'
+            self.logger.info(f"Camera resolution: {self.frame_width}x{self.frame_height}")
+
         except Exception as e:
             self.logger.warning(f"Unable to update frame dimensions: {e}")
 
@@ -487,7 +489,6 @@ class ArenaCameraStream:
         curr_frame_time = 0
         prev_frame_time = 0
 
-        # Number of channels (assuming RGB8 format)
         num_channels = 3
 
         try:
