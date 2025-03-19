@@ -479,36 +479,48 @@ class ArenaCameraStream:
         return self
 
     def update(self):
-        try:
-            curr_frame_time = 0
-            prev_frame_time = 0
+        """Main thread method for continuously acquiring frames from the camera"""
+        from arena_api.buffer import BufferFactory
+        import ctypes
 
+        # Track frame time for debugging
+        curr_frame_time = 0
+        prev_frame_time = 0
+
+        # Number of channels (assuming RGB8 format)
+        num_channels = 3
+
+        try:
+            # Main acquisition loop
             while not self.stop_event.is_set():
                 try:
+                    # Used to calculate FPS
                     curr_frame_time = time.time()
 
-                    # Get buffer from device
+                    # Get the buffer
                     buffer = self.device.get_buffer()
 
-                    # Process buffer data
+                    # Copy buffer to avoid running out of buffers
+                    item = BufferFactory.copy(buffer)
+
+                    # Requeue original buffer immediately
+                    self.device.requeue_buffer(buffer)
+
                     try:
-                        # Copy the buffer to avoid running out of buffers
-                        item = BufferFactory.copy(buffer)
+                        # Calculate bytes per pixel (exactly as in the example)
+                        buffer_bytes_per_pixel = int(len(item.data) / (item.width * item.height))
 
-                        # Calculate bytes per pixel
-                        buffer_bytes_per_pixel = 3  # Assuming RGB8 format
-
-                        # Access buffer data using cpointer approach from the example
-                        array = (ctypes.c_ubyte * buffer_bytes_per_pixel * item.width * item.height).from_address(
+                        # Access buffer data using cpointer approach (exactly as in the example)
+                        array = (ctypes.c_ubyte * num_channels * item.width * item.height).from_address(
                             ctypes.addressof(item.pbytes))
 
-                        # Create a reshaped NumPy array
+                        # Create a reshaped NumPy array (exactly as in the example)
                         frame = np.ndarray(buffer=array, dtype=np.uint8,
                                            shape=(item.height, item.width, buffer_bytes_per_pixel))
 
                         # Update the frame
                         with self.lock:
-                            self.frame = frame.copy()  # Make a copy to prevent reference issues
+                            self.frame = frame.copy()  # Make a copy to ensure we don't keep a reference
 
                         with self.condition:
                             self.condition.notify_all()
@@ -519,24 +531,41 @@ class ArenaCameraStream:
                             if fps < 10:  # Only log if FPS is low
                                 self.logger.debug(f"Frame rate: {fps:.2f} FPS")
 
-                        # Cleanup copied buffer
-                        BufferFactory.destroy(item)
-
                     except Exception as e:
-                        self.logger.error(f"Error converting buffer to image: {e}", exc_info=True)
-
-                    # Always requeue the original buffer
-                    self.device.requeue_buffer(buffer)
+                        self.logger.error(f"Error processing buffer: {e}", exc_info=True)
+                    finally:
+                        # Always destroy the copied buffer to prevent memory leaks
+                        BufferFactory.destroy(item)
 
                     # Update previous frame time
                     prev_frame_time = curr_frame_time
 
                 except Exception as e:
-                    self.logger.error(f"Error getting buffer: {e}")
-                    time.sleep(0.01)
+                    self.logger.error(f"Error in buffer acquisition: {e}", exc_info=True)
+                    time.sleep(0.01)  # Small delay to avoid tight loop in case of errors
 
+                # Small delay to prevent CPU from being maxed out
                 time.sleep(0.001)
 
+        except Exception as e:
+            self.logger.error(f"Fatal error in camera thread: {e}", exc_info=True)
+        finally:
+            # Clean up resources
+            self.cleanup_resources()
+
+    def cleanup_resources(self):
+        """Clean up camera resources - separate method for clarity"""
+        try:
+            self.device.stop_stream()
+            self.logger.info("Arena camera streaming stopped")
+        except Exception as e:
+            self.logger.error(f"Error stopping stream: {e}", exc_info=True)
+
+        try:
+            system.destroy_device()
+            self.logger.info("Arena camera device destroyed")
+        except Exception as e:
+            self.logger.error(f"Error destroying device: {e}", exc_info=True)
         except Exception as e:
             self.logger.error(f"Exception in update loop: {e}")
         finally:
