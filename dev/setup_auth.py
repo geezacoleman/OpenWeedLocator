@@ -212,6 +212,7 @@ class OWLAuthSetup:
             self.logger.error(f"Authentication setup failed: {e}")
             return {}
 
+    # Update the create_nginx_config method:
     def create_nginx_config(self, auth_details: dict) -> bool:
         self.logger.info("Creating nginx configuration")
         config = f"""
@@ -259,6 +260,16 @@ class OWLAuthSetup:
             proxy_buffering off;  # Critical for MJPEG streaming
             proxy_cache off;
             chunked_transfer_encoding off;
+            proxy_read_timeout 86400;
+            client_max_body_size 0;
+        }}
+
+        # Serve static files directly through nginx
+        location /static/ {{
+            proxy_cache owl_cache;
+            proxy_cache_valid 200 60m;
+            expires 1h;
+            alias /home/pi/owl/static/;
         }}
     }}
 
@@ -268,6 +279,7 @@ class OWLAuthSetup:
         return 301 https://$server_name$request_uri;
     }}
     """
+        # Rest of the method remains the same
         try:
             config_path = self.nginx_dir / f"sites-available/{self.device_id}"
             enabled_path = self.nginx_dir / f"sites-enabled/{self.device_id}"
