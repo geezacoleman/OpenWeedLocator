@@ -311,13 +311,15 @@ class ArenaCameraStream:
                  target_brightness=None,
                  gain_control=None,
                  exposure_auto=True,
-                 exposure_time=None):
+                 exposure_time=None,
+                 packet_size=9000):
 
         self.logger = LogManager.get_logger(__name__)
         self.name = "ArenaCameraStream"
         self.resolution = resolution
         self.frame_width, self.frame_height = resolution
         self.frame = None
+        self.packet_size = packet_size
         self.stop_event = Event()
         self.lock = Lock()
         self.condition = Condition()
@@ -334,6 +336,7 @@ class ArenaCameraStream:
 
             # Get and log device info
             device_info = self._get_device_info()
+            self._set_stream_parameters()
             self.logger.info(
                 f"Device control > Serial: {device_info.get('serial', 'N/A')}, Model: {device_info.get('model', 'N/A')}")
 
@@ -391,6 +394,14 @@ class ArenaCameraStream:
         except Exception as e:
             self.logger.warning(f"Error getting device info: {e}")
         return device_info
+
+    def _set_stream_parameters(self):
+        try:
+            nodes = self.nodemap.get_node(['DeviceStreamChannelPacketSize'])
+            if 'DeviceStreamChannelPacketSize' in nodes:
+                nodes['DeviceStreamChannelPacketSize'].value = self.packet_size
+        except Exception as e:
+            self.logger.warning(f"Error setting streaming packet size: {e}")
 
     def _update_resolution(self):
         try:
