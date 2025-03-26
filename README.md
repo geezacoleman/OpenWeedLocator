@@ -12,7 +12,7 @@ device for low-cost, simple and open-source site-specific weed control. Projects
 vehicles and bicycles for spot spraying. For the latest ideas and news, check out the [Discussion](https://github.com/geezacoleman/OpenWeedLocator/discussions) tab.
 
 ### News
-**14-02-2024** - Complete OWL software installation guide now on YouTube
+**14-02-2025** - Complete OWL software installation guide now on YouTube
 
 <a href="https://www.youtube.com/watch?v=lH5b8tXYmDw&t=62s">
   <img src="https://github.com/user-attachments/assets/28d13c6d-c8d3-4e2e-858c-d4ba973716dd" alt="thumbnail" width="600">
