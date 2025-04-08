@@ -1,0 +1,474 @@
+[
+    {
+        "id": "global_all_nozzles_on",
+        "type": "ui_button",
+        "z": "flow_global",
+        "name": "All Nozzles On",
+        "group": "global_group",
+        "order": 1,
+        "width": "3",
+        "height": "1",
+        "label": "All Nozzles On",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "green",
+        "payload": "on",
+        "payloadType": "str",
+        "topic": "",
+        "x": 100,
+        "y": 60,
+        "wires": [
+            [
+                "format_all_nozzles"
+            ]
+        ]
+    },
+    {
+        "id": "global_all_nozzles_off",
+        "type": "ui_button",
+        "z": "flow_global",
+        "name": "All Nozzles Off",
+        "group": "global_group",
+        "order": 2,
+        "width": "3",
+        "height": "1",
+        "label": "All Nozzles Off",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "red",
+        "payload": "off",
+        "payloadType": "str",
+        "topic": "",
+        "x": 100,
+        "y": 120,
+        "wires": [
+            [
+                "format_all_nozzles"
+            ]
+        ]
+    },
+    {
+        "id": "format_all_nozzles",
+        "type": "function",
+        "z": "flow_global",
+        "name": "Format All Nozzles",
+        "func": "msg.payload = { command: 'all_nozzles', state: msg.payload };\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 300,
+        "y": 90,
+        "wires": [
+            [
+                "mqtt_out_commands"
+            ]
+        ]
+    },
+    {
+        "id": "global_recording_on",
+        "type": "ui_button",
+        "z": "flow_global",
+        "name": "Recording On",
+        "group": "global_group",
+        "order": 3,
+        "width": "3",
+        "height": "1",
+        "label": "Recording On",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "green",
+        "payload": "on",
+        "payloadType": "str",
+        "topic": "",
+        "x": 100,
+        "y": 180,
+        "wires": [
+            [
+                "format_recording"
+            ]
+        ]
+    },
+    {
+        "id": "global_recording_off",
+        "type": "ui_button",
+        "z": "flow_global",
+        "name": "Recording Off",
+        "group": "global_group",
+        "order": 4,
+        "width": "3",
+        "height": "1",
+        "label": "Recording Off",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "red",
+        "payload": "off",
+        "payloadType": "str",
+        "topic": "",
+        "x": 100,
+        "y": 240,
+        "wires": [
+            [
+                "format_recording"
+            ]
+        ]
+    },
+    {
+        "id": "format_recording",
+        "type": "function",
+        "z": "flow_global",
+        "name": "Format Recording",
+        "func": "msg.payload = { command: 'recording', state: msg.payload };\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 300,
+        "y": 210,
+        "wires": [
+            [
+                "mqtt_out_commands"
+            ]
+        ]
+    },
+    {
+        "id": "global_sensitivity",
+        "type": "ui_slider",
+        "z": "flow_global",
+        "name": "Sensitivity",
+        "group": "global_group",
+        "order": 5,
+        "width": "3",
+        "height": "1",
+        "label": "Sensitivity",
+        "format": "{{value}}",
+        "min": "1",
+        "max": "10",
+        "step": "1",
+        "x": 100,
+        "y": 300,
+        "wires": [
+            [
+                "format_sensitivity"
+            ]
+        ]
+    },
+    {
+        "id": "format_sensitivity",
+        "type": "function",
+        "z": "flow_global",
+        "name": "Format Sensitivity",
+        "func": "msg.payload = { command: 'sensitivity', value: Number(msg.payload) };\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 300,
+        "y": 300,
+        "wires": [
+            [
+                "mqtt_out_commands"
+            ]
+        ]
+    },
+    {
+        "id": "global_files",
+        "type": "ui_slider",
+        "z": "flow_global",
+        "name": "Files",
+        "group": "global_group",
+        "order": 6,
+        "width": "3",
+        "height": "1",
+        "label": "Files",
+        "format": "{{value}}",
+        "min": "1",
+        "max": "10",
+        "step": "1",
+        "x": 100,
+        "y": 360,
+        "wires": [
+            [
+                "format_files"
+            ]
+        ]
+    },
+    {
+        "id": "format_files",
+        "type": "function",
+        "z": "flow_global",
+        "name": "Format Files",
+        "func": "msg.payload = { command: 'files', value: Number(msg.payload) };\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 300,
+        "y": 360,
+        "wires": [
+            [
+                "mqtt_out_commands"
+            ]
+        ]
+    },
+    {
+        "id": "spot_spray_201",
+        "type": "ui_switch",
+        "z": "flow_global",
+        "name": "Spot Spray 0x201",
+        "label": "Spot Spray 0x201",
+        "tooltip": "",
+        "group": "spot_spray_group_201",
+        "order": 1,
+        "width": "3",
+        "height": "1",
+        "passthru": true,
+        "decouple": "false",
+        "topic": "",
+        "style": "",
+        "onvalue": "on",
+        "onvalueType": "str",
+        "offvalue": "off",
+        "offvalueType": "str",
+        "x": 100,
+        "y": 440,
+        "wires": [
+            [
+                "format_spot_spray_201"
+            ]
+        ]
+    },
+    {
+        "id": "format_spot_spray_201",
+        "type": "function",
+        "z": "flow_global",
+        "name": "Format Spot Spray 0x201",
+        "func": "msg.payload = { command: 'spot_spray', slave: '0x201', state: msg.payload };\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 300,
+        "y": 440,
+        "wires": [
+            [
+                "mqtt_out_commands"
+            ]
+        ]
+    },
+    {
+        "id": "spot_spray_202",
+        "type": "ui_switch",
+        "z": "flow_global",
+        "name": "Spot Spray 0x202",
+        "label": "Spot Spray 0x202",
+        "tooltip": "",
+        "group": "spot_spray_group_202",
+        "order": 1,
+        "width": "3",
+        "height": "1",
+        "passthru": true,
+        "decouple": "false",
+        "topic": "",
+        "style": "",
+        "onvalue": "on",
+        "onvalueType": "str",
+        "offvalue": "off",
+        "offvalueType": "str",
+        "x": 100,
+        "y": 500,
+        "wires": [
+            [
+                "format_spot_spray_202"
+            ]
+        ]
+    },
+    {
+        "id": "format_spot_spray_202",
+        "type": "function",
+        "z": "flow_global",
+        "name": "Format Spot Spray 0x202",
+        "func": "msg.payload = { command: 'spot_spray', slave: '0x202', state: msg.payload };\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 300,
+        "y": 500,
+        "wires": [
+            [
+                "mqtt_out_commands"
+            ]
+        ]
+    },
+    {
+        "id": "spot_spray_203",
+        "type": "ui_switch",
+        "z": "flow_global",
+        "name": "Spot Spray 0x203",
+        "label": "Spot Spray 0x203",
+        "tooltip": "",
+        "group": "spot_spray_group_203",
+        "order": 1,
+        "width": "3",
+        "height": "1",
+        "passthru": true,
+        "decouple": "false",
+        "topic": "",
+        "style": "",
+        "onvalue": "on",
+        "onvalueType": "str",
+        "offvalue": "off",
+        "offvalueType": "str",
+        "x": 100,
+        "y": 560,
+        "wires": [
+            [
+                "format_spot_spray_203"
+            ]
+        ]
+    },
+    {
+        "id": "format_spot_spray_203",
+        "type": "function",
+        "z": "flow_global",
+        "name": "Format Spot Spray 0x203",
+        "func": "msg.payload = { command: 'spot_spray', slave: '0x203', state: msg.payload };\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 300,
+        "y": 560,
+        "wires": [
+            [
+                "mqtt_out_commands"
+            ]
+        ]
+    },
+    {
+        "id": "spot_spray_204",
+        "type": "ui_switch",
+        "z": "flow_global",
+        "name": "Spot Spray 0x204",
+        "label": "Spot Spray 0x204",
+        "tooltip": "",
+        "group": "spot_spray_group_204",
+        "order": 1,
+        "width": "3",
+        "height": "1",
+        "passthru": true,
+        "decouple": "false",
+        "topic": "",
+        "style": "",
+        "onvalue": "on",
+        "onvalueType": "str",
+        "offvalue": "off",
+        "offvalueType": "str",
+        "x": 100,
+        "y": 620,
+        "wires": [
+            [
+                "format_spot_spray_204"
+            ]
+        ]
+    },
+    {
+        "id": "format_spot_spray_204",
+        "type": "function",
+        "z": "flow_global",
+        "name": "Format Spot Spray 0x204",
+        "func": "msg.payload = { command: 'spot_spray', slave: '0x204', state: msg.payload };\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 300,
+        "y": 620,
+        "wires": [
+            [
+                "mqtt_out_commands"
+            ]
+        ]
+    },
+    {
+        "id": "mqtt_out_commands",
+        "type": "mqtt out",
+        "z": "flow_global",
+        "name": "MQTT Out Commands",
+        "topic": "commands/can",
+        "qos": "1",
+        "retain": "false",
+        "broker": "mqtt_broker_conf",
+        "x": 500,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "mqtt_broker_conf",
+        "type": "mqtt-broker",
+        "name": "Local MQTT Broker",
+        "broker": "localhost",
+        "port": "1883",
+        "clientid": "",
+        "usetls": false,
+        "compatmode": true,
+        "keepalive": "60",
+        "cleansession": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthPayload": "",
+        "closeTopic": "",
+        "closePayload": "",
+        "willTopic": "",
+        "willQos": "0",
+        "willPayload": ""
+    },
+    {
+        "id": "global_group",
+        "type": "ui_group",
+        "z": "",
+        "name": "Global Commands",
+        "tab": "dashboard_tab",
+        "order": 1,
+        "disp": true,
+        "width": "12",
+        "collapse": false
+    },
+    {
+        "id": "spot_spray_group_201",
+        "type": "ui_group",
+        "z": "",
+        "name": "Spot Spray 0x201",
+        "tab": "dashboard_tab",
+        "order": 2,
+        "disp": true,
+        "width": "12",
+        "collapse": false
+    },
+    {
+        "id": "spot_spray_group_202",
+        "type": "ui_group",
+        "z": "",
+        "name": "Spot Spray 0x202",
+        "tab": "dashboard_tab",
+        "order": 3,
+        "disp": true,
+        "width": "12",
+        "collapse": false
+    },
+    {
+        "id": "spot_spray_group_203",
+        "type": "ui_group",
+        "z": "",
+        "name": "Spot Spray 0x203",
+        "tab": "dashboard_tab",
+        "order": 4,
+        "disp": true,
+        "width": "12",
+        "collapse": false
+    },
+    {
+        "id": "spot_spray_group_204",
+        "type": "ui_group",
+        "z": "",
+        "name": "Spot Spray 0x204",
+        "tab": "dashboard_tab",
+        "order": 5,
+        "disp": true,
+        "width": "12",
+        "collapse": false
+    },
+    {
+        "id": "dashboard_tab",
+        "type": "ui_tab",
+        "z": "",
+        "name": "Dashboard",
+        "icon": "dashboard",
+        "order": 1
+    }
+]
