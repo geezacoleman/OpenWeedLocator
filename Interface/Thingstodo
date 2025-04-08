@@ -1,0 +1,73 @@
+# Things To Do
+
+This document lists tasks and next steps for setting up and testing the Node-RED Multi-Slave Wireless CAN Command System.
+
+## Project Setup
+
+- [ ] **Install Node-RED**
+  - Follow the Node-RED installation instructions for your platform:
+    - [Node-RED Installation](https://nodered.org/docs/getting-started/installation)
+- [ ] **Install Node-RED Dashboard**
+  - Use the Palette Manager or run:
+    ```bash
+    npm install node-red-dashboard
+    ```
+- [ ] **Install MQTT Broker**
+  - Set up an MQTT broker (e.g., Mosquitto) and ensure it is running on `localhost:1883`.
+
+## Global/Control Flow (Dashboard)
+
+- [ ] **Import Global Flow**
+  - Import the JSON file for the global control flow (`flows-global.json`) into Node-RED.
+- [ ] **Configure MQTT Nodes**
+  - Verify that the MQTT Out node points to the correct MQTT broker.
+- [ ] **Test Global Commands**
+  - On the Node-RED dashboard, use:
+    - **All Nozzles On/Off** buttons
+    - **Recording On/Off** buttons
+    - **Sensitivity** and **Files** sliders
+    - **Spot Spray** switches (global commands if applicable)
+
+## Slave Flows
+
+For each slave device (0x201, 0x202, 0x203, 0x204):
+
+- [ ] **Import Slave Flow**
+  - Import the corresponding JSON file (e.g., `flows-slave-0x201.json`) into the Node-RED instance running on the slave device.
+- [ ] **Verify MQTT Connection**
+  - Ensure each slave flow subscribes to the `commands/can` topic.
+- [ ] **Update Function Node**
+  - Confirm the function node filters commands correctly (especially for slave-specific `spot_spray` commands).
+- [ ] **Replace Debug Nodes (if needed)**
+  - For hardware integration, replace the debug node with appropriate output nodes (e.g., `socketcan-out` or `rpi-gpio out`).
+
+## Integration and Testing
+
+- [ ] **Connect Dashboard to MQTT Broker**
+  - Make sure the global flow can communicate with the MQTT broker.
+- [ ] **Test End-to-End Communication**
+  - Confirm that global commands from the dashboard are received and correctly processed by all slave flows.
+- [ ] **Use the Debug Sidebar**
+  - Troubleshoot any issues by checking messages in the Node-RED debug sidebar.
+- [ ] **Hardware Integration**
+  - If using CAN interfaces, connect the hardware and validate actual signal transmission.
+
+## Customization and Future Work
+
+- [ ] **Extend Command Functionality**
+  - Add new commands or modify existing commands as needed.
+- [ ] **Improve UI/UX**
+  - Customize the dashboard (colors, layout, additional indicators) to better suit your application.
+- [ ] **Enhance Error Handling**
+  - Add robust error handling in function nodes and log errors appropriately.
+- [ ] **Document Changes**
+  - Keep the README and documentation updated with any modifications.
+- [ ] **Perform Final Review**
+  - Conduct a thorough test and cleanup of Node-RED flows before production deployment.
+
+## Final Steps
+
+- [ ] **Backup Node-RED Flows**
+  - Export and save a backup of your Node-RED flows.
+- [ ] **Share Instructions**
+  - Ensure team members have access to this document and installation instructions.
