@@ -1,138 +1,116 @@
-# Node-RED Multi-Slave Wireless CAN Command System
+# MQTT Command Interface & Slave Controller System
 
-This project demonstrates a multi-slave command system where a global control dashboard sends both global and slave-specific commands over MQTT. These commands are then received by individual Node‑RED flows—one for each slave device (0x201, 0x202, 0x203, and 0x204). The commands can be used to trigger hardware actions such as controlling CAN bus interfaces, GPIO outputs, or other peripherals.
+This project provides a centralized MQTT command interface (publisher) and a slave controller (subscriber) that communicate via an MQTT broker. The command interface is built with Tkinter and acts as a graphical user interface (similar to a Node‑RED dashboard), while slave devices receive and process commands intended for them based on their unique slave IDs.
 
 ## Overview
 
-The system consists of two main parts:
+- **MQTT Command Interface (Publisher):**  
+  A Python/Tkinter GUI application that lets you send commands such as "All Nozzles On/Off", "Recording On/Off", adjust "Sensitivity" and "Files" via sliders, and send "Spot Spray" commands to a selectable slave.
 
-1. **Global/Control Flow (Dashboard):**
-   - Provides dashboard controls (buttons, switches, sliders) to issue commands.
-   - **Global commands include:**
-     - **All Nozzles On/Off:**  
-       Example payload: `{ "command": "all_nozzles", "state": "on" }`
-     - **Recording On/Off:**  
-       Example payload: `{ "command": "recording", "state": "off" }`
-     - **Sensitivity (Slider 1–10):**  
-       Example payload: `{ "command": "sensitivity", "value": 7 }`
-     - **Files (Slider 1–10):**  
-       Example payload: `{ "command": "files", "value": 3 }`
-   - **Slave-specific commands include:**
-     - **Spot Spray Enable (per slave):**  
-       Example payload for slave 0x201:  
-       `{ "command": "spot_spray", "slave": "0x201", "state": "on" }`
+- **Slave Controller (Subscriber):**  
+  A Python script that runs on a slave device (e.g., a Raspberry Pi) and listens for MQTT commands on a common topic. The slave processes only messages that include its unique slave identifier.
 
-   All dashboard commands are formatted as JSON and published to the MQTT topic `commands/can`.
+## Components
 
-2. **Slave Flows:**
-   - There are four separate Node‑RED flows (one per slave: 0x201, 0x202, 0x203, and 0x204).
-   - Each slave flow subscribes to the MQTT topic `commands/can` and processes incoming JSON commands.
-   - Global commands (e.g. `all_nozzles`, `recording`, `sensitivity`, `files`) are applied to every slave.
-   - Slave-specific commands (e.g. `spot_spray`) are only processed if the message’s `slave` field matches the slave’s address.
-   - Processed commands can be forwarded to a hardware interface (for example, a SocketCAN-out node) or used to control local hardware directly.
+- **Publisher Script:**  
+  - **File:** `mqtt_interface.py`  
+  - Provides a GUI interface to send MQTT messages to the topic `"commands/can"`.
+  - Commands include global commands (all nozzles, recording, sensitivity, files) and spot spray commands with a selectable slave ID.
 
-## Flows Included
+- **Slave Script:**  
+  - **File:** `slave_controller.py`  
+  - Subscribes to the MQTT topic (`"commands/can"`) and processes messages intended for its own slave ID.
+  - Updates internal state based on commands such as recording, sensitivity, and detection mode.
+  - Uses dummy placeholder classes (`DummyOwl` and `DummyStatusIndicator`) which should be replaced with your actual implementations.
 
-- **Global/Control Flow (Dashboard):**  
-  Contains dashboard nodes (buttons, switches, sliders) and function nodes that format commands before publishing them via MQTT.  
-  _File: `flows-global.json`_
-
-- **Slave 0x201 Flow:**  
-  Subscribes to `commands/can`, filters, and processes commands for slave address 0x201.  
-  _File: `flows-slave-0x201.json`_
-
-- **Slave 0x202 Flow:**  
-  Processes commands for slave address 0x202.  
-  _File: `flows-slave-0x202.json`_
-
-- **Slave 0x203 Flow:**  
-  Processes commands for slave address 0x203.  
-  _File: `flows-slave-0x203.json`_
-
-- **Slave 0x204 Flow:**  
-  Processes commands for slave address 0x204.  
-  _File: `flows-slave-0x204.json`_
-
-## Setup and Installation
-
-### Prerequisites
-
-- **Node-RED:**  
-  Install Node-RED (for example, on a Raspberry Pi or any other device).  
-  [Installation Instructions](https://nodered.org/docs/getting-started/installation)
-
-- **Node-RED Dashboard:**  
-  Install the Node-RED dashboard nodes via the palette manager or by running:
-  ```bash
-  npm install node-red-dashboard
-  ```
-
-- **MQTT Nodes:**  
-  Ensure the MQTT nodes are installed (they are usually included with Node-RED).
+## Requirements
 
 - **MQTT Broker:**  
-  Run an MQTT broker (for example, Mosquitto) that is accessible from your Node-RED device. The flows assume the broker is at `localhost:1883`.
+  An MQTT broker (e.g., [Mosquitto](https://mosquitto.org/)) running on your network. The default configuration assumes the broker is on `localhost` (port `1883`).
 
-### Importing the Flows
+- **Python 3:**  
+  Ensure you have Python 3 installed.
 
-1. Open the Node-RED editor.
-2. From the menu, choose **Import > Clipboard**.
-3. Copy and paste the JSON export for each flow:
-   - Global/Control Flow
-   - Slave 0x201 Flow
-   - Slave 0x202 Flow
-   - Slave 0x203 Flow
-   - Slave 0x204 Flow
-4. Deploy the flows.
-5. Adjust MQTT broker settings if necessary (double-click the MQTT nodes and modify the `broker` field).
+- **Python Dependencies:**
+  - `paho-mqtt`
+  - `tkinter` (usually included with Python on most platforms)
+  - Standard libraries: `json`, `logging`, `configparser`, and `multiprocessing`
 
-### Running the System
+To install the MQTT dependency, run:
 
-- **Global Dashboard:**  
-  Open the Node-RED Dashboard URL (usually `http://<your-node-red-IP>:1880/ui`) in your browser. Use the controls to send commands.
-- **Slave Devices:**  
-  Each slave flow subscribes to the MQTT topic `commands/can` and processes only the commands relevant to that slave. Verify message processing via the Node-RED debug sidebar.
-
-## Directory Structure
-
+```bash
+pip install paho-mqtt
 ```
-/node-red-project
-  ├── flows-global.json      # Global control flow export
-  ├── flows-slave-0x201.json   # Slave 0x201 flow export
-  ├── flows-slave-0x202.json   # Slave 0x202 flow export
-  ├── flows-slave-0x203.json   # Slave 0x203 flow export
-  ├── flows-slave-0x204.json   # Slave 0x204 flow export
-  └── README.md
-```
+
+## Setup Instructions
+
+### 1. Start an MQTT Broker
+
+Make sure you have an MQTT broker running (for example, Mosquitto on `localhost:1883`).
+
+### 2. Run the Command Interface Script
+
+1. Verify that `mqtt_interface.py` contains the correct MQTT broker address and port.
+2. Edit the list of slave IDs in the script if necessary.
+3. Run the script with:
+
+   ```bash
+   python mqtt_interface.py
+   ```
+
+4. A Tkinter GUI window will open, allowing you to send commands.
+
+### 3. Run the Slave Script
+
+1. Edit the `SLAVE_ID` variable in `slave_controller.py` to match the unique identifier for the slave (e.g., `"0x201"`).
+2. Update configuration file paths if necessary.
+3. Replace the dummy classes (`DummyOwl` and `DummyStatusIndicator`) with your actual implementations.
+4. Run the script with:
+
+   ```bash
+   python slave_controller.py
+   ```
+
+5. The slave script will subscribe to the MQTT topic `"commands/can"` and process only the commands that include its slave ID.
+
+## How It Works
+
+- **Publisher Script:**  
+  When a command is issued (for example, pressing "Recording On"), the publisher creates a JSON message (e.g., `{ "command": "recording", "state": "on" }`) and publishes it to the MQTT topic `"commands/can"`.
+
+- **Slave Script:**  
+  The slave script listens on the MQTT topic and processes only the messages whose `"slave"` field matches its unique `SLAVE_ID`. It then updates its internal state accordingly (e.g., starting/stopping recording or adjusting sensitivity).
+
+- **Multi-Slave Support:**  
+  To support multiple slaves, run the `slave_controller.py` script on each device with a unique `SLAVE_ID`.
+
+## Extending the System
+
+### Adding More Commands
+
+- Update both the publisher and slave scripts with additional command types and corresponding JSON payloads as needed.
+
+### Adding More Slaves
+
+- Run the `slave_controller.py` script on additional devices, each with a unique `SLAVE_ID`.
 
 ## Troubleshooting
 
-- **MQTT Connection:**  
-  Ensure your MQTT broker is running and reachable. Use an MQTT client (e.g., MQTT Explorer) to verify that messages are published to and received on `commands/can`.
+### MQTT Connection Issues
 
-- **Message Processing:**  
-  Check the Node-RED debug sidebar for log messages from the function nodes. This will help verify that messages are correctly filtered and formatted per slave.
+- Verify that your MQTT broker is running and that the broker's address and port are correctly configured in both scripts.
 
-- **Hardware Integration:**  
-  If integrating with actual CAN hardware (e.g., via SocketCAN), verify that your CAN interface is correctly configured, and modify the flows to forward messages to a hardware node instead of debug nodes.
+### GUI Not Responding
 
-## Customization
+- Check for errors in the console output. The Tkinter main loop should keep the GUI responsive.
 
-- **Adjusting Topics & Payloads:**  
-  Modify the function nodes if you need a different JSON structure or wish to include additional parameters.
+### No Commands Received at Slave
 
-- **Hardware Control:**  
-  Replace debug nodes in the slave flows with hardware interface nodes (e.g., `socketcan-out` or `rpi-gpio out`) to control physical devices.
+- Ensure that the JSON payload sent by the publisher includes the correct `"slave"` field matching the slave’s `SLAVE_ID`.
+- Check the logs for any errors.
 
-- **Deployment:**  
-  You can deploy the global/control flow on one Node-RED instance and deploy each slave flow on separate devices (such as Raspberry Pis) as required.
+## License and Credits
 
-## References
+This sample code is provided as-is and you are free to use and modify it as needed.
 
-- [Node-RED Documentation](https://nodered.org/docs/)
-- [Node-RED Dashboard GitHub](https://github.com/node-red/node-red-dashboard)
-- [MQTT Documentation](https://mqtt.org/)
-
-## Conclusion
-
-This project provides a flexible method to issue global and slave-specific commands over a wireless network using Node-RED and MQTT. The flows can be easily adapted for integration with CAN bus systems or direct hardware control. For additional information or further customization, please refer to the Node-RED documentation or community forums.
+Happy coding!
