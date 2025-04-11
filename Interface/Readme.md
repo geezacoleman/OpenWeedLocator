@@ -187,6 +187,8 @@ If you want your Raspberry Pi to also act as a WiFi access point (so that slave 
 
 ## Slave Device Setup
 
+needs more information will update.
+
 1. **Prepare the Slave Device:**
    - Ensure the device (for example, a Raspberry Pi or Windows computer) has Python 3 installed and the required packages (`paho-mqtt`).
 
