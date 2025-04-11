@@ -74,7 +74,101 @@ This project provides a centralized MQTT command interface (publisher) and a sla
 
 ### Creating a WiFi Access Point on Raspberry Pi for the Broker
 
-(Instructions skipped here for brevity - see previous responses for full configuration)
+If you want your Raspberry Pi to also act as a WiFi access point (so that slave devices or other computers can connect directly to it to access the MQTT broker), follow these steps:
+
+1. **Install Required Software:**
+   - Install `hostapd` and `dnsmasq`:
+     ```bash
+     sudo apt update
+     sudo apt install hostapd dnsmasq
+     ```
+
+2. **Stop Services Temporarily:**
+   - Disable the services while configuring:
+     ```bash
+     sudo systemctl stop hostapd
+     sudo systemctl stop dnsmasq
+     ```
+
+3. **Configure a Static IP for the Wireless Interface:**
+   - Edit the DHCP daemon configuration for `dhcpcd`:
+     ```bash
+     sudo nano /etc/dhcpcd.conf
+     ```
+   - Add the following lines at the end:
+     ```
+     interface wlan0
+         static ip_address=192.168.4.1/24
+         nohook wpa_supplicant
+     ```
+   - Save and exit (`CTRL+O`, `ENTER`, then `CTRL+X`).
+
+4. **Configure hostapd:**
+   - Create or edit the hostapd configuration file:
+     ```bash
+     sudo nano /etc/hostapd/hostapd.conf
+     ```
+   - Add the following configuration (edit `ssid` and `wpa_passphrase` as desired):
+     ```
+     interface=wlan0
+     driver=nl80211
+     ssid=RaspberryPi_AP
+     hw_mode=g
+     channel=7
+     wmm_enabled=0
+     macaddr_acl=0
+     auth_algs=1
+     ignore_broadcast_ssid=0
+     wpa=2
+     wpa_passphrase=YourStrongPassword
+     wpa_key_mgmt=WPA-PSK
+     wpa_pairwise=TKIP
+     rsn_pairwise=CCMP
+     ```
+   - Edit `/etc/default/hostapd` to point to this configuration file. Uncomment and change the DAEMON_CONF variable:
+     ```bash
+     sudo nano /etc/default/hostapd
+     ```
+     Change to:
+     ```
+     DAEMON_CONF="/etc/hostapd/hostapd.conf"
+     ```
+
+5. **Configure dnsmasq:**
+   - Rename the default configuration file:
+     ```bash
+     sudo mv /etc/dnsmasq.conf /etc/dnsmasq.conf.orig
+     ```
+   - Create a new dnsmasq configuration file:
+     ```bash
+     sudo nano /etc/dnsmasq.conf
+     ```
+   - Add the following:
+     ```
+     interface=wlan0      # Use the correct wireless interface name
+     dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
+     ```
+   - Save and exit.
+
+6. **Enable and Start the Access Point:**
+   - Restart the DHCP service:
+     ```bash
+     sudo service dhcpcd restart
+     ```
+   - Start `hostapd` and `dnsmasq`:
+     ```bash
+     sudo systemctl start hostapd
+     sudo systemctl start dnsmasq
+     ```
+   - Enable both services to start on boot:
+     ```bash
+     sudo systemctl enable hostapd
+     sudo systemctl enable dnsmasq
+     ```
+
+7. **Test the Access Point:**
+   - From another device, search for the WiFi network (SSID: `RaspberryPi_AP`), connect using the password you set, and then test connectivity by pinging `192.168.4.1`.
+   - MQTT clients on this network can now connect to your Raspberry Pi broker using the IP address `192.168.4.1` on port `1883`.
 
 ---
 
