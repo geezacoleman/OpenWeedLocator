@@ -191,7 +191,7 @@ If you want your Raspberry Pi to also act as a WiFi access point (so that slave 
    - Ensure the device (for example, a Raspberry Pi or Windows computer) has Python 3 installed and the required packages (`paho-mqtt`).
 
 2. **Configure the Slave Script:**
-   - Open `slave_controller.py`.
+   - Open `input_manager.py`.
    - Set the `SLAVE_ID` variable to a unique identifier for this slave (e.g., `"0x201"`).
    - Update configuration file paths if necessary.
    - Replace the dummy classes (`DummyOwl` and `DummyStatusIndicator`) with your actual implementations.
