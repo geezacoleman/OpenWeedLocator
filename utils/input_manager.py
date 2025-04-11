@@ -6,11 +6,11 @@ from multiprocessing import Value
 import paho.mqtt.client as mqtt
 
 # Set up logging.
-logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 ###############################################################################
-# Dummy Interfaces (Replace with your actual Owl and StatusIndicator implementations)
+# Dummy Interfaces (Replace these with your actual Owl and StatusIndicator implementations need help setting up)
 ###############################################################################
 class DummyOwl:
     def __init__(self):
@@ -42,7 +42,7 @@ class DummyStatusIndicator:
     def generic_notification(self): logger.info("Generic notification")
 
 ###############################################################################
-# Simple Advanced Controller for a Slave
+# Advanced Controller for a Slave
 ###############################################################################
 class SimpleAdvancedController:
     """
