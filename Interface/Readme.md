@@ -13,12 +13,12 @@ This project provides a centralized MQTT command interface (publisher) and a sla
 ## Components
 
 - **Publisher Script:**  
-  - **File:** `mqtt_interface.py`  
+  - **File:** ``  
   - Provides a GUI interface to send MQTT messages to the topic `"commands/can"`.
   - Commands include global commands (all nozzles, recording, sensitivity, files) and spot spray commands with a selectable slave ID.
 
 - **Slave Script:**  
-  - **File:** `slave_controller.py`  
+  - **File:** ``  
   - Subscribes to the MQTT topic (`"commands/can"`) and processes messages intended for its own slave ID.
   - Updates internal state based on commands such as recording, sensitivity, and detection mode.
   - Uses dummy placeholder classes (`DummyOwl` and `DummyStatusIndicator`) which should be replaced with your actual implementations.
