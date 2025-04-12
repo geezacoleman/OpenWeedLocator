@@ -228,6 +228,68 @@ needs more information will update.
 
 ---
 
+# MQTT Interface & USB Section Control
+
+This Python application provides a flexible interface to control and monitor agricultural equipment using MQTT. It features two modes of operation:
+
+## Modes of Operation
+
+1. **GUI Mode (`--mode gui`)**  
+   Launches a Tkinter-based graphical interface for manual control of nozzles, spot spraying, recording, and other parameters. Ideal for real-time control and testing.
+
+2. **Serial Mode (`--mode serial`)**  
+   Reads relay section control data from an AgOpenGPS-compatible device over USB (`/dev/ttyUSB0`) and publishes the section states as JSON MQTT messages. This mode allows relay state automation without relying on GPIO pins.
+
+## Features
+
+- **Tkinter GUI**
+  - Turn all nozzles on/off
+  - Start/stop recording
+  - Adjust sensitivity and file settings
+  - Toggle spot spraying for individual slave sections
+
+- **USB Serial Integration**
+  - Monitors AgOpenGPS relay messages (PGN 239)
+  - Converts relay bytes to 16-bit section state array
+  - Publishes state updates to `commands/can` over MQTT
+
+- **MQTT Messaging**
+  - Consistent MQTT structure across modes
+  - Publishes to: `commands/can`
+  - JSON payloads like:
+    ```json
+    {
+      "command": "relay_states",
+      "states": [1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]
+    }
+    ```
+
+## Requirements
+
+- Python 3.7+
+- Dependencies:
+  ```bash
+  pip install paho-mqtt pyserial
+  ```
+
+## Running the Application
+
+### GUI Mode:
+```bash
+python mqtt_interface_combined.py --mode gui
+```
+
+### Serial Mode (auto-relay publishing):
+```bash
+python mqtt_interface_combined.py --mode serial --port /dev/ttyUSB0
+```
+
+## Use Cases
+
+- Enable spot spray control on Raspberry Pi without GPIO logic.
+- Interface AgOpenGPS relay messages directly with MQTT-based field control logic.
+- Manual control interface for local override or test setups.
+
 ## Troubleshooting
 
 - **Broker not connecting:**  
