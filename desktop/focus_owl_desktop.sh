@@ -31,10 +31,10 @@ source "$VENV_ACTIVATE"
 
 FOCUS_SCRIPT="$HOME/owl/desktop/focus_gui.py"
 
-if [ ! -f "$OWL_SCRIPT" ]; then
-    echo -e "${RED}[ERROR] OWL script not found at $OWL_SCRIPT${NC}"
+if [ ! -f "$FOCUS_SCRIPT" ]; then
+    echo -e "${RED}[ERROR] OWL script not found at $FOCUS_SCRIPT${NC}"
     exit 1
 fi
 
 echo -e "${GREEN}[INFO] Starting OWL focus mode...${NC}"
-"$OWL_SCRIPT"
+"$FOCUS_SCRIPT"

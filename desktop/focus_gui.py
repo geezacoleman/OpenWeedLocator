@@ -27,7 +27,7 @@ class OWLFocusGUI:
         self.resolution = (640, 480)
         self.exp_compensation = -2
 
-        # Focus tracking: Persist best focus value and corresponding frame indefinitely.
+        # Focus tracking: persist best focus value and its frame indefinitely.
         self.focus_history = collections.deque(maxlen=250)
         self.focus_moving_avg = collections.deque(maxlen=10)
         self.best_focus = float('-inf')
@@ -54,7 +54,7 @@ class OWLFocusGUI:
         self.video_label = tk.Label(self.video_container)
         self.video_label.pack(fill=tk.BOTH, expand=True)
 
-        # Middle Section: Create a grid with three equal columns.
+        # Middle Section: Centered, horizontally stacked values and buttons.
         mid_frame = ttk.Frame(main_frame)
         mid_frame.pack(fill=tk.X, pady=(0,10))
         mid_frame.columnconfigure(0, weight=1)
@@ -67,7 +67,6 @@ class OWLFocusGUI:
         ttk.Label(current_frame, text="Current:", font=("Arial", 12, "bold")).pack(side=tk.LEFT)
         self.focus_value_container = tk.Frame(current_frame, bg="#f0f0f0", padx=5, pady=2)
         self.focus_value_container.pack(side=tk.LEFT, padx=(5,0))
-        # Use a tk.Label (not ttk) to allow background updates.
         self.focus_value_label = tk.Label(self.focus_value_container, text="0.0", font=("Arial", 16), bg="#f0f0f0")
         self.focus_value_label.pack()
 
@@ -87,30 +86,35 @@ class OWLFocusGUI:
         self.display_button.pack(side=tk.LEFT, padx=5)
 
         # Graph Section: Focus History.
-        # Force the graph frame to have a minimum height.
         graph_frame = ttk.LabelFrame(main_frame, text="Focus History")
         graph_frame.pack(fill=tk.BOTH, expand=True)
-        graph_frame.config(height=500)
-        graph_frame.pack_propagate(True)
+        graph_frame.configure(relief=tk.FLAT)
         self.fig = plt.Figure(figsize=(5, 2), dpi=100)
-        # Set the figure background to match the window.
         self.fig.patch.set_facecolor('#f0f0f0')
         self.ax = self.fig.add_subplot(111)
         self.ax.set_facecolor('#f0f0f0')
         self.ax.set_xlabel('Frame')
         self.ax.set_ylabel('Focus')
         self.ax.grid(True)
-        self.canvas = FigureCanvasTkAgg(self.fig, graph_frame)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=graph_frame)
         self.canvas.draw()
-        # Set the canvas background.
-        self.canvas.get_tk_widget().configure(background='#f0f0f0')
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        # Bind to the <Configure> event of the graph frame to update figure size.
+        graph_frame.bind("<Configure>", self.on_graph_frame_configure)
 
         # Exit Button at the bottom.
         exit_frame = ttk.Frame(main_frame)
         exit_frame.pack(fill=tk.X, pady=(5,0))
         self.exit_button = ttk.Button(exit_frame, text="Exit", command=self.on_closing)
         self.exit_button.pack(side=tk.RIGHT)
+
+    def on_graph_frame_configure(self, event):
+        """Update the matplotlib figure size to match the graph frame."""
+        new_width = event.width
+        new_height = event.height
+        dpi = self.fig.get_dpi()
+        self.fig.set_size_inches(new_width/dpi, new_height/dpi)
+        self.canvas.draw()
 
     def reset_best_focus(self):
         self.best_focus = float('-inf')
@@ -127,7 +131,7 @@ class OWLFocusGUI:
         img = Image.fromarray(frame_rgb)
         photo = ImageTk.PhotoImage(image=img)
         lbl = ttk.Label(win, image=photo)
-        lbl.image = photo  # Keep a reference to avoid garbage collection.
+        lbl.image = photo  # Prevent garbage collection.
         lbl.pack()
 
     def camera_loop(self):
@@ -141,7 +145,7 @@ class OWLFocusGUI:
                     time.sleep(0.1)
                     continue
                 grey = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2GRAY)
-                focus_val = fft_blur(grey, size=60)
+                focus_val = fft_blur(grey, size=30)
                 self.focus_history.append(focus_val)
                 self.focus_moving_avg.append(focus_val)
                 current_avg_focus = np.mean(self.focus_moving_avg)
@@ -162,7 +166,7 @@ class OWLFocusGUI:
         if self.frame is not None:
             frame_rgb = cv2.cvtColor(self.frame, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(frame_rgb)
-            # Resize frame to fixed video container dimensions.
+            # Resize frame to fill the fixed video container.
             img = img.resize((self.video_width, self.video_height), Image.LANCZOS)
             self.photo = ImageTk.PhotoImage(image=img)
             self.video_label.configure(image=self.photo)
@@ -175,10 +179,11 @@ class OWLFocusGUI:
             current_avg_focus = np.mean(self.focus_moving_avg)
             self.focus_value_label.configure(text=f"{current_avg_focus:.1f}")
             self.best_focus_label.configure(text=f"{self.best_focus:.1f}")
+            # Set background color consistently on both the container and label.
             if current_avg_focus >= self.best_focus:
-                new_bg = "#90EE90"  # Green when current equals/exceeds best.
+                new_bg = "#90EE90"  # Green when current is as good as or better than best.
             elif current_avg_focus < self.last_avg_focus:
-                new_bg = "#FFB6C1"  # Red when focus is deteriorating.
+                new_bg = "#FFB6C1"  # Red if focus deteriorates.
             else:
                 new_bg = "#f0f0f0"
             self.focus_value_container.configure(bg=new_bg)
@@ -198,7 +203,7 @@ class OWLFocusGUI:
             if self.best_focus > float('-inf'):
                 self.ax.axhline(y=self.best_focus, color='g', linestyle='--', linewidth=1, label='Best Focus')
             self.ax.set_xlabel('Frame')
-            self.ax.set_ylabel('Focus')
+            self.ax.set_ylabel('Focus Value (higher is better)')
             self.ax.grid(True, alpha=0.3)
             self.ax.legend(loc='upper right')
             if y_data:
