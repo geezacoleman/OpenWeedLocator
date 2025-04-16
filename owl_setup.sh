@@ -201,7 +201,9 @@ sleep 2
 echo -e "${GREEN}[INFO] Creating OWL Focusing desktop icon...${NC}"
 
 FOCUS_WRAPPER="${SCRIPT_DIR}/desktop/focus_owl_desktop.sh"
+FOCUS_GUI="${SCRIPT_DIR}/desktop/focus_gui.py"
 chmod +x "$FOCUS_WRAPPER"
+chmod +x "$FOCUS_GUI"
 
 DESKTOP_DIR="$HOME/Desktop"
 if [ ! -d "$DESKTOP_DIR" ]; then
@@ -209,16 +211,16 @@ if [ ! -d "$DESKTOP_DIR" ]; then
     mkdir -p "$DESKTOP_DIR"
 fi
 
-DESKTOP_FILE="${DESKTOP_DIR}/Focus OWL.desktop"
+DESKTOP_FILE="${DESKTOP_DIR}/Focus.desktop"
 cat << EOF > "$DESKTOP_FILE"
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Focus OWL
+Name=Focus
 Comment=Run OWL focusing mode
 Exec=${FOCUS_WRAPPER}
 Icon=${SCRIPT_DIR}/images/owl-logo.png
-Terminal=true
+Terminal=false
 Categories=Utility;
 EOF
 chmod +x "$DESKTOP_FILE"

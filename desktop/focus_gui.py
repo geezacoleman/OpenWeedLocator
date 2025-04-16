@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
+import os
 import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import cv2
 import time
 import signal
@@ -17,7 +21,7 @@ from utils.algorithms import fft_blur
 class OWLFocusGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("OWL Camera Focus Tool")
+        self.root.title("Camera Focus Tool")
         self.root.geometry("1000x700")
         self.root.configure(bg='#f0f0f0')
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -43,7 +47,7 @@ class OWLFocusGUI:
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # Video Feed Section: Fixed size using a container frame.
+        # Video Feed Section
         video_frame = ttk.LabelFrame(main_frame, text="Camera Feed")
         video_frame.pack(pady=(0,10))
         self.video_width = 640
@@ -54,7 +58,7 @@ class OWLFocusGUI:
         self.video_label = tk.Label(self.video_container)
         self.video_label.pack(fill=tk.BOTH, expand=True)
 
-        # Middle Section: Centered, horizontally stacked values and buttons.
+        # Middle Section
         mid_frame = ttk.Frame(main_frame)
         mid_frame.pack(fill=tk.X, pady=(0,10))
         mid_frame.columnconfigure(0, weight=1)
@@ -99,7 +103,6 @@ class OWLFocusGUI:
         self.canvas = FigureCanvasTkAgg(self.fig, master=graph_frame)
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        # Bind to the <Configure> event of the graph frame to update figure size.
         graph_frame.bind("<Configure>", self.on_graph_frame_configure)
 
         # Exit Button at the bottom.
@@ -109,7 +112,6 @@ class OWLFocusGUI:
         self.exit_button.pack(side=tk.RIGHT)
 
     def on_graph_frame_configure(self, event):
-        """Update the matplotlib figure size to match the graph frame."""
         new_width = event.width
         new_height = event.height
         dpi = self.fig.get_dpi()
@@ -131,7 +133,7 @@ class OWLFocusGUI:
         img = Image.fromarray(frame_rgb)
         photo = ImageTk.PhotoImage(image=img)
         lbl = ttk.Label(win, image=photo)
-        lbl.image = photo  # Prevent garbage collection.
+        lbl.image = photo
         lbl.pack()
 
     def camera_loop(self):
@@ -166,7 +168,6 @@ class OWLFocusGUI:
         if self.frame is not None:
             frame_rgb = cv2.cvtColor(self.frame, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(frame_rgb)
-            # Resize frame to fill the fixed video container.
             img = img.resize((self.video_width, self.video_height), Image.LANCZOS)
             self.photo = ImageTk.PhotoImage(image=img)
             self.video_label.configure(image=self.photo)
@@ -179,9 +180,8 @@ class OWLFocusGUI:
             current_avg_focus = np.mean(self.focus_moving_avg)
             self.focus_value_label.configure(text=f"{current_avg_focus:.1f}")
             self.best_focus_label.configure(text=f"{self.best_focus:.1f}")
-            # Set background color consistently on both the container and label.
             if current_avg_focus >= self.best_focus:
-                new_bg = "#90EE90"  # Green when current is as good as or better than best.
+                new_bg = "#90EE90"
             elif current_avg_focus < self.last_avg_focus:
                 new_bg = "#FFB6C1"  # Red if focus deteriorates.
             else:
@@ -203,7 +203,7 @@ class OWLFocusGUI:
             if self.best_focus > float('-inf'):
                 self.ax.axhline(y=self.best_focus, color='g', linestyle='--', linewidth=1, label='Best Focus')
             self.ax.set_xlabel('Frame')
-            self.ax.set_ylabel('Focus Value (higher is better)')
+            self.ax.set_ylabel('Focus')
             self.ax.grid(True, alpha=0.3)
             self.ax.legend(loc='upper right')
             if y_data:
@@ -211,7 +211,7 @@ class OWLFocusGUI:
                 min_focus = min(y_data)
                 range_focus = max_focus - min_focus
                 margin = max(range_focus * 0.1, 1)
-                y_min = max(0, min_focus - margin)
+                y_min = min_focus - margin
                 y_max = max_focus + margin
                 self.ax.set_ylim(y_min, y_max)
             self.canvas.draw()
