@@ -1,17 +1,15 @@
 # Green‑on‑Green (In‑Crop) Detection – _Beta_
 
 > **Status:** early beta · expect rough edges · API and install steps may still change  
-> **Tested on:**  
-> • Raspberry Pi 4 (64‑bit Bookworm) with **Hailo‑8L M.2 HAT+**  
-> • Libre‑Computer AML‑S905X‑CC (“Le Potato”)  
-> • Windows 11 desktop (CPU‑only)
+> **Tested on:**
+> to be tested 
 
 The Green‑on‑Green (GoG) module lets the **Open Weed Locator (OWL)** detect weeds _inside_ the crop canopy.  
 It supports three execution back‑ends:
 
 | Priority | Back‑end | Model | Notes |
 |----------|----------|-------|-------|
-| 1 | **Hailo‑8/8L** | `.hef` | Works on Pi 4/5 with Hailo‑8L M.2 HAT+ and on x86 with Hailo‑8 PCIe. |
+| 1 | **Hailo‑8/8L** | `.hef` | Works on Pi 5 with Hailo‑8L M.2 HAT+ and on x86 with Hailo‑8 PCIe. |
 | 2 | **CPU (TFLite)** | `.tflite` | Always available – slower. |
 | 3 | **Coral Edge‑TPU** | `.tflite` (Edge‑TPU‑compiled) | _Only_ if Python ≤ 3.9; PyCoral does **not** support the default Pi Bookworm (Python 3.11). |
 
