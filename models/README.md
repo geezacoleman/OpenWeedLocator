@@ -1,100 +1,167 @@
-# Adding Green-on-Green to the OWL (beta)
-Welcome to the first iteration of Green-on-Green or in-crop weed detection with the OWL. This is still an early beta version, so it may require additional troubleshooting. It has been tested and works on both a Raspberry Pi 4, LibreComputer and a Windows desktop computer.
+# Green‑on‑Green (In‑Crop) Detection – _Beta_
 
-## Stage 1| Hardware/Software - Google Coral Installation
-In addition to the other software installation to get the OpenWeedLocator running, you will also need to install the Google Coral supporting software onto the Raspberry Pi. Simply run `install_coral.sh` from the command line using the instructions below. 
+> **Status:** early beta · expect rough edges · API and install steps may still change  
+> **Tested on:**  
+> • Raspberry Pi 4 (64‑bit Bookworm) with **Hailo‑8L M.2 HAT+**  
+> • Libre‑Computer AML‑S905X‑CC (“Le Potato”)  
+> • Windows 11 desktop (CPU‑only)
 
-### Step 1
-Assuming you have cloned the OpenWeedLocator repository and renamed it to `owl`, navigate to the `models` directory on the Raspberry Pi with:
+The Green‑on‑Green (GoG) module lets the **Open Weed Locator (OWL)** detect weeds _inside_ the crop canopy.  
+It supports three execution back‑ends:
 
-`owl@raspberrypi:~ $ cd ~/owl/models`
+| Priority | Back‑end | Model | Notes |
+|----------|----------|-------|-------|
+| 1 | **Hailo‑8/8L** | `.hef` | Works on Pi 4/5 with Hailo‑8L M.2 HAT+ and on x86 with Hailo‑8 PCIe. |
+| 2 | **CPU (TFLite)** | `.tflite` | Always available – slower. |
+| 3 | **Coral Edge‑TPU** | `.tflite` (Edge‑TPU‑compiled) | _Only_ if Python ≤ 3.9; PyCoral does **not** support the default Pi Bookworm (Python 3.11). |
 
-### Step 2
-Now run the installation file. This will install the `pycoral` library and other important packages to run the Coral. For full instructions on the installation process, we recommend reading  the Google Coral [documentation](https://coral.ai/docs/accelerator/get-started/).
+The detector auto‑selects the best back‑end; you can override with `--accel hailo|cpu|coral`.
 
-During the installation, you will be asked to confirm performance options and connect the Google Coral USB to the USB3.0 ports (blue). 
+---
 
-`owl@raspberrypi:~ $ chmod +x install_coral.sh && ./install_coral.sh`.
+## 1 · Install OWL & GoG
 
-If you run into errors during the `pycoral` library installation, try running 
+### 1.1 Clone the repo
 
-```
-owl@raspberrypi:~ $ workon owl
-(owl) owl@raspberrypi:~/owl/models$ pip install pycoral
-```
-
-### Step 3
-The final step is to test the installation.
-
-Open up a Python terminal by running:
-```
-(owl) owl@raspberrypi:~/owl/models$ python
+```bash
+git clone https://github.com/CropCrusaders/OpenWeedLocator.git owl
+cd owl
 ```
 
-Now try running:
-```
->>> import pycoral
-```
+> All commands below assume you are inside the `owl` root.
 
-If this runs successfully then you're ready to move on to the next step and running object detection models with the OWL.
+### 1.2 Set up the Python environment
 
-## Stage 2 | Model Training/Deployment - Inference with the Coral
-Running weed recognition models on the Google Coral requires the generation of a .tflite model file. The .tflite files are specifically designed to be lightweight and efficient, making them well-suited for deployment on edge devices like the Coral USB TPU. One important thing to note is that .tflite files for the Google Coral are specifically optimized for it, so you cannot simply use any .tflite file. Using a generic .tflite file may result in much slower performance or even failure to run.
-
-This is an overview of the process from the official Google Coral documentation:
-![image](https://user-images.githubusercontent.com/51358498/226113545-9b642d75-f611-4ff5-a613-5e684822e619.png)
-
-### Step 1
-To test if the installation has worked, the recommended option is to download a generic model file first from the [Coral model repository](https://coral.ai/models/object-detection/). This will isolate any issues with it running to the OWL or the Google Coral installation, rather than the model training. 
-
-While still in the `models` directory, run this command to download the appropriate model:
-```
-(owl) owl@raspberrypi:~/owl/models$ wget https://raw.githubusercontent.com/google-coral/test_data/master/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-Now change back to the `owl` directory and try running `owl.py` and specifying `gog` for the algorithm. If you don't specify a path to the `.tflite` model file, it will automatically select the first model in the directory when sorted alphabetically.
+Requirements include `tflite-runtime`; Hailo/Coral extras are separate (see below).
 
-**NOTE** If you are testing this inside, the camera settings will likely be too dark (and the image will appear entirely black) so you may also need to specify the `--exp-compensation 4` and `--exp-mode auto`. 
+---
 
+## 2 · Hardware / Driver setup
+
+### 2.1 Hailo‑8/8L (recommended)
+
+```bash
+# Enable the Hailo repo
+echo "deb https://hailo.ai/repo/apt stable main" | sudo tee /etc/apt/sources.list.d/hailo.list
+wget -qO - https://hailo.ai/repo/apt/public.key | sudo apt-key add -
+
+# Install platform 4.20 (works with Python 3.11)
+sudo apt update
+sudo apt install hailo-all=4.20.*
 ```
-(owl) owl@raspberrypi:~/owl/models$ cd ..
-(owl) owl@raspberrypi:~/owl$python owl.py --show-display --algorithm gog
+
+Reboot, then verify:
+
+```bash
+hailortcli info          # should list your device
 ```
 
-If this runs correctly, a video feed just like the previous green-on-brown approach should appear with a red box around an 'object', which in this case has been filtered to only detect 'potted plants'. If you would like to detect any of the other COCO categories, simply change the `filter_id=63` to a different category. The full list is [available here](https://tech.amikelive.com/node-718/what-object-categories-labels-are-in-coco-dataset/).
+### 2.2 Coral Edge‑TPU (optional)
 
-Once you have confirmed it is working, you will need to start training and deploying your own weed recognition models.
+> **Pi Bookworm users:** PyCoral wheels are only built for Python 3.7–3.9.  
+> You must create a **Python 3.9 virtualenv** or use the legacy “Bullseye AIY” image.
 
-There are two main ways to generate optimized, weed recognition .tflite files for the Coral. These are detailed below.
+```bash
+# Example inside a Python 3.9 venv
+pip install pycoral
+```
 
-### Option 1 | Train a model using Tensorflow
-These instructions by EdjeElectronics provide a step-by-step to a working .tflite Edge TPU model file. 
-* [Google Colab walkthrough](https://colab.research.google.com/github/EdjeElectronics/TensorFlow-Lite-Object-Detection-on-Android-and-Raspberry-Pi/blob/master/Train_TFLite2_Object_Detction_Model.ipynb)
-* [Accompanying YouTube video](https://www.youtube.com/watch?v=XZ7FYAMCc4M&ab_channel=EdjeElectronics)
+Follow the official [Coral USB Accelerator guide](https://coral.ai/docs/accelerator/) for udev rules and firmware.
 
-There is also the [official Google Colab tutorial](https://colab.research.google.com/github/google-coral/tutorials/blob/master/retrain_ssdlite_mobiledet_qat_tf1.ipynb) from the Coral documentation, that walks you through the entire training process for custom datasets.
+---
 
-### Train a YOLO v5/v8 model and export as .tflite 
-** NOTE ** it appears this method isn't currently working consistently. Once this resolves, this will be the recommended approach, given the ease of training for YOLO models and the relatively high performance. You can track one of the issues on the Ultralytics repository [here](https://github.com/ultralytics/ultralytics/issues/1185).
+## 3 · Quick smoke test
 
-To train a YOLOv5 model from Weed-AI, check out this notebook we have for [Weed-AI datasets](https://colab.research.google.com/github/Weed-AI/Weed-AI/blob/master/weed_ai_yolov5.ipynb)). Once it is trained, you must export it using either of the following commands:
+1.  Drop a demo model into `owl/models/`:
 
-#### YOLOv5
-`!python export.py --weights path/to/your/weights/best.pt --include edgetpu`
-#### YOLOv8
-`!yolo export model=path/to/your/weights/best.pt format=edgetpu`
+    ```bash
+    cd models
+    wget https://github.com/google-coral/test_data/raw/master/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite
+    wget https://github.com/google-coral/test_data/raw/master/coco_labels.txt -O labels.txt
+    cd ..
+    ```
 
-The full explanation for each method is available in the [Ultralytics YOLOv5](https://github.com/ultralytics/yolov5)
-or [Ultralytics YOLOv8](https://github.com/ultralytics/ultralytics) repositories.
+2.  Run OWL in display mode with GoG:
 
-Currently, the `GreenOnGreen` class will simply either load the first (alphabetically) model in the directory if specified with
-`algorithm='gog'` or will load the model specified if `algorithm=path/to/model.tflite`. Importantly, all your classes must
-appear in the `labels.txt` file.
+    ```bash
+    python owl.py --show-display --algorithm gog --accel auto
+    ```
 
-This is a very early version of the approach, so it is subject to change.
+    * A window should open with the camera feed and red boxes around “potted plants”  
+      (class ID 63 in the COCO set).  
+    * Pass `--filter-id 0` to show **all** classes.
+
+> Inside under low light? Add `--exp-compensation 4 --exp-mode auto`.
+
+---
+
+## 4 · Training your own GoG model
+
+### 4.1 TensorFlow Object Detection API → Edge‑TPU
+
+*   Follow the Colab by **EdjeElectronics**  
+    <https://colab.research.google.com/github/EdjeElectronics/TensorFlow-Lite-Object-Detection-on-Android-and-Raspberry-Pi/blob/master/Train_TFLite2_Object_Detction_Model.ipynb>  
+    It walks from labelling → training → quantisation → Edge‑TPU compile.
+
+### 4.2 YOLO v5 / v8 → Edge‑TPU  (**experimental**)
+
+Ultralytics export:
+
+```bash
+# YOLOv5
+python export.py --weights best.pt --include edgetpu
+
+# YOLOv8
+yolo export model=best.pt format=edgetpu
+```
+
+> Export sometimes fails with current tool‑chain – track  
+> <https://github.com/ultralytics/ultralytics/issues/1185>.
+
+### 4.3 Hailo .hef compilation
+
+1.  Quantise your model to `.onnx` or `.tflite`.  
+2.  Run the **Hailo Dataflow Compiler** (`hef_generator`) to produce `your_model.hef`.  
+    See Hailo docs §“Deploy a network”.
+
+Place the resulting `.hef` **or** Edge‑TPU‑compiled `.tflite` in `owl/models/` and
+update `labels.txt` so every class ID used by the model has a name.
+
+---
+
+## 5 · Command‑line reference (GoG‑specific)
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--algorithm gog` | activate Green‑on‑Green | _n/a_ |
+| `--model-path path/to/model.hef|.tflite` | override auto‑selected model | first (α‑sort) in `models/` |
+| `--accel auto|hailo|cpu|coral` | force back‑end | `auto` |
+| `--filter-id N` | draw detections only for class N | `0` (show all) |
+
+---
+
+## 6 · Troubleshooting
+
+| Symptom | Cause / Fix |
+|---------|-------------|
+| `RuntimeError: Failed to open Hailo device` | Check ribbon cable / M.2 seating; make sure another process isn’t using the accelerator. |
+| `ImportError: No module named 'pycoral'` on Pi OS Bookworm | Create a Python 3.9 venv or use Hailo/CPU back‑end instead. |
+| Detections look squashed / shifted | Camera aspect ratio ≠ model input. Use `--res (W H)` or retrain model at native ratio. |
+| Low FPS on CPU | Reduce `frame-size`, prune model, or add Hailo 8L hardware. |
+
+---
 
 ## References
-These are some of the sources used in the development of this aspect of the project.
 
-1. [PyImageSearch](https://pyimagesearch.com/2019/05/13/object-detection-and-image-classification-with-google-coral-usb-accelerator/)
-2. [Google Coral Guides](https://coral.ai/docs/accelerator/get-started/)
+1. PyImageSearch – “Object Detection with Google Coral”  
+   <https://pyimagesearch.com/2019/05/13/object-detection-and-image-classification-with-google-coral-usb-accelerator/>
+2. Google Coral documentation  
+   <https://coral.ai/docs/>
+3. Hailo RT documentation  
+   <https://hailo.ai/developer-zone/>
