@@ -1714,43 +1714,61 @@ With the config files set, save them to the OWL, reboot, and you should be ready
 
 </details>
 
-## Green-on-Green
+## Green‑on‑Green (In‑Crop) Detection – *Beta*
 
-<details>
-<summary>How to detect in-crop weeds with the OWL</summary>
-<br>
+> **Status:** early beta – APIs and install steps may change. Feedback welcome!
 
-### OWL Integration
+The *Green‑on‑Green* (GoG) module enables the Open Weed Locator (OWL) to spot weeds **inside the crop canopy**, where traditional green‑on‑brown vision fails.
 
-Green-on-Green capability is (almost) here!
+### How It Works
+GoG is a pluggable detector that chooses the fastest hardware it finds at runtime:
 
-While we previously had implemented in-crop detection models with the Google Coral and Pycoral, the lack of support
-has made us reconsider that approach. Running detection models like YOLO is in the works to run on the base Raspberry Pi
-5 or with additional hardware such as the Raspberry Pi AI Kit with the Hailo 8L.
+| Priority | Accelerator | Model type | Notes |
+|:--|:--|:--|:--|
+| 1 | **Hailo‑8 / 8L** | `.hef` | Pi 5 + Hailo‑8L M.2 HAT+ or x86 PCIe card. Best FPS & lowest power. |
+| 2 | CPU (TFLite) | `.tflite` | Always available but slow – good for bench tests. |
+| 3 | Coral Edge‑TPU | `.tflite` (Edge‑TPU compiled) | Requires Python ≤ 3.9; *PyCoral* wheels not yet built for Pi OS Bookworm (Py 3.11). |
 
-If you would like to try the Google Coral, you can by following the instructions in the 'models' directory.
+Override auto‑selection with `--accel hailo|coral|cpu`.
 
+### Quick Start
+```bash
+# 1 · Clone & set‑up OWL
+$ git clone https://github.com/CropCrusaders/OpenWeedLocator.git owl && cd owl
+$ python3 -m venv .venv && source .venv/bin/activate
+$ pip install -r requirements.txt   # core + TFLite
 
-### Model Training
+# 2 · Add your compiled GoG model & labels
+$ mkdir -p models && cp ~/my_gog/best.{hef,tflite} models/
+$ cp ~/my_gog/labels.txt           models/
 
-Effective models need training data, so if you're interested in using the Green-on-Green functionality, you will need to
-start collecting and annotating images of relevant weeds for training. Alternatively, head over
-to [Weed-AI](https://weed-ai.sydney.edu.au/explore?is_head_filter=%5B%22latest+version%22%5D) to see if any image data
-may be relevant for your purposes.
+# 3 · Run a smoke test (camera preview)
+$ python owl.py --algorithm gog --accel auto --show-display
+```
 
->⚠️**NOTE**⚠️There do appear to be some issues with the exporting functionality of YOLOv5/v8 to .tflite models for use with
-the Coral. The issue has been raised on the Ultralytics repository and should hopefully be resolved soon. You can follow
-the updates [here](https://github.com/ultralytics/ultralytics/issues/1312).
+> **Need a model?** The *models/README* gives step‑by‑step recipes to **train**, **quantise**, and **compile** YOLOv8/YOLOv11 detectors for Hailo‑8L, Coral, or pure‑CPU. Start there if you don’t already have `best.hef` / `best.tflite`.
 
-[YOLOv8](https://github.com/ultralytics/ultralytics) and [YOLOv5](https://github.com/ultralytics/yolov5) currently
-provide the most user friendly methods of training, optimisation and exporting as `.tflite` files for use with the
-Google Coral. There is also a Weed-AI Google Colab
-Notebook <a target="_blank" href="https://colab.research.google.com/github/Weed-AI/Weed-AI/blob/master/weed_ai_yolov5.ipynb">
-<img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
-</a>
-which can be used to train models from Weed-AI data directly.
+### Hardware & Driver Notes
+* **Hailo‑8/8L** – install platform `hailo‑all >= 4.20` (supports Python 3.11). After `sudo reboot`, confirm with `hailortcli info`.
+* **Coral Edge‑TPU** – create a **Python 3.9** venv (`pycoral` wheels stop at 3.9). Follow Coral USB/PCIe udev‑rules guide.
 
-</details>
+### Troubleshooting
+| Symptom | Fix |
+|---|---|
+| `RuntimeError: Failed to open Hailo device` | Check cable/M.2 seating; ensure no other process is hogging the accelerator. |
+| `ImportError: No module named 'pycoral'` on Pi OS Bookworm | Use Python 3.9 venv **or** switch to Hailo/CPU. |
+| Camera preview flattened / stretched | Supply `--res W H` matching your sensor, or retrain model at native aspect. |
+| Low FPS on CPU | Lower image size, prune model, or add Hailo 8L HAT+. |
+
+### Training Your Own GoG Model
+Full instructions live in **`models/README_green_on_green.md`**. It covers:
+1. Image labelling (Label Studio, Weed‑AI datasets)
+2. YOLO v8 / YOLO v11 training (Ultralytics)
+3. Export → ONNX/TFLite
+4. Compile for Hailo (`.hef`) or Edge‑TPU (`.tflite`) – including known export caveats.
+
+*(Last verified 17 Apr 2025)*
+
 
 ## Non-Raspberry Pi Installation
 
