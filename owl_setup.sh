@@ -15,6 +15,24 @@ if [ "$SUDO_USER" ]; then
    exit 1
 fi
 
+if pgrep -f "owl.py" > /dev/null; then
+    echo -e "${ORANGE}[WARNING] owl.py is already running from a previous installation."
+    echo -e "${ORANGE}It is unlikely you need to run this script a second time, consider running 'python owl.py --focus or --show-display instead if you just need the display."
+    read -p "Otherwise, please enter 'y' to stop the currently running instance of owl.py to continue: (y/n): " stop_choice
+    if [[ "$stop_choice" =~ ^[Yy]$ ]]; then
+        pkill -f "owl.py"
+        echo -e "${GREEN}[INFO] owl.py process has been stopped. Continuing..."
+        sleep 2
+    else
+        echo -e "${RED}[ERROR] Please stop the running owl.py process before running this script."
+        exit 1
+    fi
+fi
+
+if [ "$CURRENT_USER" != "owl" ]; then
+   echo -e "${ORANGE}[WARNING] Current user '$CURRENT_USER' differs from expected 'owl'. Some settings may not work correctly.${NC}"
+fi
+
 # Initialize status tracking variables
 STATUS_UPGRADE=""
 STATUS_CAMERA=""
@@ -24,6 +42,7 @@ STATUS_VENV=""
 STATUS_OPENCV=""
 STATUS_OWL_DEPS=""
 STATUS_BOOT_SCRIPTS=""
+STATUS_DESKTOP_ICON=""
 
 ERROR_UPGRADE=""
 ERROR_CAMERA=""
@@ -33,10 +52,7 @@ ERROR_VENV=""
 ERROR_OPENCV=""
 ERROR_OWL_DEPS=""
 ERROR_BOOT_SCRIPTS=""
-
-if [ "$CURRENT_USER" != "owl" ]; then
-   echo -e "${ORANGE}[WARNING] Current user '$CURRENT_USER' differs from expected 'owl'. Some settings may not work correctly.${NC}"
-fi
+ERROR_DESKTOP_ICON=""
 
 # Function to check the exit status of the last executed command
 check_status() {
@@ -179,6 +195,37 @@ check_status "Adding boot script to cron" "BOOT_SCRIPTS"
 echo -e "${GREEN}[INFO] Setting desktop background...${NC}"
 pcmanfm --set-wallpaper $SCRIPT_DIR/images/owl-background.png
 check_status "Setting desktop background" "BOOT_SCRIPTS"
+sleep 2
+
+# creating desktop icon for focusing
+echo -e "${GREEN}[INFO] Creating OWL Focusing desktop icon...${NC}"
+
+FOCUS_WRAPPER="${SCRIPT_DIR}/desktop/focus_owl_desktop.sh"
+FOCUS_GUI="${SCRIPT_DIR}/desktop/focus_gui.py"
+chmod +x "$FOCUS_WRAPPER"
+chmod +x "$FOCUS_GUI"
+
+DESKTOP_DIR="$HOME/Desktop"
+if [ ! -d "$DESKTOP_DIR" ]; then
+    DESKTOP_DIR="$HOME/.local/share/applications"
+    mkdir -p "$DESKTOP_DIR"
+fi
+
+DESKTOP_FILE="${DESKTOP_DIR}/Focus.desktop"
+cat << EOF > "$DESKTOP_FILE"
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Focus
+Comment=Run OWL focusing mode
+Exec=${FOCUS_WRAPPER}
+Icon=${SCRIPT_DIR}/images/owl-logo.png
+Terminal=false
+Categories=Utility;
+EOF
+chmod +x "$DESKTOP_FILE"
+echo -e "${GREEN}[INFO] Focus OWL desktop icon created at: ${DESKTOP_FILE}${NC}"
+check_status "Creating desktop icon" "DESKTOP_ICON"
 
 # Final Summary
 echo -e "\n${GREEN}[INFO] Installation Summary:${NC}"
@@ -194,17 +241,26 @@ echo -e "$STATUS_VENV Virtual Environment Created"
 echo -e "$STATUS_OPENCV OpenCV Installed"
 echo -e "$STATUS_OWL_DEPS OWL Dependencies Installed"
 echo -e "$STATUS_BOOT_SCRIPTS Boot Scripts Moved"
+echo -e "$STATUS_DESKTOP_ICON Desktop Icon Created"
+
+OWL_VERSION=$(python3 - <<EOF
+import version
+print(version.VERSION)
+EOF
+)
+
+echo -e "${GREEN}[COMPLETE] OWL version installed: ${NEW_VERSION}${NC}"
 
 # Step 10: Start OWL focusing
 read -p "Start OWL focusing? (y/n): " choice
 case "$choice" in
-  y|Y ) echo -e "${GREEN}[INFO] Starting focusing...${NC}"; ./owl.py --focus;;
-  n|N ) echo -e "${GREEN}[INFO] Focusing skipped. Run './owl.py --focus' to focus the OWL later.${NC}";;
+  y|Y ) echo -e "${GREEN}[INFO] Starting focusing...${NC}"; "$FOCUS_WRAPPER" &;;
+  n|N ) echo -e "${GREEN}[INFO] Focusing skipped. Double click the desktop icon to focus the OWL later.${NC}";;
   * ) echo -e "${RED}[ERROR] Invalid input. Please enter y or n.${NC}";;
 esac
 
 # Step 11: Launch OWL
-read -p "Launch OWL software? (y/n): " choice
+read -p "Launch OWL? (y/n): " choice
 case "$choice" in
   y|Y ) echo -e "${GREEN}[INFO] Launching OWL...${NC}"; ./owl.py --show-display;;
   n|N ) echo -e "${GREEN}[INFO] Skipped. Run './owl.py --show-display' to launch OWL later.${NC}";;

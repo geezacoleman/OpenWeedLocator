@@ -1910,8 +1910,8 @@ We and others will be continually contributing to and improving OWL as we become
 increase detection performance. Once you have a functioning setup the process to update is simple with a single bash script. 
 First, you'll either need to connect a screen, keyboard and mouse to the OWL unit or do this via SSH.
 
->⚠️**IMPORTANT**⚠️ Before continuing make sure you are NOT in the `owl` directory: e.g. `(owl) owl@raspberrypi:~. You can
-> double check by running `~``
+>⚠️**IMPORTANT**⚠️ If you have made any changes to the config.ini files, these will be saved and copied across. You will
+> be shown during this update process if changes have been made and where they will be kept.
 
 The software can be updated using a one line bash script:
 ```
