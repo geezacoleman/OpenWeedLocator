@@ -117,9 +117,12 @@ if command -v workon > /dev/null; then
 else
     echo -e "${ORANGE}[WARNING] virtualenvwrapper not found; activate your venv manually if needed.${NC}"
 fi
-pip install --upgrade -r requirements.txt
+pip install -r requirements.txt
 
-# 5) Fix permissions
-chmod +x owl.py owl_boot.sh
+SCRIPT_DIR=$(dirname "$(realpath "$0")")
+FOCUS_WRAPPER="${SCRIPT_DIR}/desktop/focus_owl_desktop.sh"
+FOCUS_GUI="${SCRIPT_DIR}/desktop/focus_gui.py"
+chmod +x "$FOCUS_WRAPPER"
+chmod +x "$FOCUS_GUI"
 
 echo -e "${GREEN}[COMPLETE] Upgraded version: ${OLD_VERSION} → ${NEW_VERSION}${NC}"

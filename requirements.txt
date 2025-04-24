@@ -8,4 +8,4 @@ RPi.GPIO
 tqdm
 blessed
 matplotlib
-Pillow>=11.2.1,<11.3.0
+Pillow
