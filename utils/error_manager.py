@@ -67,6 +67,55 @@ class OWLError(Exception):
             f"{content}\n"
         )
 
+    # In the OWLError base class
+    def handle(self, owl_instance=None) -> None:
+        """
+        Handle OWL errors with appropriate logging and MQTT notification.
+
+        Args:
+            owl_instance: Optional Owl instance that encountered the error.
+        """
+        logger = getattr(owl_instance, 'logger', logging.getLogger(__name__))
+
+        extra_data = {'error_details': self.details, 'error_type': self.__class__.__name__}
+        logger.error(str(self), extra=extra_data)
+        if logger.isEnabledFor(logging.DEBUG):
+            # Get traceback for the original exception if available
+            if hasattr(self, 'original_error') and hasattr(self.original_error, '__traceback__'):
+                traceback_str = ''.join(
+                    traceback.format_exception(None, self.original_error, self.original_error.__traceback__)
+                )
+                logger.debug(
+                    "Full error context",
+                    extra={
+                        'traceback': traceback_str,
+                        'error_class': f"{type(self.original_error).__module__}.{type(self.original_error).__name__}"
+                    }
+                )
+
+        # Publish error via MQTT if available
+        if owl_instance and hasattr(owl_instance, 'mqtt_manager') and owl_instance.mqtt_manager:
+            error_data = {
+                'error_type': self.__class__.__name__,
+                'message': str(self),
+                'details': self.details,
+                'error_id': self.error_id,
+                'timestamp': self.timestamp.timestamp()
+            }
+
+            for key in ['algorithm', 'original_error', 'device_id', 'device']:
+                if hasattr(self, key):
+                    error_data[key] = getattr(self, key)
+
+            owl_instance.mqtt_manager.publish_error(error_data)
+
+        if owl_instance and hasattr(owl_instance, 'stop'):
+            logger.info(f"Stopping OWL due to error: {self.__class__.__name__}")
+            owl_instance.stop()
+        else:
+            logger.info(f"Exiting due to error: {self.__class__.__name__}")
+            sys.exit(1)
+
 ### HARDWARE RELATED ERRORS ###
 
 @dataclass
@@ -542,40 +591,6 @@ class AlgorithmError(OWLError):
             )
         )
 
-    def handle(self, owl_instance) -> None:
-        """
-        Handle algorithm errors with appropriate logging and actions.
-
-        Args:
-            owl_instance: The Owl instance that encountered the error.
-        """
-        logger = getattr(owl_instance, 'logger', logging.getLogger(__name__))
-
-        logger.error(
-            self.message,
-            extra={
-                'algorithm': self.algorithm,
-                'error_type': self.error_type.__name__,
-                'error_details': self.details
-            }
-        )
-
-        if logger.isEnabledFor(logging.DEBUG):
-            traceback_str = ''.join(traceback.format_exception(None, self.original_error, self.original_error.__traceback__))
-            logger.debug(
-                "Full error context",
-                extra={
-                    'traceback': traceback_str,
-                    'error_class': f"{self.error_type.__module__}.{self.error_type.__name__}"
-                }
-            )
-
-        if hasattr(owl_instance, 'stop'):
-            owl_instance.stop()
-        else:
-            logger.info("Exiting due to algorithm error.")
-            sys.exit(1)
-
 
 class OpenCVError(OWLError):
     """Raised when there are issues with OpenCV (cv2) initialization or imports"""
@@ -622,34 +637,6 @@ class OpenCVError(OWLError):
         )
 
         self.args = (message,)
-
-    def handle(self, owl_instance=None) -> None:
-        """
-        Handle OpenCV errors with appropriate logging and actions.
-
-        Args:
-            owl_instance: Optional Owl instance that encountered the error.
-        """
-        if owl_instance and hasattr(owl_instance, 'logger'):
-            logger = owl_instance.logger
-        else:
-            logger = logging.getLogger(__name__)
-
-        logger.error(
-            str(self),
-            extra={
-                'virtual_env': os.environ.get('VIRTUAL_ENV'),
-                'python_version': sys.version,
-                'env_path': sys.prefix,
-                'error_details': self.details
-            }
-        )
-
-        if owl_instance and hasattr(owl_instance, 'stop'):
-            owl_instance.stop()
-        else:
-            logger.info("Exiting due to OpenCV import error.")
-            sys.exit(1)
 
 
 class DependencyError(OWLError):
@@ -743,29 +730,6 @@ class DependencyError(OWLError):
                     "Try reinstalling OWL from the repository."
                 )
         )
-
-    def handle(self, owl_instance=None) -> None:
-        """Handle dependency errors with appropriate logging and actions"""
-        if owl_instance and hasattr(owl_instance, 'logger'):
-            logger = owl_instance.logger
-        else:
-            logger = logging.getLogger(__name__)
-
-        # Log the error
-        logger.error(
-            str(self),
-            extra={
-                'missing_module': self.missing_module,
-                'pip_package': self.pip_package,
-                'error_details': self.details
-            }
-        )
-
-        if owl_instance and hasattr(owl_instance, 'stop'):
-            owl_instance.stop()
-        else:
-            sys.exit(1)
-
 
 ### MEDIA RELATED ERRORS ###
 class MediaPathError(OWLError):

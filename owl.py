@@ -39,14 +39,14 @@ logger.info("Starting OWL - checking imports...")
 try:
    import utils.error_manager as errors
 except ImportError:
-   logger.critical("Cannot import from utils package! Not in correct directory.")
-   logger.critical(f"Current working directory: {os.getcwd()}")
-   print("\nERROR: Cannot import from utils package!")
-   print("This usually means you are not in the correct directory.")
-   print("\nTo fix:")
-   print("1. Ensure owl environment is active: workon owl")
-   print("2. Navigate to owl directory:        cd /home/owl/owl")
-   sys.exit(1)
+    logger.critical("Cannot import from utils package! Not in correct directory.")
+    logger.critical(f"Current working directory: {os.getcwd()}")
+    print("\nERROR: Cannot import from utils package!")
+    print("This usually means you are not in the correct directory.")
+    print("\nTo fix:")
+    print("1. Ensure owl environment is active: workon owl")
+    print("2. Navigate to owl directory:        cd /home/owl/owl")
+    sys.exit(1)
 
 try:
    import cv2
@@ -57,29 +57,30 @@ except ImportError as e:
    raise errors.OpenCVError(str(e)) from None
 
 try:
-   import imutils
-   from imutils.video import FPS
+    import imutils
+    from imutils.video import FPS
 
-   from utils.input_manager import UteController, AdvancedController, get_rpi_version
-   from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator
-   from utils.directory_manager import DirectorySetup
-   from utils.video_manager import VideoStream
-   from utils.image_sampler import ImageRecorder
-   from utils.algorithms import fft_blur
-   from utils.greenonbrown import GreenOnBrown
-   from utils.frame_reader import FrameReader
-   from utils.config_manager import ConfigValidator
-   from utils.log_manager import LogManager
-   import utils.error_manager as errors
-   from version import SystemInfo, VERSION
+    from utils.input_manager import UteController, AdvancedController, get_rpi_version
+    from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator
+    from utils.directory_manager import DirectorySetup
+    from utils.video_manager import VideoStream
+    from utils.image_sampler import ImageRecorder
+    from utils.algorithms import fft_blur
+    from utils.greenonbrown import GreenOnBrown
+    from utils.frame_reader import FrameReader
+    from utils.config_manager import ConfigValidator
+    from utils.log_manager import LogManager
+    from utils.comms_manager import MQTTManager, MQTTConfigError
+    import utils.error_manager as errors
+    from version import SystemInfo, VERSION
 
 except ImportError as e:
-   missing_module = str(e).split("'")[1]
-   logger.error(f"Failed to import required module: {missing_module}")
-   logger.error(f"Error details: {str(e)}")
-   logger.error(f"Current virtual env: {os.environ.get('VIRTUAL_ENV', 'None')}")
-   logger.error(f"Current working directory: {os.getcwd()}")
-   raise errors.DependencyError(missing_module, str(e)) from None
+    missing_module = str(e).split("'")[1]
+    logger.error(f"Failed to import required module: {missing_module}")
+    logger.error(f"Error details: {str(e)}")
+    logger.error(f"Current virtual env: {os.environ.get('VIRTUAL_ENV', 'None')}")
+    logger.error(f"Current working directory: {os.getcwd()}")
+    raise errors.DependencyError(missing_module, str(e)) from None
 
 logger.info("All required modules imported successfully")
 
@@ -109,6 +110,32 @@ class Owl:
         self.config.read(self._config_path)
         self.RPI_VERSION = get_rpi_version()
         self.logger.info(msg=f'Raspberry Pi version: {self.RPI_VERSION}')
+
+        # Initialize MQTT if configured and enabled
+        self.mqtt_manager = None
+        try:
+            mqtt_enabled = self.config.getboolean('MQTT', 'mqtt_enabled', fallback=False)
+
+            if mqtt_enabled:
+                self.logger.info("MQTT communication is enabled, initializing...")
+                self.mqtt_manager = MQTTManager.from_config(self.config, owl_instance=self)
+                self.mqtt_manager.start()
+
+                # Register command handlers
+                self.mqtt_manager.register_command_handler('settings', self._handle_mqtt_settings)
+                self.mqtt_manager.register_command_handler('model', self._handle_mqtt_model)
+                self.mqtt_manager.register_command_handler('location', self._handle_mqtt_location)
+                self.mqtt_manager.register_command_handler('reboot', self._handle_mqtt_reboot)
+
+                # Start system monitoring
+                self.system_monitor = self.mqtt_manager.create_system_monitor(interval=60)
+
+                self.logger.info("MQTT communication initialized successfully")
+            else:
+                self.logger.info("MQTT communication is disabled in configuration")
+
+        except (MQTTConfigError, ImportError) as e:
+            self.logger.warning(f"MQTT initialization failed: {e}")
 
         # is the source a directory/file
         self.input_file_or_directory = input_file_or_directory
@@ -311,6 +338,10 @@ class Owl:
 
         # Precompute the integer lane coordinates for reuse
         self.lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
+
+        if self.mqtt_manager:
+            self.mqtt_manager.setup_command_topics()
+            self.mqtt_manager.publish_current_status()
 
     def hoot(self):
         self.record_video = False  # Flag to control video recording
@@ -572,6 +603,14 @@ class Owl:
             if hasattr(self, 'cam') and self.cam:
                 safe_stop(self.cam, 'camera', fallback_to_terminate=False)
 
+            # Stop MQTT comms
+            if hasattr(self, 'mqtt_manager') and self.mqtt_manager:
+                try:
+                    self.mqtt_manager.stop()
+                    self.logger.info("MQTT manager stopped")
+                except Exception as e:
+                    self.logger.warning(f"Failed to stop MQTT manager: {e}")
+
         except Exception as e:
             self.logger.error(f"Critical error during shutdown: {e}", exc_info=True)
         finally:
@@ -726,6 +765,145 @@ class Owl:
                 self.logger.info("Git information not available.")
         except Exception as e:
             self.logger.warning(f"Failed to retrieve Git information: {e}")
+
+        try:
+            if hasattr(self, 'mqtt_manager') and self.mqtt_manager:
+                status_data = {
+                    "version": VERSION,
+                    "system": sys_info.get('system', 'Unknown'),
+                    "machine": sys_info.get('machine', 'Unknown'),
+                    "python": python_info.get('version', 'Unknown'),
+                    "hardware": rpi_info or "Unknown",
+                    "algorithm": self.config.get('System', 'algorithm'),
+                    "resolution": f"{self.resolution[0]}x{self.resolution[1]}"
+                }
+                self.mqtt_manager.publish_status(status_data)
+        except Exception as e:
+            self.logger.warning(f"Failed to send system info over MQTT. This may indicate a wider comms issue: {e}")
+
+    def _handle_mqtt_settings(self, data):
+        """Handle settings commands received via MQTT"""
+        self.logger.info(f"Received settings update via MQTT: {data}")
+        try:
+            if 'exg_min' in data:
+                self.exg_min = int(data['exg_min'])
+            if 'exg_max' in data:
+                self.exg_max = int(data['exg_max'])
+            if 'hue_min' in data:
+                self.hue_min = int(data['hue_min'])
+            if 'hue_max' in data:
+                self.hue_max = int(data['hue_max'])
+            if 'saturation_min' in data:
+                self.saturation_min = int(data['saturation_min'])
+            if 'saturation_max' in data:
+                self.saturation_max = int(data['saturation_max'])
+            if 'brightness_min' in data:
+                self.brightness_min = int(data['brightness_min'])
+            if 'brightness_max' in data:
+                self.brightness_max = int(data['brightness_max'])
+
+            if self.show_display:
+                self._update_trackbars()
+
+            # Send confirmation status
+            if hasattr(self, 'mqtt_manager') and self.mqtt_manager:
+                self.mqtt_manager.publish_status({
+                    "message": "Settings updated successfully",
+                    "settings": {
+                        "exg_min": self.exg_min,
+                        "exg_max": self.exg_max,
+                        "hue_min": self.hue_min,
+                        "hue_max": self.hue_max,
+                        "saturation_min": self.saturation_min,
+                        "saturation_max": self.saturation_max,
+                        "brightness_min": self.brightness_min,
+                        "brightness_max": self.brightness_max
+                    }
+                })
+        except Exception as e:
+            self.logger.error(f"Error applying MQTT settings: {e}", exc_info=True)
+            if hasattr(self, 'mqtt_manager') and self.mqtt_manager:
+                self.mqtt_manager.publish_error({
+                    "error": "settings_update_failed",
+                    "message": str(e)
+                })
+
+    def _handle_mqtt_model(self, data):
+        """Handle model selection commands received via MQTT"""
+        self.logger.info(f"Received model update via MQTT: {data}")
+        try:
+            if 'algorithm' in data:
+                algorithm = data['algorithm']
+                if algorithm in self.config['System']:
+                    self.config.set('System', 'algorithm', algorithm)
+
+                    if hasattr(self, 'mqtt_manager') and self.mqtt_manager:
+                        self.mqtt_manager.publish_status({
+                            "message": f"Algorithm changed to {algorithm}",
+                            "algorithm": algorithm
+                        })
+                else:
+                    raise ValueError(f"Unknown algorithm: {algorithm}")
+
+        except Exception as e:
+            self.logger.error(f"Error changing algorithm via MQTT: {e}", exc_info=True)
+            if hasattr(self, 'mqtt_manager') and self.mqtt_manager:
+                self.mqtt_manager.publish_error({
+                    "error": "algorithm_change_failed",
+                    "message": str(e)
+                })
+
+    def _handle_mqtt_location(self, data):
+        """Handle location updates received via MQTT"""
+        self.logger.info(f"Received location update via MQTT: {data}")
+        try:
+            if 'latitude' in data and 'longitude' in data:
+                # Store location data
+                self.location = {
+                    'latitude': data['latitude'],
+                    'longitude': data['longitude'],
+                    'timestamp': data.get('timestamp', time.time())
+                }
+
+                if hasattr(self, 'mqtt_manager') and self.mqtt_manager:
+                    self.mqtt_manager.publish_status({
+                        "message": "Location updated",
+                        "location": self.location
+                    })
+        except Exception as e:
+            self.logger.error(f"Error processing location via MQTT: {e}", exc_info=True)
+
+    def _handle_mqtt_reboot(self, data):
+        """Handle reboot commands received via MQTT"""
+        self.logger.warning("Received reboot command via MQTT")
+
+        reason = data.get('reason', 'No reason provided')
+        requested_by = data.get('requested_by', 'Unknown')
+        self.logger.warning(f"Reboot requested by {requested_by}: {reason}")
+
+        # Publish acknowledgment
+        if hasattr(self, 'mqtt_manager') and self.mqtt_manager:
+            self.mqtt_manager.publish_status({
+                "message": "Reboot command received",
+                "status": "rebooting",
+                "reason": reason,
+                "requested_by": requested_by
+            })
+
+        # Clean shutdown
+        try:
+            self.logger.info("Initiating clean shutdown before reboot")
+            self.stop()
+        except Exception as e:
+            self.logger.error(f"Error during pre-reboot shutdown: {e}")
+
+        # Execute reboot
+        try:
+            self.logger.warning("Executing system reboot")
+            import subprocess
+            subprocess.call(['sudo', 'reboot'])
+        except Exception as e:
+            self.logger.error(f"Failed to execute reboot: {e}")
 
 
 # business end of things
