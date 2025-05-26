@@ -111,12 +111,17 @@ class Owl:
         self.RPI_VERSION = get_rpi_version()
         self.logger.info(msg=f'Raspberry Pi version: {self.RPI_VERSION}')
 
-        # Initialize MQTT if configured and enabled
+        # if a controller is connected, sample images must be true to set up directories correctly
+        self.controller_type = self.config.get('Controller', 'controller_type').strip("'\" ").lower()
+
+        if self.controller_type not in {'none', 'ute', 'advanced', 'mqtt'}:
+            self.logger.error(f"Invalid controller type: {self.controller_type}")
+            raise errors.ControllerTypeError(self.config.get('Controller', 'controller_type'))
+
+        # Initialize MQTT if configured and enabled'
         self.mqtt_manager = None
         try:
-            mqtt_enabled = self.config.getboolean('MQTT', 'mqtt_enabled', fallback=False)
-
-            if mqtt_enabled:
+            if self.controller_type == 'mqtt':
                 self.logger.info("MQTT communication is enabled, initializing...")
                 self.mqtt_manager = MQTTManager.from_config(self.config, owl_instance=self)
                 self.mqtt_manager.start()
@@ -132,7 +137,7 @@ class Owl:
 
                 self.logger.info("MQTT communication initialized successfully")
             else:
-                self.logger.info("MQTT communication is disabled in configuration")
+                self.logger.info("MQTT communication is disabled")
 
         except (MQTTConfigError, ImportError) as e:
             self.logger.warning(f"MQTT initialization failed: {e}")
@@ -193,13 +198,6 @@ class Owl:
         # WARNING: initialise option disable detection for data collection
         self.disable_detection = False
         self.save_directory = None
-
-        # if a controller is connected, sample images must be true to set up directories correctly
-        self.controller_type = self.config.get('Controller', 'controller_type').strip("'\" ").lower()
-
-        if self.controller_type not in {'none', 'ute', 'advanced'}:
-            self.logger.error(f"Invalid controller type: {self.controller_type}")
-            raise errors.ControllerTypeError(self.config.get('Controller', 'controller_type'))
 
         if self.controller_type != 'none':
             self.sample_images = True
