@@ -1,0 +1,21 @@
+################################################################################
+Notes on greenonbrown.py
+
+Summary completed on 29/05/2025
+Summary based on commit 5380e50
+################################################################################
+
+Purpose:
+- Classical colour-based weed detector for bare earth scenes
+
+Class:
+- GreenOnBrown: wraps various colour-index algorithms and morphological filtering
+
+Key Methods:
+- inference: runs detection using selected algorithm and returns contours and bounding boxes
+
+Dependencies:
+- numpy
+- opencv-python
+- utils.algorithms
+

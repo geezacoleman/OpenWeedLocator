@@ -1,0 +1,28 @@
+################################################################################
+Notes on config_manager.py
+
+Summary completed on 29/05/2025
+Summary based on commit 5380e50
+################################################################################
+
+Purpose:
+- Validate and load OWL configuration files (.ini)
+- Enforces required sections and value ranges
+
+Classes:
+- ConfigValidator: class with methods to check algorithms, controller types,
+  thresholds, and relay mappings
+
+Key Methods:
+- load_and_validate_config
+- validate_controller
+- validate_algorithm
+- validate_thresholds
+- validate_relays
+
+Dependencies:
+- configparser
+- pathlib
+- logging
+- utils.error_manager
+

@@ -1,0 +1,22 @@
+################################################################################
+Notes on vis_manager.py
+
+Summary completed on 29/05/2025
+Summary based on commit 5380e50
+################################################################################
+
+Purpose:
+- Terminal-based visualisation of relay status
+
+Class:
+- RelayVis: draws colored boxes in the terminal to show relay activation
+
+Key Methods:
+- setup: initialise display
+- update: toggle relay boxes
+- close: cleanup
+
+Dependencies:
+- numpy
+- blessed (optional, falls back to BasicTerminal)
+

@@ -1,0 +1,23 @@
+################################################################################
+Notes on version.py
+
+Summary completed on 29/05/2025
+Summary based on commit 5380e50
+################################################################################
+
+Purpose:
+- Provide version metadata and system information helpers
+
+Classes:
+- Version: dataclass holding semantic version numbers
+- SystemInfo: gather OS, Python and Git details
+
+Key Methods:
+- get_os_info
+- get_python_info
+- get_rpi_info
+- get_git_info
+
+Dependencies:
+- platform, sys, subprocess, logging
+

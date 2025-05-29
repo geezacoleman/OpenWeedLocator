@@ -109,3 +109,4 @@ Error Handling:
 - Stream read errors
 - Resource cleanup on errors
 - Camera version compatibility
+

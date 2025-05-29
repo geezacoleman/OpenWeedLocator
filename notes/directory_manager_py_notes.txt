@@ -1,0 +1,24 @@
+################################################################################
+Notes on directory_manager.py
+
+Summary completed on 29/05/2025
+Summary based on commit 5380e50
+################################################################################
+
+Purpose:
+- Prepare USB or local directories for saving images and logs
+- Handles mount checks and write permissions
+
+Class:
+- DirectorySetup: manages save directory creation and validation
+
+Key Methods:
+- setup_directories: retry logic for USB detection
+- _try_setup_directories and _try_setup_drive
+- _handle_mount_error and test_file_write
+
+Dependencies:
+- os, platform, datetime, time
+- utils.error_manager
+- utils.log_manager
+
