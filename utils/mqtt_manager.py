@@ -52,6 +52,14 @@ class MQTTManager:
         except Exception as exc:  # pragma: no cover - network errors only
             self.logger.error(f"MQTT publish failed: {exc}")
 
+    def publish_to_topic(self, topic: str, payload: Dict[str, Any]) -> None:
+        """Publish a JSON payload to a specific topic."""
+        try:
+            message = json.dumps(payload)
+            self.client.publish(topic, message)
+        except Exception as exc:  # pragma: no cover - network errors only
+            self.logger.error(f"MQTT publish failed: {exc}")
+
     def disconnect(self) -> None:
         """Disconnect from the broker."""
         self.stop_loop()
