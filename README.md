@@ -981,7 +981,7 @@ algorithm determines how sharp an image is, so the higher the value the better.
 ## Detailed Method
 **IMPORTANT**: *Suitable for the Raspberry Pi 5 and Bookworm Raspberry Pi OS.*
 
-This setup approach may take a little longer (aproximately 1 hour total) than the quick method, but you'll be much better
+This setup approach may take a little longer (approximately 1 hour total) than the quick method, but you'll be much better
 trained in the ways of OWL and more prepared for any problem solving, upgrades or changes in the future. You'll also
 download and use the latest software that hasn't been saved in the .img file yet. In the process you'll learn about
 Python environments, install Python packages and set it all up to run on startup. To get this working you'll need access
