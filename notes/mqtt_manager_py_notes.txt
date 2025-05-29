@@ -2,7 +2,7 @@
 Notes on mqtt_manager.py
 
 Summary completed on 29/05/2025
-Summary based on new file in current commit
+Summary based on commit d8ee5cd
 ################################################################################
 
 Purpose:
@@ -10,7 +10,7 @@ Purpose:
 - Supports subscribing to control topics for remote commands
 
 Key Classes/Functions:
-- MQTTManager: connect, publish, subscribe and manage the client loop
+- MQTTManager: connect, publish, publish_to_topic, subscribe and manage the client loop
 
 Dependencies:
 - paho-mqtt
