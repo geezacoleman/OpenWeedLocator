@@ -23,10 +23,13 @@ dependencies = [
     "matplotlib",
     "Pillow>=11.2.1,<11.3.0"
     ,"paho-mqtt"
+    ,"hbmqtt"
 ]
 
 [project.scripts]
 owl = "owl:cli"
+mqtt-cli = "utils.mqtt_cli:main"
+mqtt-broker = "utils.mqtt_broker:main"
 
 [tool.setuptools]
 packages = ["display", "utils"]

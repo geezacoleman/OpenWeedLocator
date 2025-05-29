@@ -1,0 +1,18 @@
+################################################################################
+Notes on mqtt_broker.py
+
+Summary completed on 29/05/2025
+Summary based on new file in current commit
+################################################################################
+
+Purpose:
+- Provide a minimal MQTT broker for local testing
+- Allows running a broker without installing Mosquitto
+
+Key Functions:
+- start_broker: create and start the hbmqtt broker
+- main: parse command line options and manage shutdown
+
+Dependencies:
+- hbmqtt
+- standard library asyncio, argparse, signal, and logging

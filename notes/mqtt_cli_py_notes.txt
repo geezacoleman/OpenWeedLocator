@@ -1,0 +1,19 @@
+################################################################################
+Notes on mqtt_cli.py
+
+Summary completed on 29/05/2025
+Summary based on new file in current commit
+################################################################################
+
+Purpose:
+- Provide a minimal command line interface to an MQTT broker
+- Allows subscribing to a topic and publishing messages via user input
+
+Key Functions:
+- main: parses arguments and runs the interactive loop
+- on_message: callback to display received MQTT messages
+
+Dependencies:
+- utils.mqtt_manager
+- paho-mqtt
+- standard library argparse and logging modules
