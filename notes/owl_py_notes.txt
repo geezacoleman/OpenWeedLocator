@@ -97,3 +97,4 @@ Configuration:
   - GreenOnBrown: Detection parameters
   - Relays: GPIO mappings
 
+- Added `cli()` entry point helper for pip installation

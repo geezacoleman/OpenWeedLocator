@@ -728,14 +728,19 @@ class Owl:
             self.logger.warning(f"Failed to retrieve Git information: {e}")
 
 
-# business end of things
-if __name__ == "__main__":
-    # these command line arguments enable people to operate/change some settings from the command line instead of
-    # opening up the OWL code each time.
+def cli() -> None:
+    """Command-line interface for OWL.
+
+    This mirrors the ``if __name__ == '__main__'`` block so that the project can
+    expose an entry point when installed via ``pip``.
+    """
     ap = argparse.ArgumentParser()
-    ap.add_argument('--show-display', action='store_true', default=False, help='show display windows')
-    ap.add_argument('--focus', action='store_true', default=False, help='(DEPRECATED) launch the focus GUI; please use the desktop icon instead')
-    ap.add_argument('--input', type=str, default=None, help='path to image directory, single image or video file')
+    ap.add_argument('--show-display', action='store_true', default=False,
+                    help='show display windows')
+    ap.add_argument('--focus', action='store_true', default=False,
+                    help='(DEPRECATED) launch the focus GUI; please use the desktop icon instead')
+    ap.add_argument('--input', type=str, default=None,
+                    help='path to image directory, single image or video file')
 
     args = ap.parse_args()
 
@@ -746,12 +751,15 @@ if __name__ == "__main__":
         desktop.focus_gui.main()
         sys.exit(0)
 
-    # this is where you can change the config file default
     owl = Owl(
         config_file='config/DAY_SENSITIVITY_2.ini',
         show_display=args.show_display,
         input_file_or_directory=args.input
     )
 
-    # start the targeting!
     owl.hoot()
+
+
+# business end of things
+if __name__ == "__main__":
+    cli()

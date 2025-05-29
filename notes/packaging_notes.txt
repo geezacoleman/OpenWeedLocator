@@ -1,0 +1,8 @@
+OpenWeedLocator packaging
+-------------------------
+
+- Added a `pyproject.toml` with setuptools metadata.
+- Project published as `owl` so users can run `pip install owl`.
+- Provides `owl` console entry point via `owl:cli`.
+- Packages `display` and `utils` modules plus `owl.py` as a module.
+- Installs example config files from `config/`.

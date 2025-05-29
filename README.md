@@ -1737,6 +1737,7 @@ Override auto‑selection with `--accel hailo|coral|cpu`.
 $ git clone https://github.com/CropCrusaders/OpenWeedLocator.git owl && cd owl
 $ python3 -m venv .venv && source .venv/bin/activate
 $ pip install -r requirements.txt   # core + TFLite
+$ pip install owl                   # install the OWL CLI
 
 # 2 · Add your compiled GoG model & labels
 $ mkdir -p models && cp ~/my_gog/best.{hef,tflite} models/

@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "owl"
+version = "2.3.0"
+description = "Open source hardware and software weed detector"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {file = "LICENSE"}
+authors = [{name = "OpenWeedLocator Developers"}]
+keywords = ["agriculture", "weed", "detection", "raspberry pi"]
+
+dependencies = [
+    "numpy",
+    "imutils",
+    "gpiozero",
+    "pandas",
+    "RPi.GPIO",
+    "tqdm",
+    "blessed",
+    "matplotlib",
+    "Pillow>=11.2.1,<11.3.0"
+]
+
+[project.scripts]
+owl = "owl:cli"
+
+[tool.setuptools]
+packages = ["display", "utils"]
+py-modules = ["owl"]
+
+[tool.setuptools.package-data]
+# Include configuration files in wheel
+"*" = ["config/*.ini"]
+
