@@ -1,0 +1,22 @@
+################################################################################
+Notes on greenongreen.py
+
+Summary completed on 29/05/2025
+Summary based on commit 5380e50
+################################################################################
+
+Purpose:
+- Neural-network based weed detector supporting multiple accelerators
+- Uses YOLOv5 models with Hailo, Coral Edge-TPU or CPU back ends
+
+Class:
+- GreenOnGreen: manages model loading and inference
+
+Key Methods:
+- inference: dispatch to hardware-specific implementation
+- fps: return instantaneous frames per second
+
+Dependencies:
+- numpy, cv2
+- optional: hailo_platform, pycoral, tflite_runtime
+

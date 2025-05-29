@@ -1,0 +1,24 @@
+################################################################################
+Notes on frame_reader.py
+
+Summary completed on 29/05/2025
+Summary based on commit 5380e50
+################################################################################
+
+Purpose:
+- Provide a unified interface for reading frames from images, videos or directories
+- Used for testing algorithms without a live camera
+
+Class:
+- FrameReader: loads media, iterates over frames, and supports looping
+
+Key Methods:
+- read: returns next frame depending on input type
+- reset: restart iteration
+- stop: cleanup video stream
+
+Dependencies:
+- cv2
+- imutils FileVideoStream
+- utils.log_manager
+

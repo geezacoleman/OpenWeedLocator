@@ -1,0 +1,24 @@
+################################################################################
+Notes on log_manager.py
+
+Summary completed on 29/05/2025
+Summary based on commit 5380e50
+################################################################################
+
+Purpose:
+- Centralized JSON and console logging for OWL
+- Handles batched detection logging
+
+Class:
+- LogManager: singleton managing loggers and background worker
+
+Key Methods:
+- setup: configure root and detection log files
+- get_logger: return named logger
+- log_detection and _process_detection_queue
+- stop: shutdown worker thread
+
+Dependencies:
+- logging, queue, threading
+- pathlib, time, json
+

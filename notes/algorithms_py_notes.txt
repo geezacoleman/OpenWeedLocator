@@ -1,0 +1,22 @@
+################################################################################
+Notes on algorithms.py
+
+Summary completed on 29/05/2025
+Summary based on commit 5380e50
+################################################################################
+
+Purpose:
+- Collection of image processing algorithms for weed detection
+- Includes colour indices and blur detection utilities
+
+Functions:
+- exg, maxg, exg_standardised, exg_standardised_hue
+- exgr, hsv, gndvi, veg, cive
+- clahe_sat_val, dgci
+- normalize_brightness and several blur metrics
+
+Dependencies:
+- numpy
+- opencv-python
+- pywt (optional for wavelet blur)
+
