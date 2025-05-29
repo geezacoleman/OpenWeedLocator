@@ -5,9 +5,11 @@ import sys
 import logging
 import argparse
 import time
+import json
 from datetime import datetime
 from multiprocessing import Process, Value
 from pathlib import Path
+from typing import Optional
 
 def get_python_env():
     """Get current Python environment status"""
@@ -70,6 +72,7 @@ try:
    from utils.frame_reader import FrameReader
    from utils.config_manager import ConfigValidator
    from utils.log_manager import LogManager
+   from utils.mqtt_manager import MQTTManager
    import utils.error_manager as errors
    from version import SystemInfo, VERSION
 
@@ -87,9 +90,13 @@ def nothing(x):
     pass
 
 class Owl:
-    def __init__(self, show_display=False,
-                 input_file_or_directory=None,
-                 config_file='config/DAY_SENSITIVITY_2.ini'):
+    def __init__(self, show_display: bool = False,
+                 input_file_or_directory: Optional[str] = None,
+                 config_file: str = 'config/DAY_SENSITIVITY_2.ini',
+                 mqtt_host: Optional[str] = None,
+                 mqtt_port: int = 1883,
+                 mqtt_topic: str = 'owl/detections',
+                 mqtt_control_topic: Optional[str] = None):
         # set up the logger
         log_dir = Path(os.path.join(os.path.dirname(__file__), 'logs'))
         LogManager.setup(log_dir=log_dir, log_level='INFO')
@@ -97,6 +104,19 @@ class Owl:
 
         self.logger.info("Initializing OWL...")
         self._log_system_info()
+
+        self.mqtt_manager = None
+        if mqtt_host:
+            self.mqtt_manager = MQTTManager(host=mqtt_host, port=mqtt_port, topic=mqtt_topic)
+            try:
+                self.mqtt_manager.connect()
+                self.mqtt_manager.start_loop()
+                if mqtt_control_topic:
+                    self.mqtt_manager.subscribe(mqtt_control_topic, self.handle_control_command)
+            except Exception as e:  # pragma: no cover - network errors only
+                self.logger.error(f"Failed to connect MQTT manager: {e}")
+
+        self.external_shutdown = False
 
         # read the config file
         self._config_path = Path(__file__).parent / config_file
@@ -323,6 +343,7 @@ class Owl:
 
         # track FPS and framecount
         frame_count = 0
+        self.external_shutdown = False
 
         if log_fps:
             fps = FPS().start()
@@ -359,6 +380,13 @@ class Owl:
             delay = self.config.getfloat('System', 'delay')
 
             while True:
+                if self.external_shutdown:
+                    self.logger.info("External shutdown flag set. Exiting loop.")
+                    if log_fps:
+                        fps.stop()
+                        self.logger.info(f"[INFO] Approximate FPS: {fps.fps():.2f}")
+                    self.stop()
+                    break
                 frame = self.cam.read()
 
                 if frame is None:
@@ -427,6 +455,13 @@ class Owl:
                                         delay=delay,
                                         time_stamp=actuation_time,
                                         duration=actuation_duration)
+                                    if self.mqtt_manager:
+                                        self.mqtt_manager.publish({
+                                            'frame_id': frame_count,
+                                            'relay': i,
+                                            'centre': centre,
+                                            'timestamp': actuation_time
+                                        })
 
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often
@@ -571,6 +606,9 @@ class Owl:
             # Stop camera
             if hasattr(self, 'cam') and self.cam:
                 safe_stop(self.cam, 'camera', fallback_to_terminate=False)
+
+            if self.mqtt_manager:
+                self.mqtt_manager.disconnect()
 
         except Exception as e:
             self.logger.error(f"Critical error during shutdown: {e}", exc_info=True)
@@ -727,6 +765,23 @@ class Owl:
         except Exception as e:
             self.logger.warning(f"Failed to retrieve Git information: {e}")
 
+    def handle_control_command(self, client, userdata, msg):
+        """Handle MQTT control commands."""
+        try:
+            data = json.loads(msg.payload.decode())
+            command = data.get('command', '').lower()
+            if command == 'start':
+                self.disable_detection = False
+                self.logger.info("MQTT control: start detection")
+            elif command == 'stop':
+                self.disable_detection = True
+                self.logger.info("MQTT control: stop detection")
+            elif command == 'shutdown':
+                self.external_shutdown = True
+                self.logger.info("MQTT control: shutdown requested")
+        except Exception as e:  # pragma: no cover - network errors only
+            self.logger.error(f"Failed to handle control command: {e}")
+
 
 def cli() -> None:
     """Command-line interface for OWL.
@@ -741,6 +796,14 @@ def cli() -> None:
                     help='(DEPRECATED) launch the focus GUI; please use the desktop icon instead')
     ap.add_argument('--input', type=str, default=None,
                     help='path to image directory, single image or video file')
+    ap.add_argument('--mqtt-host', type=str, default=None,
+                    help='enable MQTT output by specifying broker host')
+    ap.add_argument('--mqtt-port', type=int, default=1883,
+                    help='MQTT broker port')
+    ap.add_argument('--mqtt-topic', type=str, default='owl/detections',
+                    help='MQTT topic for detection messages')
+    ap.add_argument('--mqtt-control-topic', type=str, default=None,
+                    help='MQTT topic for control commands')
 
     args = ap.parse_args()
 
@@ -754,7 +817,11 @@ def cli() -> None:
     owl = Owl(
         config_file='config/DAY_SENSITIVITY_2.ini',
         show_display=args.show_display,
-        input_file_or_directory=args.input
+        input_file_or_directory=args.input,
+        mqtt_host=args.mqtt_host,
+        mqtt_port=args.mqtt_port,
+        mqtt_topic=args.mqtt_topic,
+        mqtt_control_topic=args.mqtt_control_topic
     )
 
     owl.hoot()

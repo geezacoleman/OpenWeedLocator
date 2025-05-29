@@ -1,0 +1,17 @@
+################################################################################
+Notes on mqtt_manager.py
+
+Summary completed on 29/05/2025
+Summary based on new file in current commit
+################################################################################
+
+Purpose:
+- Provide a thin wrapper for publishing OWL detection data via MQTT
+- Supports subscribing to control topics for remote commands
+
+Key Classes/Functions:
+- MQTTManager: connect, publish, subscribe and manage the client loop
+
+Dependencies:
+- paho-mqtt
+- standard library json and logging modules
