@@ -88,7 +88,6 @@ def nothing(x):
 
 class Owl:
     def __init__(self, show_display=False,
-                 focus=False,
                  input_file_or_directory=None,
                  config_file='config/DAY_SENSITIVITY_2.ini'):
         # set up the logger
@@ -116,10 +115,6 @@ class Owl:
 
         # visualise the detections with video feed
         self.show_display = show_display
-        self.focus = focus
-
-        if self.focus:
-            self.show_display = True
 
         # threshold parameters for different algorithms
         self.exg_min = self.config.getint('GreenOnBrown', 'exg_min')
@@ -366,10 +361,6 @@ class Owl:
             while True:
                 frame = self.cam.read()
 
-                if self.focus:
-                    grey = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2GRAY)
-                    blurriness = fft_blur(grey, size=30)
-
                 if frame is None:
                     if log_fps:
                         fps.stop()
@@ -490,10 +481,6 @@ class Owl:
                                 (80, 80, 255), 1)
                     cv2.putText(image_out, f'Press "S" to save {algorithm} thresholds to file.',
                                 (20, int(image_out.shape[1 ] *0.72)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 80, 255), 1)
-                    if self.focus:
-                        cv2.putText(image_out, f'Blurriness: {blurriness:.2f}', (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 1,
-                                    (80, 80, 255), 1)
-
                     cv2.imshow("Detection Output", imutils.resize(image_out, width=600))
 
                 k = cv2.waitKey(1) & 0xFF
@@ -747,16 +734,22 @@ if __name__ == "__main__":
     # opening up the OWL code each time.
     ap = argparse.ArgumentParser()
     ap.add_argument('--show-display', action='store_true', default=False, help='show display windows')
-    ap.add_argument('--focus', action='store_true', default=False, help='add FFT blur to output frame')
+    ap.add_argument('--focus', action='store_true', default=False, help='(DEPRECATED) launch the focus GUI; please use the desktop icon instead')
     ap.add_argument('--input', type=str, default=None, help='path to image directory, single image or video file')
 
     args = ap.parse_args()
+
+    if args.focus:
+        logger.warning("--focus is deprecated, auto-launching focus GUI; please switch to the desktop icon in the future")
+        import desktop.focus_gui
+
+        desktop.focus_gui.main()
+        sys.exit(0)
 
     # this is where you can change the config file default
     owl = Owl(
         config_file='config/DAY_SENSITIVITY_2.ini',
         show_display=args.show_display,
-        focus=args.focus,
         input_file_or_directory=args.input
     )
 
