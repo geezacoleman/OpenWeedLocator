@@ -102,6 +102,14 @@ These will be updated as major changes are made. All older versions will be reta
 
 [View all versions](docs)
 
+### MQTT Integration (Experimental)
+
+OWL can broadcast detection events and receive control commands over MQTT.
+Install the optional `paho-mqtt` dependency and run OWL with the `--mqtt-*`
+options. Detections are published as JSON messages and OWL listens for control
+commands (`start`, `stop`, `shutdown`) to allow a master PC or Raspberry Pi to
+coordinate multiple OWL nodes.
+
 # OWL Use Cases
 
 ## Vehicle-mounted spot spraying

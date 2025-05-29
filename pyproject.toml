@@ -22,6 +22,7 @@ dependencies = [
     "blessed",
     "matplotlib",
     "Pillow>=11.2.1,<11.3.0"
+    ,"paho-mqtt"
 ]
 
 [project.scripts]
