@@ -18,3 +18,4 @@ OpenWeedLocator packaging
   reports an AppArmor error, and updated the workflow to set
   `kernel.unprivileged_userns_clone=1`.
 - Pinned GitHub Actions runner to ubuntu-22.04 to avoid AppArmor user namespace issue.
+- Switched Yocto build workflow to a self-hosted runner using the `self-hosted` and `linux` labels.
