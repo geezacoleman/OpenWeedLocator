@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-yocto:
-    runs-on: self-hosted
+    runs-on: [self-hosted, linux]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
