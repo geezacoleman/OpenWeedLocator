@@ -103,6 +103,7 @@ These will be updated as major changes are made. All older versions will be reta
 [View all versions](docs)
 
 * [Yocto build guide](docs/yocto.md)
+* [Yocto extras and configuration](docs/yocto-extras.md)
 * [Self-hosted GitHub runner setup](docs/self-hosted-runner.md)
 
 ### MQTT Integration (Experimental)
