@@ -26,3 +26,5 @@ OpenWeedLocator packaging
 - Added docs/yocto-extras.md describing additional packages, services, and configuration options in the OWL Yocto image.
 - Workflow now builds images for Raspberry Pi 3, 4 and 5 using a build matrix.
 - Added step to upload built images to GitHub Releases when a tag is published.
+- Workflow now compresses `.wic` images, generates `.bmap` files, and creates a
+  `SHA256SUMS` file for release assets.

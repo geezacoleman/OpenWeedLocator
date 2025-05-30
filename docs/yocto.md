@@ -60,7 +60,9 @@ done
 
 The provided GitHub workflow uses a similar approach with a build matrix to
 automatically produce images for Raspberry Pi 3, 4 and 5 and attaches them to a
-release when triggered from a tag.
+release when triggered from a tag. The workflow also compresses each `.wic`
+image with `bzip2`, creates a corresponding `.bmap` file and generates a
+`SHA256SUMS` file for verification.
 
 ## 3. Add OWL to the image
 
