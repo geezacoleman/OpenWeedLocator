@@ -42,7 +42,18 @@ To build images for different models, set `MACHINE` to `raspberrypi0`, `raspberr
 IMAGE_INSTALL += "owl"
 ```
 
-## 4. Build the image
+## 4. Add a custom splash screen (optional)
+
+To show a branded splash screen on boot, enable the `psplash` package and point it at a custom PNG image:
+
+```bash
+IMAGE_INSTALL += "psplash"
+SPLASH = "file://path/to/my_splash.png"
+```
+
+Place your splash image in your layer under `recipes-core/psplash/files/` and update your recipe accordingly. This will display the image while the system boots into the simple framebuffer console.
+
+## 5. Build the image
 
 Run `bitbake` to build the desired image, such as `core-image-base` or a custom recipe:
 ```bash
@@ -50,7 +61,7 @@ bitbake core-image-base
 ```
 The resulting SD card image will be available under `tmp/deploy/images/<machine>/`.
 
-## 5. Flash and run
+## 6. Flash and run
 
 Write the generated `.wic` or `.sdimg` file to an SD card and boot your Raspberry Pi. The OWL application can then be launched according to the normal usage instructions.
 
