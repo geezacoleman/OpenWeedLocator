@@ -18,6 +18,11 @@ This guide outlines the basic steps for creating a custom Yocto image for runnin
    ```bash
    source oe-init-build-env
    ```
+4. If BitBake reports that user namespaces are not usable (for example on
+   Ubuntu systems with AppArmor restrictions), enable them with:
+   ```bash
+   sudo sysctl -w kernel.unprivileged_userns_clone=1
+   ```
 
 ## 2. Configure layers
 
