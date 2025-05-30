@@ -19,15 +19,10 @@ def exg(image):
     blue = image[:, :, 0].astype(np.float32)
     green = image[:, :, 1].astype(np.float32)
     red = image[:, :, 2].astype(np.float32)
-    # cv2.imshow('blue', blue.astype('uint8'))
-    # cv2.imshow('green', green.astype('uint8'))
-    # cv2.imshow('red', red.astype('uint8'))
 
     image_out = 2 * green - red - blue
     image_out = np.clip(image_out, 0, 255)
     image_out = image_out.astype('uint8')
-
-    # cv2.imshow('ExG', imgOut)
     return image_out
 
 def maxg(image):
@@ -69,7 +64,6 @@ def exg_standardised(image):
     image_out = np.where(image_out > 255, 255, image_out)
 
     image_out = image_out.astype('uint8')
-    # cv2.imshow('ExG Standardised', imgOut)
 
     return image_out
 
@@ -117,7 +111,6 @@ def exg_standardised_hue(image,
                        saturation_min=saturation_min, saturation_max=saturation_max,
                        invert_hue=invert_hue)
     image_out = hsv_thresh & image_out
-    # cv2.imshow('exhu', imgOut)
 
     return image_out
 
@@ -174,7 +167,6 @@ def hsv(image,
         hue_thresh = cv2.bitwise_not(hue_thresh)
 
     out_thresh = sat_thresh & val_thresh & hue_thresh
-    # cv2.imshow('HSV Out', outThresh)
     return out_thresh, True
 
 # for NIR images only
@@ -190,7 +182,6 @@ def gndvi(image):
     image_out = (NIR - green) / (NIR + green)
     image_out = cv2.normalize(image_out, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
     image_out = image_out.astype('uint8')
-    cv2.imshow('gndvi', image_out)
     return image_out
 
 
@@ -231,7 +222,6 @@ def clahe_sat_val(image):
 
     claheImage = cv2.merge([hue, satCL, valCL])
     claheImage = cv2.cvtColor(claheImage, cv2.COLOR_HSV2BGR)
-    #cv2.imshow('CLAHE', claheImage)
     return claheImage
 
 def dgci(image):
@@ -259,9 +249,6 @@ def normalize_brightness(image, intensity=0.8):
     normalized = cv2.cvtColor(img_yuv, cv2.COLOR_YUV2BGR)
 
     # Return the normalized image
-    #stacked = np.hstack((image, normalized))
-    #cv2.imshow('normalised', stacked)
-    #cv2.waitKey(0)
 
     return normalized
 

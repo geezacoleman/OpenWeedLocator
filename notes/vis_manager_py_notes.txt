@@ -19,4 +19,5 @@ Key Methods:
 Dependencies:
 - numpy
 - blessed (optional, falls back to BasicTerminal)
+- Removed demonstration __main__ block
 

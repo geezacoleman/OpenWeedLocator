@@ -68,11 +68,3 @@ class RelayVis:
     def close(self):
         print("\n", end='\n')
 
-if __name__ == "__main__":
-    box_drawer = RelayVis(relays=4)
-
-    for i in range(0, 100):
-        relay = np.random.randint(0, 4)
-        status = bool(np.random.randint(0, 2))
-        box_drawer.update(relay=relay, status=status)
-        time.sleep(0.01)
