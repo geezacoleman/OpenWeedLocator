@@ -48,6 +48,20 @@ MACHINE ?= "raspberrypi3"
 To build images for different models, set `MACHINE` to `raspberrypi0`,
 `raspberrypi2`, `raspberrypi3`, `raspberrypi4`, or `raspberrypi5` as needed.
 
+If you require images for multiple boards, rerun the build with each desired
+`MACHINE` setting:
+
+```bash
+for m in raspberrypi4 raspberrypi5; do
+  sed -i "s/^MACHINE.*/MACHINE ?= \"$m\"/" conf/local.conf
+  bitbake core-image-base
+done
+```
+
+The provided GitHub workflow uses a similar approach with a build matrix to
+automatically produce images for Raspberry Pi 3, 4 and 5 and attaches them to a
+release when triggered from a tag.
+
 ## 3. Add OWL to the image
 
 1. Add a custom layer (e.g. `meta-owl`) to package the OWL application. This layer should provide a recipe that installs OWL and its Python dependencies.
