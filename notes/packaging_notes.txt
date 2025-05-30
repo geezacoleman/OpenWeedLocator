@@ -23,3 +23,4 @@ OpenWeedLocator packaging
 - Documented host tool dependencies (lz4 and zstd) and Raspberry Pi 5 machine support in docs/yocto.md.
 
 - Updated Yocto build workflow to install lz4 and zstd host tools.
+- Added docs/yocto-extras.md describing additional packages, services, and configuration options in the OWL Yocto image.
