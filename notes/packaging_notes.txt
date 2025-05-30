@@ -12,3 +12,5 @@ OpenWeedLocator packaging
 - Workflow now uploads the generated image artifact.
 - Yocto guide includes steps for an optional custom psplash screen.
 - Updated workflow to use actions/upload-artifact@v4 to fix download issue.
+
+- Updated Yocto build workflow to use libegl1 on Ubuntu 24.04.
