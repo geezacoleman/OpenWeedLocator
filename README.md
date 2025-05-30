@@ -102,6 +102,8 @@ These will be updated as major changes are made. All older versions will be reta
 
 [View all versions](docs)
 
+* [Yocto build guide](docs/yocto.md)
+
 ### MQTT Integration (Experimental)
 
 OWL can broadcast detection events and receive control commands over MQTT.

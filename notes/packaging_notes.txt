@@ -6,3 +6,5 @@ OpenWeedLocator packaging
 - Provides `owl` console entry point via `owl:cli`.
 - Packages `display` and `utils` modules plus `owl.py` as a module.
 - Installs example config files from `config/`.
+
+- Added docs/yocto.md with instructions for building an OWL Yocto image for multiple Raspberry Pi models.
