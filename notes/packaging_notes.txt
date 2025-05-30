@@ -21,3 +21,5 @@ OpenWeedLocator packaging
 - Switched Yocto build workflow to a self-hosted runner using the `self-hosted` and `linux` labels.
 - Updated workflow to ignore errors when enabling unprivileged user namespaces.
 - Documented host tool dependencies (lz4 and zstd) and Raspberry Pi 5 machine support in docs/yocto.md.
+
+- Updated Yocto build workflow to install lz4 and zstd host tools.

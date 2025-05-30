@@ -18,7 +18,8 @@ jobs:
           sudo apt-get install -y gawk wget git-core diffstat unzip texinfo gcc-multilib \
             build-essential chrpath socat cpio python3 python3-pip python3-pexpect \
             xz-utils debianutils iputils-ping python3-git python3-jinja2 libegl1 \
-            libsdl1.2-dev pylint xterm bc bison flex libssl-dev libncurses5-dev
+            libsdl1.2-dev pylint xterm bc bison flex libssl-dev libncurses5-dev \
+            lz4 zstd
 
       - name: Set up Yocto environment
         run: |
