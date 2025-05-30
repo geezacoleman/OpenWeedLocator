@@ -24,6 +24,12 @@ This guide outlines the basic steps for creating a custom Yocto image for runnin
    sudo sysctl -w kernel.unprivileged_userns_clone=1
    ```
 
+5. Ensure the host packages providing `lz4c`, `pzstd`, `unzstd` and `zstd`
+   are installed. On Debian/Ubuntu systems run:
+   ```bash
+   sudo apt-get install lz4 zstd
+   ```
+
 ## 2. Configure layers
 
 Edit `conf/bblayers.conf` in the build directory to include the new layers.
@@ -39,7 +45,8 @@ Configure the machine type in `conf/local.conf` for the desired Raspberry Pi mod
 ```bash
 MACHINE ?= "raspberrypi3"
 ```
-To build images for different models, set `MACHINE` to `raspberrypi0`, `raspberrypi2`, `raspberrypi3`, or `raspberrypi4` as needed.
+To build images for different models, set `MACHINE` to `raspberrypi0`,
+`raspberrypi2`, `raspberrypi3`, `raspberrypi4`, or `raspberrypi5` as needed.
 
 ## 3. Add OWL to the image
 
