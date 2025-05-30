@@ -17,3 +17,4 @@ OpenWeedLocator packaging
 - Added instructions to enable unprivileged user namespaces when BitBake
   reports an AppArmor error, and updated the workflow to set
   `kernel.unprivileged_userns_clone=1`.
+- Pinned GitHub Actions runner to ubuntu-22.04 to avoid AppArmor user namespace issue.
