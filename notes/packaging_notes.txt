@@ -9,3 +9,5 @@ OpenWeedLocator packaging
 
 - Added docs/yocto.md with instructions for building an OWL Yocto image for multiple Raspberry Pi models.
 - Added a GitHub Actions workflow to build the OWL Yocto image.
+- Workflow now uploads the generated image artifact.
+- Yocto guide includes steps for an optional custom psplash screen.
