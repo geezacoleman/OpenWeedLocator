@@ -34,7 +34,7 @@ jobs:
           bitbake core-image-base
 
       - name: Upload image artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: yocto-image
           path: poky/build/tmp/deploy/images/**/core-image-base*.wic
