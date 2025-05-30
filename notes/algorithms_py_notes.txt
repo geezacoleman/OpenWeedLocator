@@ -19,4 +19,5 @@ Dependencies:
 - numpy
 - opencv-python
 - pywt (optional for wavelet blur)
+- Removed unused cv2.imshow debugging calls
 

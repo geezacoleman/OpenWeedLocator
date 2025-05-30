@@ -560,26 +560,3 @@ class RelayController:
     def stop(self):
         self.running = False
 
-
-if __name__ == "__main__":
-    print("Starting test of status indicators...")
-
-    # Test HeadlessStatusIndicator
-    print("\nTesting HeadlessStatusIndicator...")
-    headless_indicator = HeadlessStatusIndicator(save_directory="output")
-    headless_indicator.show_error(3)  # Show an error with 3 flashes
-    headless_indicator.stop()
-
-    # Test UteStatusIndicator
-    print("\nTesting UteStatusIndicator...")
-    ute_indicator = UteStatusIndicator(save_directory="output", record_led_pin='BOARD38', storage_led_pin='BOARD40')
-    ute_indicator.show_error(4)  # Show an error with 4 flashes
-    ute_indicator.stop()
-
-    # Test AdvancedStatusIndicator
-    print("\nTesting AdvancedStatusIndicator...")
-    advanced_indicator = AdvancedStatusIndicator(save_directory="output", status_led_pin='BOARD37')
-    advanced_indicator.show_error(2)  # Show an error with 2 flashes
-    advanced_indicator.stop()
-
-    print("\nTest complete.")
