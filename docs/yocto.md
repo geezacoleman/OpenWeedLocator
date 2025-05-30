@@ -21,11 +21,13 @@ This guide outlines the basic steps for creating a custom Yocto image for runnin
 
 ## 2. Configure layers
 
-Edit `conf/bblayers.conf` in the build directory to include the new layers:
+Edit `conf/bblayers.conf` in the build directory to include the new layers.
+Use paths relative to the build directory so that BitBake can locate the
+cloned layers:
 ```bash
-BBLAYERS += "${BSPDIR}/meta-openembedded/meta-oe"
-BBLAYERS += "${BSPDIR}/meta-openembedded/meta-python"
-BBLAYERS += "${BSPDIR}/meta-raspberrypi"
+BBLAYERS += "${TOPDIR}/../meta-openembedded/meta-oe"
+BBLAYERS += "${TOPDIR}/../meta-openembedded/meta-python"
+BBLAYERS += "${TOPDIR}/../meta-raspberrypi"
 ```
 
 Configure the machine type in `conf/local.conf` for the desired Raspberry Pi model, for example:

@@ -27,9 +27,9 @@ jobs:
           git clone --branch kirkstone git://git.openembedded.org/meta-openembedded
           git clone --branch kirkstone https://github.com/agherzan/meta-raspberrypi
           source oe-init-build-env build
-          echo 'BBLAYERS += "${BSPDIR}/meta-openembedded/meta-oe"' >> conf/bblayers.conf
-          echo 'BBLAYERS += "${BSPDIR}/meta-openembedded/meta-python"' >> conf/bblayers.conf
-          echo 'BBLAYERS += "${BSPDIR}/meta-raspberrypi"' >> conf/bblayers.conf
+          echo 'BBLAYERS += "${TOPDIR}/../meta-openembedded/meta-oe"' >> conf/bblayers.conf
+          echo 'BBLAYERS += "${TOPDIR}/../meta-openembedded/meta-python"' >> conf/bblayers.conf
+          echo 'BBLAYERS += "${TOPDIR}/../meta-raspberrypi"' >> conf/bblayers.conf
           echo 'MACHINE ?= "raspberrypi3"' >> conf/local.conf
           bitbake core-image-base
 
