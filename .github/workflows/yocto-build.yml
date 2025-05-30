@@ -24,7 +24,7 @@ jobs:
             build-essential chrpath socat cpio python3 python3-pip python3-pexpect \
             xz-utils debianutils iputils-ping python3-git python3-jinja2 libegl1 \
             libsdl1.2-dev pylint xterm bc bison flex libssl-dev libncurses5-dev \
-            lz4 zstd
+            lz4 zstd bzip2 bmap-tools
 
       - name: Set up Yocto environment
         run: |
@@ -40,15 +40,30 @@ jobs:
           echo 'MACHINE ?= "${{ matrix.machine }}"' >> conf/local.conf
           bitbake core-image-base
 
+      - name: Prepare release artifacts
+        run: |
+          cd poky/build/tmp/deploy/images
+          find . -name 'core-image-base*.wic' -print0 | while IFS= read -r -d '' img; do
+            bmaptool create "$img" -o "$img.bmap"
+            bzip2 -f "$img"
+            sha256sum "$img.bz2" "$img.bmap" >> "$GITHUB_WORKSPACE/SHA256SUMS"
+          done
+
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
           name: yocto-image
-          path: poky/build/tmp/deploy/images/**/core-image-base*.wic
+          path: |
+            poky/build/tmp/deploy/images/**/core-image-base*.wic.bz2
+            poky/build/tmp/deploy/images/**/core-image-base*.wic.bmap
+            SHA256SUMS
 
       - name: Upload release asset
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: poky/build/tmp/deploy/images/**/core-image-base*.wic
+          files: |
+            poky/build/tmp/deploy/images/**/core-image-base*.wic.bz2
+            poky/build/tmp/deploy/images/**/core-image-base*.wic.bmap
+            SHA256SUMS
 
