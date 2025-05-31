@@ -1,0 +1,17 @@
+################################################################################
+Notes on mqtt_gui.py
+
+Summary completed on 29/05/2025
+Summary based on new file in current commit
+################################################################################
+
+Purpose:
+- Provide a basic Tkinter GUI to connect to an MQTT broker
+- Allows subscribing to a topic, publishing text messages and viewing received messages
+
+Key Classes:
+- MQTTGui: builds the interface and manages MQTT interactions using utils.mqtt_manager
+
+Dependencies:
+- utils.mqtt_manager
+- tkinter standard library widgets

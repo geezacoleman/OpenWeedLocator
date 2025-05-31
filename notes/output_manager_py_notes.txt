@@ -22,9 +22,7 @@ Classes:
 - RelayController
 
 Entrypoint:
-- Has __main__ check for testing status indicators
-- Sets testing flag via get_platform_config() if not on Raspberry Pi
-- Uses terminal messages instead of GPIO when in test mode
+- Removed __main__ test block used for manual status indicator testing
 
 TestRelay class:
 - Simulates relay hardware for testing
@@ -169,3 +167,4 @@ RelayController class --> consumer method:
 - Processes queued spray jobs
 - Manages timing and relay states
 - Coordinates with visualization system
+

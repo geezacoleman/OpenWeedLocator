@@ -1,0 +1,23 @@
+################################################################################
+Notes on image_sampler.py
+
+Summary completed on 29/05/2025
+Summary based on commit 5380e50
+################################################################################
+
+Purpose:
+- Save image frames or cropped regions to disk asynchronously
+
+Class:
+- ImageRecorder: manages worker processes and queue of frames
+
+Key Methods:
+- add_frame: queue new frame for saving
+- save_images: worker loop processing queued frames
+- stop and terminate: shutdown helpers
+
+Dependencies:
+- cv2, numpy
+- multiprocessing, datetime
+- utils.log_manager
+

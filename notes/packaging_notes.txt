@@ -1,0 +1,30 @@
+OpenWeedLocator packaging
+-------------------------
+
+- Added a `pyproject.toml` with setuptools metadata.
+- Project published as `owl` so users can run `pip install owl`.
+- Provides `owl` console entry point via `owl:cli`.
+- Packages `display` and `utils` modules plus `owl.py` as a module.
+- Installs example config files from `config/`.
+
+- Added docs/yocto.md with instructions for building an OWL Yocto image for multiple Raspberry Pi models.
+- Added a GitHub Actions workflow to build the OWL Yocto image.
+- Workflow now uploads the generated image artifact.
+- Yocto guide includes steps for an optional custom psplash screen.
+- Updated workflow to use actions/upload-artifact@v4 to fix download issue.
+
+- Updated Yocto build workflow to use libegl1 on Ubuntu 24.04.
+- Added instructions to enable unprivileged user namespaces when BitBake
+  reports an AppArmor error, and updated the workflow to set
+  `kernel.unprivileged_userns_clone=1`.
+- Pinned GitHub Actions runner to ubuntu-22.04 to avoid AppArmor user namespace issue.
+- Switched Yocto build workflow to a self-hosted runner using the `self-hosted` and `linux` labels.
+- Updated workflow to ignore errors when enabling unprivileged user namespaces.
+- Documented host tool dependencies (lz4 and zstd) and Raspberry Pi 5 machine support in docs/yocto.md.
+
+- Updated Yocto build workflow to install lz4 and zstd host tools.
+- Added docs/yocto-extras.md describing additional packages, services, and configuration options in the OWL Yocto image.
+- Workflow now builds images for Raspberry Pi 3, 4 and 5 using a build matrix.
+- Added step to upload built images to GitHub Releases when a tag is published.
+- Workflow now compresses `.wic` images, generates `.bmap` files, and creates a
+  `SHA256SUMS` file for release assets.

@@ -96,3 +96,7 @@ Configuration:
   - DataCollection: Storage settings
   - GreenOnBrown: Detection parameters
   - Relays: GPIO mappings
+
+- Added `cli()` entry point helper for pip installation
+- Optional MQTT output via MQTTManager. Use --mqtt-host/--mqtt-port/--mqtt-topic to enable.
+- MQTT control messages supported via --mqtt-control-topic for remote start/stop.
