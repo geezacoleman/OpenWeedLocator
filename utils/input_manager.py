@@ -285,7 +285,7 @@ class DashboardController:
         try:
             import sys
             import os
-            sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+            sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
             print('SUCCESS SUCCESS')
             from web.owl_dash import get_shared_state
             self.dashboard_state = get_shared_state()

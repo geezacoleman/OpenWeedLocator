@@ -214,7 +214,12 @@ class OWLDashboard:
 
         @self.app.route('/video_feed')
         def video_feed():
-            return Response(self.generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+            try:
+                return Response(self.generate_frames(),
+                                mimetype='multipart/x-mixed-replace; boundary=frame')
+            except Exception as e:
+                self.logger.error(f"Video feed error: {e}")
+                return f"Video feed error: {e}", 500
 
         @self.app.route('/api/system_stats')
         def system_stats():
