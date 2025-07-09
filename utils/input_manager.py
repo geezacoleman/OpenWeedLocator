@@ -283,9 +283,13 @@ class DashboardController:
 
         # Get dashboard shared state
         try:
-            import owl_dash
-            self.dashboard_state = owl_dash.get_shared_state()
-
+            import sys
+            import os
+            sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+            print('SUCCESS SUCCESS')
+            from web.owl_dash import get_shared_state
+            self.dashboard_state = get_shared_state()
+            print('SUCCESS SUCCESS')
             # Sync shared state references
             self.dashboard_state.detection_enable = detection_state
             self.dashboard_state.image_sample_enable = image_sample_state
