@@ -3,90 +3,207 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OpenWeedLocator Dashboard</title>
+    <title>OWL Dashboard</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
 </head>
 <body>
     <div class="header">
-        <img src="{{ url_for('static', filename='images/owl-logo-wht.png') }}" alt="OWL Logo">
-        <h1>OpenWeedLocator Dashboard</h1>
+        <div class="header-content">
+            <div class="logo-section">
+                <img src="{{ url_for('static', filename='images/owl-logo-wht.png') }}" alt="OWL Logo" class="logo">
+                <h1>OWL Dashboard</h1>
+            </div>
+            <div class="status-indicator">
+                <div class="owl-status" id="owlStatus">
+                    <span class="status-dot" id="statusDot"></span>
+                    <span id="statusText">Connecting...</span>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="container">
         <!-- Navigation Tabs -->
         <div class="nav-tabs">
-            <div class="nav-tab active" data-tab="dashboard">Dashboard</div>
-            <div class="nav-tab" data-tab="stream">Camera Stream</div>
+            <div class="nav-tab active" data-tab="dashboard">
+                <span class="tab-icon">📊</span>
+                <span>Dashboard</span>
+            </div>
+            <div class="nav-tab" data-tab="stream">
+                <span class="tab-icon">📹</span>
+                <span>Live Stream</span>
+            </div>
+            <div class="nav-tab" data-tab="control">
+                <span class="tab-icon">⚙️</span>
+                <span>Controls</span>
+            </div>
         </div>
 
         <!-- Dashboard Tab -->
         <div id="dashboard" class="tab-content active">
-            <div class="card status-box">
-                <h2>System Status</h2>
-                <div class="status-grid">
-                    <div class="status-item">
-                        <h3>CPU Usage</h3>
-                        <div class="status-value" id="cpuValue">0%</div>
-                    </div>
-                    <div class="status-item">
-                        <h3>CPU Temperature</h3>
-                        <div class="status-value" id="tempValue">0°C</div>
-                    </div>
-                    <div class="status-item">
-                        <h3>Detection</h3>
-                        <div class="status-value" id="detectionStatus">Enabled</div>
-                    </div>
-                    <div class="status-item">
-                        <h3>Recording</h3>
-                        <div class="status-value" id="recordingStatusText">Stopped</div>
+            <div class="dashboard-grid">
+                <div class="card status-card">
+                    <h2>System Status</h2>
+                    <div class="status-grid">
+                        <div class="status-item">
+                            <div class="status-icon">🔥</div>
+                            <div class="status-info">
+                                <h3>CPU Temp</h3>
+                                <div class="status-value" id="cpuTemp">0°C</div>
+                            </div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-icon">💾</div>
+                            <div class="status-info">
+                                <h3>CPU Usage</h3>
+                                <div class="status-value" id="cpuUsage">0%</div>
+                            </div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-icon">🧠</div>
+                            <div class="status-info">
+                                <h3>Memory</h3>
+                                <div class="status-value" id="memoryUsage">0%</div>
+                            </div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-icon">💿</div>
+                            <div class="status-info">
+                                <h3>Disk</h3>
+                                <div class="status-value" id="diskUsage">0%</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <div class="status-timestamp" id="statusTimestamp"></div>
+
+                <div class="card detection-card">
+                    <h2>Detection Status</h2>
+                    <div class="detection-grid">
+                        <div class="detection-item">
+                            <div class="detection-label">Weed Detection</div>
+                            <div class="detection-status" id="detectionStatus">
+                                <span class="status-indicator" id="detectionIndicator"></span>
+                                <span id="detectionText">Disabled</span>
+                            </div>
+                        </div>
+                        <div class="detection-item">
+                            <div class="detection-label">Image Recording</div>
+                            <div class="detection-status" id="recordingStatus">
+                                <span class="status-indicator" id="recordingIndicator"></span>
+                                <span id="recordingText">Stopped</span>
+                            </div>
+                        </div>
+                        <div class="detection-item">
+                            <div class="detection-label">Sensitivity Level</div>
+                            <div class="detection-status" id="sensitivityStatus">
+                                <span class="status-indicator" id="sensitivityIndicator"></span>
+                                <span id="sensitivityText">High</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <!-- Camera Stream Tab -->
+        <!-- Stream Tab -->
         <div id="stream" class="tab-content">
-            <div class="stream-container">
-                <div class="zoom-container">
-                    <img id="stream-img" class="stream zoom-image" src="{{ url_for('video_feed') }}">
-
-                    <div class="toggle-container">
-                        <span class="toggle-label">GPS Location</span>
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="gps-toggle" checked>
-                            <span class="toggle-slider"></span>
-                        </label>
+            <div class="stream-card">
+                <div class="stream-header">
+                    <h2>Live Camera Feed</h2>
+                    <div class="stream-controls">
+                        <button id="fullscreenBtn" class="icon-btn" title="Fullscreen">📺</button>
+                        <button id="downloadFrame" class="icon-btn" title="Download Frame">📸</button>
                     </div>
+                </div>
+                <div class="stream-container">
+                    <div class="zoom-container">
+                        <img id="stream-img" class="stream zoom-image" src="{{ url_for('video_feed') }}" alt="Camera Feed">
 
-                    <div class="gps-status">
-                        <svg class="gps-icon" viewBox="0 0 24 24">
-                            <path fill="currentColor" d="M12,2A7,7 0 0,1 19,9C19,14.25 12,22 12,22C12,22 5,14.25 5,9A7,7 0 0,1 12,2M12,4A5,5 0 0,0 7,9C7,10 7,12 12,18.71C17,12 17,10 17,9A5,5 0 0,0 12,4M12,6.5A2.5,2.5 0 0,1 14.5,9A2.5,2.5 0 0,1 12,11.5A2.5,2.5 0 0,1 9.5,9A2.5,2.5 0 0,1 12,6.5"/>
-                        </svg>
-                        <span id="gps-accuracy">Searching...</span>
+                        <div class="stream-overlay">
+                            <div class="overlay-item gps-status">
+                                <svg class="gps-icon" viewBox="0 0 24 24">
+                                    <path fill="currentColor" d="M12,2A7,7 0 0,1 19,9C19,14.25 12,22 12,22C12,22 5,14.25 5,9A7,7 0 0,1 12,2M12,4A5,5 0 0,0 7,9C7,10 7,12 12,18.71C17,12 17,10 17,9A5,5 0 0,0 12,4M12,6.5A2.5,2.5 0 0,1 14.5,9A2.5,2.5 0 0,1 12,11.5A2.5,2.5 0 0,1 9.5,9A2.5,2.5 0 0,1 12,6.5"/>
+                                </svg>
+                                <span id="gps-accuracy">GPS Off</span>
+                            </div>
+
+                            <div class="overlay-item zoom-controls">
+                                <button class="zoom-btn" id="zoomIn">+</button>
+                                <button class="zoom-btn" id="zoomOut">-</button>
+                                <button class="zoom-btn" id="zoomReset">⌂</button>
+                            </div>
+                        </div>
                     </div>
+                </div>
+            </div>
+        </div>
 
-                    <div class="zoom-controls">
-                        <button>+</button>
-                        <button>-</button>
-                        <button>Reset</button>
+        <!-- Control Tab -->
+        <div id="control" class="tab-content">
+            <div class="control-grid">
+                <div class="card control-card">
+                    <h2>Detection Control</h2>
+                    <div class="control-section">
+                        <div class="control-buttons">
+                            <button id="start-detection" class="control-btn success">
+                                <span class="btn-icon">🎯</span>
+                                Start Detection
+                            </button>
+                            <button id="stop-detection" class="control-btn danger">
+                                <span class="btn-icon">⏹️</span>
+                                Stop Detection
+                            </button>
+                        </div>
+                        <div class="control-info">
+                            <p>Current Status: <span id="controlDetectionStatus">Disabled</span></p>
+                        </div>
                     </div>
                 </div>
 
-                <div class="controls">
-                    <button id="start-detection" class="btn-success">Start Detection</button>
-                    <button id="stop-detection" class="btn-danger">Stop Detection</button>
-                    <button id="recordButton" class="btn-primary">Start Recording</button>
-                    <button id="downloadFrame" class="btn-secondary">Download Frame</button>
-                    <div class="recording-status" id="recordingStatus"></div>
+                <div class="card control-card">
+                    <h2>Recording Control</h2>
+                    <div class="control-section">
+                        <div class="control-buttons">
+                            <button id="start-recording" class="control-btn primary">
+                                <span class="btn-icon">🔴</span>
+                                Start Recording
+                            </button>
+                            <button id="stop-recording" class="control-btn secondary">
+                                <span class="btn-icon">⏹️</span>
+                                Stop Recording
+                            </button>
+                        </div>
+                        <div class="control-info">
+                            <p>Current Status: <span id="controlRecordingStatus">Stopped</span></p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card control-card">
+                    <h2>Sensitivity Control</h2>
+                    <div class="control-section">
+                        <div class="control-buttons">
+                            <button id="toggle-sensitivity" class="control-btn accent">
+                                <span class="btn-icon">🔧</span>
+                                Toggle Sensitivity
+                            </button>
+                        </div>
+                        <div class="control-info">
+                            <p>Current Level: <span id="controlSensitivityStatus">High</span></p>
+                            <p class="control-description">High = More sensitive to small weeds<br>Low = Less sensitive, fewer false positives</p>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
     <footer>
-        <p>OpenWeedLocator © 2025 | <a href="https://github.com/geezacoleman/OpenWeedLocator" target="_blank">GitHub</a></p>
+        <div class="footer-content">
+            <p>OpenWeedLocator © 2025 | <a href="https://github.com/geezacoleman/OpenWeedLocator" target="_blank">GitHub</a></p>
+            <p class="status-timestamp">Last Updated: <span id="statusTimestamp">--</span></p>
+        </div>
     </footer>
 
     <div id="notifications"></div>

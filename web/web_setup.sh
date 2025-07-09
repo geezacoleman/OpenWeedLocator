@@ -22,6 +22,7 @@ fi
 
 # Initialize status tracking variables
 STATUS_PACKAGES=""
+STATUS_PYTHON_PACKAGES=""
 STATUS_WIFI_CONFIG=""
 STATUS_UFW_CONFIG=""
 STATUS_NGINX_CONFIG=""
@@ -30,6 +31,7 @@ STATUS_AVAHI_CONFIG=""
 STATUS_SERVICES=""
 
 ERROR_PACKAGES=""
+ERROR_PYTHON_PACKAGES=""
 ERROR_WIFI_CONFIG=""
 ERROR_UFW_CONFIG=""
 ERROR_NGINX_CONFIG=""
@@ -82,7 +84,6 @@ collect_user_input() {
     echo -e "${GREEN}[INFO] Configuration Summary:${NC}"
     echo -e "  SSID: ${SSID}"
     echo -e "  IP Address: 10.42.0.1/24"
-    echo -e "  DNS: 8.8.8.8, 8.8.4.4"
     echo -e "  Hostname: owl-${OWL_ID}"
     echo
 
@@ -241,13 +242,43 @@ EOF
 
 check_status "Avahi service configuration" "AVAHI_CONFIG"
 
-# Step 9: Start and enable services
 echo -e "${GREEN}[INFO] Starting and enabling services...${NC}"
 sudo systemctl enable avahi-daemon
 sudo systemctl start avahi-daemon
 sudo systemctl enable nginx
 sudo systemctl restart nginx
 check_status "Starting services" "SERVICES"
+
+# Step 9: Create systemd service for OWL Dashboard
+echo -e "${GREEN}[INFO] Creating systemd service for OWL Dashboard...${NC}"
+sudo tee /etc/systemd/system/owl-dash.service > /dev/null <<EOF
+[Unit]
+Description=OWL Dashboard Service
+After=network.target
+
+[Service]
+Type=exec
+User=owl
+Group=owl
+WorkingDirectory=/home/owl/owl/web
+Environment="PATH=/home/owl/.virtualenvs/owl/bin"
+ExecStart=/home/owl/.virtualenvs/owl/bin/gunicorn --bind 127.0.0.1:8000 --workers 2 owl_dash:app
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable owl-dash
+sudo systemctl start owl-dash
+check_status "Creating and starting dashboard service" "SERVICES"
+
+# Install Python dependencies for dashboard
+echo -e "${GREEN}[INFO] Installing Python dependencies...${NC}"
+sudo -u owl /home/owl/.virtualenvs/owl/bin/pip install flask gunicorn psutil
+check_status "Installing Python dependencies" "PYTHON_PACKAGES"
 
 # Step 10: Create configuration summary file
 echo -e "${GREEN}[INFO] Creating configuration summary...${NC}"
@@ -293,7 +324,8 @@ echo -e "  Configuration saved to: /opt/owl-dash-config.txt"
 if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_WIFI_CONFIG" == "${TICK}" && "$STATUS_UFW_CONFIG" == "${TICK}" && "$STATUS_NGINX_CONFIG" == "${TICK}" && "$STATUS_SSL_CERT" == "${TICK}" && "$STATUS_AVAHI_CONFIG" == "${TICK}" && "$STATUS_SERVICES" == "${TICK}" ]]; then
     echo -e "\n${GREEN}[COMPLETE] OWL Dashboard setup completed successfully!${NC}"
     echo -e "${GREEN}[INFO] Connect to WiFi '${SSID}' and visit https://${HOSTNAME}.local/${NC}"
-    echo -e "${GREEN}[INFO] Next step: Run the Flask app setup to enable GPIO controls.${NC}"
+    echo -e "${GREEN}[INFO] Dashboard service running on port 8000${NC}"
+    echo -e "${GREEN}[INFO] Next: Complete the main OWL setup to enable full functionality${NC}"
 else
     echo -e "\n${RED}[ERROR] Some components failed to install. Check the status above.${NC}"
 
