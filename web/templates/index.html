@@ -27,16 +27,16 @@
         <!-- Navigation Tabs -->
         <div class="nav-tabs">
             <div class="nav-tab active" data-tab="dashboard">
-                <span class="tab-icon">📊</span>
-                <span>Dashboard</span>
+                <span class="tab-text">Dashboard</span>
             </div>
             <div class="nav-tab" data-tab="stream">
-                <span class="tab-icon">📹</span>
-                <span>Live Stream</span>
+                <span class="tab-text">Stream</span>
             </div>
             <div class="nav-tab" data-tab="control">
-                <span class="tab-icon">⚙️</span>
-                <span>Controls</span>
+                <span class="tab-text">Controls</span>
+            </div>
+            <div class="nav-tab" data-tab="storage">
+                <span class="tab-text">Storage</span>
             </div>
         </div>
 
@@ -47,28 +47,24 @@
                     <h2>System Status</h2>
                     <div class="status-grid">
                         <div class="status-item">
-                            <div class="status-icon">🔥</div>
                             <div class="status-info">
                                 <h3>CPU Temp</h3>
                                 <div class="status-value" id="cpuTemp">0°C</div>
                             </div>
                         </div>
                         <div class="status-item">
-                            <div class="status-icon">💾</div>
                             <div class="status-info">
                                 <h3>CPU Usage</h3>
                                 <div class="status-value" id="cpuUsage">0%</div>
                             </div>
                         </div>
                         <div class="status-item">
-                            <div class="status-icon">🧠</div>
                             <div class="status-info">
                                 <h3>Memory</h3>
                                 <div class="status-value" id="memoryUsage">0%</div>
                             </div>
                         </div>
                         <div class="status-item">
-                            <div class="status-icon">💿</div>
                             <div class="status-info">
                                 <h3>Disk</h3>
                                 <div class="status-value" id="diskUsage">0%</div>
@@ -80,26 +76,26 @@
                 <div class="card detection-card">
                     <h2>Detection Status</h2>
                     <div class="detection-grid">
-                        <div class="detection-item">
-                            <div class="detection-label">Weed Detection</div>
-                            <div class="detection-status" id="detectionStatus">
-                                <span class="status-indicator" id="detectionIndicator"></span>
-                                <span id="detectionText">Disabled</span>
+                        <div class="detection-item" id="detectionStatusBox">
+                            <div class="detection-content">
+                                <h4>Weed Detection</h4>
+                                <div class="status-text" id="detectionText">Disabled</div>
                             </div>
+                            <div class="status-indicator-large" id="detectionIndicator"></div>
                         </div>
-                        <div class="detection-item">
-                            <div class="detection-label">Image Recording</div>
-                            <div class="detection-status" id="recordingStatus">
-                                <span class="status-indicator" id="recordingIndicator"></span>
-                                <span id="recordingText">Stopped</span>
+                        <div class="detection-item" id="recordingStatusBox">
+                            <div class="detection-content">
+                                <h4>Image Recording</h4>
+                                <div class="status-text" id="recordingText">Stopped</div>
                             </div>
+                            <div class="status-indicator-large" id="recordingIndicator"></div>
                         </div>
-                        <div class="detection-item">
-                            <div class="detection-label">Sensitivity Level</div>
-                            <div class="detection-status" id="sensitivityStatus">
-                                <span class="status-indicator" id="sensitivityIndicator"></span>
-                                <span id="sensitivityText">High</span>
+                        <div class="detection-item" id="sensitivityStatusBox">
+                            <div class="detection-content">
+                                <h4>Sensitivity Level</h4>
+                                <div class="status-text" id="sensitivityText">High</div>
                             </div>
+                            <div class="status-indicator-large" id="sensitivityIndicator"></div>
                         </div>
                     </div>
                 </div>
@@ -112,8 +108,8 @@
                 <div class="stream-header">
                     <h2>Live Camera Feed</h2>
                     <div class="stream-controls">
-                        <button id="fullscreenBtn" class="icon-btn" title="Fullscreen">📺</button>
-                        <button id="downloadFrame" class="icon-btn" title="Download Frame">📸</button>
+                        <button id="fullscreenBtn" class="icon-btn" title="Fullscreen">Fullscreen</button>
+                        <button id="downloadFrame" class="icon-btn" title="Download Frame">Download</button>
                     </div>
                 </div>
                 <div class="stream-container">
@@ -131,7 +127,7 @@
                             <div class="overlay-item zoom-controls">
                                 <button class="zoom-btn" id="zoomIn">+</button>
                                 <button class="zoom-btn" id="zoomOut">-</button>
-                                <button class="zoom-btn" id="zoomReset">⌂</button>
+                                <button class="zoom-btn" id="zoomReset">Reset</button>
                             </div>
                         </div>
                     </div>
@@ -147,11 +143,9 @@
                     <div class="control-section">
                         <div class="control-buttons">
                             <button id="start-detection" class="control-btn success">
-                                <span class="btn-icon">🎯</span>
                                 Start Detection
                             </button>
                             <button id="stop-detection" class="control-btn danger">
-                                <span class="btn-icon">⏹️</span>
                                 Stop Detection
                             </button>
                         </div>
@@ -166,11 +160,9 @@
                     <div class="control-section">
                         <div class="control-buttons">
                             <button id="start-recording" class="control-btn primary">
-                                <span class="btn-icon">🔴</span>
                                 Start Recording
                             </button>
                             <button id="stop-recording" class="control-btn secondary">
-                                <span class="btn-icon">⏹️</span>
                                 Stop Recording
                             </button>
                         </div>
@@ -185,13 +177,55 @@
                     <div class="control-section">
                         <div class="control-buttons">
                             <button id="toggle-sensitivity" class="control-btn accent">
-                                <span class="btn-icon">🔧</span>
                                 Toggle Sensitivity
                             </button>
                         </div>
                         <div class="control-info">
                             <p>Current Level: <span id="controlSensitivityStatus">High</span></p>
                             <p class="control-description">High = More sensitive to small weeds<br>Low = Less sensitive, fewer false positives</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Storage Tab -->
+        <div id="storage" class="tab-content">
+            <div class="storage-grid">
+                <div class="card">
+                    <h2>USB Storage Devices</h2>
+                    <div class="storage-info" id="usbDevices">
+                        <p>Scanning for USB devices...</p>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>Recording Status</h2>
+                    <div class="recording-info">
+                        <div class="info-item">
+                            <span class="info-label">Save Directory:</span>
+                            <span class="info-value" id="saveDirectory">Not set</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Available Space:</span>
+                            <span class="info-value" id="availableSpace">Unknown</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Total Recordings:</span>
+                            <span class="info-value" id="totalRecordings">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>File Browser</h2>
+                    <div class="file-browser">
+                        <div class="browser-controls">
+                            <button id="refreshFiles" class="btn-secondary">Refresh Files</button>
+                            <button id="downloadLogs" class="btn-primary">Download Logs</button>
+                        </div>
+                        <div class="file-list" id="fileList">
+                            <p>Click Refresh Files to browse recordings</p>
                         </div>
                     </div>
                 </div>

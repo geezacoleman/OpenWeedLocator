@@ -164,36 +164,63 @@ class Owl:
 
         ### Data collection only ###
         self.detection_enable = Value('b', self.config.getboolean('DataCollection', 'detection_enable', fallback=False))
-        self.image_sample_enable = Value('b', self.config.getboolean('DataCollection', 'image_sample_enable', fallback=False))
+        self.image_sample_enable = Value('b', self.config.getboolean('DataCollection', 'image_sample_enable',
+                                                                     fallback=False))
 
-        # a local version of these is set and auto updated to avoid the more expensive multiprocessing in the main loop
+        # Local cached versions for performance
         self._detection_enable = self.detection_enable.value
         self._image_sample_enable = self.image_sample_enable.value
         self._STATE_CHECK_INTERVAL = 0.2
         self.stop_state_update = threading.Event()
+
+        # Dashboard setup
+        self.dash = None
+
+        if self.config.getboolean('Dashboard', 'dashboard_enable', fallback=False):
+            try:
+                # Import dashboard module and connect shared state
+                import sys
+                sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+                from web.owl_dash import get_shared_state
+
+                # Get dashboard shared state and link it to the owl.py state
+                dash_state = get_shared_state()
+                dash_state.detection_enable = self.detection_enable
+                dash_state.image_sample_enable = self.image_sample_enable
+
+                # Create sensitivity state for dashboard
+                self.sensitivity_state = Value('b', False)
+                dash_state.sensitivity_state = self.sensitivity_state
+
+                # Create dashboard controller for sensitivity management
+                from utils.input_manager import DashboardController
+                self.dash = DashboardController(
+                    detection_state=self.detection_enable,
+                    image_sample_state=self.image_sample_enable,
+                    sensitivity_state=self.sensitivity_state,
+                    stop_flag=Value('b', False),
+                    owl_instance=self,
+                    low_sensitivity_config=self.config.get('Controller', 'low_sensitivity_config',
+                                                           fallback='config/DAY_SENSITIVITY_2.ini'),
+                    high_sensitivity_config=self.config.get('Controller', 'high_sensitivity_config',
+                                                            fallback='config/DAY_SENSITIVITY_3.ini')
+                )
+
+                self.logger.info("Dashboard integration enabled")
+
+            except ImportError as e:
+                self.logger.warning(f"Dashboard not available: {e}")
+                self.dash_controller = None
+
+        # Start state monitoring thread
         threading.Thread(target=self.update_state, daemon=True).start()
-
-        self.save_directory = None
-
-        # Web server (only if enabled)
-        self.web_server = None
-        if self.config.getboolean('System', 'dashboard_enable', fallback=False):
-            from web.owl_dash import OWLWebServer
-            self.web_server = OWLWebServer(
-                port=self.config.getint('System', 'dashboard_port', fallback=5000),
-                owl_home=os.path.expanduser("~/owl"),
-                detection_enable=self.detection_enable,
-                recording_enable=self.image_sample_enable
-            )
-            threading.Thread(target=self.web_server.run, daemon=True).start()
-            self.logger.info("Web server started")
 
         # GPS setup (only if enabled in config)
         self.gps_source = self.config.get('System', 'gps_source', fallback='none').lower()
         self.gps_data = None
 
         if self.gps_source != "none":
-            if self.web_server:  # Override with dashboard if enabled
+            if self.dash:  # Override with dashboard if enabled
                 self.gps_source = 'dashboard'
             self.gps_port = self.config.get('System', 'gps_port', fallback='/dev/ttyUSB0')
             self.gps_baudrate = self.config.getint('System', 'gps_baudrate', fallback=9600)
@@ -206,7 +233,7 @@ class Owl:
             raise errors.ControllerTypeError(self.config.get('Controller', 'controller_type'))
 
         with self.image_sample_enable.get_lock():
-            if self.controller_type != 'none' or self.web_server:
+            if self.controller_type != 'none' or self.dash:
                 self.image_sample_enable.value = True
             self._image_sample_enable = self.image_sample_enable.value
 
@@ -374,8 +401,8 @@ class Owl:
                         self.stop()
                         break
 
-                if self.web_server:
-                    self.web_server.update_frame(frame)
+                if self.dash:
+                    self.dash.update_frame(frame)
 
                 # retrieve the trackbar positions for thresholds
                 if self.show_display:
@@ -580,6 +607,16 @@ class Owl:
                     self.relay_controller.relay.all_off()  # Ensure all relays are off
                 except Exception as e:
                     self.logger.warning(f"Failed to turn off relays: {e}")
+            # Stop state update thread
+            if hasattr(self, 'stop_state_update'):
+                self.stop_state_update.set()
+
+            # Stop dashboard controller
+            if hasattr(self, 'dash') and self.dash:
+                try:
+                    self.dash.stop()
+                except Exception as e:
+                    self.logger.warning(f"Error stopping dashboard controller: {e}")
 
             # Stop camera
             if hasattr(self, 'cam') and self.cam:

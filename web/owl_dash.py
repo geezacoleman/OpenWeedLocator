@@ -162,6 +162,36 @@ class OWLDashboard:
                 self.logger.error(f"Error monitoring status: {e}")
                 time.sleep(5)
 
+    def get_usb_storage_info(self):
+        """Get USB storage device information"""
+        try:
+            usb_devices = []
+            # Get mounted drives
+            result = subprocess.run(['df', '-h'], capture_output=True, text=True)
+            if result.returncode == 0:
+                lines = result.stdout.split('\n')
+                for line in lines[1:]:  # Skip header
+                    if '/media/' in line or '/mnt/' in line:
+                        parts = line.split()
+                        if len(parts) >= 6:
+                            device = parts[0]
+                            size = parts[1]
+                            used = parts[2]
+                            available = parts[3]
+                            mount_point = parts[5]
+                            usb_devices.append({
+                                'device': device,
+                                'size': size,
+                                'used': used,
+                                'available': available,
+                                'mount_point': mount_point
+                            })
+
+            return usb_devices
+        except Exception as e:
+            self.logger.error(f"Error getting USB storage info: {e}")
+            return []
+
     def setup_routes(self):
         """Setup Flask routes"""
 
@@ -260,6 +290,33 @@ class OWLDashboard:
         @self.app.route('/static/<path:filename>')
         def static_files(filename):
             return send_from_directory(self.app.static_folder, filename)
+
+        @self.app.route('/api/usb_storage')
+        def usb_storage():
+            return jsonify(self.get_usb_storage_info())
+
+        @self.app.route('/api/browse_files', methods=['POST'])
+        def browse_files():
+            try:
+                data = request.get_json()
+                directory = data.get('directory', '/media')
+
+                files = []
+                if os.path.exists(directory):
+                    for item in os.listdir(directory):
+                        item_path = os.path.join(directory, item)
+                        if os.path.isfile(item_path):
+                            stat = os.stat(item_path)
+                            files.append({
+                                'name': item,
+                                'size': stat.st_size,
+                                'modified': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M'),
+                                'path': item_path
+                            })
+
+                return jsonify({'files': files})
+            except Exception as e:
+                return jsonify({'error': str(e)}), 500
 
     def generate_frames(self):
         """Generate video frames for streaming"""
