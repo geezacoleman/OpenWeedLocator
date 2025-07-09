@@ -1,6 +1,6 @@
 /**
- * OWL Web Interface - Optimized Version
- * Improved JavaScript for monitoring, GPS, and detection/recording control
+ * OWL Web Interface - Complete Fixed Version
+ * Fixed element IDs and added USB storage functionality
  */
 
 let isGpsEnabled = true;
@@ -23,6 +23,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initZoom();
     initGPS();
     initControlButtons();
+    initStorageTab();
 
     // Start periodic updates
     startUpdateInterval();
@@ -41,10 +42,31 @@ function initTabs() {
             tabContents.forEach(content => content.classList.remove('active'));
             const targetId = this.getAttribute('data-tab');
             document.getElementById(targetId).classList.add('active');
+
+            // Load storage data when storage tab is clicked
+            if (targetId === 'storage') {
+                loadStorageData();
+            }
         });
     });
     const firstTab = document.querySelector('.nav-tab');
     if (firstTab) firstTab.click();
+}
+
+/**
+ * Initialize storage tab functionality
+ */
+function initStorageTab() {
+    const refreshButton = document.getElementById('refreshFiles');
+    const downloadLogsButton = document.getElementById('downloadLogs');
+
+    if (refreshButton) {
+        refreshButton.addEventListener('click', loadStorageData);
+    }
+
+    if (downloadLogsButton) {
+        downloadLogsButton.addEventListener('click', downloadLogs);
+    }
 }
 
 /**
@@ -53,9 +75,11 @@ function initTabs() {
 function initControlButtons() {
     const buttons = {
         'downloadFrame': downloadFrame,
-        'recordButton': toggleRecording,
+        'start-recording': startRecording,
+        'stop-recording': stopRecording,
         'start-detection': startDetection,
-        'stop-detection': stopDetection
+        'stop-detection': stopDetection,
+        'toggle-sensitivity': toggleSensitivity
     };
 
     Object.entries(buttons).forEach(([id, handler]) => {
@@ -70,16 +94,14 @@ function initControlButtons() {
                 // Visual feedback
                 this.classList.add('disabled');
                 const originalText = this.textContent;
-                this.innerHTML = '<div class="spinner-small"></div>';
+                this.innerHTML = '<div class="spinner-small"></div>' + originalText;
 
                 // Execute handler with debouncing
                 handler.call(this);
 
                 // Reset button after 2 seconds regardless of response
                 setTimeout(() => {
-                    if (id !== 'recordButton' || !isRecording) {
-                        this.innerHTML = originalText;
-                    }
+                    this.innerHTML = originalText;
                     this.classList.remove('disabled');
                 }, 2000);
             });
@@ -91,9 +113,9 @@ function initControlButtons() {
  * Initialize zoom functionality
  */
 function initZoom() {
-    document.querySelector('.zoom-controls button:nth-child(1)')?.addEventListener('click', zoomIn);
-    document.querySelector('.zoom-controls button:nth-child(2)')?.addEventListener('click', zoomOut);
-    document.querySelector('.zoom-controls button:nth-child(3)')?.addEventListener('click', resetZoom);
+    document.getElementById('zoomIn')?.addEventListener('click', zoomIn);
+    document.getElementById('zoomOut')?.addEventListener('click', zoomOut);
+    document.getElementById('zoomReset')?.addEventListener('click', resetZoom);
 }
 
 /**
@@ -197,99 +219,47 @@ function downloadFrame() {
 }
 
 /**
- * Toggle recording state with optimized handling
+ * Start recording
  */
-function toggleRecording() {
-    const button = document.getElementById('recordButton');
-    const statusElement = document.getElementById('recordingStatus');
-    if (!button || !statusElement) return;
+function startRecording() {
+    showNotification('Info', 'Starting recording...', 'info');
 
-    if (!isRecording) {
-        showNotification('Info', 'Starting recording...', 'info');
-
-        apiRequest('/api/recording/start', { method: 'POST' })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    isRecording = true;
-                    recordingStartTime = Date.now();
-                    button.textContent = 'Stop Recording';
-                    button.classList.add('recording');
-                    statusElement.style.display = 'block';
-                    updateRecordingStatus();
-                    if (window.recordingInterval) clearInterval(window.recordingInterval);
-                    window.recordingInterval = setInterval(updateRecordingStatus, 1000);
-                } else {
-                    throw new Error(data.message || 'Failed to start recording');
-                }
-            })
-            .catch(error => {
-                showNotification('Error', error.message || 'Failed to start recording', 'error');
-                console.error('Recording start error:', error);
-            });
-    } else {
-        button.disabled = true;
-        button.innerHTML = '<div class="spinner"></div>';
-        showNotification('Info', 'Stopping recording and downloading...', 'info');
-
-        apiRequest('/api/recording/stop', { method: 'POST' }, 30000) // Longer timeout for video processing
-            .then(response => response.blob())
-            .then(blob => {
-                isRecording = false;
-                button.disabled = false;
-                button.textContent = 'Start Recording';
-                button.classList.remove('recording');
-                statusElement.style.display = 'none';
-                if (window.recordingInterval) {
-                    clearInterval(window.recordingInterval);
-                    window.recordingInterval = null;
-                }
-
-                // Download the video file
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.style.display = 'none';
-                a.href = url;
-                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                a.download = `owl_recording_${timestamp}.mp4`;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a);
-
-                showNotification('Success', 'Recording saved and downloaded', 'success');
-            })
-            .catch(error => {
-                isRecording = false;
-                button.disabled = false;
-                button.textContent = 'Start Recording';
-                button.classList.remove('recording');
-                statusElement.style.display = 'none';
-                if (window.recordingInterval) {
-                    clearInterval(window.recordingInterval);
-                    window.recordingInterval = null;
-                }
-                showNotification('Error', error.message || 'Failed to save recording', 'error');
-                console.error('Recording stop error:', error);
-            });
-    }
+    apiRequest('/api/recording/start', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Success', data.message || 'Recording started', 'success');
+                updateSystemStats(); // Refresh UI
+            } else {
+                throw new Error(data.message || 'Failed to start recording');
+            }
+        })
+        .catch(error => {
+            showNotification('Error', error.message || 'Failed to start recording', 'error');
+            console.error('Recording start error:', error);
+        });
 }
 
 /**
- * Update recording status display
+ * Stop recording
  */
-function updateRecordingStatus() {
-    const statusElement = document.getElementById('recordingStatus');
-    if (!statusElement || !isRecording) return;
+function stopRecording() {
+    showNotification('Info', 'Stopping recording...', 'info');
 
-    const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
-    const remaining = MAX_RECORDING_TIME - elapsed;
-    const estimatedSize = Math.max(1, Math.floor((elapsed * ESTIMATED_BITRATE) / (8 * 1024 * 1024)));
-
-    let gpsStatus = gpsData ? `GPS: ±${gpsData.accuracy.toFixed(1)}m` : '';
-    statusElement.innerHTML = `Recording: ${remaining}s remaining<br>Estimated Size: ~${estimatedSize}MB${gpsStatus ? '<br>' + gpsStatus : ''}`;
-
-    if (elapsed >= MAX_RECORDING_TIME) toggleRecording();
+    apiRequest('/api/recording/stop', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Success', data.message || 'Recording stopped', 'success');
+                updateSystemStats(); // Refresh UI
+            } else {
+                throw new Error(data.message || 'Failed to stop recording');
+            }
+        })
+        .catch(error => {
+            showNotification('Error', error.message || 'Failed to stop recording', 'error');
+            console.error('Recording stop error:', error);
+        });
 }
 
 /**
@@ -303,9 +273,7 @@ function startDetection() {
         .then(data => {
             if (data.success) {
                 showNotification('Success', data.message || 'Detection started', 'success');
-                // Update UI immediately without waiting for next poll
-                const detectionElement = document.getElementById('detectionStatus');
-                if (detectionElement) detectionElement.textContent = 'Enabled';
+                updateSystemStats(); // Refresh UI immediately
             } else {
                 throw new Error(data.message || 'Failed to start detection');
             }
@@ -324,9 +292,7 @@ function stopDetection() {
         .then(data => {
             if (data.success) {
                 showNotification('Success', data.message || 'Detection stopped', 'success');
-                // Update UI immediately without waiting for next poll
-                const detectionElement = document.getElementById('detectionStatus');
-                if (detectionElement) detectionElement.textContent = 'Disabled';
+                updateSystemStats(); // Refresh UI immediately
             } else {
                 throw new Error(data.message || 'Failed to stop detection');
             }
@@ -338,6 +304,177 @@ function stopDetection() {
 }
 
 /**
+ * Toggle sensitivity
+ */
+function toggleSensitivity() {
+    showNotification('Info', 'Toggling sensitivity...', 'info');
+
+    apiRequest('/api/sensitivity/toggle', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Success', data.message || 'Sensitivity toggled', 'success');
+                updateSystemStats(); // Refresh UI immediately
+            } else {
+                throw new Error(data.message || 'Failed to toggle sensitivity');
+            }
+        })
+        .catch(error => {
+            showNotification('Error', error.message || 'Failed to toggle sensitivity', 'error');
+            console.error('Sensitivity toggle error:', error);
+        });
+}
+
+/**
+ * Load storage data (USB devices and files)
+ */
+function loadStorageData() {
+    // Load USB devices
+    apiRequest('/api/usb_storage')
+        .then(response => response.json())
+        .then(data => {
+            updateUSBDevices(data);
+        })
+        .catch(error => {
+            console.error('Error loading USB storage:', error);
+            const usbContainer = document.getElementById('usbDevices');
+            if (usbContainer) {
+                usbContainer.innerHTML = '<p style="color: red;">Error loading USB devices</p>';
+            }
+        });
+
+    // Load file browser data
+    apiRequest('/api/browse_files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ directory: '/media' })
+    })
+        .then(response => response.json())
+        .then(data => {
+            updateFileBrowser(data.files || []);
+        })
+        .catch(error => {
+            console.error('Error loading files:', error);
+            const fileContainer = document.getElementById('fileList');
+            if (fileContainer) {
+                fileContainer.innerHTML = '<p style="color: red;">Error loading files</p>';
+            }
+        });
+}
+
+/**
+ * Update USB devices display
+ */
+function updateUSBDevices(devices) {
+    const container = document.getElementById('usbDevices');
+    if (!container) return;
+
+    if (!devices || devices.length === 0) {
+        container.innerHTML = '<p>No USB storage devices detected</p>';
+        return;
+    }
+
+    let html = '';
+    devices.forEach(device => {
+        html += `
+            <div class="usb-device">
+                <h4>${device.device}</h4>
+                <div class="device-info">
+                    <span><strong>Size:</strong> ${device.size}</span>
+                    <span><strong>Used:</strong> ${device.used}</span>
+                    <span><strong>Available:</strong> ${device.available}</span>
+                    <span><strong>Mount:</strong> ${device.mount_point}</span>
+                </div>
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+
+    // Update save directory info
+    const saveDirectoryElement = document.getElementById('saveDirectory');
+    const availableSpaceElement = document.getElementById('availableSpace');
+
+    if (devices.length > 0) {
+        const primaryDevice = devices[0];
+        if (saveDirectoryElement) {
+            saveDirectoryElement.textContent = primaryDevice.mount_point;
+        }
+        if (availableSpaceElement) {
+            availableSpaceElement.textContent = primaryDevice.available;
+        }
+    }
+}
+
+/**
+ * Update file browser display
+ */
+function updateFileBrowser(files) {
+    const container = document.getElementById('fileList');
+    if (!container) return;
+
+    if (!files || files.length === 0) {
+        container.innerHTML = '<p>No files found. Try refreshing or check if USB drive is mounted.</p>';
+        return;
+    }
+
+    let html = '';
+    files.forEach(file => {
+        const sizeInMB = (file.size / (1024 * 1024)).toFixed(2);
+        html += `
+            <div class="file-item">
+                <div class="file-info">
+                    <strong>${file.name}</strong><br>
+                    <small>Size: ${sizeInMB} MB | Modified: ${file.modified}</small>
+                </div>
+                <button onclick="downloadFile('${file.path}')" class="btn-secondary">Download</button>
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+
+    // Update total recordings count
+    const totalRecordingsElement = document.getElementById('totalRecordings');
+    if (totalRecordingsElement) {
+        totalRecordingsElement.textContent = files.length;
+    }
+}
+
+/**
+ * Download a specific file
+ */
+function downloadFile(filePath) {
+    showNotification('Info', 'Downloading file...', 'info');
+
+    // Create a download link
+    const link = document.createElement('a');
+    link.href = `/api/download_file?path=${encodeURIComponent(filePath)}`;
+    link.download = filePath.split('/').pop();
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    showNotification('Success', 'File download started', 'success');
+}
+
+/**
+ * Download logs
+ */
+function downloadLogs() {
+    showNotification('Info', 'Downloading logs...', 'info');
+
+    const link = document.createElement('a');
+    link.href = '/api/download_logs';
+    link.download = `owl_logs_${new Date().toISOString().split('T')[0]}.zip`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    showNotification('Success', 'Log download started', 'success');
+}
+
+/**
  * Initialize GPS functionality
  */
 function initGPS() {
@@ -345,8 +482,6 @@ function initGPS() {
     if (toggle) {
         toggle.addEventListener('change', toggleGPS);
         if (toggle.checked) startGPS();
-    } else {
-        startGPS();
     }
 }
 
@@ -451,32 +586,70 @@ function startUpdateInterval() {
 }
 
 /**
- * Update system statistics with optimized handling
+ * Update system statistics with FIXED element IDs
  */
 function updateSystemStats() {
     apiRequest('/api/system_stats')
         .then(response => response.json())
         .then(data => {
-            const cpuElement = document.getElementById('cpuValue');
+            // CPU Usage (fixed ID)
+            const cpuElement = document.getElementById('cpuUsage');
             if (cpuElement) {
                 cpuElement.textContent = `${data.cpu_percent}%`;
                 cpuElement.style.color = getColorForValue(data.cpu_percent, 100);
             }
 
-            const tempElement = document.getElementById('tempValue');
+            // CPU Temperature (fixed ID)
+            const tempElement = document.getElementById('cpuTemp');
             if (tempElement) {
                 tempElement.textContent = `${data.cpu_temp}°C`;
                 tempElement.style.color = getColorForValue(data.cpu_temp, 85);
             }
 
-            const detectionElement = document.getElementById('detectionStatus');
-            if (detectionElement) {
-                detectionElement.textContent = data.detection_enable ? 'Enabled' : 'Disabled';
+            // Memory Usage
+            const memoryElement = document.getElementById('memoryUsage');
+            if (memoryElement) {
+                memoryElement.textContent = `${data.memory_percent}%`;
+                memoryElement.style.color = getColorForValue(data.memory_percent, 100);
             }
 
-            const recordingTextElement = document.getElementById('recordingStatusText');
-            if (recordingTextElement) {
-                recordingTextElement.textContent = data.recording_enable ? 'Recording' : 'Stopped';
+            // Disk Usage
+            const diskElement = document.getElementById('diskUsage');
+            if (diskElement) {
+                diskElement.textContent = `${data.disk_percent}%`;
+                diskElement.style.color = getColorForValue(data.disk_percent, 100);
+            }
+
+            // Update detection status boxes with colors
+            updateDetectionStatusBoxes(data);
+
+            // Update OWL status indicator in header
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            if (statusDot && statusText) {
+                if (data.owl_running) {
+                    statusDot.classList.add('connected');
+                    statusText.textContent = 'OWL Running';
+                } else {
+                    statusDot.classList.remove('connected');
+                    statusText.textContent = 'OWL Offline';
+                }
+            }
+
+            // Update control status displays
+            const controlDetectionStatus = document.getElementById('controlDetectionStatus');
+            if (controlDetectionStatus) {
+                controlDetectionStatus.textContent = data.detection_enable ? 'Enabled' : 'Disabled';
+            }
+
+            const controlRecordingStatus = document.getElementById('controlRecordingStatus');
+            if (controlRecordingStatus) {
+                controlRecordingStatus.textContent = data.image_sample_enable ? 'Recording' : 'Stopped';
+            }
+
+            const controlSensitivityStatus = document.getElementById('controlSensitivityStatus');
+            if (controlSensitivityStatus) {
+                controlSensitivityStatus.textContent = data.sensitivity_state ? 'Low' : 'High';
             }
 
             const timestampElement = document.getElementById('statusTimestamp');
@@ -485,6 +658,35 @@ function updateSystemStats() {
             }
         })
         .catch(error => console.error('Error fetching system stats:', error));
+}
+
+/**
+ * Update the colored detection status boxes
+ */
+function updateDetectionStatusBoxes(data) {
+    // Detection status
+    const detectionBox = document.getElementById('detectionStatusBox');
+    const detectionText = document.getElementById('detectionText');
+    if (detectionBox && detectionText) {
+        detectionText.textContent = data.detection_enable ? 'Enabled' : 'Disabled';
+        detectionBox.className = 'detection-item ' + (data.detection_enable ? 'status-enabled' : 'status-disabled');
+    }
+
+    // Recording status
+    const recordingBox = document.getElementById('recordingStatusBox');
+    const recordingText = document.getElementById('recordingText');
+    if (recordingBox && recordingText) {
+        recordingText.textContent = data.image_sample_enable ? 'Recording' : 'Stopped';
+        recordingBox.className = 'detection-item ' + (data.image_sample_enable ? 'status-active' : 'status-disabled');
+    }
+
+    // Sensitivity status
+    const sensitivityBox = document.getElementById('sensitivityStatusBox');
+    const sensitivityText = document.getElementById('sensitivityText');
+    if (sensitivityBox && sensitivityText) {
+        sensitivityText.textContent = data.sensitivity_state ? 'Low' : 'High';
+        sensitivityBox.className = 'detection-item ' + (data.sensitivity_state ? 'status-low' : 'status-high');
+    }
 }
 
 /**
@@ -541,7 +743,7 @@ function showNotification(title, message, type = 'info', duration = 5000) {
     }, duration);
 }
 
-// Add CSS for the spinner
+// Add CSS for the spinner and USB devices
 const style = document.createElement('style');
 style.textContent = `
 .spinner-small {
@@ -564,6 +766,51 @@ style.textContent = `
     opacity: 0.7;
     cursor: not-allowed;
 }
+
+.usb-device {
+    background: #f8f9fa;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    border: 1px solid #e9ecef;
+}
+
+.usb-device h4 {
+    margin: 0 0 0.5rem 0;
+    color: var(--primary);
+}
+
+.device-info {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.file-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem;
+    border-bottom: 1px solid #e9ecef;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.file-item:hover {
+    background-color: #f8f9fa;
+}
+
+.file-info {
+    flex: 1;
+}
+
+.file-item button {
+    margin-left: 1rem;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.8rem;
+}
 `;
 document.head.appendChild(style);
 
@@ -571,7 +818,6 @@ document.head.appendChild(style);
 window.addEventListener('unload', () => {
     if (gpsWatchId !== null) navigator.geolocation.clearWatch(gpsWatchId);
     if (updateInterval) clearInterval(updateInterval);
-    if (window.recordingInterval) clearInterval(window.recordingInterval);
 
     // Abort any pending requests
     Object.values(pendingRequests).forEach(controller => {

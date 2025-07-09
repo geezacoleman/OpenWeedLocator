@@ -20,7 +20,7 @@ from datetime import datetime
 from multiprocessing import Value, Queue
 
 try:
-    from flask import Flask, Response, render_template, request, jsonify, send_from_directory
+    from flask import Flask, Response, render_template, request, jsonify, send_from_directory, send_file
     import psutil
     import cv2
     import numpy as np
@@ -316,6 +316,52 @@ class OWLDashboard:
 
                 return jsonify({'files': files})
             except Exception as e:
+                return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/api/download_file')
+        def download_file():
+            try:
+                file_path = request.args.get('path')
+                if not file_path or not os.path.exists(file_path):
+                    return jsonify({'error': 'File not found'}), 404
+
+                return send_file(file_path, as_attachment=True)
+            except Exception as e:
+                return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/api/download_logs')
+        def download_logs():
+            try:
+                import zipfile
+                import tempfile
+                import os
+
+                # Create a temporary zip file
+                temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
+
+                with zipfile.ZipFile(temp_zip.name, 'w') as zip_file:
+                    log_dir = Path('../logs')
+                    if log_dir.exists():
+                        for log_file in log_dir.glob('*.log*'):
+                            if log_file.is_file():
+                                zip_file.write(log_file, log_file.name)
+
+                    # Also include any jsonl files (OWL log format)
+                    for jsonl_file in log_dir.glob('*.jsonl'):
+                        if jsonl_file.is_file():
+                            zip_file.write(jsonl_file, jsonl_file.name)
+
+                filename = f'owl_logs_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'
+
+                return send_file(
+                    temp_zip.name,
+                    as_attachment=True,
+                    download_name=filename,
+                    mimetype='application/zip'
+                )
+
+            except Exception as e:
+                self.logger.error(f"Error creating log archive: {e}")
                 return jsonify({'error': str(e)}), 500
 
     def generate_frames(self):
