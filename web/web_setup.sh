@@ -157,6 +157,13 @@ echo -e "${GREEN}[INFO] Setting hostname to ${HOSTNAME}...${NC}"
 sudo hostnamectl set-hostname "${HOSTNAME}"
 check_status "Setting hostname" "WIFI_CONFIG"
 
+echo -e "${GREEN}[INFO] Updating local hostname resolution...${NC}"
+sudo sed -i "/${HOSTNAME}/d" /etc/hosts
+echo "127.0.0.1 ${HOSTNAME}" | sudo tee -a /etc/hosts
+echo "127.0.1.1 ${HOSTNAME}" | sudo tee -a /etc/hosts
+
+check_status "Setting hostname and local resolution" "WIFI_CONFIG"
+
 # Step 6: Generate SSL certificates
 echo -e "${GREEN}[INFO] Generating SSL certificates...${NC}"
 sudo mkdir -p /etc/ssl/private
