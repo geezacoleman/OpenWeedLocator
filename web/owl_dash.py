@@ -71,6 +71,15 @@ class OWLDashboard:
 
         self.logger.info("OWL Dashboard initialized")
 
+    def update_frame(self, frame):
+        """Receive a new video frame from owl.py and queue it for display."""
+        try:
+            if shared_state.frame_queue.full():
+                _ = shared_state.frame_queue.get_nowait()
+            shared_state.frame_queue.put_nowait(frame)
+        except Exception as e:
+            self.logger.error(f"Error in update_frame: {e}")
+
     def load_config(self):
         """Load configuration from config file"""
         config_path = Path(self.config_file)
@@ -163,34 +172,38 @@ class OWLDashboard:
                 time.sleep(5)
 
     def get_usb_storage_info(self):
-        """Get USB storage device information"""
+        devices = []
         try:
-            usb_devices = []
-            # Get mounted drives
-            result = subprocess.run(['df', '-h'], capture_output=True, text=True)
-            if result.returncode == 0:
-                lines = result.stdout.split('\n')
-                for line in lines[1:]:  # Skip header
-                    if '/media/' in line or '/mnt/' in line:
-                        parts = line.split()
-                        if len(parts) >= 6:
-                            device = parts[0]
-                            size = parts[1]
-                            used = parts[2]
-                            available = parts[3]
-                            mount_point = parts[5]
-                            usb_devices.append({
-                                'device': device,
-                                'size': size,
-                                'used': used,
-                                'available': available,
-                                'mount_point': mount_point
-                            })
-
-            return usb_devices
+            output = subprocess.check_output(['df', '-h']).decode()
+            for line in output.splitlines()[1:]:
+                parts = line.split()
+                # Only block devices mounted under /media
+                if len(parts) >= 6 and parts[0].startswith('/dev/') and parts[5].startswith('/media/'):
+                    devices.append({
+                        'device': parts[0],
+                        'size': parts[1],
+                        'used': parts[2],
+                        'available': parts[3],
+                        'mount_point': parts[5]
+                    })
         except Exception as e:
-            self.logger.error(f"Error getting USB storage info: {e}")
-            return []
+            self.logger.error(f"Error retrieving USB storage info: {e}")
+        return devices
+
+    def browse_files(self, directory):
+        files = []
+        try:
+            for entry in os.scandir(directory):
+                stat = entry.stat()
+                files.append({
+                    'name': entry.name,
+                    'path': entry.path,
+                    'size': stat.st_size,
+                    'modified': datetime.fromtimestamp(stat.st_mtime).isoformat()
+                })
+        except Exception as e:
+            self.logger.error(f"Error browsing files in {directory}: {e}")
+        return files
 
     def setup_routes(self):
         """Setup Flask routes"""
@@ -292,42 +305,25 @@ class OWLDashboard:
             return send_from_directory(self.app.static_folder, filename)
 
         @self.app.route('/api/usb_storage')
-        def usb_storage():
-            return jsonify(self.get_usb_storage_info())
+        def api_usb_storage():
+            devices = self.get_usb_storage_info()
+            return jsonify(devices)
 
         @self.app.route('/api/browse_files', methods=['POST'])
-        def browse_files():
-            try:
-                data = request.get_json()
-                directory = data.get('directory', '/media')
-
-                files = []
-                if os.path.exists(directory):
-                    for item in os.listdir(directory):
-                        item_path = os.path.join(directory, item)
-                        if os.path.isfile(item_path):
-                            stat = os.stat(item_path)
-                            files.append({
-                                'name': item,
-                                'size': stat.st_size,
-                                'modified': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M'),
-                                'path': item_path
-                            })
-
-                return jsonify({'files': files})
-            except Exception as e:
-                return jsonify({'error': str(e)}), 500
+        def api_browse_files():
+            data = request.get_json() or {}
+            directory = data.get('directory', '')
+            if not os.path.isdir(directory):
+                return jsonify({'files': []})
+            files = self.browse_files(directory)
+            return jsonify({'files': files})
 
         @self.app.route('/api/download_file')
-        def download_file():
-            try:
-                file_path = request.args.get('path')
-                if not file_path or not os.path.exists(file_path):
-                    return jsonify({'error': 'File not found'}), 404
-
-                return send_file(file_path, as_attachment=True)
-            except Exception as e:
-                return jsonify({'error': str(e)}), 500
+        def api_download_file():
+            path = request.args.get('path', '')
+            if not os.path.isfile(path):
+                return "File not found", 404
+            return send_file(path, as_attachment=True)
 
         @self.app.route('/api/download_logs')
         def download_logs():
@@ -392,7 +388,7 @@ class OWLDashboard:
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
-                time.sleep(1 / 20)  # 20 FPS
+                time.sleep(0.05)  # 20 FPS
             except Exception as e:
                 self.logger.error(f"Error generating frame: {e}")
                 time.sleep(0.5)

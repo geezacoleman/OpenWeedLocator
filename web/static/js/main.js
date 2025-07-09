@@ -1,8 +1,3 @@
-/**
- * OWL Web Interface - Complete Fixed Version
- * Fixed element IDs and added USB storage functionality
- */
-
 let isGpsEnabled = true;
 let gpsWatchId = null;
 let gpsData = null;
@@ -585,21 +580,18 @@ function startUpdateInterval() {
     updateInterval = setInterval(updateSystemStats, SYSTEM_UPDATE_INTERVAL);
 }
 
-/**
- * Update system statistics with FIXED element IDs
- */
 function updateSystemStats() {
     apiRequest('/api/system_stats')
         .then(response => response.json())
         .then(data => {
-            // CPU Usage (fixed ID)
+            // CPU Usage
             const cpuElement = document.getElementById('cpuUsage');
             if (cpuElement) {
                 cpuElement.textContent = `${data.cpu_percent}%`;
                 cpuElement.style.color = getColorForValue(data.cpu_percent, 100);
             }
 
-            // CPU Temperature (fixed ID)
+            // CPU Temperature
             const tempElement = document.getElementById('cpuTemp');
             if (tempElement) {
                 tempElement.textContent = `${data.cpu_temp}°C`;
