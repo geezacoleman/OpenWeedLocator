@@ -105,6 +105,11 @@ sudo apt update
 sudo apt install -y nginx ufw openssl avahi-daemon
 check_status "Installing packages (nginx, ufw, openssl, avahi-daemon)" "PACKAGES"
 
+# Install Python dependencies for dashboard
+echo -e "${GREEN}[INFO] Installing Python dependencies...${NC}"
+sudo -u owl /home/owl/.virtualenvs/owl/bin/pip install flask gunicorn psutil
+check_status "Installing Python dependencies" "PYTHON_PACKAGES"
+
 # Step 3: Configure WiFi hotspot with NetworkManager
 echo -e "${GREEN}[INFO] Setting up WiFi hotspot: ${SSID}...${NC}"
 
@@ -274,11 +279,6 @@ sudo systemctl daemon-reload
 sudo systemctl enable owl-dash
 sudo systemctl start owl-dash
 check_status "Creating and starting dashboard service" "SERVICES"
-
-# Install Python dependencies for dashboard
-echo -e "${GREEN}[INFO] Installing Python dependencies...${NC}"
-sudo -u owl /home/owl/.virtualenvs/owl/bin/pip install flask gunicorn psutil
-check_status "Installing Python dependencies" "PYTHON_PACKAGES"
 
 # Step 10: Create configuration summary file
 echo -e "${GREEN}[INFO] Creating configuration summary...${NC}"
