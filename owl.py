@@ -178,7 +178,7 @@ class Owl:
         # Web server (only if enabled)
         self.web_server = None
         if self.config.getboolean('System', 'dashboard_enable', fallback=False):
-            from web.owl_web_server import OWLWebServer
+            from web.owl_dash import OWLWebServer
             self.web_server = OWLWebServer(
                 port=self.config.getint('System', 'dashboard_port', fallback=5000),
                 owl_home=os.path.expanduser("~/owl"),

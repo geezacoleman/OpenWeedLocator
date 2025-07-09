@@ -43,6 +43,7 @@ STATUS_OPENCV=""
 STATUS_OWL_DEPS=""
 STATUS_BOOT_SCRIPTS=""
 STATUS_DESKTOP_ICON=""
+STATUS_DASHBOARD=""
 
 ERROR_UPGRADE=""
 ERROR_CAMERA=""
@@ -53,6 +54,7 @@ ERROR_OPENCV=""
 ERROR_OWL_DEPS=""
 ERROR_BOOT_SCRIPTS=""
 ERROR_DESKTOP_ICON=""
+ERROR_DASHBOARD=""
 
 # Function to check the exit status of the last executed command
 check_status() {
@@ -191,13 +193,13 @@ echo -e "${GREEN}[INFO] Adding boot script to cron...${NC}"
 (crontab -l 2>/dev/null; echo "@reboot /usr/local/bin/owl_boot_wrapper.sh > /home/launch.log 2>&1") | sudo crontab -
 check_status "Adding boot script to cron" "BOOT_SCRIPTS"
 
-# set desktop background - check for wayland or X11
+# Step 10: Set desktop background - check for wayland or X11
 echo -e "${GREEN}[INFO] Setting desktop background...${NC}"
 pcmanfm --set-wallpaper $SCRIPT_DIR/images/owl-background.png
 check_status "Setting desktop background" "BOOT_SCRIPTS"
 sleep 2
 
-# creating desktop icon for focusing
+# Step 11: creating desktop icon for focusing
 echo -e "${GREEN}[INFO] Creating OWL Focusing desktop icon...${NC}"
 
 FOCUS_WRAPPER="${SCRIPT_DIR}/desktop/focus_owl_desktop.sh"
@@ -227,6 +229,32 @@ chmod +x "$DESKTOP_FILE"
 echo -e "${GREEN}[INFO] Focus OWL desktop icon created at: ${DESKTOP_FILE}${NC}"
 check_status "Creating desktop icon" "DESKTOP_ICON"
 
+# Step 12: Dashboard Setup
+echo -e "${GREEN}[INFO] Dashboard setup available...${NC}"
+read -p "Do you want to add a web dashboard for remote GPIO control? (y/n): " dashboard_choice
+case "$dashboard_choice" in
+  y|Y )
+    echo -e "${GREEN}[INFO] Setting up OWL Dashboard...${NC}"
+    if [ -f "${SCRIPT_DIR}/web_setup.sh" ]; then
+      chmod +x "${SCRIPT_DIR}/web_setup.sh"
+      sudo "${SCRIPT_DIR}/web_setup.sh"
+      check_status "Dashboard setup" "DASHBOARD"
+    else
+      echo -e "${RED}[ERROR] web_setup.sh not found in ${SCRIPT_DIR}${NC}"
+      STATUS_DASHBOARD="${CROSS}"
+      ERROR_DASHBOARD="web_setup.sh not found"
+    fi
+    ;;
+  n|N )
+    echo -e "${GREEN}[INFO] Dashboard setup skipped.${NC}"
+    STATUS_DASHBOARD="SKIPPED"
+    ;;
+  * )
+    echo -e "${RED}[ERROR] Invalid input. Dashboard setup skipped.${NC}"
+    STATUS_DASHBOARD="SKIPPED"
+    ;;
+esac
+
 # Final Summary
 echo -e "\n${GREEN}[INFO] Installation Summary:${NC}"
 echo -e "$STATUS_UPGRADE System Upgrade"
@@ -243,6 +271,14 @@ echo -e "$STATUS_OWL_DEPS OWL Dependencies Installed"
 echo -e "$STATUS_BOOT_SCRIPTS Boot Scripts Moved"
 echo -e "$STATUS_DESKTOP_ICON Desktop Icon Created"
 
+if [[ "$STATUS_DASHBOARD" == "${TICK}" ]]; then
+    echo -e "$STATUS_DASHBOARD Web Dashboard Configured"
+elif [[ "$STATUS_DASHBOARD" == "SKIPPED" ]]; then
+    echo -e "${ORANGE}[SKIPPED]${NC} Web Dashboard"
+else
+    echo -e "$STATUS_DASHBOARD Web Dashboard"
+fi
+
 OWL_VERSION=$(python3 - <<EOF
 import version
 print(version.VERSION)
@@ -251,7 +287,7 @@ EOF
 
 echo -e "${GREEN}[COMPLETE] OWL version installed: ${NEW_VERSION}${NC}"
 
-# Step 10: Start OWL focusing
+# Step 13: Start OWL focusing
 read -p "Start OWL focusing? (y/n): " choice
 case "$choice" in
   y|Y ) echo -e "${GREEN}[INFO] Starting focusing...${NC}"; "$FOCUS_WRAPPER" &;;
@@ -259,7 +295,7 @@ case "$choice" in
   * ) echo -e "${RED}[ERROR] Invalid input. Please enter y or n.${NC}";;
 esac
 
-# Step 11: Launch OWL
+# Step 14: Launch OWL
 read -p "Launch OWL? (y/n): " choice
 case "$choice" in
   y|Y ) echo -e "${GREEN}[INFO] Launching OWL...${NC}"; ./owl.py --show-display;;

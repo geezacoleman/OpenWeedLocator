@@ -4,6 +4,7 @@ import configparser
 import subprocess
 import cv2
 import logging
+from threading import Thread
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +259,145 @@ class AdvancedController:
             'brightness_min': config.getint('GreenOnBrown', 'brightness_min'),
             'brightness_max': config.getint('GreenOnBrown', 'brightness_max')
         }
+
+
+class DashboardController:
+    def __init__(self,
+                 detection_state,
+                 image_sample_state,
+                 sensitivity_state,
+                 stop_flag,
+                 owl_instance,
+                 low_sensitivity_config,
+                 high_sensitivity_config):
+
+        self.detection_state = detection_state
+        self.image_sample_state = image_sample_state
+        self.sensitivity_state = sensitivity_state
+        self.stop_flag = stop_flag
+        self.owl_instance = owl_instance
+
+        # Load sensitivity configs
+        self.low_sensitivity_settings = self._read_config(low_sensitivity_config)
+        self.high_sensitivity_settings = self._read_config(high_sensitivity_config)
+
+        # Get dashboard shared state
+        try:
+            import owl_dash
+            self.dashboard_state = owl_dash.get_shared_state()
+
+            # Sync shared state references
+            self.dashboard_state.detection_enable = detection_state
+            self.dashboard_state.image_sample_enable = image_sample_state
+            self.dashboard_state.sensitivity_state = sensitivity_state
+
+            self.logger = logging.getLogger(__name__)
+            self.logger.info("Dashboard controller initialized")
+
+        except ImportError:
+            self.logger = logging.getLogger(__name__)
+            self.logger.error("Could not import owl_dash module")
+            self.dashboard_state = None
+
+        # Start monitoring thread
+        self.monitoring_thread = Thread(target=self._monitor_states, daemon=True)
+        self.monitoring_thread.start()
+
+    def _monitor_states(self):
+        """Monitor state changes and update owl instance accordingly"""
+        last_sensitivity = self.sensitivity_state.value
+
+        while not self.stop_flag.value:
+            try:
+                # Check for sensitivity changes
+                current_sensitivity = self.sensitivity_state.value
+                if current_sensitivity != last_sensitivity:
+                    self.update_sensitivity_settings()
+                    last_sensitivity = current_sensitivity
+
+                time.sleep(0.1)
+
+            except Exception as e:
+                self.logger.error(f"Error in dashboard monitoring: {e}")
+                time.sleep(1)
+
+    def update_sensitivity_settings(self):
+        """Update OWL instance with current sensitivity settings"""
+        try:
+            settings = self.low_sensitivity_settings if self.sensitivity_state.value else self.high_sensitivity_settings
+
+            # Update Owl instance settings
+            self.owl_instance.exg_min = settings['exg_min']
+            self.owl_instance.exg_max = settings['exg_max']
+            self.owl_instance.hue_min = settings['hue_min']
+            self.owl_instance.hue_max = settings['hue_max']
+            self.owl_instance.saturation_min = settings['saturation_min']
+            self.owl_instance.saturation_max = settings['saturation_max']
+            self.owl_instance.brightness_min = settings['brightness_min']
+            self.owl_instance.brightness_max = settings['brightness_max']
+
+            sensitivity_name = "Low" if self.sensitivity_state.value else "High"
+            self.logger.info(f"Sensitivity updated to {sensitivity_name} from dashboard")
+
+        except Exception as e:
+            self.logger.error(f"Error updating sensitivity settings: {e}")
+
+    def update_frame(self, frame):
+        """Send frame to dashboard for display"""
+        if self.dashboard_state and frame is not None:
+            try:
+                # Put frame in shared queue (non-blocking)
+                if not self.dashboard_state.frame_queue.full():
+                    self.dashboard_state.frame_queue.put_nowait(frame)
+            except Exception as e:
+                # Don't log every frame error to avoid spam
+                pass
+
+    def weed_detect_indicator(self):
+        """Called when weed is detected"""
+        # Dashboard will show this in the frame overlay
+        pass
+
+    def image_write_indicator(self):
+        """Called when image is written"""
+        # Dashboard will show this in the frame overlay
+        pass
+
+    def run(self):
+        """Main run loop (for compatibility with other controllers)"""
+        try:
+            while not self.stop_flag.value:
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            self.logger.info("Dashboard controller stopped by keyboard interrupt")
+            self.stop()
+
+    def stop(self):
+        """Stop the dashboard controller"""
+        with self.stop_flag.get_lock():
+            self.stop_flag.value = True
+        self.logger.info("Dashboard controller stopped")
+
+    def _read_config(self, config_file):
+        """Read configuration file"""
+        import configparser
+        config = configparser.ConfigParser()
+        config.read(config_file)
+        return {
+            'exg_min': config.getint('GreenOnBrown', 'exg_min'),
+            'exg_max': config.getint('GreenOnBrown', 'exg_max'),
+            'hue_min': config.getint('GreenOnBrown', 'hue_min'),
+            'hue_max': config.getint('GreenOnBrown', 'hue_max'),
+            'saturation_min': config.getint('GreenOnBrown', 'saturation_min'),
+            'saturation_max': config.getint('GreenOnBrown', 'saturation_max'),
+            'brightness_min': config.getint('GreenOnBrown', 'brightness_min'),
+            'brightness_max': config.getint('GreenOnBrown', 'brightness_max')
+        }
+
+    def update_state(self):
+        """Update initial state (for compatibility)"""
+        self.update_sensitivity_settings()
+
 
 def get_rpi_version():
     try:
