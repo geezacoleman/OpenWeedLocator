@@ -235,10 +235,10 @@ read -p "Do you want to add a web dashboard for remote control? (y/n): " dashboa
 case "$dashboard_choice" in
   y|Y )
     echo -e "${GREEN}[INFO] Setting up OWL Dashboard...${NC}"
-    if [ -f "${SCRIPT_DIR}/web_setup.sh" ]; then
-      chmod +x "${SCRIPT_DIR}/web_setup.sh"
+    if [ -f "${SCRIPT_DIR}/web/web_setup.sh" ]; then
+      chmod +x "${SCRIPT_DIR}/web/web_setup.sh"
       cd "$SCRIPT_DIR"  # Ensure we're in the right directory
-      sudo "${SCRIPT_DIR}/web_setup.sh"
+      sudo "${SCRIPT_DIR}/web/web_setup.sh"
       check_status "Dashboard setup" "DASHBOARD"
     else
       echo -e "${RED}[ERROR] web_setup.sh not found in ${SCRIPT_DIR}${NC}"
