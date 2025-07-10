@@ -3,6 +3,7 @@ import platform
 import configparser
 import subprocess
 import os
+import sys
 import cv2
 import logging
 from threading import Thread
@@ -289,15 +290,17 @@ class DashboardController:
         self.logger = logging.getLogger(__name__)
 
         try:
-            sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-            from owl import shared_state
+            from utils.state_manager import shared_state  # Import from utils
             self.dashboard_state = shared_state
+
+            self.dashboard_state.log_state_ids(self.logger)
+
+            if id(self.dashboard_state.detection_enable) != id(detection_state):
+                self.logger.warning("[WARNING] Detection state objects are different!")
 
             # Log IDs for debugging
             self.dashboard_state.log_state_ids(self.logger)
 
-            # IMPORTANT: Don't overwrite - these should be the SAME objects
-            # Instead, verify they're the same
             if id(self.dashboard_state.detection_enable) != id(detection_state):
                 self.logger.warning("Detection state objects are different!")
                 self.logger.info(f"Dashboard detection_enable ID: {id(self.dashboard_state.detection_enable)}")

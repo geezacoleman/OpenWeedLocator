@@ -7,7 +7,7 @@ import argparse
 import time
 import threading
 from datetime import datetime
-from multiprocessing import Process, Value, Queue
+from multiprocessing import Process, Value
 from pathlib import Path
 
 def get_python_env():
@@ -38,40 +38,42 @@ logger = setup_basic_logger()
 logger.info("Starting OWL - checking imports...")
 
 try:
-   import utils.error_manager as errors
+    import utils.error_manager as errors
 except ImportError:
-   logger.critical("Cannot import from utils package! Not in correct directory.")
-   logger.critical(f"Current working directory: {os.getcwd()}")
-   print("\nERROR: Cannot import from utils package!")
-   print("This usually means you are not in the correct directory.")
-   print("\nTo fix:")
-   print("1. Ensure owl environment is active: workon owl")
-   print("2. Navigate to owl directory:        cd /home/owl/owl")
-   sys.exit(1)
+    logger.critical("Cannot import from utils package! Not in correct directory.")
+    logger.critical(f"Current working directory: {os.getcwd()}")
+    print("\nERROR: Cannot import from utils package!")
+    print("This usually means you are not in the correct directory.")
+    print("\nTo fix:")
+    print("1. Ensure owl environment is active: workon owl")
+    print("2. Navigate to owl directory:        cd /home/owl/owl")
+    sys.exit(1)
 
 try:
-   import cv2
+    import cv2
 except ImportError as e:
-   logger.error("OpenCV import failed - likely not in `owl` virtual environment")
-   logger.error(f"Error details: {str(e)}")
-   logger.error(f"Python environment: {get_python_env()}")
-   raise errors.OpenCVError(str(e)) from None
+    logger.error("OpenCV import failed - likely not in `owl` virtual environment")
+    logger.error(f"Error details: {str(e)}")
+    logger.error(f"Python environment: {get_python_env()}")
+    raise errors.OpenCVError(str(e)) from None
 
 try:
-   import imutils
-   from imutils.video import FPS
-   from utils.input_manager import UteController, AdvancedController, get_rpi_version
-   from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator
-   from utils.directory_manager import DirectorySetup
-   from utils.video_manager import VideoStream
-   from utils.image_sampler import ImageRecorder
-   from utils.algorithms import fft_blur
-   from utils.greenonbrown import GreenOnBrown
-   from utils.frame_reader import FrameReader
-   from utils.config_manager import ConfigValidator
-   from utils.log_manager import LogManager
-   import utils.error_manager as errors
-   from version import SystemInfo, VERSION
+    import imutils
+    from imutils.video import FPS
+    from utils.input_manager import UteController, AdvancedController, get_rpi_version
+    from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator
+    from utils.directory_manager import DirectorySetup
+    from utils.video_manager import VideoStream
+    from utils.image_sampler import ImageRecorder
+    from utils.algorithms import fft_blur
+    from utils.greenonbrown import GreenOnBrown
+    from utils.frame_reader import FrameReader
+    from utils.config_manager import ConfigValidator
+    from utils.log_manager import LogManager
+    from utils.state_manager import shared_state
+    import utils.error_manager as errors
+
+    from version import SystemInfo, VERSION
 
 except ImportError as e:
    missing_module = str(e).split("'")[1]
@@ -86,71 +88,6 @@ logger.info("All required modules imported successfully")
 def nothing(x):
     pass
 
-
-# Global shared state
-class SharedState:
-    def __init__(self):
-        self.detection_enable = Value('b', False)
-        self.image_sample_enable = Value('b', False)
-        self.sensitivity_state = Value('b', False)  # False = high sensitivity, True = low sensitivity
-        self.frame_queue = Queue(maxsize=5)
-        self.owl_running = Value('b', False)
-        self.last_frame_time = Value('d', 0.0)
-
-        # GPS data
-        self.gps_latitude = Value('d', 0.0)
-        self.gps_longitude = Value('d', 0.0)
-        self.gps_accuracy = Value('d', 0.0)
-        self.gps_timestamp = Value('d', 0.0)
-        self.gps_available = Value('b', False)
-
-        # Config values - will be populated from config file
-        self.config = None
-        self.config_path = None
-
-        # For debugging - store the ID of each Value object
-        self.state_ids = {
-            'detection_enable': id(self.detection_enable),
-            'image_sample_enable': id(self.image_sample_enable),
-            'sensitivity_state': id(self.sensitivity_state),
-            'gps_latitude': id(self.gps_latitude),
-            'gps_longitude': id(self.gps_longitude),
-        }
-
-    def log_state_ids(self, logger):
-        """Log the IDs of all shared state objects for debugging"""
-        logger.info("=== Shared State Object IDs ===")
-        for name, obj_id in self.state_ids.items():
-            logger.info(f"{name}: {obj_id}")
-        logger.info("===============================")
-
-    def get_gps_data(self):
-        """Get current GPS data as a dictionary"""
-        if not self.gps_available.value:
-            return None
-
-        return {
-            'latitude': self.gps_latitude.value,
-            'longitude': self.gps_longitude.value,
-            'accuracy': self.gps_accuracy.value,
-            'timestamp': self.gps_timestamp.value
-        }
-
-    def update_gps_data(self, lat, lon, accuracy, timestamp):
-        """Update GPS data from dashboard"""
-        with self.gps_latitude.get_lock():
-            self.gps_latitude.value = lat
-        with self.gps_longitude.get_lock():
-            self.gps_longitude.value = lon
-        with self.gps_accuracy.get_lock():
-            self.gps_accuracy.value = accuracy
-        with self.gps_timestamp.get_lock():
-            self.gps_timestamp.value = timestamp
-        with self.gps_available.get_lock():
-            self.gps_available.value = True
-
-
-shared_state = SharedState()
 shared_state.log_state_ids(logger)
 
 class Owl:

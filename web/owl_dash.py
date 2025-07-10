@@ -19,7 +19,11 @@ from pathlib import Path
 from datetime import datetime
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from owl import shared_state
+from utils.state_manager import shared_state
+
+logger = logging.getLogger(__name__)
+logger.info("=== DASHBOARD IMPORTING SHARED STATE ===")
+shared_state.log_state_ids(logger)
 
 try:
     from flask import Flask, Response, render_template, request, jsonify, send_from_directory, send_file
