@@ -253,15 +253,13 @@ class MQTTServer:
     def update_frame(self, frame):
         """
         Encode the given OpenCV frame as JPEG, publish it to the 'owl/frames' topic,
-        and return True on success. Silently returns False if not connected or if
-        encoding/publish fails.
+        and return True on success.
         """
         if not self.connected:
-            # Skip if we’re not currently connected
             return False
 
         try:
-            # Encode to JPEG with integer-only params
+            # Integer-only parameters—True is not allowed here
             params = [
                 cv2.IMWRITE_JPEG_QUALITY, 70,
                 cv2.IMWRITE_JPEG_OPTIMIZE, 1
@@ -271,14 +269,28 @@ class MQTTServer:
                 self.logger.error("Failed to JPEG-encode frame")
                 return False
 
-            # Base64 encode the JPEG and send
-            jpg_as_text = base64.b64encode(buffer).decode('utf-8')
-            # Use QoS=1 for at-least-once delivery
-            result = self.client.publish('owl/frames', jpg_as_text, qos=1)
+            img_data = buffer.tobytes()
+            if len(img_data) > 512 * 1024:
+                h, w = frame.shape[:2]
+                scale = 640 / w if w > 640 else 1
+                small = cv2.resize(frame, (int(w * scale), int(h * scale)))
+                success, buffer = cv2.imencode('.jpg', small,
+                                               [cv2.IMWRITE_JPEG_QUALITY, 60])
+                img_data = buffer.tobytes()
+                if not success:
+                    self.logger.error("Failed to encode downscaled frame")
+                    return False
 
-            # result: (rc, mid)
-            if result.rc != 0:
-                self.logger.error(f"MQTT publish returned non-zero rc={result.rc}")
+            # Base64 & JSON
+            img_b64 = base64.b64encode(img_data).decode('utf-8')
+            frame_msg = json.dumps({
+                'image': img_b64,
+                'timestamp': time.time(),
+                'encoding': 'jpeg_base64'
+            })
+            rc, _ = self.client.publish(self.topics['frames'], frame_msg, qos=1)
+            if rc != mqtt.MQTT_ERR_SUCCESS:
+                self.logger.error(f"MQTT publish error rc={rc}")
                 return False
 
             return True
@@ -286,7 +298,6 @@ class MQTTServer:
         except Exception as e:
             self.logger.error(f"Error publishing frame: {e}")
             return False
-
 
     def weed_detect_indicator(self):
         """Send weed detection indicator to dashboard (replaces DashboardController method)"""
@@ -418,25 +429,30 @@ class MQTTClient:
 
     def _on_message(self, client, userdata, msg):
         """Handle incoming MQTT messages"""
+        topic = msg.topic
+        raw = msg.payload.decode(errors='ignore')
         try:
-            topic = msg.topic
-            payload = json.loads(msg.payload.decode())
+            data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            self.logger.error(
+                f"Malformed JSON on topic '{topic}': "
+                f"{raw[:60]!r}… ({e})"
+            )
+            return
 
-            if topic == self.topics['state']:
-                with self.state_lock:
-                    self.current_state = payload
+        # Now dispatch cleanly
+        if topic == self.topics['state']:
+            with self.state_lock:
+                self.current_state = data
 
-            elif topic == self.topics['frames']:
-                self._handle_frame(payload)
+        elif topic == self.topics['frames']:
+            self._handle_frame(data)
 
-            elif topic == self.topics['status']:
-                self.logger.info(f"OWL status: {payload}")
+        elif topic == self.topics['status']:
+            self.logger.info(f"OWL status: {data}")
 
-            elif topic == self.topics['indicators']:
-                self._handle_indicator(payload)
-
-        except Exception as e:
-            self.logger.error(f"Error processing MQTT message: {e}")
+        elif topic == self.topics['indicators']:
+            self._handle_indicator(data)
 
     def _handle_frame(self, frame_data):
         """Handle incoming video frame"""
