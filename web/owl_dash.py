@@ -5,7 +5,7 @@
 OWL Dashboard Server
 -------------------
 Standalone web dashboard for the OpenWeedLocator (OWL) providing a WiFi-accessible interface
-for monitoring and control. Designed to work with or without the main owl.py process.
+for monitoring and control using MQTT for inter-process communication.
 """
 
 import os
@@ -19,11 +19,7 @@ from pathlib import Path
 from datetime import datetime
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from utils.state_manager import shared_state
-
-logger = logging.getLogger(__name__)
-logger.info("=== DASHBOARD IMPORTING SHARED STATE ===")
-shared_state.log_state_ids(logger)
+from utils.mqtt_manager import MQTTClient
 
 try:
     from flask import Flask, Response, render_template, request, jsonify, send_from_directory, send_file
@@ -41,36 +37,29 @@ class OWLDashboard:
         self.load_config()
         self.setup_logging()
 
-        # Create Flask app
         self.app = Flask(__name__,
                          static_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static'),
                          template_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates'))
 
-        # Video frame handling
+        self.mqtt_client = MQTTClient(
+            broker_host='localhost',
+            broker_port=1883,
+            client_id='owl_dashboard')
+
         self.latest_frame = None
         self.frame_lock = threading.Lock()
 
-        # Start background tasks
-        self.start_background_tasks()
+        try:
+            self.mqtt_client.start()
+            self.logger.info("Connected to MQTT broker")
+        except Exception as e:
+            self.logger.error(f"Failed to connect to MQTT: {e}")
+            self.mqtt_client = None
 
-        # Set up routes
+        self.start_background_tasks()
         self.setup_routes()
 
         self.logger.info("OWL Dashboard initialized")
-
-    def update_frame(self, frame):
-        """Receive a new video frame from owl.py and queue it for display."""
-        try:
-            if shared_state.frame_queue.full():
-                try:
-                    _ = shared_state.frame_queue.get_nowait()
-                except:
-                    pass
-            shared_state.frame_queue.put_nowait(frame)
-            shared_state.last_frame_time.value = time.time()
-            print('FRAME PUT IN QUEUE')
-        except Exception as e:
-            self.logger.error(f"Error in update_frame: {e}")
 
     def load_config(self):
         """Load configuration from config file"""
@@ -82,11 +71,9 @@ class OWLDashboard:
         self.config = configparser.ConfigParser()
         if config_path.exists():
             self.config.read(config_path)
-            shared_state.config = self.config
-            shared_state.config_path = config_path
-            print(f"Config loaded from {config_path}")
+            self.logger.info(f"Config loaded from {config_path}")
         else:
-            print(f"Warning: Config file not found at {config_path}")
+            self.logger.warning(f"Config file not found at {config_path}")
             # Create minimal config sections
             self.config.add_section('GreenOnBrown')
             self.config.set('GreenOnBrown', 'exg_min', '25')
@@ -118,50 +105,6 @@ class OWLDashboard:
             ]
         )
         self.logger = logging.getLogger("OWL.Dashboard")
-
-    def start_background_tasks(self):
-        """Start background tasks"""
-        # Frame processing thread
-        threading.Thread(target=self.process_frames, daemon=True).start()
-
-        # Status monitoring thread
-        threading.Thread(target=self.monitor_status, daemon=True).start()
-
-    def process_frames(self):
-        """Process frames from shared queue"""
-        while True:
-            try:
-                if not shared_state.frame_queue.empty():
-                    frame = shared_state.frame_queue.get_nowait()
-                    with self.frame_lock:
-                        self.latest_frame = frame
-                        shared_state.last_frame_time.value = time.time()
-                time.sleep(0.033)  # ~30 FPS
-            except Exception as e:
-                self.logger.error(f"Error processing frames: {e}")
-                time.sleep(0.1)
-
-    def monitor_status(self):
-        """Monitor system status"""
-        while True:
-            try:
-                # Check if owl.py is running
-                owl_running = False
-                try:
-                    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-                        if proc.info['cmdline'] and any('owl.py' in cmd for cmd in proc.info['cmdline']):
-                            owl_running = True
-                            break
-                except:
-                    pass
-
-                with shared_state.owl_running.get_lock():
-                    shared_state.owl_running.value = owl_running
-
-                time.sleep(2)
-            except Exception as e:
-                self.logger.error(f"Error monitoring status: {e}")
-                time.sleep(5)
 
     def get_usb_storage_info(self):
         devices = []
@@ -256,108 +199,104 @@ class OWLDashboard:
         return f"{size_bytes:.1f} {size_names[i]}"
 
     def setup_routes(self):
-        """Setup Flask routes"""
+        """Setup Flask routes with MQTT"""
 
         @self.app.route('/')
         def index():
+            """Main dashboard page"""
             return render_template('index.html')
 
         @self.app.route('/video_feed')
         def video_feed():
-            try:
-                return Response(self.generate_frames(),
-                                mimetype='multipart/x-mixed-replace; boundary=frame')
-            except Exception as e:
-                self.logger.error(f"Video feed error: {e}")
-                return f"Video feed error: {e}", 500
+            """Video streaming route"""
+            return Response(self.generate_frames(),
+                            mimetype='multipart/x-mixed-replace; boundary=frame')
+
+        @self.app.route('/api/detection/start', methods=['POST'])
+        def start_detection():
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            result = self.mqtt_client.set_detection_enable(True)
+            self.logger.info("Detection enabled via dashboard")
+            return jsonify(result)
+
+        @self.app.route('/api/detection/stop', methods=['POST'])
+        def stop_detection():
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            result = self.mqtt_client.set_detection_enable(False)
+            self.logger.info("Detection disabled via dashboard")
+            return jsonify(result)
+
+        @self.app.route('/api/recording/start', methods=['POST'])
+        def start_recording():
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            result = self.mqtt_client.set_image_sample_enable(True)
+            self.logger.info("Recording enabled via dashboard")
+            return jsonify(result)
+
+        @self.app.route('/api/recording/stop', methods=['POST'])
+        def stop_recording():
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            result = self.mqtt_client.set_image_sample_enable(False)
+            self.logger.info("Recording disabled via dashboard")
+            return jsonify(result)
+
+        @self.app.route('/api/sensitivity/toggle', methods=['POST'])
+        def toggle_sensitivity():
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            result = self.mqtt_client.toggle_sensitivity()
+            self.logger.info("Sensitivity toggled via dashboard")
+            return jsonify(result)
 
         @self.app.route('/api/update_gps', methods=['POST'])
         def update_gps():
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             try:
                 gps_data = request.get_json()
-
-                # Update shared state GPS data
                 lat = float(gps_data.get('latitude', 0.0))
                 lon = float(gps_data.get('longitude', 0.0))
                 accuracy = float(gps_data.get('accuracy', 0.0))
-                timestamp = time.time()
-
-                shared_state.update_gps_data(lat, lon, accuracy, timestamp)
-
-                self.logger.info(f"GPS updated: lat={lat}, lon={lon}, acc={accuracy}")
-                return jsonify({'success': True, 'message': 'GPS data updated'})
+                result = self.mqtt_client.update_gps(lat, lon, accuracy)
+                self.logger.info(f"GPS updated: lat={lat}, lon={lon}")
+                return jsonify(result)
             except Exception as e:
-                self.logger.error(f"GPS update error: {e}")
                 return jsonify({'success': False, 'error': str(e)})
 
         @self.app.route('/api/system_stats')
         def system_stats():
-            return jsonify(self.get_system_stats())
+            # Get MQTT state
+            mqtt_state = {}
+            if self.mqtt_client:
+                mqtt_state = self.mqtt_client.get_state()
 
-        @self.app.route('/api/detection/start', methods=['POST'])
-        def start_detection():
-            try:
-                with shared_state.detection_enable.get_lock():
-                    shared_state.detection_enable.value = True
-                self.logger.info("Detection enabled via dashboard")
-                return jsonify({'success': True, 'message': 'Detection enabled'})
-            except Exception as e:
-                self.logger.error(f"Error starting detection: {e}")
-                return jsonify({'success': False, 'error': str(e)})
+            stats = self.get_system_stats()
 
-        @self.app.route('/api/detection/stop', methods=['POST'])
-        def stop_detection():
-            try:
-                with shared_state.detection_enable.get_lock():
-                    shared_state.detection_enable.value = False
-                self.logger.info("Detection disabled via dashboard")
-                return jsonify({'success': True, 'message': 'Detection disabled'})
-            except Exception as e:
-                self.logger.error(f"Error stopping detection: {e}")
-                return jsonify({'success': False, 'error': str(e)})
+            stats.update({
+                'detection_enable': mqtt_state.get('detection_enable', False),
+                'image_sample_enable': mqtt_state.get('image_sample_enable', False),
+                'sensitivity_state': mqtt_state.get('sensitivity_state', False),
+                'owl_running': mqtt_state.get('owl_running', False),
+                'weed_detect_indicator': self.mqtt_client.get_weed_detect_indicator() if self.mqtt_client else False,
+                'image_write_indicator': self.mqtt_client.get_image_write_indicator() if self.mqtt_client else False
+            })
 
-        @self.app.route('/api/recording/start', methods=['POST'])
-        def start_recording():
-            try:
-                with shared_state.image_sample_enable.get_lock():
-                    shared_state.image_sample_enable.value = True
-                self.logger.info("Recording enabled via dashboard")
-                return jsonify({'success': True, 'message': 'Recording enabled'})
-            except Exception as e:
-                self.logger.error(f"Error starting recording: {e}")
-                return jsonify({'success': False, 'error': str(e)})
-
-        @self.app.route('/api/recording/stop', methods=['POST'])
-        def stop_recording():
-            try:
-                with shared_state.image_sample_enable.get_lock():
-                    shared_state.image_sample_enable.value = False
-                self.logger.info("Recording disabled via dashboard")
-                return jsonify({'success': True, 'message': 'Recording disabled'})
-            except Exception as e:
-                self.logger.error(f"Error stopping recording: {e}")
-                return jsonify({'success': False, 'error': str(e)})
-
-        @self.app.route('/api/sensitivity/toggle', methods=['POST'])
-        def toggle_sensitivity():
-            try:
-                with shared_state.sensitivity_state.get_lock():
-                    shared_state.sensitivity_state.value = not shared_state.sensitivity_state.value
-
-                sensitivity_name = "Low" if shared_state.sensitivity_state.value else "High"
-                self.logger.info(f"Sensitivity changed to {sensitivity_name} via dashboard")
-                return jsonify({'success': True, 'message': f'Sensitivity set to {sensitivity_name}'})
-            except Exception as e:
-                self.logger.error(f"Error toggling sensitivity: {e}")
-                return jsonify({'success': False, 'error': str(e)})
+            return jsonify(stats)
 
         @self.app.route('/api/download_frame', methods=['POST'])
         def download_frame():
             try:
-                with self.frame_lock:
-                    if self.latest_frame is None:
-                        return jsonify({'error': 'No frame available'}), 404
-                    frame = self.latest_frame.copy()
+                # Get latest frame from MQTT
+                frame = None
+                if self.mqtt_client:
+                    frame = self.mqtt_client.get_latest_frame()
+
+                if frame is None:
+                    return jsonify({'error': 'No frame available'}), 404
 
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 success, buffer = cv2.imencode('.jpg', frame)
@@ -462,7 +401,6 @@ class OWLDashboard:
             try:
                 import zipfile
                 import tempfile
-                import os
 
                 # Create a temporary zip file
                 temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
@@ -474,10 +412,9 @@ class OWLDashboard:
                             if log_file.is_file():
                                 zip_file.write(log_file, log_file.name)
 
-                    # Also include any jsonl files (OWL log format)
-                    for jsonl_file in log_dir.glob('*.jsonl'):
-                        if jsonl_file.is_file():
-                            zip_file.write(jsonl_file, jsonl_file.name)
+                        for jsonl_file in log_dir.glob('*.jsonl'):
+                            if jsonl_file.is_file():
+                                zip_file.write(jsonl_file, jsonl_file.name)
 
                 filename = f'owl_logs_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'
 
@@ -493,15 +430,12 @@ class OWLDashboard:
                 return jsonify({'error': str(e)}), 500
 
     def generate_frames(self):
-        """Generate video frames for streaming"""
+        """Generate video frames from MQTT"""
         while True:
             try:
                 frame = None
-                if not shared_state.frame_queue.empty():
-                    try:
-                        frame = shared_state.frame_queue.get_nowait()
-                    except:
-                        pass
+                if self.mqtt_client:
+                    frame = self.mqtt_client.get_latest_frame()
 
                 if frame is None:
                     frame = self.generate_placeholder_frame()
@@ -519,11 +453,51 @@ class OWLDashboard:
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
-                time.sleep(0.05)  # 20 FPS
+                time.sleep(0.033)  # 30 FPS
 
             except Exception as e:
                 self.logger.error(f"Error generating frame: {e}")
                 time.sleep(0.5)
+
+    def add_frame_overlay(self, frame):
+        """Add overlay information to frame (including indicators)"""
+        height, width = frame.shape[:2]
+
+        # Get current state
+        mqtt_state = {}
+        if self.mqtt_client:
+            mqtt_state = self.mqtt_client.get_state()
+
+        # Timestamp
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cv2.putText(frame, timestamp, (10, height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+        # System status
+        detection_status = "ON" if mqtt_state.get('detection_enable', False) else "OFF"
+        recording_status = "ON" if mqtt_state.get('image_sample_enable', False) else "OFF"
+        sensitivity_status = "LOW" if mqtt_state.get('sensitivity_state', False) else "HIGH"
+
+        # Status text with colors
+        cv2.putText(frame, f"Detection: {detection_status}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
+                    (0, 255, 0) if mqtt_state.get('detection_enable', False) else (0, 0, 255), 1)
+        cv2.putText(frame, f"Recording: {recording_status}", (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
+                    (0, 255, 0) if mqtt_state.get('image_sample_enable', False) else (0, 0, 255), 1)
+        cv2.putText(frame, f"Sensitivity: {sensitivity_status}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
+                    (255, 255, 255), 1)
+
+        # Indicators
+        if self.mqtt_client:
+            # Weed detection indicator (flashing red circle)
+            if self.mqtt_client.get_weed_detect_indicator():
+                cv2.circle(frame, (width - 30, 30), 10, (0, 0, 255), -1)
+                cv2.putText(frame, "WEED", (width - 60, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 255), 1)
+
+            # Image write indicator (flashing blue circle)
+            if self.mqtt_client.get_image_write_indicator():
+                cv2.circle(frame, (width - 30, 60), 10, (255, 0, 0), -1)
+                cv2.putText(frame, "SAVE", (width - 60, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 0, 0), 1)
+
+        return frame
 
     def generate_placeholder_frame(self):
         """Generate placeholder frame when OWL is not running"""
@@ -536,28 +510,6 @@ class OWLDashboard:
         # Add status text
         cv2.putText(frame, "OWL Not Running", (220, 320), cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 255), 2)
         cv2.putText(frame, "Dashboard Active", (230, 360), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
-
-        return frame
-
-    def add_frame_overlay(self, frame):
-        """Add overlay information to frame"""
-        height, width = frame.shape[:2]
-
-        # Timestamp
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        cv2.putText(frame, timestamp, (10, height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-
-        # System status
-        detection_status = "ON" if shared_state.detection_enable.value else "OFF"
-        recording_status = "ON" if shared_state.image_sample_enable.value else "OFF"
-        sensitivity_status = "LOW" if shared_state.sensitivity_state.value else "HIGH"
-
-        cv2.putText(frame, f"Detection: {detection_status}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                    (0, 255, 0) if shared_state.detection_enable.value else (0, 0, 255), 1)
-        cv2.putText(frame, f"Recording: {recording_status}", (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                    (0, 255, 0) if shared_state.image_sample_enable.value else (0, 0, 255), 1)
-        cv2.putText(frame, f"Sensitivity: {sensitivity_status}", (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                    (255, 255, 255), 1)
 
         return frame
 
@@ -601,10 +553,6 @@ class OWLDashboard:
                 'disk_percent': round(disk.percent, 1),
                 'disk_used': round(disk.used / (1024 ** 3), 1),
                 'disk_total': round(disk.total / (1024 ** 3), 1),
-                'detection_enable': bool(shared_state.detection_enable.value),
-                'image_sample_enable': bool(shared_state.image_sample_enable.value),
-                'sensitivity_state': bool(shared_state.sensitivity_state.value),
-                'owl_running': bool(shared_state.owl_running.value),
                 'usb_devices': usb_devices,
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
@@ -619,18 +567,14 @@ class OWLDashboard:
                 'disk_percent': 0,
                 'disk_used': 0,
                 'disk_total': 0,
-                'detection_enable': bool(shared_state.detection_enable.value),
-                'image_sample_enable': bool(shared_state.image_sample_enable.value),
-                'sensitivity_state': bool(shared_state.sensitivity_state.value),
-                'owl_running': bool(shared_state.owl_running.value),
                 'usb_devices': [],
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
 
-
-def get_shared_state():
-    """Get the shared state for external access (from owl.py)"""
-    return shared_state
+    def stop(self):
+        """Stop the dashboard"""
+        if self.mqtt_client:
+            self.mqtt_client.stop()
 
 
 # Create the dashboard instance

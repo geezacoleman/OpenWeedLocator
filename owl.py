@@ -70,7 +70,7 @@ try:
     from utils.frame_reader import FrameReader
     from utils.config_manager import ConfigValidator
     from utils.log_manager import LogManager
-    from utils.state_manager import shared_state
+    from utils.mqtt_manager import MQTTServer
     import utils.error_manager as errors
 
     from version import SystemInfo, VERSION
@@ -88,7 +88,6 @@ logger.info("All required modules imported successfully")
 def nothing(x):
     pass
 
-shared_state.log_state_ids(logger)
 
 class Owl:
     def __init__(self, show_display=False,
@@ -179,45 +178,25 @@ class Owl:
 
         # Dashboard setup
         self.dash = None
-
         if self.config.getboolean('Dashboard', 'dashboard_enable', fallback=False):
             try:
-                import sys
-                sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-                from utils.input_manager import DashboardController
+                self.dash = MQTTServer(
+                    broker_host='localhost',
+                    broker_port=1883,
+                    client_id='owl_main')
 
-                # IMPORTANT: Use the global shared_state directly
-                # Set owl.py state references to point to shared_state
-                self.detection_enable = shared_state.detection_enable
-                self.image_sample_enable = shared_state.image_sample_enable
-                self.sensitivity_state = shared_state.sensitivity_state
+                # Configure sensitivity switching
+                low_config = self.config.get('Controller', 'low_sensitivity_config',
+                                             fallback='config/DAY_SENSITIVITY_2.ini')
+                high_config = self.config.get('Controller', 'high_sensitivity_config',
+                                              fallback='config/DAY_SENSITIVITY_3.ini')
 
-                # Mark OWL as running
-                with shared_state.owl_running.get_lock():
-                    shared_state.owl_running.value = True
+                self.dash.set_owl_instance(self, low_config, high_config)
+                self.dash.start()
 
-                # Log state IDs for debugging
-                self.logger.info("=== OWL State Object IDs ===")
-                self.logger.info(f"detection_enable: {id(self.detection_enable)}")
-                self.logger.info(f"image_sample_enable: {id(self.image_sample_enable)}")
-                self.logger.info(f"sensitivity_state: {id(self.sensitivity_state)}")
+                self.logger.info("MQTT Dashboard integration enabled")
 
-                # Create dashboard controller with shared state objects
-                self.dash = DashboardController(
-                    detection_state=shared_state.detection_enable,
-                    image_sample_state=shared_state.image_sample_enable,
-                    sensitivity_state=shared_state.sensitivity_state,
-                    stop_flag=Value('b', False),
-                    owl_instance=self,
-                    low_sensitivity_config=self.config.get('Controller', 'low_sensitivity_config',
-                                                           fallback='config/DAY_SENSITIVITY_2.ini'),
-                    high_sensitivity_config=self.config.get('Controller', 'high_sensitivity_config',
-                                                            fallback='config/DAY_SENSITIVITY_3.ini')
-                )
-
-                self.logger.info("Dashboard integration enabled")
-
-            except ImportError as e:
+            except Exception as e:
                 self.logger.warning(f"Dashboard not available: {e}")
                 self.dash = None
 
@@ -242,12 +221,14 @@ class Owl:
             self.detection_enable = Value('b', False)
             self.image_sample_enable = Value('b', False)
             self.sensitivity_state = Value('b', False)
-            self.dash = None
 
-        with shared_state.image_sample_enable.get_lock():
-            if self.controller_type != 'none' or self.dash:
-                shared_state.image_sample_enable.value = True
-            self._image_sample_enable = shared_state.image_sample_enable.value
+        if self.controller_type != 'none' or self.dash:
+            if self.dash:
+                self.dash.set_image_sample_enable(True)
+            else:
+                with self.image_sample_enable.get_lock():
+                    self.image_sample_enable.value = True
+            self._image_sample_enable = True
 
         # if controller is 'none' but _image_sample_enable is True, then it will set everything up
         if self._image_sample_enable:
@@ -418,8 +399,10 @@ class Owl:
                         break
 
                 if self.dash:
-                    print('DASHBOARD')
-                    self.dash.update_frame(frame)
+                    try:
+                        self.dash.update_frame(frame)
+                    except Exception as e:
+                        self.logger.error(f"Error sending frame to dashboard: {e}")
 
                 # retrieve the trackbar positions for thresholds
                 if self.show_display:
@@ -459,8 +442,11 @@ class Owl:
                             label='WEED'
                         )
 
-                    if len(weed_centres) > 0 and self.controller:
-                        self.controller.weed_detect_indicator()
+                    if len(weed_centres) > 0:
+                        if self.dash:
+                            self.dash.weed_detect_indicator()
+                        elif self.controller:
+                            self.controller.weed_detect_indicator()
 
                     # loop over the weed centres
                     for centre in weed_centres:
@@ -498,14 +484,23 @@ class Owl:
 
                         if self.controller:
                             self.status_indicator.image_write_indicator()
+                        if self.dash:
+                            self.dash.image_write_indicator()
 
                         if self.status_indicator.DRIVE_FULL:
-                            with self.image_sample_enable.get_lock():
-                                self.image_sample_enable.value = False
+                            if self.dash:
+                                self.dash.set_image_sample_enable(False)
+                                self.logger.info("Drive full: Image sampling disabled via MQTT")
+                            else:
+                                with self.image_sample_enable.get_lock():
+                                    self.image_sample_enable.value = False
+                                self.logger.info("Drive full: Image sampling disabled locally")
+
                             self._image_sample_enable = False
+
                             self.image_recorder.stop()
                             self.status_indicator.error(5)
-                            self.logger.info("Drive full: Image sampling disabled permanently and state update stopped")
+                            self.logger.info("Drive full: Image sampling disabled permanently due to storage full")
 
                 frame_count = frame_count + 1 if frame_count < 900 else 1
 
@@ -754,18 +749,33 @@ class Owl:
             raise errors.CameraInitError(str(e)) from e
 
     def update_state(self):
-        """Update local state caches from shared multiprocessing Values every INTERVAL secs"""
+        """Update local state from MQTT server or local hardware controllers"""
         while not self.stop_state_update.is_set():
-            print('UPDATING SHARED STATES')
-            with shared_state.detection_enable.get_lock():
-                self._detection_enable = shared_state.detection_enable.value
-            with shared_state.image_sample_enable.get_lock():
-                self._image_sample_enable = shared_state.image_sample_enable.value
+            if self.dash:
+                self._detection_enable = self.dash.get_detection_enable()
+                self._image_sample_enable = self.dash.get_image_sample_enable()
+                self._sensitivity_state = self.dash.get_sensitivity_state()
+                self.gps_data = self.dash.get_gps_data()
 
-            self.gps_data = shared_state.get_gps_data()
+                print(f'MQTT - Detection: {self._detection_enable}, '
+                      f'Recording: {self._image_sample_enable}, '
+                      f'Sensitivity: {self._sensitivity_state}')
+            else:
+                # For hardware controllers, read from local Values
+                if hasattr(self, 'detection_enable'):
+                    with self.detection_enable.get_lock():
+                        self._detection_enable = self.detection_enable.value
+                if hasattr(self, 'image_sample_enable'):
+                    with self.image_sample_enable.get_lock():
+                        self._image_sample_enable = self.image_sample_enable.value
+                if hasattr(self, 'sensitivity_state'):
+                    with self.sensitivity_state.get_lock():
+                        self._sensitivity_state = self.sensitivity_state.value
+
+                # Debug output
+                print(f'Local - Detection: {self._detection_enable}, Recording: {self._image_sample_enable}')
 
             time.sleep(self._STATE_CHECK_INTERVAL)
-        print(shared_state.detection_enable.value, shared_state.image_sample_enable.value)
 
     def _log_system_info(self):
         """Log system information on startup"""
