@@ -36,7 +36,7 @@ class OWLDashboard:
         self.config_file = config_file
         self.load_config()
         self.setup_logging()
-
+        self.logger = logging.getLogger(__name__)
         self.app = Flask(__name__,
                          static_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static'),
                          template_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates'))
