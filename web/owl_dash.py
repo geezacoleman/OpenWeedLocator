@@ -174,36 +174,94 @@ class OWLDashboard:
     def get_usb_storage_info(self):
         devices = []
         try:
-            output = subprocess.check_output(['df', '-h']).decode()
-            for line in output.splitlines()[1:]:
+            df_command = None
+            for path in ['/bin/df', '/usr/bin/df']:
+                if os.path.exists(path):
+                    df_command = path
+                    break
+
+            if not df_command:
+                self.logger.error("df command not found")
+                return devices
+
+            result = subprocess.run([df_command, '-h'],
+                                    capture_output=True, text=True, timeout=10)
+
+            if result.returncode != 0:
+                self.logger.error(f"df command failed: {result.stderr}")
+                return devices
+
+            for line in result.stdout.splitlines()[1:]:
                 parts = line.split()
-                # Only block devices mounted under /media
-                if len(parts) >= 6 and parts[0].startswith('/dev/') and parts[5].startswith('/media/'):
-                    devices.append({
-                        'device': parts[0],
-                        'size': parts[1],
-                        'used': parts[2],
-                        'available': parts[3],
-                        'mount_point': parts[5]
-                    })
+                if len(parts) >= 6:
+                    device = parts[0]
+                    mount_point = parts[5]
+
+                    # Check if it's a USB device (starts with /dev/ and mounted in /media/)
+                    if device.startswith('/dev/') and '/media/' in mount_point:
+                        devices.append({
+                            'device': device,
+                            'size': parts[1],
+                            'used': parts[2],
+                            'available': parts[3],
+                            'mount_point': mount_point
+                        })
+                        self.logger.info(f"Found USB device: {device} mounted at {mount_point}")
+
         except Exception as e:
             self.logger.error(f"Error retrieving USB storage info: {e}")
+
         return devices
 
     def browse_files(self, directory):
+        """Browse files in a directory with directory support"""
         files = []
         try:
-            for entry in os.scandir(directory):
-                stat = entry.stat()
-                files.append({
-                    'name': entry.name,
-                    'path': entry.path,
-                    'size': stat.st_size,
-                    'modified': datetime.fromtimestamp(stat.st_mtime).isoformat()
-                })
+            directory_path = Path(directory)
+            if not directory_path.exists() or not directory_path.is_dir():
+                self.logger.warning(f"Directory does not exist or is not a directory: {directory}")
+                return files
+
+            # Security check - only allow browsing under /media
+            if not str(directory_path).startswith('/media'):
+                self.logger.warning(f"Directory access denied: {directory}")
+                return files
+
+            for entry in directory_path.iterdir():
+                try:
+                    stat = entry.stat()
+                    files.append({
+                        'name': entry.name,
+                        'path': str(entry),
+                        'size': stat.st_size,
+                        'is_directory': entry.is_dir(),
+                        'modified': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S'),
+                        'size_formatted': self.format_file_size(stat.st_size) if not entry.is_dir() else 'Directory'
+                    })
+                except Exception as e:
+                    self.logger.warning(f"Error reading {entry}: {e}")
+                    continue
+
+            # Sort: directories first, then by name
+            files.sort(key=lambda x: (not x['is_directory'], x['name'].lower()))
+
+            self.logger.info(f"Found {len(files)} items in {directory}")
+
         except Exception as e:
-            self.logger.error(f"Error browsing files in {directory}: {e}")
+            self.logger.error(f"Error browsing {directory}: {e}")
+
         return files
+
+    def format_file_size(self, size_bytes):
+        """Format file size in human readable format"""
+        if size_bytes == 0:
+            return "0 B"
+        size_names = ["B", "KB", "MB", "GB", "TB"]
+        i = 0
+        while size_bytes >= 1024.0 and i < len(size_names) - 1:
+            size_bytes /= 1024.0
+            i += 1
+        return f"{size_bytes:.1f} {size_names[i]}"
 
     def setup_routes(self):
         """Setup Flask routes"""
@@ -220,6 +278,14 @@ class OWLDashboard:
             except Exception as e:
                 self.logger.error(f"Video feed error: {e}")
                 return f"Video feed error: {e}", 500
+
+        @self.app.route('/api/update_gps', methods=['POST'])
+        def update_gps():
+            try:
+                gps_data = request.get_json()
+                return jsonify({'success': True, 'message': 'GPS data received'})
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)})
 
         @self.app.route('/api/system_stats')
         def system_stats():
@@ -317,16 +383,74 @@ class OWLDashboard:
         @self.app.route('/api/browse_files', methods=['POST'])
         def api_browse_files():
             data = request.get_json() or {}
-            directory = data.get('directory', '')
-            if not os.path.isdir(directory):
-                return jsonify({'files': []})
+            directory = data.get('directory', '/media')
+
+            # Security: only allow browsing under /media
+            if not directory.startswith('/media'):
+                return jsonify({
+                    'files': [],
+                    'directory': directory,
+                    'error': 'Directory access denied'
+                })
+
             files = self.browse_files(directory)
-            return jsonify({'files': files})
+
+            # Add parent directory option (except for /media root)
+            if directory != '/media' and directory.startswith('/media'):
+                parent_dir = str(Path(directory).parent)
+                if parent_dir.startswith('/media'):
+                    files.insert(0, {
+                        'name': '.. (Parent Directory)',
+                        'path': parent_dir,
+                        'size': 0,
+                        'is_directory': True,
+                        'modified': '',
+                        'size_formatted': 'Directory',
+                        'is_parent': True
+                    })
+
+            return jsonify({
+                'files': files,
+                'directory': directory,
+                'total_items': len(files)
+            })
+
+        @self.app.route('/api/navigate_directory', methods=['POST'])
+        def api_navigate_directory():
+            data = request.get_json() or {}
+            directory = data.get('directory', '/media')
+
+            # Security check
+            if not directory.startswith('/media'):
+                return jsonify({'error': 'Directory access denied'}), 403
+
+            if not os.path.exists(directory) or not os.path.isdir(directory):
+                return jsonify({'error': 'Directory not found'}), 404
+
+            files = self.browse_files(directory)
+
+            # Add breadcrumb navigation
+            breadcrumbs = []
+            current_path = '/media'
+            breadcrumbs.append({'name': 'USB Storage', 'path': current_path})
+
+            if directory != '/media':
+                path_parts = Path(directory).relative_to('/media').parts
+                for part in path_parts:
+                    current_path = os.path.join(current_path, part)
+                    breadcrumbs.append({'name': part, 'path': current_path})
+
+            return jsonify({
+                'files': files,
+                'directory': directory,
+                'breadcrumbs': breadcrumbs,
+                'can_go_up': directory != '/media' and directory.startswith('/media')
+            })
 
         @self.app.route('/api/download_file')
         def api_download_file():
             path = request.args.get('path', '')
-            if not os.path.isfile(path):
+            if not path.startswith('/media') or not os.path.isfile(path):
                 return "File not found", 404
             return send_file(path, as_attachment=True)
 

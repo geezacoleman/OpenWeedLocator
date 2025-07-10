@@ -19,8 +19,13 @@ document.addEventListener('DOMContentLoaded', function() {
     initGPS();
     initControlButtons();
     initStorageTab();
+    initVideoStream(); // Add this line
 
-    // Start periodic updates
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
+    if (fullscreenBtn) {
+        fullscreenBtn.addEventListener('click', toggleFullscreen);
+    }
+
     startUpdateInterval();
 });
 
@@ -62,8 +67,15 @@ function initStorageTab() {
     if (downloadLogsButton) {
         downloadLogsButton.addEventListener('click', downloadLogs);
     }
-}
 
+    // Add breadcrumb container if it doesn't exist
+    const fileList = document.getElementById('fileList');
+    if (fileList && !document.getElementById('breadcrumbs')) {
+        const breadcrumbDiv = document.createElement('div');
+        breadcrumbDiv.id = 'breadcrumbs';
+        fileList.parentNode.insertBefore(breadcrumbDiv, fileList);
+    }
+}
 /**
  * Initialize control buttons with debouncing
  */
@@ -74,7 +86,8 @@ function initControlButtons() {
         'stop-recording': stopRecording,
         'start-detection': startDetection,
         'stop-detection': stopDetection,
-        'toggle-sensitivity': toggleSensitivity
+        'toggle-sensitivity': toggleSensitivity,
+        'refreshStreamBtn': refreshVideoStream
     };
 
     Object.entries(buttons).forEach(([id, handler]) => {
@@ -102,6 +115,26 @@ function initControlButtons() {
             });
         }
     });
+}
+
+/**
+ * Initialize video stream
+ */
+function initVideoStream() {
+    const streamImg = document.getElementById('stream-img');
+    if (!streamImg) {
+        console.error('Stream image element not found');
+        return;
+    }
+
+    // Set up the video stream
+    setupVideoStream();
+
+    // Handle image load/error events
+    streamImg.addEventListener('load', handleStreamLoad);
+    streamImg.addEventListener('error', handleStreamError);
+
+    console.log('Video stream initialized');
 }
 
 /**
@@ -138,6 +171,81 @@ function resetZoom() {
 function updateZoom() {
     const img = document.querySelector('.zoom-image');
     if (img) img.style.transform = `scale(${zoomLevel})`;
+}
+
+/**
+ * Setup video stream with cache busting
+ */
+function setupVideoStream() {
+    const streamImg = document.getElementById('stream-img');
+    if (!streamImg) return;
+
+    // Add timestamp to prevent caching issues
+    const timestamp = new Date().getTime();
+    streamImg.src = `/video_feed?t=${timestamp}`;
+
+    console.log('Video stream source set');
+}
+
+
+/**
+ * Handle successful stream load
+ */
+function handleStreamLoad() {
+    console.log('Video stream loaded successfully');
+    updateStreamStatus('Connected', 'success');
+}
+
+/**
+ * Handle stream errors with retry logic
+ */
+function handleStreamError(error) {
+    console.error('Video stream error:', error);
+    updateStreamStatus('Connection failed - retrying...', 'error');
+
+    // Retry after 3 seconds
+    setTimeout(() => {
+        console.log('Retrying video stream...');
+        setupVideoStream();
+    }, 3000);
+}
+
+/**
+ * Update stream connection status (optional visual feedback)
+ */
+function updateStreamStatus(message, type) {
+    // You can add a status indicator if you want
+    console.log(`Stream status: ${message} (${type})`);
+
+    // Optional: Show notification for errors
+    if (type === 'error') {
+        showNotification('Stream Error', message, 'warning', 3000);
+    }
+}
+
+/**
+ * Refresh video stream manually
+ */
+function refreshVideoStream() {
+    console.log('Manually refreshing video stream...');
+    setupVideoStream();
+    showNotification('Info', 'Video stream refreshed', 'info', 2000);
+}
+
+/**
+ * Handle fullscreen for video
+ */
+function toggleFullscreen() {
+    const streamContainer = document.querySelector('.stream-container');
+    if (!streamContainer) return;
+
+    if (!document.fullscreenElement) {
+        streamContainer.requestFullscreen().catch(err => {
+            console.error('Error entering fullscreen:', err);
+        });
+    } else {
+        document.exitFullscreen();
+    }
 }
 
 /**
@@ -185,12 +293,14 @@ function apiRequest(url, options = {}, timeout = 10000) {
             throw error;
         });
 }
-
-/**
- * Download current frame with optimized handling
- */
 function downloadFrame() {
     showNotification('Info', 'Downloading current frame...', 'info');
+
+    const streamImg = document.getElementById('stream-img');
+    if (!streamImg || !streamImg.src) {
+        showNotification('Error', 'No video stream available', 'error');
+        return;
+    }
 
     apiRequest('/api/download_frame', { method: 'POST' })
         .then(response => response.blob())
@@ -319,6 +429,7 @@ function toggleSensitivity() {
             console.error('Sensitivity toggle error:', error);
         });
 }
+let currentDirectory = '/media';
 
 /**
  * Load storage data (USB devices and files)
@@ -329,6 +440,13 @@ function loadStorageData() {
         .then(response => response.json())
         .then(data => {
             updateUSBDevices(data);
+            // Auto-navigate to first USB device if found
+            if (data && data.length > 0) {
+                currentDirectory = data[0].mount_point;
+                loadDirectoryContents(currentDirectory);
+            } else {
+                loadDirectoryContents('/media');
+            }
         })
         .catch(error => {
             console.error('Error loading USB storage:', error);
@@ -337,22 +455,29 @@ function loadStorageData() {
                 usbContainer.innerHTML = '<p style="color: red;">Error loading USB devices</p>';
             }
         });
+}
 
-    // Load file browser data
+/**
+ * Load contents of a specific directory
+ */
+function loadDirectoryContents(directory) {
+    currentDirectory = directory;
+
     apiRequest('/api/browse_files', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ directory: '/media' })
+        body: JSON.stringify({ directory: directory })
     })
         .then(response => response.json())
         .then(data => {
-            updateFileBrowser(data.files || []);
+            updateFileBrowser(data.files || [], directory);
+            updateBreadcrumbs(directory);
         })
         .catch(error => {
-            console.error('Error loading files:', error);
+            console.error('Error loading directory contents:', error);
             const fileContainer = document.getElementById('fileList');
             if (fileContainer) {
-                fileContainer.innerHTML = '<p style="color: red;">Error loading files</p>';
+                fileContainer.innerHTML = '<p style="color: red;">Error loading directory contents</p>';
             }
         });
 }
@@ -401,56 +526,143 @@ function updateUSBDevices(devices) {
     }
 }
 
+
 /**
- * Update file browser display
+ * Update breadcrumb navigation
  */
-function updateFileBrowser(files) {
+function updateBreadcrumbs(directory) {
+    const breadcrumbContainer = document.getElementById('breadcrumbs');
+    if (!breadcrumbContainer) return;
+
+    let html = '<nav class="breadcrumbs">';
+
+    // Split path and create breadcrumbs
+    if (directory === '/media') {
+        html += '<span class="breadcrumb-item active">USB Storage</span>';
+    } else {
+        html += '<a href="#" onclick="navigateToDirectory(\'/media\')" class="breadcrumb-item">USB Storage</a>';
+
+        const relativePath = directory.replace('/media/', '');
+        const parts = relativePath.split('/');
+        let currentPath = '/media';
+
+        for (let i = 0; i < parts.length; i++) {
+            currentPath += '/' + parts[i];
+            if (i === parts.length - 1) {
+                html += ` > <span class="breadcrumb-item active">${parts[i]}</span>`;
+            } else {
+                html += ` > <a href="#" onclick="navigateToDirectory('${currentPath}')" class="breadcrumb-item">${parts[i]}</a>`;
+            }
+        }
+    }
+
+    html += '</nav>';
+    breadcrumbContainer.innerHTML = html;
+}
+
+/**
+ * Navigate to a specific directory
+ */
+function navigateToDirectory(directory) {
+    loadDirectoryContents(directory);
+}
+
+/**
+ * Update file browser display with directory support
+ */
+function updateFileBrowser(files, directory) {
     const container = document.getElementById('fileList');
     if (!container) return;
 
     if (!files || files.length === 0) {
-        container.innerHTML = '<p>No files found. Try refreshing or check if USB drive is mounted.</p>';
+        container.innerHTML = '<p>No files found in this directory.</p>';
         return;
     }
 
-    let html = '';
+    let html = '<div class="file-browser">';
+
+    // Add current directory info
+    html += `<div class="directory-info">
+        <strong>Current Directory:</strong> ${directory}
+        <span class="item-count">(${files.length} items)</span>
+    </div>`;
+
     files.forEach(file => {
-        const sizeInMB = (file.size / (1024 * 1024)).toFixed(2);
+        const isDirectory = file.is_directory;
+        const icon = isDirectory ? '📁' : '📄';
+        const sizeDisplay = isDirectory ? 'Directory' : file.size_formatted || formatFileSize(file.size);
+        const isParent = file.is_parent || false;
+
         html += `
-            <div class="file-item">
+            <div class="file-item ${isDirectory ? 'directory' : 'file'}" ${isParent ? 'data-parent="true"' : ''}>
                 <div class="file-info">
-                    <strong>${file.name}</strong><br>
-                    <small>Size: ${sizeInMB} MB | Modified: ${file.modified}</small>
+                    <span class="file-icon">${icon}</span>
+                    <div class="file-details">
+                        <strong class="file-name">${file.name}</strong><br>
+                        <small class="file-meta">
+                            Size: ${sizeDisplay}
+                            ${file.modified ? ` | Modified: ${file.modified}` : ''}
+                        </small>
+                    </div>
                 </div>
-                <button onclick="downloadFile('${file.path}')" class="btn-secondary">Download</button>
+                <div class="file-actions">
+                    ${isDirectory ? 
+                        `<button onclick="navigateToDirectory('${file.path}')" class="btn-primary">Open</button>` :
+                        `<button onclick="downloadFile('${file.path}')" class="btn-secondary">Download</button>`
+                    }
+                </div>
             </div>
         `;
     });
 
+    html += '</div>';
     container.innerHTML = html;
 
-    // Update total recordings count
+    // Update total recordings count (only count non-directory files)
+    const fileCount = files.filter(f => !f.is_directory && !f.is_parent).length;
     const totalRecordingsElement = document.getElementById('totalRecordings');
     if (totalRecordingsElement) {
-        totalRecordingsElement.textContent = files.length;
+        totalRecordingsElement.textContent = fileCount;
     }
 }
+
+
+/**
+ * Format file size in human readable format
+ */
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
 
 /**
  * Download a specific file
  */
 function downloadFile(filePath) {
-    showNotification('Info', 'Downloading file...', 'info');
+    // Check if it's actually a file
+    if (!filePath || filePath.endsWith('/')) {
+        showNotification('Error', 'Invalid file path', 'error');
+        return;
+    }
+
+    showNotification('Info', 'Starting download...', 'info');
 
     // Create a download link
     const link = document.createElement('a');
     link.href = `/api/download_file?path=${encodeURIComponent(filePath)}`;
     link.download = filePath.split('/').pop();
+    link.style.display = 'none';
+
+    // Add to DOM, click, and remove
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
 
-    showNotification('Success', 'File download started', 'success');
+    showNotification('Success', `Download started: ${link.download}`, 'success');
 }
 
 /**
@@ -805,6 +1017,114 @@ style.textContent = `
 }
 `;
 document.head.appendChild(style);
+
+// Add CSS for better file browser styling
+const fileBrowserStyle = document.createElement('style');
+fileBrowserStyle.textContent = `
+.file-browser {
+    margin-top: 1rem;
+}
+
+.directory-info {
+    padding: 0.5rem;
+    background: #f8f9fa;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+}
+
+.item-count {
+    color: #666;
+    margin-left: 0.5rem;
+}
+
+.breadcrumbs {
+    margin-bottom: 1rem;
+    padding: 0.5rem;
+    background: #e9ecef;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+.breadcrumb-item {
+    color: #007bff;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.breadcrumb-item:hover {
+    text-decoration: underline;
+}
+
+.breadcrumb-item.active {
+    color: #6c757d;
+    font-weight: bold;
+}
+
+.file-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem;
+    border-bottom: 1px solid #e9ecef;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.file-item:hover {
+    background-color: #f8f9fa;
+}
+
+.file-item.directory {
+    background-color: #f0f8ff;
+}
+
+.file-item[data-parent="true"] {
+    background-color: #fff3cd;
+    border: 1px solid #ffeaa7;
+}
+
+.file-info {
+    display: flex;
+    align-items: center;
+    flex: 1;
+}
+
+.file-icon {
+    font-size: 1.5rem;
+    margin-right: 0.75rem;
+}
+
+.file-details {
+    flex: 1;
+}
+
+.file-name {
+    font-size: 1rem;
+    color: #333;
+}
+
+.file-meta {
+    color: #666;
+    font-size: 0.8rem;
+}
+
+.file-actions {
+    margin-left: 1rem;
+}
+
+.file-actions button {
+    padding: 0.25rem 0.75rem;
+    font-size: 0.8rem;
+    min-width: 80px;
+}
+`;
+
+// Add the CSS to the document
+if (!document.getElementById('file-browser-styles')) {
+    fileBrowserStyle.id = 'file-browser-styles';
+    document.head.appendChild(fileBrowserStyle);
+}
 
 // Cleanup on unload
 window.addEventListener('unload', () => {
