@@ -18,6 +18,7 @@ import configparser
 from pathlib import Path
 from datetime import datetime
 
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from owl import shared_state
 
 try:
