@@ -48,7 +48,7 @@ class MQTTServer:
             'detection_enable': False,
             'image_sample_enable': False,
             'sensitivity_state': False,  # False = High, True = Low
-            'owl_running': True,
+            'owl_running': False,  # Will be set to True when server starts
             'gps_latitude': 0.0,
             'gps_longitude': 0.0,
             'gps_accuracy': 0.0,
@@ -57,7 +57,10 @@ class MQTTServer:
             'last_update': time.time()
         }
 
+        # Thread safety
         self.state_lock = threading.RLock()
+
+        # OWL instance reference for sensitivity switching
         self.owl_instance = None
         self.low_sensitivity_config = None
         self.high_sensitivity_config = None
@@ -65,6 +68,10 @@ class MQTTServer:
         self.last_sensitivity_state = False
         self.monitoring_thread = None
 
+        self.last_frame_time = 0
+        self.frame_interval = 0.1
+
+        # MQTT client
         self.client = mqtt.Client(client_id=self.client_id)
         self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message
@@ -88,9 +95,13 @@ class MQTTServer:
             self.client.connect(self.broker_host, self.broker_port, 60)
             self.client.loop_start()
 
+            with self.state_lock:
+                self.state['owl_running'] = True
+
             self.monitoring_thread = threading.Thread(target=self._monitor_states, daemon=True)
             self.monitoring_thread.start()
 
+            # Publish initial state
             self._publish_state()
 
             self.logger.info(f"MQTT IPC Server started (broker: {self.broker_host}:{self.broker_port})")
@@ -100,15 +111,21 @@ class MQTTServer:
             raise
 
     def stop(self):
-        """Stop the MQTT IPC server"""
+        """Stop the MQTT server"""
         self.running = False
 
+        # Mark OWL as stopped
+        with self.state_lock:
+            self.state['owl_running'] = False
+
         if self.connected:
-            # Publish offline status
             self.client.publish(self.topics['status'], json.dumps({
                 'owl_running': False,
                 'timestamp': time.time()
             }), retain=True)
+
+            # Also update main state
+            self._publish_state()
 
         self.client.loop_stop()
         self.client.disconnect()
@@ -196,6 +213,7 @@ class MQTTServer:
                 with self.state_lock:
                     current_sensitivity = self.state['sensitivity_state']
 
+                # Check for sensitivity changes
                 if current_sensitivity != self.last_sensitivity_state:
                     self._apply_sensitivity_config_change(current_sensitivity)
                     self.last_sensitivity_state = current_sensitivity
@@ -252,9 +270,15 @@ class MQTTServer:
 
     def update_frame(self, frame):
         """
-        Encode the given OpenCV frame as JPEG, publish it to the 'owl/frames' topic,
-        and return True on success.
+        Throttle frame publishing to 10 FPS max and encode the given OpenCV frame as JPEG
         """
+        # Throttle frames to 10 FPS
+        current_time = time.time()
+        if current_time - self.last_frame_time < self.frame_interval:
+            return True  # Skip this frame to maintain 10 FPS
+
+        self.last_frame_time = current_time
+
         if not self.connected:
             return False
 
@@ -270,25 +294,27 @@ class MQTTServer:
                 return False
 
             img_data = buffer.tobytes()
-            if len(img_data) > 512 * 1024:
+
+            # Resize if too large (MQTT message size limits)
+            if len(img_data) > 512 * 1024:  # 512KB limit
                 h, w = frame.shape[:2]
                 scale = 640 / w if w > 640 else 1
                 small = cv2.resize(frame, (int(w * scale), int(h * scale)))
-                success, buffer = cv2.imencode('.jpg', small,
-                                               [cv2.IMWRITE_JPEG_QUALITY, 60])
+                success, buffer = cv2.imencode('.jpg', small, [cv2.IMWRITE_JPEG_QUALITY, 60])
                 img_data = buffer.tobytes()
                 if not success:
                     self.logger.error("Failed to encode downscaled frame")
                     return False
 
-            # Base64 & JSON
+            # Encode as base64 for JSON
             img_b64 = base64.b64encode(img_data).decode('utf-8')
             frame_msg = json.dumps({
                 'image': img_b64,
                 'timestamp': time.time(),
                 'encoding': 'jpeg_base64'
             })
-            rc, _ = self.client.publish(self.topics['frames'], frame_msg, qos=1)
+
+            rc, _ = self.client.publish(self.topics['frames'], frame_msg, qos=0)
             if rc != mqtt.MQTT_ERR_SUCCESS:
                 self.logger.error(f"MQTT publish error rc={rc}")
                 return False
@@ -314,6 +340,16 @@ class MQTTServer:
             indicator_msg = json.dumps({
                 'type': 'image_written',
                 'timestamp': time.time()
+            })
+            self.client.publish(self.topics['indicators'], indicator_msg, qos=0)
+
+    def drive_full_indicator(self):
+        """Send drive full indicator to dashboard"""
+        if self.connected:
+            indicator_msg = json.dumps({
+                'type': 'drive_full',
+                'timestamp': time.time(),
+                'message': 'Storage drive is full - recording disabled'
             })
             self.client.publish(self.topics['indicators'], indicator_msg, qos=0)
 
@@ -348,7 +384,6 @@ class MQTTServer:
             self.state['last_update'] = time.time()
         self._publish_state()
 
-
 class MQTTClient:
     """
     MQTT IPC Client for owl_dash.py
@@ -375,6 +410,8 @@ class MQTTClient:
         self.current_state = {}
         self.latest_frame = None
         self.state_lock = threading.RLock()
+        self.last_frame_time = 0
+        self.frame_timeout = 5.0
 
         # Indicators
         self.last_weed_detect = 0
@@ -468,6 +505,7 @@ class MQTTClient:
 
                 if frame is not None:
                     self.latest_frame = frame
+                    self.last_frame_time = time.time()  # Update frame timestamp
 
                     # Call frame callback if set
                     if self.frame_callback:
@@ -491,7 +529,9 @@ class MQTTClient:
             self.logger.error(f"Error handling indicator: {e}")
 
     def get_latest_frame(self):
-        """Get the latest frame"""
+        """Get the latest frame, return None if too old"""
+        if time.time() - self.last_frame_time > self.frame_timeout:
+            return None  # Force placeholder
         return self.latest_frame
 
     def get_state(self):

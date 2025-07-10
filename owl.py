@@ -185,7 +185,6 @@ class Owl:
                     broker_port=1883,
                     client_id='owl_main')
 
-                # Configure sensitivity switching
                 low_config = self.config.get('Controller', 'low_sensitivity_config',
                                              fallback='config/DAY_SENSITIVITY_2.ini')
                 high_config = self.config.get('Controller', 'high_sensitivity_config',
@@ -416,7 +415,6 @@ class Owl:
                     self.brightness_max = cv2.getTrackbarPos("Bright-Max", self.window_name)
 
                 # pass image, thresholds to green_on_brown function
-                print(f'DETECTION STATUS: {self._detection_enable}, SAMPLE {self._image_sample_enable}')
                 if self._detection_enable:
                     if algorithm == 'gog':
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
@@ -756,10 +754,8 @@ class Owl:
                 self._image_sample_enable = self.dash.get_image_sample_enable()
                 self._sensitivity_state = self.dash.get_sensitivity_state()
                 self.gps_data = self.dash.get_gps_data()
+                print(self.gps_data)
 
-                print(f'MQTT - Detection: {self._detection_enable}, '
-                      f'Recording: {self._image_sample_enable}, '
-                      f'Sensitivity: {self._sensitivity_state}')
             else:
                 # For hardware controllers, read from local Values
                 if hasattr(self, 'detection_enable'):

@@ -49,6 +49,9 @@ class OWLDashboard:
 
         self.latest_frame = None
         self.frame_lock = threading.Lock()
+        self.frame_interval = 0.1  # seconds between frames (~10 FPS)
+        self.last_yield_time = 0
+        self.disconnect_threshold = 2.0  # seconds without new frame => disconnected placeholder
 
         try:
             self.mqtt_client.start()
