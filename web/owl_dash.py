@@ -62,8 +62,13 @@ class OWLDashboard:
         """Receive a new video frame from owl.py and queue it for display."""
         try:
             if shared_state.frame_queue.full():
-                _ = shared_state.frame_queue.get_nowait()
+                try:
+                    _ = shared_state.frame_queue.get_nowait()
+                except:
+                    pass
             shared_state.frame_queue.put_nowait(frame)
+            shared_state.last_frame_time.value = time.time()
+            print('FRAME PUT IN QUEUE')
         except Exception as e:
             self.logger.error(f"Error in update_frame: {e}")
 
@@ -491,31 +496,31 @@ class OWLDashboard:
         """Generate video frames for streaming"""
         while True:
             try:
-                with self.frame_lock:
-                    if self.latest_frame is not None:
-                        frame = self.latest_frame.copy()
-                    else:
-                        frame = self.generate_placeholder_frame()
+                frame = None
+                if not shared_state.frame_queue.empty():
+                    try:
+                        frame = shared_state.frame_queue.get_nowait()
+                    except:
+                        pass
 
-                # Resize frame for web streaming
-                h, w = frame.shape[:2]
-                if w > 800:
-                    scale = 800 / w
-                    frame = cv2.resize(frame, (int(w * scale), int(h * scale)))
+                if frame is None:
+                    frame = self.generate_placeholder_frame()
 
-                # Add overlay information
                 frame = self.add_frame_overlay(frame)
 
-                # Encode frame
-                success, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                if not success:
-                    continue
+                h, w = frame.shape[:2]
+                if w > 640:
+                    scale = 640 / w
+                    frame = cv2.resize(frame, (int(w * scale), int(h * scale)))
 
-                frame_bytes = buffer.tobytes()
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                success, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                if success:
+                    frame_bytes = buffer.tobytes()
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
                 time.sleep(0.05)  # 20 FPS
+
             except Exception as e:
                 self.logger.error(f"Error generating frame: {e}")
                 time.sleep(0.5)

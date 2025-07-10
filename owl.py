@@ -174,7 +174,7 @@ class Owl:
         # Local cached versions for performance
         self._detection_enable = self.detection_enable.value
         self._image_sample_enable = self.image_sample_enable.value
-        self._STATE_CHECK_INTERVAL = 0.2
+        self._STATE_CHECK_INTERVAL = 0.1
         self.stop_state_update = threading.Event()
 
         # Dashboard setup
@@ -217,9 +217,6 @@ class Owl:
 
                 self.logger.info("Dashboard integration enabled")
 
-                # Start state monitoring thread
-                threading.Thread(target=self.update_state, daemon=True).start()
-
             except ImportError as e:
                 self.logger.warning(f"Dashboard not available: {e}")
                 self.dash = None
@@ -246,9 +243,6 @@ class Owl:
             self.image_sample_enable = Value('b', False)
             self.sensitivity_state = Value('b', False)
             self.dash = None
-
-            # Start state monitoring thread
-            threading.Thread(target=self.update_state, daemon=True).start()
 
         with shared_state.image_sample_enable.get_lock():
             if self.controller_type != 'none' or self.dash:
@@ -311,6 +305,10 @@ class Owl:
 
             else:
                 self.status_indicator = HeadlessStatusIndicator(save_directory=None, no_save=True)
+
+        if self.dash or self.controller_type != 'none':
+            threading.Thread(target=self.update_state, daemon=True).start()
+            self.logger.info("State monitoring thread started")
 
         self.relay_vis = None
 
@@ -420,6 +418,7 @@ class Owl:
                         break
 
                 if self.dash:
+                    print('DASHBOARD')
                     self.dash.update_frame(frame)
 
                 # retrieve the trackbar positions for thresholds
@@ -434,6 +433,7 @@ class Owl:
                     self.brightness_max = cv2.getTrackbarPos("Bright-Max", self.window_name)
 
                 # pass image, thresholds to green_on_brown function
+                print(f'DETECTION STATUS: {self._detection_enable}, SAMPLE {self._image_sample_enable}')
                 if self._detection_enable:
                     if algorithm == 'gog':
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
@@ -505,7 +505,6 @@ class Owl:
                             self._image_sample_enable = False
                             self.image_recorder.stop()
                             self.status_indicator.error(5)
-                            self.stop_state_update.set()
                             self.logger.info("Drive full: Image sampling disabled permanently and state update stopped")
 
                 frame_count = frame_count + 1 if frame_count < 900 else 1
@@ -757,6 +756,7 @@ class Owl:
     def update_state(self):
         """Update local state caches from shared multiprocessing Values every INTERVAL secs"""
         while not self.stop_state_update.is_set():
+            print('UPDATING SHARED STATES')
             with shared_state.detection_enable.get_lock():
                 self._detection_enable = shared_state.detection_enable.value
             with shared_state.image_sample_enable.get_lock():
@@ -765,6 +765,7 @@ class Owl:
             self.gps_data = shared_state.get_gps_data()
 
             time.sleep(self._STATE_CHECK_INTERVAL)
+        print(shared_state.detection_enable.value, shared_state.image_sample_enable.value)
 
     def _log_system_info(self):
         """Log system information on startup"""
