@@ -251,45 +251,42 @@ class MQTTServer:
                 self.client.publish(self.topics['state'], state_msg, retain=True)
 
     def update_frame(self, frame):
+        """
+        Encode the given OpenCV frame as JPEG, publish it to the 'owl/frames' topic,
+        and return True on success. Silently returns False if not connected or if
+        encoding/publish fails.
+        """
         if not self.connected:
+            # Skip if we’re not currently connected
             return False
 
         try:
-            # Compress frame for MQTT transmission
-            success, buffer = cv2.imencode('.jpg', frame, [
+            # Encode to JPEG with integer-only params
+            params = [
                 cv2.IMWRITE_JPEG_QUALITY, 70,
-                cv2.IMWRITE_JPEG_OPTIMIZE, True
-            ])
-
+                cv2.IMWRITE_JPEG_OPTIMIZE, 1
+            ]
+            success, buffer = cv2.imencode('.jpg', frame, params)
             if not success:
+                self.logger.error("Failed to JPEG-encode frame")
                 return False
 
-            # Resize if too large (MQTT message size limits)
-            img_data = buffer.tobytes()
-            if len(img_data) > 512 * 1024:  # 512KB limit
-                h, w = frame.shape[:2]
-                if w > 640:
-                    scale = 640 / w
-                    frame_small = cv2.resize(frame, (int(w * scale), int(h * scale)))
-                    success, buffer = cv2.imencode('.jpg', frame_small, [cv2.IMWRITE_JPEG_QUALITY, 60])
-                    img_data = buffer.tobytes()
+            # Base64 encode the JPEG and send
+            jpg_as_text = base64.b64encode(buffer).decode('utf-8')
+            # Use QoS=1 for at-least-once delivery
+            result = self.client.publish('owl/frames', jpg_as_text, qos=1)
 
-            # Encode as base64 for JSON
-            img_b64 = base64.b64encode(img_data).decode()
+            # result: (rc, mid)
+            if result.rc != 0:
+                self.logger.error(f"MQTT publish returned non-zero rc={result.rc}")
+                return False
 
-            frame_msg = json.dumps({
-                'image': img_b64,
-                'timestamp': time.time(),
-                'encoding': 'jpeg_base64'
-            })
-
-            # Publish frame (non-retained, QoS 0 for speed)
-            self.client.publish(self.topics['frames'], frame_msg, qos=0)
             return True
 
         except Exception as e:
             self.logger.error(f"Error publishing frame: {e}")
             return False
+
 
     def weed_detect_indicator(self):
         """Send weed detection indicator to dashboard (replaces DashboardController method)"""
@@ -386,7 +383,7 @@ class MQTTClient:
     def start(self):
         """Start the MQTT IPC client"""
         try:
-            self.client.connect(self.broker_host, self.broker_port, 60)
+            self.client.connect(self.broker_host, self.broker_port, keepalive=60)
             self.client.loop_start()
             self.logger.info(f"MQTT IPC Client started (broker: {self.broker_host}:{self.broker_port})")
         except Exception as e:
