@@ -57,7 +57,6 @@ class OWLDashboard:
             self.logger.error(f"Failed to connect to MQTT: {e}")
             self.mqtt_client = None
 
-        self.start_background_tasks()
         self.setup_routes()
 
         self.logger.info("OWL Dashboard initialized")
