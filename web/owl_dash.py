@@ -17,7 +17,8 @@ import subprocess
 import configparser
 from pathlib import Path
 from datetime import datetime
-from multiprocessing import Value, Queue
+
+from owl import shared_state
 
 try:
     from flask import Flask, Response, render_template, request, jsonify, send_from_directory, send_file
@@ -27,25 +28,6 @@ try:
 except ImportError as e:
     print(f"Error: Required modules not installed. Error: {e}")
     sys.exit(1)
-
-
-# Global shared state - will be initialized by owl.py or standalone
-class SharedState:
-    def __init__(self):
-        self.detection_enable = Value('b', False)
-        self.image_sample_enable = Value('b', False)
-        self.sensitivity_state = Value('b', False)  # False = high sensitivity, True = low sensitivity
-        self.frame_queue = Queue(maxsize=5)
-        self.owl_running = Value('b', False)
-        self.last_frame_time = Value('d', 0.0)
-
-        # Config values - will be populated from config file
-        self.config = None
-        self.config_path = None
-
-
-# Global shared state instance
-shared_state = SharedState()
 
 
 class OWLDashboard:
@@ -283,8 +265,19 @@ class OWLDashboard:
         def update_gps():
             try:
                 gps_data = request.get_json()
-                return jsonify({'success': True, 'message': 'GPS data received'})
+
+                # Update shared state GPS data
+                lat = float(gps_data.get('latitude', 0.0))
+                lon = float(gps_data.get('longitude', 0.0))
+                accuracy = float(gps_data.get('accuracy', 0.0))
+                timestamp = time.time()
+
+                shared_state.update_gps_data(lat, lon, accuracy, timestamp)
+
+                self.logger.info(f"GPS updated: lat={lat}, lon={lon}, acc={accuracy}")
+                return jsonify({'success': True, 'message': 'GPS data updated'})
             except Exception as e:
+                self.logger.error(f"GPS update error: {e}")
                 return jsonify({'success': False, 'error': str(e)})
 
         @self.app.route('/api/system_stats')

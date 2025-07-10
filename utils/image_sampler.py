@@ -26,12 +26,14 @@ def add_gps_exif(pil_image, gps_data):
     try:
         lat = float(gps_data.get('latitude'))
         lon = float(gps_data.get('longitude'))
-        lat_deg = int(lat)
-        lat_min = int((lat - lat_deg) * 60)
-        lat_sec = int((((lat - lat_deg) * 60) - lat_min) * 60 * 100)
-        lon_deg = int(lon)
-        lon_min = int((lon - lon_deg) * 60)
-        lon_sec = int((((lon - lon_deg) * 60) - lon_min) * 60 * 100)
+
+        lat_deg = int(abs(lat))
+        lat_min = int((abs(lat) - lat_deg) * 60)
+        lat_sec = int((((abs(lat) - lat_deg) * 60) - lat_min) * 60 * 100)
+
+        lon_deg = int(abs(lon))
+        lon_min = int((abs(lon) - lon_deg) * 60)
+        lon_sec = int((((abs(lon) - lon_deg) * 60) - lon_min) * 60 * 100)
 
         exif_dict = {
             "GPS": {

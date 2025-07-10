@@ -7,7 +7,7 @@ import argparse
 import time
 import threading
 from datetime import datetime
-from multiprocessing import Process, Value
+from multiprocessing import Process, Value, Queue
 from pathlib import Path
 
 def get_python_env():
@@ -85,6 +85,73 @@ logger.info("All required modules imported successfully")
 
 def nothing(x):
     pass
+
+
+# Global shared state
+class SharedState:
+    def __init__(self):
+        self.detection_enable = Value('b', False)
+        self.image_sample_enable = Value('b', False)
+        self.sensitivity_state = Value('b', False)  # False = high sensitivity, True = low sensitivity
+        self.frame_queue = Queue(maxsize=5)
+        self.owl_running = Value('b', False)
+        self.last_frame_time = Value('d', 0.0)
+
+        # GPS data
+        self.gps_latitude = Value('d', 0.0)
+        self.gps_longitude = Value('d', 0.0)
+        self.gps_accuracy = Value('d', 0.0)
+        self.gps_timestamp = Value('d', 0.0)
+        self.gps_available = Value('b', False)
+
+        # Config values - will be populated from config file
+        self.config = None
+        self.config_path = None
+
+        # For debugging - store the ID of each Value object
+        self.state_ids = {
+            'detection_enable': id(self.detection_enable),
+            'image_sample_enable': id(self.image_sample_enable),
+            'sensitivity_state': id(self.sensitivity_state),
+            'gps_latitude': id(self.gps_latitude),
+            'gps_longitude': id(self.gps_longitude),
+        }
+
+    def log_state_ids(self, logger):
+        """Log the IDs of all shared state objects for debugging"""
+        logger.info("=== Shared State Object IDs ===")
+        for name, obj_id in self.state_ids.items():
+            logger.info(f"{name}: {obj_id}")
+        logger.info("===============================")
+
+    def get_gps_data(self):
+        """Get current GPS data as a dictionary"""
+        if not self.gps_available.value:
+            return None
+
+        return {
+            'latitude': self.gps_latitude.value,
+            'longitude': self.gps_longitude.value,
+            'accuracy': self.gps_accuracy.value,
+            'timestamp': self.gps_timestamp.value
+        }
+
+    def update_gps_data(self, lat, lon, accuracy, timestamp):
+        """Update GPS data from dashboard"""
+        with self.gps_latitude.get_lock():
+            self.gps_latitude.value = lat
+        with self.gps_longitude.get_lock():
+            self.gps_longitude.value = lon
+        with self.gps_accuracy.get_lock():
+            self.gps_accuracy.value = accuracy
+        with self.gps_timestamp.get_lock():
+            self.gps_timestamp.value = timestamp
+        with self.gps_available.get_lock():
+            self.gps_available.value = True
+
+
+shared_state = SharedState()
+shared_state.log_state_ids(logger)
 
 class Owl:
     def __init__(self, show_display=False,
@@ -178,26 +245,31 @@ class Owl:
 
         if self.config.getboolean('Dashboard', 'dashboard_enable', fallback=False):
             try:
-                # Import dashboard module and connect shared state
                 import sys
                 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-                from web.owl_dash import get_shared_state
-
-                # Get dashboard shared state and link it to the owl.py state
-                dash_state = get_shared_state()
-                dash_state.detection_enable = self.detection_enable
-                dash_state.image_sample_enable = self.image_sample_enable
-
-                # Create sensitivity state for dashboard
-                self.sensitivity_state = Value('b', False)
-                dash_state.sensitivity_state = self.sensitivity_state
-
-                # Create dashboard controller for sensitivity management
                 from utils.input_manager import DashboardController
+
+                # IMPORTANT: Use the global shared_state directly
+                # Set owl.py state references to point to shared_state
+                self.detection_enable = shared_state.detection_enable
+                self.image_sample_enable = shared_state.image_sample_enable
+                self.sensitivity_state = shared_state.sensitivity_state
+
+                # Mark OWL as running
+                with shared_state.owl_running.get_lock():
+                    shared_state.owl_running.value = True
+
+                # Log state IDs for debugging
+                self.logger.info("=== OWL State Object IDs ===")
+                self.logger.info(f"detection_enable: {id(self.detection_enable)}")
+                self.logger.info(f"image_sample_enable: {id(self.image_sample_enable)}")
+                self.logger.info(f"sensitivity_state: {id(self.sensitivity_state)}")
+
+                # Create dashboard controller with shared state objects
                 self.dash = DashboardController(
-                    detection_state=self.detection_enable,
-                    image_sample_state=self.image_sample_enable,
-                    sensitivity_state=self.sensitivity_state,
+                    detection_state=shared_state.detection_enable,
+                    image_sample_state=shared_state.image_sample_enable,
+                    sensitivity_state=shared_state.sensitivity_state,
                     stop_flag=Value('b', False),
                     owl_instance=self,
                     low_sensitivity_config=self.config.get('Controller', 'low_sensitivity_config',
@@ -208,12 +280,12 @@ class Owl:
 
                 self.logger.info("Dashboard integration enabled")
 
+                # Start state monitoring thread
+                threading.Thread(target=self.update_state, daemon=True).start()
+
             except ImportError as e:
                 self.logger.warning(f"Dashboard not available: {e}")
-                self.dash_controller = None
-
-        # Start state monitoring thread
-        threading.Thread(target=self.update_state, daemon=True).start()
+                self.dash = None
 
         # GPS setup (only if enabled in config)
         self.gps_source = self.config.get('System', 'gps_source', fallback='none').lower()
@@ -232,10 +304,19 @@ class Owl:
             self.logger.error(f"Invalid controller type: {self.controller_type}")
             raise errors.ControllerTypeError(self.config.get('Controller', 'controller_type'))
 
-        with self.image_sample_enable.get_lock():
+        if self.controller_type != 'none' and not self.dash:
+            self.detection_enable = Value('b', False)
+            self.image_sample_enable = Value('b', False)
+            self.sensitivity_state = Value('b', False)
+            self.dash = None
+
+            # Start state monitoring thread
+            threading.Thread(target=self.update_state, daemon=True).start()
+
+        with shared_state.image_sample_enable.get_lock():
             if self.controller_type != 'none' or self.dash:
-                self.image_sample_enable.value = True
-            self._image_sample_enable = self.image_sample_enable.value
+                shared_state.image_sample_enable.value = True
+            self._image_sample_enable = shared_state.image_sample_enable.value
 
         # if controller is 'none' but _image_sample_enable is True, then it will set everything up
         if self._image_sample_enable:
@@ -287,7 +368,7 @@ class Owl:
 
         else:
             self.controller = None
-            if self.image_sample_enable.value:
+            if self._image_sample_enable:
                 self.status_indicator = HeadlessStatusIndicator(save_directory=self.save_directory)
                 self.status_indicator.start_storage_indicator()
 
@@ -739,16 +820,14 @@ class Owl:
     def update_state(self):
         """Update local state caches from shared multiprocessing Values every INTERVAL secs"""
         while not self.stop_state_update.is_set():
-            with self.detection_enable.get_lock():
-                self._detection_enable = self.detection_enable.value
-            with self.image_sample_enable.get_lock():
-                self._image_sample_enable = self.image_sample_enable.value
-            time.sleep(self._STATE_CHECK_INTERVAL)
+            with shared_state.detection_enable.get_lock():
+                self._detection_enable = shared_state.detection_enable.value
+            with shared_state.image_sample_enable.get_lock():
+                self._image_sample_enable = shared_state.image_sample_enable.value
 
-    def update_gps(self, new_gps_data):
-        """Update GPS data from the selected source (dashboard or (to be implemented) GPS hat)."""
-        if new_gps_data and 'latitude' in new_gps_data and 'longitude' in new_gps_data:
-            self.gps_data = new_gps_data
+            self.gps_data = shared_state.get_gps_data()
+
+            time.sleep(self._STATE_CHECK_INTERVAL)
 
     def _log_system_info(self):
         """Log system information on startup"""

@@ -115,7 +115,7 @@
                 </div>
                 <div class="stream-container">
                     <div class="zoom-container">
-                        <img id="stream-img" class="stream zoom-image" src="/video_feed" alt="Camera Feed"
+                        <img id="stream-img" class="stream zoom-image" src="/video_feed" alt="Camera Feed">
                         <div class="stream-overlay">
                             <div class="overlay-item gps-status">
                                 <svg class="gps-icon" viewBox="0 0 24 24">
@@ -194,48 +194,55 @@
 
         <!-- Storage Tab -->
         <div id="storage" class="tab-content">
-            <div class="storage-grid">
-                <div class="card">
-                    <h2>USB Storage Devices</h2>
-                    <div class="storage-info" id="usbDevices">
-                        <p>Scanning for USB devices...</p>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <h2>Recording Status</h2>
-                    <div class="recording-info">
-                        <div class="info-item">
-                            <span class="info-label">Save Directory:</span>
-                            <span class="info-value" id="saveDirectory">Not set</span>
-                        </div>
-                        <div class="info-item">
-                            <span class="info-label">Available Space:</span>
-                            <span class="info-value" id="availableSpace">Unknown</span>
-                        </div>
-                        <div class="info-item">
-                            <span class="info-label">Total Recordings:</span>
-                            <span class="info-value" id="totalRecordings">0</span>
+            <div class="storage-container">
+                <div class="storage-section">
+                    <div class="card">
+                        <h2>USB Storage</h2>
+                        <div class="storage-info" id="usbDevices">
+                            <p>Scanning for USB devices...</p>
                         </div>
                     </div>
                 </div>
 
-                <div class="card">
-                    <h2>File Browser</h2>
-                    <div class="file-browser">
-                        <div class="browser-controls">
-                            <button id="refreshFiles" class="btn-secondary">Refresh Files</button>
-                            <button id="downloadLogs" class="btn-primary">Download Logs</button>
+                <div class="storage-section">
+                    <div class="card">
+                        <h2>Recording Status</h2>
+                        <div class="recording-info">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <span class="info-label">Save Directory:</span>
+                                    <span class="info-value" id="saveDirectory">Not set</span>
+                                </div>
+                                <div class="info-item">
+                                    <span class="info-label">Available Space:</span>
+                                    <span class="info-value" id="availableSpace">Unknown</span>
+                                </div>
+                                <div class="info-item">
+                                    <span class="info-label">Total Recordings:</span>
+                                    <span class="info-value" id="totalRecordings">0</span>
+                                </div>
+                            </div>
                         </div>
-                        <div class="file-list" id="fileList">
-                            <p>Click Refresh Files to browse recordings</p>
+                    </div>
+                </div>
+
+                <div class="storage-section storage-section-full">
+                    <div class="card">
+                        <h2>File Browser</h2>
+                        <div class="file-browser">
+                            <div class="browser-controls">
+                                <button id="refreshFiles" class="btn-secondary">Refresh</button>
+                                <button id="downloadLogs" class="btn-primary">Download Logs</button>
+                            </div>
+                            <div class="file-list" id="fileList">
+                                <p>Click Refresh to browse recordings</p>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
-
     <footer>
         <div class="footer-content">
             <p>OpenWeedLocator © 2025 | <a href="https://github.com/geezacoleman/OpenWeedLocator" target="_blank">GitHub</a></p>

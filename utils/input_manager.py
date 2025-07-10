@@ -32,6 +32,8 @@ class UteController:
                  switch_board_pin='BOARD37',
                  bounce_time=1.0):
 
+        self.logger = logging.getLogger(__name__)
+
         self.switch = Button(switch_board_pin, bounce_time=bounce_time) if not testing else None
         self.switch_purpose = switch_purpose
 
@@ -83,10 +85,10 @@ class UteController:
             while not self.stop_flag.value:
                 time.sleep(0.1)  # sleep to reduce CPU usage
         except KeyboardInterrupt:
-            logger.info("[INFO] KeyboardInterrupt received in controller run loop. Exiting.")
+            self.logger.info("[INFO] KeyboardInterrupt received in controller run loop. Exiting.")
             self.stop()  # Ensure the stop flag is set
         except Exception as e:
-            logger.error(f"Error in controller run loop: {e}", exc_info=True)
+            self.logger.error(f"Error in controller run loop: {e}", exc_info=True)
 
     def stop(self):
         with self.stop_flag.get_lock():
@@ -107,6 +109,8 @@ class AdvancedController:
                  recording_bpin='BOARD38',
                  sensitivity_bpin='BOARD40',
                  bounce_time=1.0):
+
+        self.logger = logging.getLogger(__name__)
 
         self.recording_switch = Button(recording_bpin, bounce_time=bounce_time) if not testing else None
         self.sensitivity_switch = Button(sensitivity_bpin, bounce_time=bounce_time) if not testing else None
@@ -149,10 +153,10 @@ class AdvancedController:
             self.update_sensitivity_state()
             self.update_detection_mode_state()
         except KeyboardInterrupt:
-            logger.info("[INFO] KeyboardInterrupt received in update_state. Exiting.")
+            self.logger.info("[INFO] KeyboardInterrupt received in update_state. Exiting.")
             raise  # Propagate to hoot()
         except Exception as e:
-            logger.error(f"Error in update_state: {e}", exc_info=True)
+            self.logger.error(f"Error in update_state: {e}", exc_info=True)
 
     def update_recording_state(self):
         self.status_indicator.generic_notification()
@@ -213,10 +217,10 @@ class AdvancedController:
                     self.owl.relay_controller.relay.all_off()
 
         except KeyboardInterrupt:
-            logger.info("[INFO] KeyboardInterrupt received in set_detection_mode. Exiting.")
+            self.logger.info("[INFO] KeyboardInterrupt received in set_detection_mode. Exiting.")
             raise
         except Exception as e:
-            logger.error(f"Error in set_detection_mode: {e}", exc_info=True)
+            self.logger.error(f"Error in set_detection_mode: {e}", exc_info=True)
 
     def update_detection_mode_state(self):
         if self.detection_mode_switch_up.is_pressed:
@@ -237,10 +241,10 @@ class AdvancedController:
             while not self.stop_flag.value:
                 time.sleep(0.1)  # sleep to reduce CPU usage
         except KeyboardInterrupt:
-            logger.info("[INFO] KeyboardInterrupt received in controller run loop. Exiting.")
+            self.logger.info("[INFO] KeyboardInterrupt received in controller run loop. Exiting.")
             self.stop()  # Ensure the stop flag is set
         except Exception as e:
-            logger.error(f"Error in controller run loop: {e}", exc_info=True)
+            self.logger.error(f"Error in controller run loop: {e}", exc_info=True)
 
     def stop(self):
         with self.stop_flag.get_lock():
@@ -281,25 +285,25 @@ class DashboardController:
         self.low_sensitivity_settings = self._read_config(low_sensitivity_config)
         self.high_sensitivity_settings = self._read_config(high_sensitivity_config)
 
-        # Get dashboard shared state
-        try:
-            import sys
-            import os
-            sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-            print('SUCCESS SUCCESS')
-            from web.owl_dash import get_shared_state
-            self.dashboard_state = get_shared_state()
-            print('SUCCESS SUCCESS')
-            # Sync shared state references
-            self.dashboard_state.detection_enable = detection_state
-            self.dashboard_state.image_sample_enable = image_sample_state
-            self.dashboard_state.sensitivity_state = sensitivity_state
+        self.logger = logging.getLogger(__name__)
 
-            self.logger = logging.getLogger(__name__)
+        try:
+            from owl import shared_state
+            self.dashboard_state = shared_state
+
+            # Log IDs for debugging
+            self.dashboard_state.log_state_ids(self.logger)
+
+            # IMPORTANT: Don't overwrite - these should be the SAME objects
+            # Instead, verify they're the same
+            if id(self.dashboard_state.detection_enable) != id(detection_state):
+                self.logger.warning("Detection state objects are different!")
+                self.logger.info(f"Dashboard detection_enable ID: {id(self.dashboard_state.detection_enable)}")
+                self.logger.info(f"Input manager detection_state ID: {id(detection_state)}")
+
             self.logger.info("Dashboard controller initialized")
 
         except ImportError:
-            self.logger = logging.getLogger(__name__)
             self.logger.error("Could not import owl_dash module")
             self.dashboard_state = None
 
