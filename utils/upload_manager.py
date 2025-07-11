@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Dict
+from datetime import datetime
 import logging
 
 try:
@@ -96,16 +97,39 @@ class S3Uploader:
     def check_ethernet_connection(self) -> Dict[str, any]:
         """Check if ethernet connection is available"""
         try:
+            # Find the ip command location
+            ip_command = None
+            for path in ['/sbin/ip', '/usr/sbin/ip', '/bin/ip', '/usr/bin/ip']:
+                if Path(path).exists():
+                    ip_command = path
+                    break
+
+            if not ip_command:
+                return {'connected': False, 'error': 'ip command not found'}
+
             # Check network interfaces
-            result = subprocess.run(['ip', 'route'], capture_output=True, text=True, timeout=5)
+            result = subprocess.run([ip_command, 'route'], capture_output=True, text=True, timeout=5)
             if result.returncode != 0:
                 return {'connected': False, 'error': 'Failed to check network routes'}
 
-            # Check if default route exists (internet connectivity)
             has_default_route = 'default' in result.stdout
 
+            ping_command = None
+            for path in ['/bin/ping', '/usr/bin/ping', '/sbin/ping', '/usr/sbin/ping']:
+                if Path(path).exists():
+                    ping_command = path
+                    break
+
+            if not ping_command:
+                return {
+                    'connected': has_default_route,
+                    'has_route': has_default_route,
+                    'can_ping': False,
+                    'error': 'ping command not found' if has_default_route else 'No default route and ping not found'
+                }
+
             # Try to ping a reliable server
-            ping_result = subprocess.run(['ping', '-c', '1', '-W', '3', '8.8.8.8'],
+            ping_result = subprocess.run([ping_command, '-c', '1', '-W', '3', '8.8.8.8'],
                                          capture_output=True, timeout=10)
             can_ping = ping_result.returncode == 0
 
@@ -222,6 +246,150 @@ class S3Uploader:
         )
         self.upload_thread.start()
         return True
+
+    def find_key_files(self) -> Dict[str, any]:
+        """Find credential files on USB drives"""
+        try:
+            key_files = []
+
+            # Search for secret_key folders on USB drives
+            media_path = Path('/media')
+            if not media_path.exists():
+                return {'success': False, 'error': 'No media directory found'}
+
+            for user_dir in media_path.iterdir():
+                if user_dir.is_dir():
+                    for mount_dir in user_dir.iterdir():
+                        if mount_dir.is_dir():
+                            # Look for secret_key folder
+                            secret_dir = mount_dir / 'secret_key'
+                            if secret_dir.exists() and secret_dir.is_dir():
+                                # Find credential files
+                                for file_path in secret_dir.iterdir():
+                                    if file_path.is_file() and file_path.suffix.lower() in ['.txt', '.env', '.key']:
+                                        try:
+                                            # Try to parse the file to see if it contains keys
+                                            content = file_path.read_text().strip()
+                                            if any(key in content.upper() for key in
+                                                   ['ACCESS_KEY', 'SECRET_KEY', 'BUCKET']):
+                                                key_files.append({
+                                                    'name': file_path.name,
+                                                    'path': str(file_path),
+                                                    'size': file_path.stat().st_size,
+                                                    'modified': datetime.fromtimestamp(
+                                                        file_path.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S'),
+                                                    'usb_device': str(mount_dir)
+                                                })
+                                        except Exception as e:
+                                            self.logger.debug(f"Could not read {file_path}: {e}")
+                                            continue
+
+            return {
+                'success': True,
+                'key_files': key_files,
+                'count': len(key_files)
+            }
+
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def load_credentials_from_file(self, file_path: str) -> Dict[str, any]:
+        """Load S3 credentials from a file"""
+        try:
+            if not file_path.startswith('/media'):
+                return {'success': False, 'error': 'File access denied - must be on USB drive'}
+
+            file_path_obj = Path(file_path)
+            if not file_path_obj.exists():
+                return {'success': False, 'error': 'File not found'}
+
+            # Read and parse the file
+            content = file_path_obj.read_text().strip()
+            credentials = {}
+
+            # Parse different formats
+            for line in content.split('\n'):
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+
+                # Handle KEY=value format
+                if '=' in line:
+                    key, value = line.split('=', 1)
+                    key = key.strip().upper()
+                    value = value.strip().strip('"\'')
+
+                    if key in ['ACCESS_KEY', 'AWS_ACCESS_KEY_ID', 'S3_ACCESS_KEY']:
+                        credentials['access_key'] = value
+                    elif key in ['SECRET_KEY', 'AWS_SECRET_ACCESS_KEY', 'S3_SECRET_KEY']:
+                        credentials['secret_key'] = value
+                    elif key in ['BUCKET_NAME', 'BUCKET', 'S3_BUCKET']:
+                        credentials['bucket_name'] = value
+                    elif key in ['REGION', 'AWS_REGION', 'S3_REGION']:
+                        credentials['region'] = value
+                    elif key in ['ENDPOINT_URL', 'ENDPOINT', 'S3_ENDPOINT']:
+                        credentials['endpoint_url'] = value
+
+            # Validate required fields
+            required_fields = ['access_key', 'secret_key', 'bucket_name']
+            missing_fields = [field for field in required_fields if field not in credentials]
+
+            if missing_fields:
+                return {
+                    'success': False,
+                    'error': f'Missing required fields: {", ".join(missing_fields)}'
+                }
+
+            # Set defaults
+            if 'region' not in credentials:
+                credentials['region'] = 'us-east-1'
+
+            return {
+                'success': True,
+                'credentials': credentials,
+                'file_path': file_path
+            }
+
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def create_metadata_file(self, metadata: Dict[str, str], upload_directory: str) -> Dict[str, any]:
+        """Create a metadata file for the upload"""
+        try:
+            # Create metadata content
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            metadata_content = f"""# OWL Upload Metadata
+    # Generated: {timestamp}
+
+    [Upload Information]
+    Name = {metadata.get('name', '')}
+    Date = {metadata.get('date', '')}
+    Location = {metadata.get('location', '')}
+    Field = {metadata.get('field', '')}
+    Weather = {metadata.get('weather', '')}
+    Crop = {metadata.get('crop', '')}
+    Expected Weeds = {metadata.get('expected_weeds', '')}
+    Additional Notes = {metadata.get('notes', '')}
+
+    [Technical Information]
+    Upload Timestamp = {timestamp}
+    Source Directory = {upload_directory}
+    Generated By = OWL Dashboard
+    """
+
+            # Save metadata file in the upload directory
+            metadata_path = Path(upload_directory) / 'upload_metadata.txt'
+            metadata_path.write_text(metadata_content)
+
+            return {
+                'success': True,
+                'metadata_file': str(metadata_path),
+                'content': metadata_content
+            }
+
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
 
     def _upload_worker(self, directory_path: str, access_key: str, secret_key: str,
                        bucket_name: str, s3_prefix: str, region: str,

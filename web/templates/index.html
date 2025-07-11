@@ -266,37 +266,57 @@
                 <div class="card">
                     <h2>S3 Configuration</h2>
                     <div class="credentials-form">
-                        <div class="form-grid">
-                            <div class="form-group">
-                                <label for="accessKey">Access Key:</label>
-                                <input type="text" id="accessKey" placeholder="Your S3 access key" class="form-input">
+
+                        <!-- USB Key File Section -->
+                        <div class="key-file-section">
+                            <h4>Load Credentials from USB</h4>
+                            <div class="key-file-controls">
+                                <button id="findKeyFiles" class="btn-secondary">Find Key Files on USB</button>
+                                <div id="keyFilesList" class="key-files-list hidden"></div>
                             </div>
-                            <div class="form-group">
-                                <label for="secretKey">Secret Key:</label>
-                                <input type="password" id="secretKey" placeholder="Your S3 secret key" class="form-input">
-                            </div>
-                            <div class="form-group">
-                                <label for="bucketName">Bucket Name:</label>
-                                <input type="text" id="bucketName" placeholder="your-bucket-name" class="form-input">
-                            </div>
-                            <div class="form-group">
-                                <label for="region">Region:</label>
-                                <select id="region" class="form-input">
-                                    <option value="us-east-1">US East (N. Virginia)</option>
-                                    <option value="us-west-2">US West (Oregon)</option>
-                                    <option value="eu-west-1">Europe (Ireland)</option>
-                                    <option value="ap-southeast-2">Asia Pacific (Sydney)</option>
-                                    <option value="fsn1">Hetzner (Falkenstein)</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label for="s3Prefix">S3 Path Prefix (optional):</label>
-                                <input type="text" id="s3Prefix" placeholder="owl-data/site-name/" class="form-input">
-                            </div>
-                            <div class="form-group">
-                                <label for="endpointUrl">Custom Endpoint (optional):</label>
-                                <input type="text" id="endpointUrl" placeholder="https://fsn1.your-objectstorage.com" class="form-input">
-                                <small class="form-help">For Hetzner or other S3-compatible services</small>
+                        </div>
+
+                        <div class="form-divider">
+                            <span>OR</span>
+                        </div>
+
+                        <!-- Manual Entry Section -->
+                        <div class="manual-entry-section">
+                            <h4>Manual Entry</h4>
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label for="accessKey">Access Key:</label>
+                                    <input type="text" id="accessKey" placeholder="Your S3 access key" class="form-input">
+                                </div>
+                                <div class="form-group">
+                                    <label for="secretKey">Secret Key:</label>
+                                    <input type="password" id="secretKey" placeholder="Your S3 secret key" class="form-input">
+                                </div>
+                                <div class="form-group">
+                                    <label for="bucketName">Bucket Name:</label>
+                                    <input type="text" id="bucketName" placeholder="your-bucket-name" class="form-input">
+                                </div>
+                                <div class="form-group">
+                                    <label for="region">Region:</label>
+                                    <select id="region" class="form-input">
+                                        <option value="us-east-1">US East (N. Virginia)</option>
+                                        <option value="us-west-2">US West (Oregon)</option>
+                                        <option value="eu-west-1">Europe (Ireland)</option>
+                                        <option value="ap-southeast-2">Asia Pacific (Sydney)</option>
+                                        <option value="fsn1">Hetzner (Falkenstein)</option>
+                                        <option value="hel1">Hetzner (Helsinki)</option>
+                                        <option value="nbg1">Hetzner (Nuremburg)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="s3Prefix">S3 Path Prefix (optional):</label>
+                                    <input type="text" id="s3Prefix" placeholder="owl-data/site-name/" class="form-input">
+                                </div>
+                                <div class="form-group">
+                                    <label for="endpointUrl">Custom Endpoint:</label>
+                                    <input type="text" id="endpointUrl" placeholder="Auto-filled for Hetzner" class="form-input" readonly>
+                                    <small class="form-help">Automatically configured for Hetzner regions</small>
+                                </div>
                             </div>
                         </div>
 
@@ -341,6 +361,48 @@
                                         <span id="scanTotalSize">0 B</span>
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>Upload Metadata</h2>
+                    <div class="metadata-form">
+                        <p class="metadata-description">Provide information about this upload that will be saved with your data.</p>
+
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="metadataName">Name/Title:</label>
+                                <input type="text" id="metadataName" placeholder="e.g., North Field Survey" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="metadataDate">Date:</label>
+                                <input type="date" id="metadataDate" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="metadataLocation">Location/Farm:</label>
+                                <input type="text" id="metadataLocation" placeholder="e.g., Smith Farm, Paddock 7" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="metadataField">Field ID:</label>
+                                <input type="text" id="metadataField" placeholder="e.g., Field A, Block 3" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="metadataWeather">Weather Conditions:</label>
+                                <input type="text" id="metadataWeather" placeholder="e.g., Sunny, 25°C, Light wind" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="metadataCrop">Crop Type:</label>
+                                <input type="text" id="metadataCrop" placeholder="e.g., Wheat, Canola, Barley" class="form-input">
+                            </div>
+                            <div class="form-group full-width">
+                                <label for="metadataWeeds">Expected Weeds:</label>
+                                <input type="text" id="metadataWeeds" placeholder="e.g., Wild radish, Ryegrass, Volunteer canola" class="form-input">
+                            </div>
+                            <div class="form-group full-width">
+                                <label for="metadataNotes">Additional Notes:</label>
+                                <textarea id="metadataNotes" placeholder="Any additional information about this data collection..." class="form-textarea" rows="3"></textarea>
                             </div>
                         </div>
                     </div>

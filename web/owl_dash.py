@@ -664,6 +664,52 @@ class OWLDashboard:
                     'error': str(e)
                 }), 500
 
+        @self.app.route('/api/upload/find_key_files', methods=['GET'])
+        def find_key_files():
+            try:
+                uploader = get_uploader()
+                result = uploader.find_key_files()
+                return jsonify(result)
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/upload/load_credentials', methods=['POST'])
+        def load_credentials():
+            try:
+                data = request.get_json()
+                file_path = data.get('file_path', '')
+
+                if not file_path:
+                    return jsonify({'success': False, 'error': 'File path required'}), 400
+
+                uploader = get_uploader()
+                result = uploader.load_credentials_from_file(file_path)
+                return jsonify(result)
+
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/upload/create_metadata', methods=['POST'])
+        def create_metadata():
+            try:
+                data = request.get_json()
+                metadata = data.get('metadata', {})
+                upload_directory = data.get('upload_directory', '')
+
+                if not upload_directory:
+                    return jsonify({'success': False, 'error': 'Upload directory required'}), 400
+
+                # Security check
+                if not upload_directory.startswith('/media'):
+                    return jsonify({'success': False, 'error': 'Directory access denied'}), 403
+
+                uploader = get_uploader()
+                result = uploader.create_metadata_file(metadata, upload_directory)
+                return jsonify(result)
+
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)}), 500
+
     def add_frame_overlay(self, frame):
         """Add overlay information to frame (including indicators)"""
         height, width = frame.shape[:2]

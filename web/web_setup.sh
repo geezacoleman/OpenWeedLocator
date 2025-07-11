@@ -311,7 +311,7 @@ check_numpy_version
 echo -e "${GREEN}[INFO] Installing Python dependencies...${NC}"
 
 # Install Flask, Gunicorn, and other web dependencies
-sudo -u owl /home/owl/.virtualenvs/owl/bin/pip install flask gunicorn psutil
+sudo -u owl /home/owl/.virtualenvs/owl/bin/pip install flask gunicorn psutil boto3
 
 # Install MQTT client
 sudo -u owl /home/owl/.virtualenvs/owl/bin/pip install paho-mqtt

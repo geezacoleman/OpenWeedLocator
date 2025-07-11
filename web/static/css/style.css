@@ -836,6 +836,7 @@ footer {
         background: linear-gradient(135deg, #3a3a3a 0%, #2d2d2d 100%);
     }
 }
+/* Upload Tab Styles - Add this to style.css */
 
 /* Upload Container */
 .upload-container {
@@ -1307,9 +1308,120 @@ footer {
     margin-top: 0.25rem;
 }
 
-/* Utility Classes */
-.hidden {
-    display: none;
+/* Key File Management */
+.key-file-section {
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+}
+
+.key-file-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.key-files-list {
+    margin-top: 1rem;
+}
+
+.key-file-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+    transition: all 0.2s;
+}
+
+.key-file-item:hover {
+    background: #f0f8ff;
+    border-color: var(--accent);
+}
+
+.key-file-info {
+    flex: 1;
+}
+
+.key-file-name {
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.key-file-meta {
+    font-size: 0.8rem;
+    color: #666;
+    margin-top: 0.25rem;
+}
+
+.key-file-actions {
+    margin-left: 1rem;
+}
+
+.form-divider {
+    text-align: center;
+    position: relative;
+    margin: 1.5rem 0;
+    font-weight: 600;
+    color: #666;
+}
+
+.form-divider::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--border);
+}
+
+.form-divider span {
+    background: white;
+    padding: 0 1rem;
+    position: relative;
+}
+
+.manual-entry-section {
+    margin-top: 1rem;
+}
+
+/* Metadata Form */
+.metadata-form {
+    max-width: 800px;
+}
+
+.metadata-description {
+    color: #666;
+    margin-bottom: 1.5rem;
+    font-style: italic;
+}
+
+.form-group.full-width {
+    grid-column: 1 / -1;
+}
+
+.form-textarea {
+    padding: 0.75rem;
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    font-size: 1rem;
+    font-family: inherit;
+    transition: border-color 0.2s;
+    background: white;
+    resize: vertical;
+    min-height: 80px;
+}
+
+.form-textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
 }
 
 .loading {

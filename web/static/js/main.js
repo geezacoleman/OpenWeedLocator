@@ -1006,21 +1006,251 @@ function initUploadTab() {
     if (stopUploadBtn) {
         stopUploadBtn.addEventListener('click', stopUploadProcess);
     }
-
+     // Key file management
+    const findKeyFilesBtn = document.getElementById('findKeyFiles');
+    if (findKeyFilesBtn) {
+        findKeyFilesBtn.addEventListener('click', findKeyFilesOnUSB);
+    }
     // Auto-fill Hetzner endpoint when region is selected
     const regionSelect = document.getElementById('region');
     const endpointInput = document.getElementById('endpointUrl');
     if (regionSelect && endpointInput) {
-        regionSelect.addEventListener('change', function() {
-            if (this.value === 'fsn1') {
-                endpointInput.value = 'https://fsn1.your-objectstorage.com';
-                endpointInput.placeholder = 'https://fsn1.your-objectstorage.com';
+    regionSelect.addEventListener('change', function() {
+        if (this.value === 'fsn1') {
+            endpointInput.value = 'https://fsn1.your-objectstorage.com';
+        } else if (this.value === 'hel1') {
+            endpointInput.value = 'https://hel1.your-objectstorage.com';
+        } else if (this.value === 'nbg1') {
+            endpointInput.value = 'https://nbg1.your-objectstorage.com';
+        } else {
+            endpointInput.value = '';
+        }
+    });
+}
+
+    // Set today's date as default
+    const dateInput = document.getElementById('metadataDate');
+    if (dateInput) {
+        dateInput.value = new Date().toISOString().split('T')[0];
+    }
+}
+
+/**
+ * Find credential files on USB drives
+ */
+function findKeyFilesOnUSB() {
+    const button = document.getElementById('findKeyFiles');
+    const listElement = document.getElementById('keyFilesList');
+
+    button.disabled = true;
+    button.textContent = 'Searching...';
+    listElement.classList.add('hidden');
+
+    apiRequest('/api/upload/find_key_files')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                displayKeyFiles(data.key_files);
+                if (data.key_files.length === 0) {
+                    showNotification('Info', 'No credential files found on USB drives', 'info');
+                } else {
+                    showNotification('Success', `Found ${data.key_files.length} credential file(s)`, 'success');
+                }
             } else {
-                endpointInput.value = '';
-                endpointInput.placeholder = 'Leave empty for AWS S3';
+                throw new Error(data.error);
+            }
+        })
+        .catch(error => {
+            showNotification('Error', 'Failed to search for key files: ' + error.message, 'error');
+        })
+        .finally(() => {
+            button.disabled = false;
+            button.textContent = 'Find Key Files on USB';
+        });
+}
+
+/**
+ * Display found key files
+ */
+function displayKeyFiles(keyFiles) {
+    const listElement = document.getElementById('keyFilesList');
+
+    if (!keyFiles || keyFiles.length === 0) {
+        listElement.innerHTML = '<p>No credential files found. Make sure your USB drive has a "secret_key" folder with credential files.</p>';
+        listElement.classList.remove('hidden');
+        return;
+    }
+
+    let html = '<div class="key-files-container">';
+    html += '<h5>Found Credential Files:</h5>';
+
+    keyFiles.forEach(file => {
+        html += `
+            <div class="key-file-item">
+                <div class="key-file-info">
+                    <div class="key-file-name">${file.name}</div>
+                    <div class="key-file-meta">
+                        USB: ${file.usb_device} | Size: ${formatFileSize(file.size)} | Modified: ${file.modified}
+                    </div>
+                </div>
+                <div class="key-file-actions">
+                    <button onclick="loadCredentialsFromFile('${file.path}')" class="btn-primary">
+                        Load Credentials
+                    </button>
+                </div>
+            </div>
+        `;
+    });
+
+    html += '</div>';
+    listElement.innerHTML = html;
+    listElement.classList.remove('hidden');
+}
+
+
+/**
+ * Load credentials from selected file
+ */
+function loadCredentialsFromFile(filePath) {
+    showNotification('Info', 'Loading credentials...', 'info');
+
+    apiRequest('/api/upload/load_credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_path: filePath })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const creds = data.credentials;
+
+                // Fill in the form fields
+                document.getElementById('accessKey').value = creds.access_key || '';
+                document.getElementById('secretKey').value = creds.secret_key || '';
+                document.getElementById('bucketName').value = creds.bucket_name || '';
+                document.getElementById('region').value = creds.region || 'us-east-1';
+
+                // Set endpoint URL if provided
+                if (creds.endpoint_url) {
+                    document.getElementById('endpointUrl').value = creds.endpoint_url;
+                } else {
+                    // Auto-set Hetzner endpoints
+                    const regionSelect = document.getElementById('region');
+                    if (regionSelect) {
+                        regionSelect.dispatchEvent(new Event('change'));
+                    }
+                }
+
+                showNotification('Success', 'Credentials loaded successfully', 'success');
+
+                // Enable test credentials button
+                const testBtn = document.getElementById('testCredentials');
+                if (testBtn) {
+                    testBtn.disabled = false;
+                }
+
+            } else {
+                throw new Error(data.error);
+            }
+        })
+        .catch(error => {
+            showNotification('Error', 'Failed to load credentials: ' + error.message, 'error');
+        });
+}
+
+/**
+ * Create metadata file before upload
+ */
+function createMetadataFile(uploadDirectory) {
+    const metadata = {
+        name: document.getElementById('metadataName').value.trim(),
+        date: document.getElementById('metadataDate').value,
+        location: document.getElementById('metadataLocation').value.trim(),
+        field: document.getElementById('metadataField').value.trim(),
+        weather: document.getElementById('metadataWeather').value.trim(),
+        crop: document.getElementById('metadataCrop').value.trim(),
+        expected_weeds: document.getElementById('metadataWeeds').value.trim(),
+        notes: document.getElementById('metadataNotes').value.trim()
+    };
+
+    return apiRequest('/api/upload/create_metadata', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            metadata: metadata,
+            upload_directory: uploadDirectory
+        })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                console.log('Metadata file created:', data.metadata_file);
+                return data;
+            } else {
+                throw new Error(data.error);
             }
         });
+}
+
+/**
+ * Enhanced start upload with metadata
+ */
+function startUploadProcess() {
+    // Validate all requirements
+    const accessKey = document.getElementById('accessKey').value.trim();
+    const secretKey = document.getElementById('secretKey').value.trim();
+    const bucketName = document.getElementById('bucketName').value.trim();
+    const region = document.getElementById('region').value;
+    const s3Prefix = document.getElementById('s3Prefix').value.trim();
+    const endpointUrl = document.getElementById('endpointUrl').value.trim() || null;
+
+    if (!accessKey || !secretKey || !bucketName || !selectedUploadDirectory) {
+        showNotification('Error', 'Please complete all required fields and select a directory', 'error');
+        return;
     }
+
+    // Create metadata file first
+    createMetadataFile(selectedUploadDirectory)
+        .then(() => {
+            showNotification('Info', 'Metadata file created, starting upload...', 'info');
+
+            const uploadData = {
+                directory_path: selectedUploadDirectory,
+                access_key: accessKey,
+                secret_key: secretKey,
+                bucket_name: bucketName,
+                s3_prefix: s3Prefix,
+                region: region,
+                endpoint_url: endpointUrl,
+                max_workers: 4
+            };
+
+            // Start upload
+            return apiRequest('/api/upload/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(uploadData)
+            });
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                uploadInProgress = true;
+                showUploadProgress();
+                startUploadProgressMonitoring();
+
+                // Update UI
+                document.getElementById('startUpload').disabled = true;
+                document.getElementById('stopUpload').disabled = false;
+
+                showNotification('Success', 'Upload started successfully with metadata', 'success');
+            } else {
+                throw new Error(data.error);
+            }
+        })
+        .catch(error => {
+            showNotification('Error', 'Failed to start upload: ' + error.message, 'error');
+        });
 }
 
 /**
@@ -1303,61 +1533,6 @@ function scanSelectedDirectory() {
         .finally(() => {
             button.disabled = false;
             button.textContent = 'Scan Selected Directory';
-        });
-}
-
-/**
- * Start upload process
- */
-function startUploadProcess() {
-    // Validate all requirements
-    const accessKey = document.getElementById('accessKey').value.trim();
-    const secretKey = document.getElementById('secretKey').value.trim();
-    const bucketName = document.getElementById('bucketName').value.trim();
-    const region = document.getElementById('region').value;
-    const s3Prefix = document.getElementById('s3Prefix').value.trim();
-    const endpointUrl = document.getElementById('endpointUrl').value.trim() || null;
-
-    if (!accessKey || !secretKey || !bucketName || !selectedUploadDirectory) {
-        showNotification('Error', 'Please complete all required fields and select a directory', 'error');
-        return;
-    }
-
-    const uploadData = {
-        directory_path: selectedUploadDirectory,
-        access_key: accessKey,
-        secret_key: secretKey,
-        bucket_name: bucketName,
-        s3_prefix: s3Prefix,
-        region: region,
-        endpoint_url: endpointUrl,
-        max_workers: 4
-    };
-
-    // Start upload
-    apiRequest('/api/upload/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(uploadData)
-    })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                uploadInProgress = true;
-                showUploadProgress();
-                startUploadProgressMonitoring();
-
-                // Update UI
-                document.getElementById('startUpload').disabled = true;
-                document.getElementById('stopUpload').disabled = false;
-
-                showNotification('Success', 'Upload started successfully', 'success');
-            } else {
-                throw new Error(data.error);
-            }
-        })
-        .catch(error => {
-            showNotification('Error', 'Failed to start upload: ' + error.message, 'error');
         });
 }
 
