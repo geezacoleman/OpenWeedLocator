@@ -20,6 +20,7 @@ from datetime import datetime
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utils.mqtt_manager import MQTTClient
+from utils.upload_manager import get_uploader
 
 try:
     from flask import Flask, Response, render_template, request, jsonify, send_from_directory, send_file
@@ -211,9 +212,60 @@ class OWLDashboard:
 
         @self.app.route('/video_feed')
         def video_feed():
-            """Video streaming route"""
-            return Response(self.generate_frames(),
-                            mimetype='multipart/x-mixed-replace; boundary=frame')
+            """Video streaming route optimized for multiple clients"""
+
+            def generate():
+                last_frame_time = 0
+                frame_interval = 0.1  # 10 FPS max
+
+                while True:
+                    try:
+                        current_time = time.time()
+                        if current_time - last_frame_time < frame_interval:
+                            time.sleep(0.05)  # Small delay to prevent CPU spinning
+                            continue
+
+                        frame = None
+                        if self.mqtt_client:
+                            frame = self.mqtt_client.get_latest_frame()
+
+                        if frame is None:
+                            frame = self.generate_placeholder_frame()
+
+                        frame = self.add_frame_overlay(frame)
+
+                        h, w = frame.shape[:2]
+                        if w > 480:
+                            scale = 480 / w
+                            frame = cv2.resize(frame, (int(w * scale), int(h * scale)))
+
+                        success, buffer = cv2.imencode('.jpg', frame,
+                                                       [cv2.IMWRITE_JPEG_QUALITY, 60])  # Lower quality for bandwidth
+
+                        if success:
+                            frame_bytes = buffer.tobytes()
+                            yield (b'--frame\r\n'
+                                   b'Content-Type: image/jpeg\r\n'
+                                   b'Cache-Control: no-cache, no-store, must-revalidate\r\n'
+                                   b'Pragma: no-cache\r\n'
+                                   b'Expires: 0\r\n\r\n' + frame_bytes + b'\r\n')
+
+                            last_frame_time = current_time
+
+                    except GeneratorExit:
+                        break
+                    except Exception as e:
+                        self.logger.error(f"Video feed error: {e}")
+                        time.sleep(1)
+
+            return Response(generate(),
+                            mimetype='multipart/x-mixed-replace; boundary=frame',
+                            headers={
+                                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                                'Pragma': 'no-cache',
+                                'Expires': '0',
+                                'Connection': 'close'
+                            })
 
         @self.app.route('/api/detection/start', methods=['POST'])
         def start_detection():
@@ -432,35 +484,185 @@ class OWLDashboard:
                 self.logger.error(f"Error creating log archive: {e}")
                 return jsonify({'error': str(e)}), 500
 
-    def generate_frames(self):
-        """Generate video frames from MQTT"""
-        while True:
+        @self.app.route('/api/upload/check_ethernet', methods=['POST'])
+        def check_ethernet():
             try:
-                frame = None
-                if self.mqtt_client:
-                    frame = self.mqtt_client.get_latest_frame()
+                uploader = get_uploader()
+                result = uploader.check_ethernet_connection()
+                return jsonify(result)
+            except Exception as e:
+                return jsonify({'connected': False, 'error': str(e)}), 500
 
-                if frame is None:
-                    frame = self.generate_placeholder_frame()
+        @self.app.route('/api/upload/test_credentials', methods=['POST'])
+        def test_s3_credentials():
+            try:
+                data = request.get_json()
+                access_key = data.get('access_key', '')
+                secret_key = data.get('secret_key', '')
+                bucket_name = data.get('bucket_name', '')
+                region = data.get('region', 'us-east-1')
+                endpoint_url = data.get('endpoint_url', None)
 
-                frame = self.add_frame_overlay(frame)
+                if not all([access_key, secret_key, bucket_name]):
+                    return jsonify({'valid': False, 'error': 'Missing required credentials'}), 400
 
-                h, w = frame.shape[:2]
-                if w > 640:
-                    scale = 640 / w
-                    frame = cv2.resize(frame, (int(w * scale), int(h * scale)))
-
-                success, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                if success:
-                    frame_bytes = buffer.tobytes()
-                    yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-
-                time.sleep(0.033)  # 30 FPS
+                uploader = get_uploader()
+                result = uploader.test_s3_credentials(
+                    access_key, secret_key, bucket_name, region, endpoint_url
+                )
+                return jsonify(result)
 
             except Exception as e:
-                self.logger.error(f"Error generating frame: {e}")
-                time.sleep(0.5)
+                return jsonify({'valid': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/upload/scan_directory', methods=['POST'])
+        def scan_upload_directory():
+            try:
+                data = request.get_json()
+                directory_path = data.get('directory_path', '')
+
+                if not directory_path:
+                    return jsonify({'success': False, 'error': 'Directory path required'}), 400
+
+                # Security check - only allow browsing under /media
+                if not directory_path.startswith('/media'):
+                    return jsonify({'success': False, 'error': 'Directory access denied'}), 403
+
+                uploader = get_uploader()
+                result = uploader.scan_directory(directory_path)
+                return jsonify(result)
+
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/upload/start', methods=['POST'])
+        def start_upload():
+            try:
+                data = request.get_json()
+
+                # Extract parameters
+                directory_path = data.get('directory_path', '')
+                access_key = data.get('access_key', '')
+                secret_key = data.get('secret_key', '')
+                bucket_name = data.get('bucket_name', '')
+                s3_prefix = data.get('s3_prefix', '')
+                region = data.get('region', 'us-east-1')
+                endpoint_url = data.get('endpoint_url', None)
+                max_workers = data.get('max_workers', 4)
+
+                # Validate required fields
+                if not all([directory_path, access_key, secret_key, bucket_name]):
+                    return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
+
+                # Security check
+                if not directory_path.startswith('/media'):
+                    return jsonify({'success': False, 'error': 'Directory access denied'}), 403
+
+                uploader = get_uploader()
+
+                # Start upload
+                success = uploader.start_upload(
+                    directory_path, access_key, secret_key, bucket_name,
+                    s3_prefix, region, endpoint_url, max_workers
+                )
+
+                if success:
+                    return jsonify({'success': True, 'message': 'Upload started'})
+                else:
+                    return jsonify({'success': False, 'error': 'Upload already in progress'}), 409
+
+            except Exception as e:
+                self.logger.error(f"Error starting upload: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/upload/progress', methods=['GET'])
+        def get_upload_progress():
+            try:
+                uploader = get_uploader()
+                progress = uploader.get_progress()
+                return jsonify(progress)
+            except Exception as e:
+                return jsonify({'status': 'error', 'error_message': str(e)}), 500
+
+        @self.app.route('/api/upload/stop', methods=['POST'])
+        def stop_upload():
+            try:
+                uploader = get_uploader()
+                uploader.stop_upload_process()
+                return jsonify({'success': True, 'message': 'Upload stopped'})
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/upload/browse_directories', methods=['POST'])
+        def browse_upload_directories():
+            """Browse directories for upload selection - only shows directories"""
+            try:
+                data = request.get_json() or {}
+                directory = data.get('directory', '/media')
+
+                # Security: only allow browsing under /media
+                if not directory.startswith('/media'):
+                    return jsonify({
+                        'directories': [],
+                        'directory': directory,
+                        'error': 'Directory access denied'
+                    }), 403
+
+                directories = []
+                try:
+                    directory_path = Path(directory)
+                    if not directory_path.exists() or not directory_path.is_dir():
+                        return jsonify({
+                            'directories': [],
+                            'directory': directory,
+                            'error': 'Directory not found'
+                        }), 404
+
+                    for entry in directory_path.iterdir():
+                        if entry.is_dir():
+                            try:
+                                stat = entry.stat()
+                                directories.append({
+                                    'name': entry.name,
+                                    'path': str(entry),
+                                    'modified': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                                })
+                            except Exception:
+                                continue
+
+                    # Sort directories by name
+                    directories.sort(key=lambda x: x['name'].lower())
+
+                    # Add parent directory option (except for /media root)
+                    if directory != '/media' and directory.startswith('/media'):
+                        parent_dir = str(Path(directory).parent)
+                        if parent_dir.startswith('/media'):
+                            directories.insert(0, {
+                                'name': '.. (Parent Directory)',
+                                'path': parent_dir,
+                                'modified': '',
+                                'is_parent': True
+                            })
+
+                except Exception as e:
+                    return jsonify({
+                        'directories': [],
+                        'directory': directory,
+                        'error': str(e)
+                    }), 500
+
+                return jsonify({
+                    'directories': directories,
+                    'directory': directory,
+                    'total_items': len(directories)
+                })
+
+            except Exception as e:
+                return jsonify({
+                    'directories': [],
+                    'directory': '/media',
+                    'error': str(e)
+                }), 500
 
     def add_frame_overlay(self, frame):
         """Add overlay information to frame (including indicators)"""
@@ -487,18 +689,6 @@ class OWLDashboard:
                     (0, 255, 0) if mqtt_state.get('image_sample_enable', False) else (0, 0, 255), 1)
         cv2.putText(frame, f"Sensitivity: {sensitivity_status}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
                     (255, 255, 255), 1)
-
-        # Indicators
-        if self.mqtt_client:
-            # Weed detection indicator (flashing red circle)
-            if self.mqtt_client.get_weed_detect_indicator():
-                cv2.circle(frame, (width - 30, 30), 10, (0, 0, 255), -1)
-                cv2.putText(frame, "WEED", (width - 60, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 255), 1)
-
-            # Image write indicator (flashing blue circle)
-            if self.mqtt_client.get_image_write_indicator():
-                cv2.circle(frame, (width - 30, 60), 10, (255, 0, 0), -1)
-                cv2.putText(frame, "SAVE", (width - 60, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 0, 0), 1)
 
         return frame
 

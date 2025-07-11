@@ -19,7 +19,8 @@ document.addEventListener('DOMContentLoaded', function() {
     initGPS();
     initControlButtons();
     initStorageTab();
-    initVideoStream(); // Add this line
+    initVideoStream();
+    initUploadTab();
 
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     if (fullscreenBtn) {
@@ -43,12 +44,19 @@ function initTabs() {
             const targetId = this.getAttribute('data-tab');
             document.getElementById(targetId).classList.add('active');
 
-            // Load storage data when storage tab is clicked
+            // ALWAYS reload data when tabs are clicked (force refresh)
             if (targetId === 'storage') {
+                // Clear any cached data first
+                document.getElementById('usbDevices').innerHTML = '<p>Scanning for USB devices...</p>';
+                document.getElementById('fileList').innerHTML = '<p>Click Refresh to browse recordings</p>';
+                // Force reload
                 loadStorageData();
+            } else if (targetId === 'upload') {
+                initUploadTab();
             }
         });
     });
+
     const firstTab = document.querySelector('.nav-tab');
     if (firstTab) firstTab.click();
 }
@@ -248,9 +256,6 @@ function toggleFullscreen() {
     }
 }
 
-/**
- * API request with timeout and abort controller
- */
 function apiRequest(url, options = {}, timeout = 10000) {
     // Cancel any pending request to the same endpoint
     if (pendingRequests[url]) {
@@ -264,7 +269,11 @@ function apiRequest(url, options = {}, timeout = 10000) {
     // Set up timeout
     const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-    // Merge options with signal
+    // Add cache-busting for multiple clients
+    const separator = url.includes('?') ? '&' : '?';
+    const cacheBustUrl = url + separator + 't=' + Date.now();
+
+    // Merge options with signal and cache-busting headers
     const fetchOptions = {
         ...options,
         signal: controller.signal,
@@ -272,27 +281,33 @@ function apiRequest(url, options = {}, timeout = 10000) {
         headers: {
             ...options.headers,
             'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache'
+            'Pragma': 'no-cache',
+            'Expires': '0'
         }
     };
 
     // Make request
-    return fetch(url, fetchOptions)
+    return fetch(cacheBustUrl, fetchOptions)
         .then(response => {
             clearTimeout(timeoutId);
             delete pendingRequests[url];
-            if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+
+            if (!response.ok) {
+                throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+            }
             return response;
         })
         .catch(error => {
             clearTimeout(timeoutId);
             delete pendingRequests[url];
+
             if (error.name === 'AbortError') {
                 throw new Error('Request timed out');
             }
             throw error;
         });
 }
+
 function downloadFrame() {
     showNotification('Info', 'Downloading current frame...', 'info');
 
@@ -435,12 +450,18 @@ let currentDirectory = '/media';
  * Load storage data (USB devices and files)
  */
 function loadStorageData() {
-    // Load USB devices
-    apiRequest('/api/usb_storage')
+    // Clear cache and force fresh data
+    const usbContainer = document.getElementById('usbDevices');
+    if (usbContainer) {
+        usbContainer.innerHTML = '<p>Scanning for USB devices...</p>';
+    }
+
+    // Add cache-busting parameter
+    const timestamp = new Date().getTime();
+    apiRequest(`/api/usb_storage?t=${timestamp}`)
         .then(response => response.json())
         .then(data => {
             updateUSBDevices(data);
-            // Auto-navigate to first USB device if found
             if (data && data.length > 0) {
                 currentDirectory = data[0].mount_point;
                 loadDirectoryContents(currentDirectory);
@@ -450,9 +471,8 @@ function loadStorageData() {
         })
         .catch(error => {
             console.error('Error loading USB storage:', error);
-            const usbContainer = document.getElementById('usbDevices');
             if (usbContainer) {
-                usbContainer.innerHTML = '<p style="color: red;">Error loading USB devices</p>';
+                usbContainer.innerHTML = '<p style="color: red;">Error loading USB devices. <button onclick="loadStorageData()">Retry</button></p>';
             }
         });
 }
@@ -626,7 +646,6 @@ function updateFileBrowser(files, directory) {
     }
 }
 
-
 /**
  * Format file size in human readable format
  */
@@ -637,7 +656,6 @@ function formatFileSize(bytes) {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
-
 
 /**
  * Download a specific file
@@ -946,6 +964,526 @@ function showNotification(title, message, type = 'info', duration = 5000) {
         }
     }, duration);
 }
+
+let uploadProgressInterval = null;
+let selectedUploadDirectory = null;
+let uploadInProgress = false;
+
+/**
+ * Initialize upload tab functionality
+ */
+function initUploadTab() {
+    // Connection check
+    const checkConnectionBtn = document.getElementById('checkConnection');
+    if (checkConnectionBtn) {
+        checkConnectionBtn.addEventListener('click', checkEthernetConnection);
+    }
+
+    // Credentials testing
+    const testCredentialsBtn = document.getElementById('testCredentials');
+    if (testCredentialsBtn) {
+        testCredentialsBtn.addEventListener('click', testS3Credentials);
+    }
+
+    // Directory browsing
+    const browseDirectoriesBtn = document.getElementById('browseDirectories');
+    if (browseDirectoriesBtn) {
+        browseDirectoriesBtn.addEventListener('click', showDirectoryBrowser);
+    }
+
+    const scanDirectoryBtn = document.getElementById('scanDirectory');
+    if (scanDirectoryBtn) {
+        scanDirectoryBtn.addEventListener('click', scanSelectedDirectory);
+    }
+
+    // Upload controls
+    const startUploadBtn = document.getElementById('startUpload');
+    if (startUploadBtn) {
+        startUploadBtn.addEventListener('click', startUploadProcess);
+    }
+
+    const stopUploadBtn = document.getElementById('stopUpload');
+    if (stopUploadBtn) {
+        stopUploadBtn.addEventListener('click', stopUploadProcess);
+    }
+
+    // Auto-fill Hetzner endpoint when region is selected
+    const regionSelect = document.getElementById('region');
+    const endpointInput = document.getElementById('endpointUrl');
+    if (regionSelect && endpointInput) {
+        regionSelect.addEventListener('change', function() {
+            if (this.value === 'fsn1') {
+                endpointInput.value = 'https://fsn1.your-objectstorage.com';
+                endpointInput.placeholder = 'https://fsn1.your-objectstorage.com';
+            } else {
+                endpointInput.value = '';
+                endpointInput.placeholder = 'Leave empty for AWS S3';
+            }
+        });
+    }
+}
+
+/**
+ * Check ethernet connection
+ */
+function checkEthernetConnection() {
+    const button = document.getElementById('checkConnection');
+    const statusElement = document.getElementById('connectionStatus');
+    const textElement = document.getElementById('connectionText');
+    const indicatorElement = document.getElementById('connectionIndicator');
+
+    // Update UI to show checking state
+    button.disabled = true;
+    button.textContent = 'Checking...';
+    statusElement.className = 'connection-status checking';
+    indicatorElement.textContent = '⏳';
+    textElement.textContent = 'Checking connection...';
+
+    apiRequest('/api/upload/check_ethernet', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.connected) {
+                statusElement.className = 'connection-status connected';
+                indicatorElement.textContent = '✅';
+                textElement.textContent = 'Ethernet connected';
+                showNotification('Success', 'Ethernet connection verified', 'success');
+            } else {
+                statusElement.className = 'connection-status disconnected';
+                indicatorElement.textContent = '❌';
+                textElement.textContent = data.error || 'No ethernet connection';
+                showNotification('Warning', data.error || 'No ethernet connection', 'warning');
+            }
+        })
+        .catch(error => {
+            statusElement.className = 'connection-status disconnected';
+            indicatorElement.textContent = '❌';
+            textElement.textContent = 'Connection check failed';
+            showNotification('Error', 'Failed to check connection: ' + error.message, 'error');
+        })
+        .finally(() => {
+            button.disabled = false;
+            button.textContent = 'Check Ethernet Connection';
+        });
+}
+
+/**
+ * Test S3 credentials
+ */
+function testS3Credentials() {
+    const button = document.getElementById('testCredentials');
+    const statusElement = document.getElementById('credentialsStatus');
+
+    // Get form values
+    const accessKey = document.getElementById('accessKey').value.trim();
+    const secretKey = document.getElementById('secretKey').value.trim();
+    const bucketName = document.getElementById('bucketName').value.trim();
+    const region = document.getElementById('region').value;
+    const endpointUrl = document.getElementById('endpointUrl').value.trim() || null;
+
+    // Validate required fields
+    if (!accessKey || !secretKey || !bucketName) {
+        statusElement.className = 'credentials-status invalid';
+        statusElement.textContent = 'Please fill in all required fields';
+        return;
+    }
+
+    // Update UI
+    button.disabled = true;
+    button.textContent = 'Testing...';
+    statusElement.className = 'credentials-status testing';
+    statusElement.textContent = 'Testing credentials...';
+
+    const requestData = {
+        access_key: accessKey,
+        secret_key: secretKey,
+        bucket_name: bucketName,
+        region: region,
+        endpoint_url: endpointUrl
+    };
+
+    apiRequest('/api/upload/test_credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestData)
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.valid) {
+                statusElement.className = 'credentials-status valid';
+                statusElement.textContent = '✅ Credentials valid - bucket accessible';
+                showNotification('Success', 'S3 credentials verified successfully', 'success');
+
+                // Enable directory browsing
+                document.getElementById('browseDirectories').disabled = false;
+            } else {
+                statusElement.className = 'credentials-status invalid';
+                statusElement.textContent = '❌ ' + data.error;
+                showNotification('Error', 'Credential test failed: ' + data.error, 'error');
+            }
+        })
+        .catch(error => {
+            statusElement.className = 'credentials-status invalid';
+            statusElement.textContent = '❌ Test failed: ' + error.message;
+            showNotification('Error', 'Failed to test credentials: ' + error.message, 'error');
+        })
+        .finally(() => {
+            button.disabled = false;
+            button.textContent = 'Test Credentials';
+        });
+}
+
+/**
+ * Show directory browser
+ */
+function showDirectoryBrowser() {
+    const browserElement = document.getElementById('directoryBrowser');
+    browserElement.classList.remove('hidden');
+    loadUploadDirectories('/media');
+}
+
+/**
+ * Load directories for upload selection
+ */
+function loadUploadDirectories(directory) {
+    const contentsElement = document.getElementById('directoryContents');
+    contentsElement.innerHTML = '<p>Loading directories...</p>';
+
+    apiRequest('/api/upload/browse_directories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ directory: directory })
+    })
+        .then(response => response.json())
+        .then(data => {
+            updateDirectoryBrowser(data.directories || [], directory);
+            updateUploadBreadcrumbs(directory);
+        })
+        .catch(error => {
+            console.error('Error loading directories:', error);
+            contentsElement.innerHTML = '<p style="color: red;">Error loading directories</p>';
+        });
+}
+
+/**
+ * Update directory browser display
+ */
+function updateDirectoryBrowser(directories, currentPath) {
+    const contentsElement = document.getElementById('directoryContents');
+
+    if (!directories || directories.length === 0) {
+        contentsElement.innerHTML = '<p>No directories found.</p>';
+        return;
+    }
+
+    let html = '<div class="directories-list">';
+
+    directories.forEach(dir => {
+        const isParent = dir.is_parent || false;
+        const iconClass = isParent ? 'parent' : '';
+
+        html += `
+            <div class="directory-item ${iconClass}" onclick="selectUploadDirectory('${dir.path}', '${dir.name}', ${isParent})">
+                <span class="directory-icon">${isParent ? '⬅️' : '📁'}</span>
+                <div class="directory-info">
+                    <div class="directory-name">${dir.name}</div>
+                    ${dir.modified ? `<div class="directory-meta">Modified: ${dir.modified}</div>` : ''}
+                </div>
+                <div class="directory-actions">
+                    ${!isParent ? '<button class="btn-primary" onclick="event.stopPropagation(); chooseUploadDirectory(\'' + dir.path + '\')">Select</button>' : ''}
+                </div>
+            </div>
+        `;
+    });
+
+    html += '</div>';
+    contentsElement.innerHTML = html;
+}
+
+/**
+ * Navigate to directory (for browsing)
+ */
+function selectUploadDirectory(path, name, isParent) {
+    if (isParent) {
+        loadUploadDirectories(path);
+    } else {
+        // Just navigate into the directory
+        loadUploadDirectories(path);
+    }
+}
+
+/**
+ * Choose directory for upload
+ */
+function chooseUploadDirectory(path) {
+    selectedUploadDirectory = path;
+    document.getElementById('selectedDirectory').textContent = path;
+    document.getElementById('scanDirectory').disabled = false;
+
+    // Hide browser and show selection
+    document.getElementById('directoryBrowser').classList.add('hidden');
+    showNotification('Info', `Selected directory: ${path}`, 'info');
+}
+
+/**
+ * Update breadcrumbs for upload directory browser
+ */
+function updateUploadBreadcrumbs(directory) {
+    const breadcrumbContainer = document.getElementById('directoryBreadcrumbs');
+    if (!breadcrumbContainer) return;
+
+    let html = '<nav class="breadcrumbs">';
+
+    if (directory === '/media') {
+        html += '<span class="breadcrumb-item active">USB Storage</span>';
+    } else {
+        html += '<a href="#" onclick="loadUploadDirectories(\'/media\')" class="breadcrumb-item">USB Storage</a>';
+
+        const relativePath = directory.replace('/media/', '');
+        const parts = relativePath.split('/');
+        let currentPath = '/media';
+
+        for (let i = 0; i < parts.length; i++) {
+            currentPath += '/' + parts[i];
+            if (i === parts.length - 1) {
+                html += ` > <span class="breadcrumb-item active">${parts[i]}</span>`;
+            } else {
+                html += ` > <a href="#" onclick="loadUploadDirectories('${currentPath}')" class="breadcrumb-item">${parts[i]}</a>`;
+            }
+        }
+    }
+
+    html += '</nav>';
+    breadcrumbContainer.innerHTML = html;
+}
+
+/**
+ * Scan selected directory
+ */
+function scanSelectedDirectory() {
+    if (!selectedUploadDirectory) {
+        showNotification('Warning', 'Please select a directory first', 'warning');
+        return;
+    }
+
+    const button = document.getElementById('scanDirectory');
+    const resultsElement = document.getElementById('scanResults');
+
+    button.disabled = true;
+    button.textContent = 'Scanning...';
+    resultsElement.classList.add('hidden');
+
+    apiRequest('/api/upload/scan_directory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ directory_path: selectedUploadDirectory })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Update scan results
+                document.getElementById('scanFileCount').textContent = data.file_count.toLocaleString();
+                document.getElementById('scanTotalSize').textContent = data.total_size_formatted;
+
+                resultsElement.classList.remove('hidden');
+
+                // Enable upload if files found
+                if (data.file_count > 0) {
+                    document.getElementById('startUpload').disabled = false;
+                    showNotification('Success', `Found ${data.file_count} files (${data.total_size_formatted})`, 'success');
+                } else {
+                    showNotification('Info', 'No files found in selected directory', 'info');
+                }
+            } else {
+                throw new Error(data.error);
+            }
+        })
+        .catch(error => {
+            showNotification('Error', 'Failed to scan directory: ' + error.message, 'error');
+        })
+        .finally(() => {
+            button.disabled = false;
+            button.textContent = 'Scan Selected Directory';
+        });
+}
+
+/**
+ * Start upload process
+ */
+function startUploadProcess() {
+    // Validate all requirements
+    const accessKey = document.getElementById('accessKey').value.trim();
+    const secretKey = document.getElementById('secretKey').value.trim();
+    const bucketName = document.getElementById('bucketName').value.trim();
+    const region = document.getElementById('region').value;
+    const s3Prefix = document.getElementById('s3Prefix').value.trim();
+    const endpointUrl = document.getElementById('endpointUrl').value.trim() || null;
+
+    if (!accessKey || !secretKey || !bucketName || !selectedUploadDirectory) {
+        showNotification('Error', 'Please complete all required fields and select a directory', 'error');
+        return;
+    }
+
+    const uploadData = {
+        directory_path: selectedUploadDirectory,
+        access_key: accessKey,
+        secret_key: secretKey,
+        bucket_name: bucketName,
+        s3_prefix: s3Prefix,
+        region: region,
+        endpoint_url: endpointUrl,
+        max_workers: 4
+    };
+
+    // Start upload
+    apiRequest('/api/upload/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(uploadData)
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                uploadInProgress = true;
+                showUploadProgress();
+                startUploadProgressMonitoring();
+
+                // Update UI
+                document.getElementById('startUpload').disabled = true;
+                document.getElementById('stopUpload').disabled = false;
+
+                showNotification('Success', 'Upload started successfully', 'success');
+            } else {
+                throw new Error(data.error);
+            }
+        })
+        .catch(error => {
+            showNotification('Error', 'Failed to start upload: ' + error.message, 'error');
+        });
+}
+
+/**
+ * Stop upload process
+ */
+function stopUploadProcess() {
+    apiRequest('/api/upload/stop', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Info', 'Upload stopped', 'info');
+            }
+        })
+        .catch(error => {
+            showNotification('Error', 'Failed to stop upload: ' + error.message, 'error');
+        });
+}
+
+/**
+ * Show upload progress UI
+ */
+function showUploadProgress() {
+    document.getElementById('uploadProgress').classList.remove('hidden');
+    document.getElementById('uploadResults').classList.add('hidden');
+}
+
+/**
+ * Start monitoring upload progress
+ */
+function startUploadProgressMonitoring() {
+    if (uploadProgressInterval) {
+        clearInterval(uploadProgressInterval);
+    }
+
+    uploadProgressInterval = setInterval(() => {
+        if (!uploadInProgress) return;
+
+        apiRequest('/api/upload/progress')
+            .then(response => response.json())
+            .then(data => {
+                updateUploadProgress(data);
+
+                // Check if upload is complete
+                if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+                    uploadInProgress = false;
+                    clearInterval(uploadProgressInterval);
+                    showUploadComplete(data);
+                }
+            })
+            .catch(error => {
+                console.error('Error getting upload progress:', error);
+            });
+    }, 1000); // Update every second
+}
+
+/**
+ * Update upload progress display
+ */
+function updateUploadProgress(data) {
+    // Update status
+    document.getElementById('uploadStatus').textContent = data.status.charAt(0).toUpperCase() + data.status.slice(1);
+
+    // Update progress bar
+    const progressPercent = Math.round(data.progress_percent || 0);
+    document.getElementById('overallProgressBar').style.width = progressPercent + '%';
+    document.getElementById('overallProgressText').textContent = progressPercent + '%';
+
+    // Update file progress
+    document.getElementById('fileProgressText').textContent = `${data.completed_files} / ${data.total_files}`;
+
+    // Update stats
+    document.getElementById('uploadSpeed').textContent = `${data.speed_mbps.toFixed(1)} MB/s`;
+    document.getElementById('uploadETA').textContent = formatTime(data.eta_seconds);
+    document.getElementById('currentFile').textContent = data.current_file || '--';
+}
+
+/**
+ * Show upload complete results
+ */
+function showUploadComplete(data) {
+    // Hide progress, show results
+    document.getElementById('uploadProgress').classList.add('hidden');
+    document.getElementById('uploadResults').classList.remove('hidden');
+
+    // Update results
+    const successCount = data.completed_files - data.failed_files;
+    document.getElementById('successCount').textContent = successCount;
+    document.getElementById('failedCount').textContent = data.failed_files;
+    document.getElementById('totalTime').textContent = formatTime(data.elapsed_seconds);
+
+    // Update UI buttons
+    document.getElementById('startUpload').disabled = false;
+    document.getElementById('stopUpload').disabled = true;
+
+    // Show notification
+    if (data.status === 'completed') {
+        showNotification('Success', `Upload completed! ${successCount} files uploaded successfully`, 'success', 10000);
+    } else if (data.status === 'failed') {
+        showNotification('Error', `Upload failed: ${data.error_message}`, 'error', 10000);
+    } else if (data.status === 'cancelled') {
+        showNotification('Info', 'Upload was cancelled', 'info');
+    } else {
+        showNotification('Warning', `Upload completed with ${data.failed_files} failures`, 'warning', 8000);
+    }
+}
+
+/**
+ * Format time in seconds to human readable format
+ */
+function formatTime(seconds) {
+    if (!seconds || seconds <= 0) return '--';
+
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+
+    if (hours > 0) {
+        return `${hours}h ${minutes}m ${secs}s`;
+    } else if (minutes > 0) {
+        return `${minutes}m ${secs}s`;
+    } else {
+        return `${secs}s`;
+    }
+}
+
 
 // Add CSS for the spinner and USB devices
 const style = document.createElement('style');

@@ -38,6 +38,9 @@
             <div class="nav-tab" data-tab="storage">
                 <span class="tab-text">Storage</span>
             </div>
+            <div class="nav-tab" data-tab="upload">
+                <span class="tab-text">Upload</span>
+            </div>
         </div>
 
         <!-- Dashboard Tab -->
@@ -236,6 +239,174 @@
                             </div>
                             <div class="file-list" id="fileList">
                                 <p>Click Refresh to browse recordings</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Upload Tab -->
+        <div id="upload" class="tab-content">
+            <div class="upload-container">
+
+                <!-- Connection Check Section -->
+                <div class="card">
+                    <h2>Network Connection</h2>
+                    <div class="connection-section">
+                        <div class="connection-status" id="connectionStatus">
+                            <div class="status-indicator" id="connectionIndicator">❓</div>
+                            <span id="connectionText">Click to check connection</span>
+                        </div>
+                        <button id="checkConnection" class="btn-primary">Check Ethernet Connection</button>
+                    </div>
+                </div>
+
+                <!-- S3 Credentials Section -->
+                <div class="card">
+                    <h2>S3 Configuration</h2>
+                    <div class="credentials-form">
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="accessKey">Access Key:</label>
+                                <input type="text" id="accessKey" placeholder="Your S3 access key" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="secretKey">Secret Key:</label>
+                                <input type="password" id="secretKey" placeholder="Your S3 secret key" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="bucketName">Bucket Name:</label>
+                                <input type="text" id="bucketName" placeholder="your-bucket-name" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="region">Region:</label>
+                                <select id="region" class="form-input">
+                                    <option value="us-east-1">US East (N. Virginia)</option>
+                                    <option value="us-west-2">US West (Oregon)</option>
+                                    <option value="eu-west-1">Europe (Ireland)</option>
+                                    <option value="ap-southeast-2">Asia Pacific (Sydney)</option>
+                                    <option value="fsn1">Hetzner (Falkenstein)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="s3Prefix">S3 Path Prefix (optional):</label>
+                                <input type="text" id="s3Prefix" placeholder="owl-data/site-name/" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="endpointUrl">Custom Endpoint (optional):</label>
+                                <input type="text" id="endpointUrl" placeholder="https://fsn1.your-objectstorage.com" class="form-input">
+                                <small class="form-help">For Hetzner or other S3-compatible services</small>
+                            </div>
+                        </div>
+
+                        <div class="credentials-actions">
+                            <button id="testCredentials" class="btn-secondary">Test Credentials</button>
+                            <div class="credentials-status" id="credentialsStatus"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Directory Selection Section -->
+                <div class="card">
+                    <h2>Select Upload Directory</h2>
+                    <div class="directory-selection">
+                        <div class="current-selection">
+                            <strong>Selected Directory:</strong>
+                            <span id="selectedDirectory">None selected</span>
+                        </div>
+
+                        <div class="directory-browser">
+                            <div class="browser-header">
+                                <button id="browseDirectories" class="btn-secondary">Browse Directories</button>
+                                <button id="scanDirectory" class="btn-primary" disabled>Scan Selected Directory</button>
+                            </div>
+
+                            <div id="directoryBrowser" class="directory-list hidden">
+                                <div id="directoryBreadcrumbs" class="breadcrumbs"></div>
+                                <div id="directoryContents" class="directory-contents">
+                                    <p>Click "Browse Directories" to start</p>
+                                </div>
+                            </div>
+
+                            <div id="scanResults" class="scan-results hidden">
+                                <h4>Directory Contents:</h4>
+                                <div class="scan-info">
+                                    <div class="scan-stat">
+                                        <span class="scan-label">Files:</span>
+                                        <span id="scanFileCount">0</span>
+                                    </div>
+                                    <div class="scan-stat">
+                                        <span class="scan-label">Total Size:</span>
+                                        <span id="scanTotalSize">0 B</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Upload Section -->
+                <div class="card">
+                    <h2>Upload Control</h2>
+                    <div class="upload-section">
+                        <div class="upload-actions">
+                            <button id="startUpload" class="btn-success upload-btn" disabled>Start Upload</button>
+                            <button id="stopUpload" class="btn-danger upload-btn" disabled>Stop Upload</button>
+                        </div>
+
+                        <div id="uploadProgress" class="upload-progress hidden">
+                            <div class="progress-header">
+                                <h4>Upload Progress</h4>
+                                <span id="uploadStatus">Preparing...</span>
+                            </div>
+
+                            <div class="progress-bars">
+                                <div class="progress-item">
+                                    <label>Overall Progress:</label>
+                                    <div class="progress-bar">
+                                        <div id="overallProgressBar" class="progress-fill"></div>
+                                    </div>
+                                    <span id="overallProgressText">0%</span>
+                                </div>
+
+                                <div class="progress-item">
+                                    <label>Files:</label>
+                                    <span id="fileProgressText">0 / 0</span>
+                                </div>
+                            </div>
+
+                            <div class="progress-stats">
+                                <div class="stat-item">
+                                    <span class="stat-label">Speed:</span>
+                                    <span id="uploadSpeed">0 MB/s</span>
+                                </div>
+                                <div class="stat-item">
+                                    <span class="stat-label">ETA:</span>
+                                    <span id="uploadETA">--</span>
+                                </div>
+                                <div class="stat-item">
+                                    <span class="stat-label">Current File:</span>
+                                    <span id="currentFile">--</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="uploadResults" class="upload-results hidden">
+                            <h4>Upload Complete</h4>
+                            <div class="results-summary">
+                                <div class="result-item success">
+                                    <span class="result-label">Successful:</span>
+                                    <span id="successCount">0</span>
+                                </div>
+                                <div class="result-item error">
+                                    <span class="result-label">Failed:</span>
+                                    <span id="failedCount">0</span>
+                                </div>
+                                <div class="result-item">
+                                    <span class="result-label">Total Time:</span>
+                                    <span id="totalTime">--</span>
+                                </div>
                             </div>
                         </div>
                     </div>

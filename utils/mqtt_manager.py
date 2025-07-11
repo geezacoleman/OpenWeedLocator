@@ -205,7 +205,7 @@ class MQTTServer:
                 'gps_available': True,
                 'last_update': time.time()
             })
-        self.logger.info(f"GPS updated: lat={self.state['gps_latitude']}, lon={self.state['gps_longitude']}")
+        # self.logger.info(f"GPS updated: lat={self.state['gps_latitude']}, lon={self.state['gps_longitude']}")
 
     def _monitor_states(self):
         while self.running:
@@ -218,7 +218,7 @@ class MQTTServer:
                     self._apply_sensitivity_config_change(current_sensitivity)
                     self.last_sensitivity_state = current_sensitivity
 
-                time.sleep(0.1)
+                time.sleep(0.01)
 
             except Exception as e:
                 self.logger.error(f"Error in MQTT monitoring: {e}")

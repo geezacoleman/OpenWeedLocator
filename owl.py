@@ -761,7 +761,6 @@ class Owl:
                 self._image_sample_enable = self.dash.get_image_sample_enable()
                 self._sensitivity_state = self.dash.get_sensitivity_state()
                 self.gps_data = self.dash.get_gps_data()
-                print(self.gps_data)
 
             else:
                 # For hardware controllers, read from local Values
