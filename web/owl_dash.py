@@ -524,15 +524,18 @@ class OWLDashboard:
                 if not directory_path:
                     return jsonify({'success': False, 'error': 'Directory path required'}), 400
 
-                # Security check - only allow browsing under /media
                 if not directory_path.startswith('/media'):
                     return jsonify({'success': False, 'error': 'Directory access denied'}), 403
 
                 uploader = get_uploader()
-                result = uploader.scan_directory(directory_path)
+                result = uploader.scan_directory(directory_path, preview_only=True)
+                if result['success']:
+                    self.logger.info(f"Directory scan: {result['file_count']} files found in {directory_path}")
+
                 return jsonify(result)
 
             except Exception as e:
+                self.logger.error(f"Error scanning directory: {e}")
                 return jsonify({'success': False, 'error': str(e)}), 500
 
         @self.app.route('/api/upload/start', methods=['POST'])

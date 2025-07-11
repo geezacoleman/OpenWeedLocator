@@ -21,6 +21,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initStorageTab();
     initVideoStream();
     initUploadTab();
+    initNotifications();
 
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     if (fullscreenBtn) {
@@ -920,49 +921,214 @@ function getColorForValue(value, max) {
     return `hsl(${hue}, 70%, 50%)`;
 }
 
-/**
- * Show notification with improved handling
- */
-function showNotification(title, message, type = 'info', duration = 5000) {
-    const container = document.getElementById('notifications');
-    if (!container) return;
+let notificationStore = [];
+let notificationId = 0;
 
-    // Limit number of notifications
-    const existingNotifications = container.querySelectorAll('.notification');
-    if (existingNotifications.length > 5) {
-        container.removeChild(existingNotifications[0]);
+/**
+ * Initialize notification system
+ */
+function initNotifications() {
+    const bell = document.getElementById('notificationBell');
+    const popup = document.getElementById('notificationPopup');
+    const closeBtn = document.getElementById('closeNotificationPopup');
+    const clearBtn = document.getElementById('clearAllNotifications');
+
+    if (bell) {
+        bell.addEventListener('click', toggleNotificationPopup);
     }
 
-    const notification = document.createElement('div');
-    notification.className = `notification ${type}`;
-    notification.innerHTML = `
-        <div class="notification-title">${title}</div>
-        <div class="notification-message">${message}</div>
-        <button class="notification-close">×</button>
-    `;
+    if (closeBtn) {
+        closeBtn.addEventListener('click', hideNotificationPopup);
+    }
 
-    container.appendChild(notification);
-
-    const closeButton = notification.querySelector('.notification-close');
-    closeButton.addEventListener('click', function() {
-        notification.style.animation = 'slide-out 0.3s forwards';
-        setTimeout(() => {
-            if (notification.parentNode === container) {
-                container.removeChild(notification);
+    if (clearBtn) {
+        clearBtn.addEventListener('click', clearAllNotifications);
+    }
+    if (popup) {
+        popup.addEventListener('click', function(e) {
+            if (e.target === popup) {
+                hideNotificationPopup();
             }
-        }, 300);
-    });
+        });
+    }
+}
+
+/**
+ * notification system with mobile-friendly popup
+ */
+function showNotification(title, message, type = 'info', duration = 5000, showToast = true) {
+    const notification = {
+        id: ++notificationId,
+        title,
+        message,
+        type,
+        timestamp: new Date(),
+        time: new Date().toLocaleTimeString()
+    };
+
+    notificationStore.unshift(notification); // Add to beginning
+
+    // Limit stored notifications
+    if (notificationStore.length > 50) {
+        notificationStore = notificationStore.slice(0, 50);
+    }
+
+    // Update notification count
+    updateNotificationCount();
+
+    updateNotificationPopup();
+
+    if (showToast && (type === 'success' || type === 'error')) {
+        showQuickToast(message, type, 2000);
+    }
+
+    // Auto-clear success/info notifications after duration
+    if (type === 'success' || type === 'info') {
+        setTimeout(() => {
+            removeNotification(notification.id);
+        }, duration);
+    }
+
+    // Shake bell for new notifications
+    const bell = document.getElementById('notificationBell');
+    if (bell) {
+        bell.classList.add('has-notifications');
+        setTimeout(() => bell.classList.remove('has-notifications'), 500);
+    }
+}
+
+/**
+ * Show quick toast for immediate feedback
+ */
+function showQuickToast(message, type = 'info', duration = 2000) {
+    const toast = document.getElementById('quickToast');
+    if (!toast) return;
+
+    toast.textContent = message;
+    toast.className = `quick-toast ${type}`;
+    toast.classList.remove('hidden');
 
     setTimeout(() => {
-        if (notification.parentNode === container) {
-            notification.style.animation = 'slide-out 0.3s forwards';
-            setTimeout(() => {
-                if (notification.parentNode === container) {
-                    container.removeChild(notification);
-                }
-            }, 300);
-        }
+        toast.classList.add('hidden');
     }, duration);
+}
+
+/**
+ * Toggle notification popup
+ */
+function toggleNotificationPopup() {
+    const popup = document.getElementById('notificationPopup');
+    if (!popup) return;
+
+    if (popup.classList.contains('hidden')) {
+        showNotificationPopup();
+    } else {
+        hideNotificationPopup();
+    }
+}
+
+/**
+ * Show notification popup
+ */
+function showNotificationPopup() {
+    const popup = document.getElementById('notificationPopup');
+    if (!popup) return;
+
+    popup.classList.remove('hidden');
+    updateNotificationPopup();
+
+    // Reset notification count visual (user has seen them)
+    setTimeout(() => {
+        const countEl = document.getElementById('notificationCount');
+        if (countEl && !countEl.classList.contains('hidden')) {
+            countEl.style.animation = 'none';
+        }
+    }, 1000);
+}
+
+/**
+ * Hide notification popup
+ */
+function hideNotificationPopup() {
+    const popup = document.getElementById('notificationPopup');
+    if (!popup) return;
+
+    popup.classList.add('hidden');
+}
+
+/**
+ * Update notification count badge
+ */
+function updateNotificationCount() {
+    const countEl = document.getElementById('notificationCount');
+    if (!countEl) return;
+
+    const count = notificationStore.length;
+
+    if (count > 0) {
+        countEl.textContent = count > 99 ? '99+' : count;
+        countEl.classList.remove('hidden');
+    } else {
+        countEl.classList.add('hidden');
+    }
+}
+
+/**
+ * Update notification popup content
+ */
+function updateNotificationPopup() {
+    const listEl = document.getElementById('notificationList');
+    if (!listEl) return;
+
+    if (notificationStore.length === 0) {
+        listEl.innerHTML = '<p class="no-notifications">No notifications</p>';
+        return;
+    }
+
+    let html = '';
+    notificationStore.forEach(notification => {
+        const iconSymbol = {
+            'success': '✓',
+            'error': '✕',
+            'warning': '⚠',
+            'info': 'i'
+        }[notification.type] || 'i';
+
+        html += `
+            <div class="notification-item" data-id="${notification.id}">
+                <div class="notification-icon ${notification.type}">
+                    ${iconSymbol}
+                </div>
+                <div class="notification-content">
+                    <div class="notification-title">${notification.title}</div>
+                    <div class="notification-message">${notification.message}</div>
+                    <div class="notification-time">${notification.time}</div>
+                </div>
+            </div>
+        `;
+    });
+
+    listEl.innerHTML = html;
+}
+
+/**
+ * Remove specific notification
+ */
+function removeNotification(id) {
+    notificationStore = notificationStore.filter(n => n.id !== id);
+    updateNotificationCount();
+    updateNotificationPopup();
+}
+
+/**
+ * Clear all notifications
+ */
+function clearAllNotifications() {
+    notificationStore = [];
+    updateNotificationCount();
+    updateNotificationPopup();
+
+    showQuickToast('All notifications cleared', 'info', 1500);
 }
 
 let uploadProgressInterval = null;

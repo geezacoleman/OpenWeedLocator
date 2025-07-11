@@ -15,6 +15,13 @@
                 <h1>OWL Dashboard</h1>
             </div>
             <div class="status-indicator">
+                <div class="notification-bell" id="notificationBell">
+                    <svg class="bell-icon" viewBox="0 0 24 24">
+                        <path fill="currentColor" d="M12,2A2,2 0 0,1 14,4V4.5A4,4 0 0,1 18,8.5V14L20,16V17H4V16L6,14V8.5A4,4 0 0,1 10,4.5V4A2,2 0 0,1 12,2M7.5,18A1.5,1.5 0 0,0 9,19.5A1.5,1.5 0 0,0 10.5,18M16.5,18A1.5,1.5 0 0,0 18,19.5A1.5,1.5 0 0,0 19.5,18"/>
+                    </svg>
+                    <span class="notification-count hidden" id="notificationCount">0</span>
+                </div>
+
                 <div class="owl-status" id="owlStatus">
                     <span class="status-dot" id="statusDot"></span>
                     <span id="statusText">Connecting...</span>
@@ -483,6 +490,18 @@
         </div>
     </footer>
 
-    <div id="notifications"></div>
+    <div id="notificationPopup" class="notification-popup hidden">
+        <div class="notification-popup-header">
+            <h3>Notifications</h3>
+            <div class="notification-popup-controls">
+                <button id="clearAllNotifications" class="clear-btn">Clear All</button>
+                <button id="closeNotificationPopup" class="close-btn">×</button>
+            </div>
+        </div>
+        <div class="notification-popup-content" id="notificationList">
+            <p class="no-notifications">No notifications</p>
+        </div>
+    </div>
+    <div id="quickToast" class="quick-toast hidden"></div>
 </body>
 </html>

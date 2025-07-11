@@ -190,7 +190,7 @@ class S3Uploader:
             else:
                 return {'valid': False, 'error': f'Connection failed: {error_msg}', 'bucket_exists': None}
 
-    def scan_directory(self, directory_path: str) -> Dict[str, any]:
+    def scan_directory(self, directory_path: str, preview_only: bool = False) -> Dict[str, any]:
         """Scan directory and return file information"""
         try:
             path = Path(directory_path)
@@ -214,11 +214,13 @@ class S3Uploader:
                     except (OSError, IOError):
                         continue
 
+            preview_files = files[:100] if preview_only else files
+
             return {
                 'success': True,
-                'file_count': len(files),
+                'file_count': len(files),  # Always show total count
                 'total_size': total_size,
-                'files': files[:100],  # Limit to first 100 for preview
+                'files': preview_files,  # Limited for preview, all for upload
                 'total_size_formatted': self._format_size(total_size)
             }
 
@@ -399,14 +401,15 @@ class S3Uploader:
             self.progress.status = "running"
             self.progress.start_time = time.time()
 
-            # Scan files
-            scan_result = self.scan_directory(directory_path)
+            scan_result = self.scan_directory(directory_path, preview_only=False)
             if not scan_result['success']:
                 raise Exception(scan_result['error'])
 
             files = scan_result['files']
             self.progress.total_files = len(files)
             self.progress.total_bytes = scan_result['total_size']
+
+            self.logger.info(f"Starting upload of {len(files)} files ({self._format_size(scan_result['total_size'])})")
 
             if len(files) == 0:
                 self.progress.status = "completed"
@@ -429,7 +432,7 @@ class S3Uploader:
             s3_client = session.client('s3', endpoint_url=endpoint_url, config=config)
             transfer_config = TransferConfig(use_threads=False)
 
-            # Upload files
+            # Upload files with progress tracking
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_file = {}
 
@@ -456,6 +459,9 @@ class S3Uploader:
                     try:
                         future.result()
                         self.progress.complete_file(file_info['name'], success=True)
+                        if self.progress.completed_files % 100 == 0:  # Log every 100 files
+                            self.logger.info(
+                                f"Uploaded {self.progress.completed_files}/{self.progress.total_files} files")
                     except Exception as e:
                         self.logger.error(f"Failed to upload {file_info['name']}: {e}")
                         self.progress.complete_file(file_info['name'], success=False)
@@ -469,6 +475,8 @@ class S3Uploader:
                 self.progress.status = "completed"
 
             self.progress.end_time = time.time()
+            self.logger.info(
+                f"Upload completed: {self.progress.completed_files - self.progress.failed_files} successful, {self.progress.failed_files} failed")
 
         except Exception as e:
             self.logger.error(f"Upload failed: {e}")
