@@ -920,7 +920,6 @@ function getColorForValue(value, max) {
     const hue = ((1 - normalized) * 120).toFixed(0);
     return `hsl(${hue}, 70%, 50%)`;
 }
-
 let notificationStore = [];
 let notificationId = 0;
 
@@ -929,34 +928,55 @@ let notificationId = 0;
  */
 function initNotifications() {
     const bell = document.getElementById('notificationBell');
-    const popup = document.getElementById('notificationPopup');
-    const closeBtn = document.getElementById('closeNotificationPopup');
+    const panel = document.getElementById('notificationPanel');
+    const overlay = document.getElementById('notificationOverlay');
+    const closeBtn = document.getElementById('closeNotificationPanel');
     const clearBtn = document.getElementById('clearAllNotifications');
 
     if (bell) {
-        bell.addEventListener('click', toggleNotificationPopup);
+        bell.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleNotificationPanel();
+        });
     }
 
     if (closeBtn) {
-        closeBtn.addEventListener('click', hideNotificationPopup);
+        closeBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            hideNotificationPanel();
+        });
     }
 
     if (clearBtn) {
-        clearBtn.addEventListener('click', clearAllNotifications);
-    }
-    if (popup) {
-        popup.addEventListener('click', function(e) {
-            if (e.target === popup) {
-                hideNotificationPopup();
-            }
+        clearBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            clearAllNotifications();
         });
     }
+
+    // Close panel when clicking overlay
+    if (overlay) {
+        overlay.addEventListener('click', function(e) {
+            hideNotificationPanel();
+        });
+    }
+
+    // Close panel with escape key
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            hideNotificationPanel();
+        }
+    });
 }
 
 /**
- * notification system with mobile-friendly popup
+ * Enhanced notification system with mobile-friendly slide panel
  */
 function showNotification(title, message, type = 'info', duration = 5000, showToast = true) {
+    // Store notification
     const notification = {
         id: ++notificationId,
         title,
@@ -976,8 +996,10 @@ function showNotification(title, message, type = 'info', duration = 5000, showTo
     // Update notification count
     updateNotificationCount();
 
-    updateNotificationPopup();
+    // Update panel content
+    updateNotificationPanel();
 
+    // Show quick toast for immediate feedback
     if (showToast && (type === 'success' || type === 'error')) {
         showQuickToast(message, type, 2000);
     }
@@ -1014,28 +1036,46 @@ function showQuickToast(message, type = 'info', duration = 2000) {
 }
 
 /**
- * Toggle notification popup
+ * Toggle notification panel
  */
-function toggleNotificationPopup() {
-    const popup = document.getElementById('notificationPopup');
-    if (!popup) return;
+function toggleNotificationPanel() {
+    const panel = document.getElementById('notificationPanel');
+    const overlay = document.getElementById('notificationOverlay');
 
-    if (popup.classList.contains('hidden')) {
-        showNotificationPopup();
+    if (!panel || !overlay) return;
+
+    if (panel.classList.contains('hidden')) {
+        showNotificationPanel();
     } else {
-        hideNotificationPopup();
+        hideNotificationPanel();
     }
 }
 
 /**
- * Show notification popup
+ * Show notification panel
  */
-function showNotificationPopup() {
-    const popup = document.getElementById('notificationPopup');
-    if (!popup) return;
+function showNotificationPanel() {
+    const panel = document.getElementById('notificationPanel');
+    const overlay = document.getElementById('notificationOverlay');
 
-    popup.classList.remove('hidden');
-    updateNotificationPopup();
+    if (!panel || !overlay) return;
+
+    // Show overlay first
+    overlay.classList.remove('hidden');
+    overlay.classList.add('visible');
+
+    // Show panel
+    panel.classList.remove('hidden');
+
+    // Trigger animation on next frame
+    requestAnimationFrame(() => {
+        panel.classList.add('visible');
+    });
+
+    updateNotificationPanel();
+
+    // Prevent body scroll
+    document.body.style.overflow = 'hidden';
 
     // Reset notification count visual (user has seen them)
     setTimeout(() => {
@@ -1047,13 +1087,24 @@ function showNotificationPopup() {
 }
 
 /**
- * Hide notification popup
+ * Hide notification panel
  */
-function hideNotificationPopup() {
-    const popup = document.getElementById('notificationPopup');
-    if (!popup) return;
+function hideNotificationPanel() {
+    const panel = document.getElementById('notificationPanel');
+    const overlay = document.getElementById('notificationOverlay');
 
-    popup.classList.add('hidden');
+    if (!panel || !overlay) return;
+
+    // Hide panel with animation
+    panel.classList.remove('visible');
+    overlay.classList.remove('visible');
+
+    // Hide after animation completes
+    setTimeout(() => {
+        panel.classList.add('hidden');
+        overlay.classList.add('hidden');
+        document.body.style.overflow = ''; // Restore body scroll
+    }, 300);
 }
 
 /**
@@ -1074,9 +1125,9 @@ function updateNotificationCount() {
 }
 
 /**
- * Update notification popup content
+ * Update notification panel content
  */
-function updateNotificationPopup() {
+function updateNotificationPanel() {
     const listEl = document.getElementById('notificationList');
     if (!listEl) return;
 
@@ -1117,7 +1168,7 @@ function updateNotificationPopup() {
 function removeNotification(id) {
     notificationStore = notificationStore.filter(n => n.id !== id);
     updateNotificationCount();
-    updateNotificationPopup();
+    updateNotificationPanel();
 }
 
 /**
@@ -1126,11 +1177,10 @@ function removeNotification(id) {
 function clearAllNotifications() {
     notificationStore = [];
     updateNotificationCount();
-    updateNotificationPopup();
+    updateNotificationPanel();
 
     showQuickToast('All notifications cleared', 'info', 1500);
 }
-
 let uploadProgressInterval = null;
 let selectedUploadDirectory = null;
 let uploadInProgress = false;
