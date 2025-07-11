@@ -259,10 +259,13 @@ class Owl:
             self.controller_process.start()
 
         elif self.controller_type == 'advanced':
+            if not hasattr(self, 'sensitivity_state'):
+                self.sensitivity_state = Value('b', False)
+
             self.status_indicator = AdvancedStatusIndicator(save_directory=self.save_directory, status_led_pin='BOARD37')
             self.controller = AdvancedController(
                 recording_state=self.image_sample_enable,
-                sensitivity_state=Value('b', False),
+                sensitivity_state=self.sensitivity_state,
                 detection_mode_state=Value('i', 1),
                 stop_flag=Value('b', False),
                 owl_instance=self,
