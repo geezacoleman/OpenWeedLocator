@@ -1819,3 +1819,138 @@ footer {
         font-size: 0.7rem;
     }
 }
+
+/* Disabled tab styling */
+.nav-tab.disabled {
+    opacity: 0.5;
+    cursor: not-allowed !important;
+    color: #999 !important;
+    background: #f8f9fa !important;
+    border-bottom-color: transparent !important;
+    position: relative;
+}
+
+.nav-tab.disabled::after {
+    content: '🔒';
+    position: absolute;
+    top: 50%;
+    right: 0.5rem;
+    transform: translateY(-50%);
+    font-size: 0.8rem;
+}
+
+.nav-tab.disabled:hover {
+    background: #f8f9fa !important;
+    color: #999 !important;
+    transform: none !important;
+}
+
+/* Hardware priority banner */
+.hardware-priority-banner {
+    background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
+    color: white;
+    padding: 1rem 1.5rem;
+    text-align: center;
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin-bottom: 1.5rem;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(243, 156, 18, 0.3);
+    animation: priorityPulse 3s infinite;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+}
+
+.hardware-priority-banner .priority-icon {
+    margin-right: 0.75rem;
+    font-size: 1.2rem;
+}
+
+.hardware-priority-banner .priority-subtext {
+    display: block;
+    font-size: 0.8rem;
+    margin-top: 0.5rem;
+    opacity: 0.9;
+    font-weight: 400;
+}
+
+@keyframes priorityPulse {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.9;
+        transform: scale(1.01);
+    }
+}
+
+/* Disabled control buttons */
+.control-btn.hardware-disabled {
+    opacity: 0.6;
+    cursor: not-allowed !important;
+    position: relative;
+    background: #95a5a6 !important;
+    color: #fff !important;
+}
+
+.control-btn.hardware-disabled::before {
+    content: '🔒 Hardware Control';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 0.75rem;
+    white-space: nowrap;
+    color: white;
+    font-weight: 600;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.control-btn.hardware-disabled:hover {
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+.control-btn.hardware-disabled:active {
+    transform: none !important;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+    .hardware-priority-banner {
+        padding: 0.75rem 1rem;
+        font-size: 0.85rem;
+        margin-bottom: 1rem;
+    }
+
+    .hardware-priority-banner .priority-subtext {
+        font-size: 0.75rem;
+        margin-top: 0.25rem;
+    }
+
+    .nav-tab.disabled::after {
+        right: 0.25rem;
+        font-size: 0.7rem;
+    }
+
+    .control-btn.hardware-disabled::before {
+        font-size: 0.65rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .hardware-priority-banner {
+        font-size: 0.8rem;
+        padding: 0.5rem 0.75rem;
+    }
+
+    .hardware-priority-banner .priority-icon {
+        margin-right: 0.5rem;
+        font-size: 1rem;
+    }
+
+    .control-btn.hardware-disabled::before {
+        content: '🔒';
+        font-size: 0.8rem;
+    }
+}

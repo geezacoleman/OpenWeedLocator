@@ -384,6 +384,23 @@ class MQTTServer:
             self.state['last_update'] = time.time()
         self._publish_state()
 
+    def set_detection_enable(self, value):
+        """Set detection state (for owl.py internal use)"""
+        with self.state_lock:
+            self.state['detection_enable'] = bool(value)
+            self.state['last_update'] = time.time()
+        self._publish_state()
+
+    def set_sensitivity_state(self, value):
+        """Set sensitivity state (for owl.py internal use)"""
+        with self.state_lock:
+            self.state['sensitivity_state'] = bool(value)
+            self.state['last_update'] = time.time()
+        self._publish_state()
+
+        # Apply the sensitivity config change immediately
+        self._apply_sensitivity_config_change(value)
+
 class MQTTClient:
     """
     MQTT IPC Client for owl_dash.py

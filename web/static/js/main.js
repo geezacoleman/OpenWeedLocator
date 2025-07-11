@@ -12,6 +12,8 @@ const SYSTEM_UPDATE_INTERVAL = 5000; // Reduced polling frequency
 const zoomStep = 0.2;
 const maxZoom = 3;
 const minZoom = 1;
+let hardwareControllerActive = false;
+let controllerType = 'none';
 
 document.addEventListener('DOMContentLoaded', function() {
     initTabs();
@@ -22,6 +24,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initVideoStream();
     initUploadTab();
     initNotifications();
+    initHardwareControllerCheck();
 
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     if (fullscreenBtn) {
@@ -257,6 +260,176 @@ function toggleFullscreen() {
     }
 }
 
+/**
+ * Initialize hardware controller checking
+ */
+function initHardwareControllerCheck() {
+    // Check controller status immediately
+    checkHardwareControllerStatus();
+
+    // Check periodically (every 30 seconds - config doesn't change often)
+    setInterval(checkHardwareControllerStatus, 30000);
+}
+
+/**
+ * Check if hardware controller is active
+ */
+function checkHardwareControllerStatus() {
+    apiRequest('/api/controller_config')
+        .then(response => response.json())
+        .then(data => {
+            const wasActive = hardwareControllerActive;
+            hardwareControllerActive = data.hardware_active;
+            controllerType = data.controller_type;
+
+            // Update UI based on hardware status
+            updateControlsTabAccess();
+            updateControlButtons();
+
+            // Show notification when hardware status changes
+            if (wasActive !== hardwareControllerActive) {
+                if (hardwareControllerActive) {
+                    showNotification(
+                        'Hardware Controller',
+                        `${controllerType.toUpperCase()} controller active - use physical switches for control`,
+                        'info',
+                        8000
+                    );
+                } else {
+                    showNotification(
+                        'Web Control',
+                        'Hardware controller not active - web controls available',
+                        'info',
+                        5000
+                    );
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error checking hardware controller status:', error);
+            // Default to no hardware controller on error
+            hardwareControllerActive = false;
+            controllerType = 'none';
+            updateControlsTabAccess();
+            updateControlButtons();
+        });
+}
+
+/**
+ * Update Controls tab accessibility based on hardware status
+ */
+function updateControlsTabAccess() {
+    const controlTab = document.querySelector('.nav-tab[data-tab="control"]');
+    if (!controlTab) return;
+
+    if (hardwareControllerActive) {
+        // Disable the Controls tab
+        controlTab.classList.add('disabled');
+        controlTab.setAttribute('title', `${controllerType.toUpperCase()} controller active - use physical switches`);
+
+        // Add click prevention
+        controlTab.addEventListener('click', preventControlTabClick);
+
+        // If currently on control tab, switch to dashboard
+        if (controlTab.classList.contains('active')) {
+            const dashboardTab = document.querySelector('.nav-tab[data-tab="dashboard"]');
+            if (dashboardTab) {
+                dashboardTab.click();
+            }
+        }
+
+        // Add hardware priority banner to control tab content
+        addHardwarePriorityBanner();
+
+    } else {
+        // Enable the Controls tab
+        controlTab.classList.remove('disabled');
+        controlTab.removeAttribute('title');
+        controlTab.removeEventListener('click', preventControlTabClick);
+
+        // Remove hardware priority banner
+        removeHardwarePriorityBanner();
+    }
+}
+
+/**
+ * Prevent clicking on disabled control tab
+ */
+function preventControlTabClick(event) {
+    if (hardwareControllerActive) {
+        event.preventDefault();
+        event.stopPropagation();
+        showNotification(
+            'Hardware Priority',
+            `${controllerType.toUpperCase()} controller is active - use physical switches for control`,
+            'warning'
+        );
+    }
+}
+
+/**
+ * Update control buttons based on hardware status
+ */
+function updateControlButtons() {
+    const controlButtons = document.querySelectorAll('.control-btn');
+
+    controlButtons.forEach(button => {
+        if (hardwareControllerActive) {
+            button.classList.add('hardware-disabled');
+            button.setAttribute('data-original-onclick', button.onclick);
+            button.onclick = function(e) {
+                e.preventDefault();
+                showNotification(
+                    'Hardware Priority',
+                    `Use the physical ${controllerType.toUpperCase()} controller switches`,
+                    'warning'
+                );
+            };
+        } else {
+            button.classList.remove('hardware-disabled');
+            // Restore original onclick if it was saved
+            const originalOnclick = button.getAttribute('data-original-onclick');
+            if (originalOnclick) {
+                button.onclick = originalOnclick;
+                button.removeAttribute('data-original-onclick');
+            }
+        }
+    });
+}
+
+/**
+ * Add hardware priority banner to control tab
+ */
+function addHardwarePriorityBanner() {
+    // Remove existing banner first
+    removeHardwarePriorityBanner();
+
+    const controlTabContent = document.getElementById('control');
+    if (controlTabContent) {
+        const banner = document.createElement('div');
+        banner.className = 'hardware-priority-banner';
+        banner.innerHTML = `
+            <span class="priority-icon">🎛️</span>
+            ${controllerType.toUpperCase()} Controller Active - Use Physical Switches for Control
+            <span class="priority-subtext">Web controls are disabled while hardware controller is connected</span>
+        `;
+
+        // Insert at the beginning of control tab content
+        controlTabContent.insertBefore(banner, controlTabContent.firstChild);
+    }
+}
+
+/**
+ * Remove hardware priority banner
+ */
+function removeHardwarePriorityBanner() {
+    const existingBanner = document.querySelector('.hardware-priority-banner');
+    if (existingBanner) {
+        existingBanner.remove();
+    }
+}
+
+
 function apiRequest(url, options = {}, timeout = 10000) {
     // Cancel any pending request to the same endpoint
     if (pendingRequests[url]) {
@@ -338,11 +511,20 @@ function downloadFrame() {
             console.error('Download frame error:', error);
         });
 }
-
 /**
  * Start recording
  */
 function startRecording() {
+    // Check for hardware controller first
+    if (hardwareControllerActive) {
+        showNotification(
+            'Hardware Priority',
+            `Use the recording switch on your ${controllerType.toUpperCase()} controller`,
+            'warning'
+        );
+        return;
+    }
+
     showNotification('Info', 'Starting recording...', 'info');
 
     apiRequest('/api/recording/start', { method: 'POST' })
@@ -365,6 +547,16 @@ function startRecording() {
  * Stop recording
  */
 function stopRecording() {
+    // Check for hardware controller first
+    if (hardwareControllerActive) {
+        showNotification(
+            'Hardware Priority',
+            `Use the recording switch on your ${controllerType.toUpperCase()} controller`,
+            'warning'
+        );
+        return;
+    }
+
     showNotification('Info', 'Stopping recording...', 'info');
 
     apiRequest('/api/recording/stop', { method: 'POST' })
@@ -387,6 +579,16 @@ function stopRecording() {
  * Start/stop detection with optimized handling
  */
 function startDetection() {
+    // Check for hardware controller first
+    if (hardwareControllerActive) {
+        showNotification(
+            'Hardware Priority',
+            `Use the detection switch on your ${controllerType.toUpperCase()} controller`,
+            'warning'
+        );
+        return;
+    }
+
     showNotification('Info', 'Starting detection...', 'info');
 
     apiRequest('/api/detection/start', { method: 'POST' })
@@ -406,6 +608,16 @@ function startDetection() {
 }
 
 function stopDetection() {
+    // Check for hardware controller first
+    if (hardwareControllerActive) {
+        showNotification(
+            'Hardware Priority',
+            `Use the detection switch on your ${controllerType.toUpperCase()} controller`,
+            'warning'
+        );
+        return;
+    }
+
     showNotification('Info', 'Stopping detection...', 'info');
 
     apiRequest('/api/detection/stop', { method: 'POST' })
@@ -428,6 +640,16 @@ function stopDetection() {
  * Toggle sensitivity
  */
 function toggleSensitivity() {
+    // Check for hardware controller first
+    if (hardwareControllerActive) {
+        showNotification(
+            'Hardware Priority',
+            `Use the sensitivity switch on your ${controllerType.toUpperCase()} controller`,
+            'warning'
+        );
+        return;
+    }
+
     showNotification('Info', 'Toggling sensitivity...', 'info');
 
     apiRequest('/api/sensitivity/toggle', { method: 'POST' })
@@ -957,14 +1179,11 @@ function initNotifications() {
         });
     }
 
-    // Close panel when clicking overlay
     if (overlay) {
         overlay.addEventListener('click', function(e) {
             hideNotificationPanel();
         });
     }
-
-    // Close panel with escape key
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
             hideNotificationPanel();

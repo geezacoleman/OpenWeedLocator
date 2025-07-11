@@ -48,6 +48,7 @@ class OWLDashboard:
             broker_port=1883,
             client_id='owl_dashboard')
 
+        self.controller_type = None
         self.latest_frame = None
         self.frame_lock = threading.Lock()
         self.frame_interval = 0.1  # seconds between frames (~10 FPS)
@@ -76,6 +77,9 @@ class OWLDashboard:
         if config_path.exists():
             self.config.read(config_path)
             self.logger.info(f"Config loaded from {config_path}")
+            self.controller_type = self.config.get('Controller', 'controller_type', fallback='none').strip(
+                "'\" ").lower()
+
         else:
             self.logger.warning(f"Config file not found at {config_path}")
             # Create minimal config sections
@@ -269,14 +273,27 @@ class OWLDashboard:
 
         @self.app.route('/api/detection/start', methods=['POST'])
         def start_detection():
+            if self.controller_type != 'none':
+                return jsonify({
+                    'success': False,
+                    'message': f'{self.controller_type.upper()} controller active - use physical switches'
+                }), 423  # HTTP 423 Locked
+
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             result = self.mqtt_client.set_detection_enable(True)
             self.logger.info("Detection enabled via dashboard")
             return jsonify(result)
 
+        # Replace the existing detection/stop route
         @self.app.route('/api/detection/stop', methods=['POST'])
         def stop_detection():
+            if self.controller_type != 'none':
+                return jsonify({
+                    'success': False,
+                    'message': f'{self.controller_type.upper()} controller active - use physical switches'
+                }), 423  # HTTP 423 Locked
+
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             result = self.mqtt_client.set_detection_enable(False)
@@ -285,6 +302,12 @@ class OWLDashboard:
 
         @self.app.route('/api/recording/start', methods=['POST'])
         def start_recording():
+            if self.controller_type != 'none':
+                return jsonify({
+                    'success': False,
+                    'message': f'{self.controller_type.upper()} controller active - use physical switches'
+                }), 423  # HTTP 423 Locked
+
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             result = self.mqtt_client.set_image_sample_enable(True)
@@ -293,6 +316,12 @@ class OWLDashboard:
 
         @self.app.route('/api/recording/stop', methods=['POST'])
         def stop_recording():
+            if self.controller_type != 'none':
+                return jsonify({
+                    'success': False,
+                    'message': f'{self.controller_type.upper()} controller active - use physical switches'
+                }), 423  # HTTP 423 Locked
+
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             result = self.mqtt_client.set_image_sample_enable(False)
@@ -301,6 +330,12 @@ class OWLDashboard:
 
         @self.app.route('/api/sensitivity/toggle', methods=['POST'])
         def toggle_sensitivity():
+            if self.controller_type != 'none':
+                return jsonify({
+                    'success': False,
+                    'message': f'{self.controller_type.upper()} controller active - use physical switches'
+                }), 423  # HTTP 423 Locked
+
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             result = self.mqtt_client.toggle_sensitivity()
@@ -712,6 +747,25 @@ class OWLDashboard:
 
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/controller_config', methods=['GET'])
+        def get_controller_config():
+            try:
+                # Read controller type from the loaded config
+                controller_type = self.config.get('Controller', 'controller_type', fallback='none').strip(
+                    "'\" ").lower()
+
+                return jsonify({
+                    'controller_type': controller_type,
+                    'hardware_active': controller_type != 'none'
+                })
+            except Exception as e:
+                self.logger.error(f"Error reading controller config: {e}")
+                return jsonify({
+                    'controller_type': 'none',
+                    'hardware_active': False,
+                    'error': str(e)
+                })
 
     def add_frame_overlay(self, frame):
         """Add overlay information to frame (including indicators)"""

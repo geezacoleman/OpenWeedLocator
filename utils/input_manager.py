@@ -2,11 +2,8 @@ import time
 import platform
 import configparser
 import subprocess
-import os
-import sys
 import cv2
 import logging
-from threading import Thread
 
 logger = logging.getLogger(__name__)
 

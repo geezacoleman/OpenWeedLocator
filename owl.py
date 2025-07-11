@@ -757,13 +757,38 @@ class Owl:
         """Update local state from MQTT server or local hardware controllers"""
         while not self.stop_state_update.is_set():
             if self.dash:
-                self._detection_enable = self.dash.get_detection_enable()
-                self._image_sample_enable = self.dash.get_image_sample_enable()
-                self._sensitivity_state = self.dash.get_sensitivity_state()
-                self.gps_data = self.dash.get_gps_data()
+                if self.controller_type != 'none':
+                    # Hardware controller active - push hardware states to existing MQTT methods
+                    if hasattr(self, 'detection_enable'):
+                        with self.detection_enable.get_lock():
+                            hardware_detection = self.detection_enable.value
+                        self.dash.set_detection_enable(hardware_detection)
+                        self._detection_enable = hardware_detection
+
+                    if hasattr(self, 'image_sample_enable'):
+                        with self.image_sample_enable.get_lock():
+                            hardware_recording = self.image_sample_enable.value
+                        self.dash.set_image_sample_enable(hardware_recording)
+                        self._image_sample_enable = hardware_recording
+
+                    if hasattr(self, 'sensitivity_state'):
+                        with self.sensitivity_state.get_lock():
+                            hardware_sensitivity = self.sensitivity_state.value
+                        self.dash.set_sensitivity_state(hardware_sensitivity)
+                        self._sensitivity_state = hardware_sensitivity
+
+                    # GPS from dashboard takes priority
+                    self.gps_data = self.dash.get_gps_data()
+
+                else:
+                    # No hardware controller - normal dashboard control
+                    self._detection_enable = self.dash.get_detection_enable()
+                    self._image_sample_enable = self.dash.get_image_sample_enable()
+                    self._sensitivity_state = self.dash.get_sensitivity_state()
+                    self.gps_data = self.dash.get_gps_data()
 
             else:
-                # For hardware controllers, read from local Values
+                # Hardware only, no dashboard - existing behavior
                 if hasattr(self, 'detection_enable'):
                     with self.detection_enable.get_lock():
                         self._detection_enable = self.detection_enable.value
@@ -773,9 +798,6 @@ class Owl:
                 if hasattr(self, 'sensitivity_state'):
                     with self.sensitivity_state.get_lock():
                         self._sensitivity_state = self.sensitivity_state.value
-
-                # Debug output
-                print(f'Local - Detection: {self._detection_enable}, Recording: {self._image_sample_enable}')
 
             time.sleep(self._STATE_CHECK_INTERVAL)
 
