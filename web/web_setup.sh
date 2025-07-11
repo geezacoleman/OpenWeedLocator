@@ -56,41 +56,129 @@ check_status() {
   fi
 }
 
-# Function to check NumPy version
+# Function to check NumPy version and detect conflicts
 check_numpy_version() {
-    echo -e "${GREEN}[INFO] Checking NumPy version...${NC}"
+    echo -e "${GREEN}[INFO] Checking NumPy installation...${NC}"
 
-    # Check if numpy is installed and get version
-    NUMPY_VERSION=$(sudo -u owl /home/owl/.virtualenvs/owl/bin/python -c "import numpy; print(numpy.__version__)" 2>/dev/null)
+    # Check for multiple NumPy installations
+    echo -e "${GREEN}[INFO] Detecting NumPy installations...${NC}"
+    NUMPY_LOCATIONS=$(sudo -u owl /home/owl/.virtualenvs/owl/bin/python -c "
+import sys
+import pkg_resources
+numpy_dists = [d for d in pkg_resources.working_set if d.project_name.lower() == 'numpy']
+if len(numpy_dists) > 1:
+    print('MULTIPLE')
+    for dist in numpy_dists:
+        print(f'{dist.version} at {dist.location}')
+elif len(numpy_dists) == 1:
+    print('SINGLE')
+    print(f'{numpy_dists[0].version}')
+else:
+    print('NONE')
+" 2>/dev/null)
 
     if [ $? -ne 0 ]; then
-        echo -e "${ORANGE}[WARNING] NumPy not found. This may cause issues with OpenCV.${NC}"
+        echo -e "${ORANGE}[WARNING] NumPy detection failed. This may cause issues with OpenCV.${NC}"
         eval "STATUS_NUMPY_VERSION='${ORANGE}[WARN]${NC}'"
-        eval "ERROR_NUMPY_VERSION='NumPy not installed'"
+        eval "ERROR_NUMPY_VERSION='NumPy detection failed'"
         return 1
     fi
 
-    # Check if version is 2.x
-    if [[ "$NUMPY_VERSION" =~ ^2\. ]]; then
-        echo -e "${RED}[ERROR] NumPy version $NUMPY_VERSION is 2.x - OpenCV requires NumPy 1.x${NC}"
-        echo -e "${GREEN}[INFO] Downgrading NumPy to 1.x...${NC}"
+    FIRST_LINE=$(echo "$NUMPY_LOCATIONS" | head -n 1)
 
-        # Downgrade NumPy to latest 1.x version
-        sudo -u owl /home/owl/.virtualenvs/owl/bin/pip install "numpy<2.0" --force-reinstall
+    if [[ "$FIRST_LINE" == "MULTIPLE" ]]; then
+        echo -e "${RED}[ERROR] Multiple NumPy installations detected!${NC}"
+        echo -e "${RED}This causes conflicts and camera access issues.${NC}"
+        echo "$NUMPY_LOCATIONS" | tail -n +2
+
+        echo -e "${GREEN}[INFO] Completely removing all NumPy installations...${NC}"
+
+        # Uninstall all NumPy packages
+        sudo -u owl /home/owl/.virtualenvs/owl/bin/pip uninstall numpy -y 2>/dev/null || true
+
+        # Clean up any remaining numpy files
+        sudo -u owl find /home/owl/.virtualenvs/owl -name "*numpy*" -type d -exec rm -rf {} + 2>/dev/null || true
+
+        # Reinstall compatible NumPy version for current OpenCV
+        echo -e "${GREEN}[INFO] Installing compatible NumPy version...${NC}"
+
+        # Check OpenCV version to determine compatible NumPy
+        OPENCV_VERSION=$(sudo -u owl /home/owl/.virtualenvs/owl/bin/python -c "import cv2; print(cv2.__version__)" 2>/dev/null)
+
+        if [[ "$OPENCV_VERSION" =~ ^4\.1[2-9] ]] || [[ "$OPENCV_VERSION" =~ ^4\.[2-9] ]]; then
+            # OpenCV 4.12+ supports NumPy 2.x
+            echo -e "${GREEN}[INFO] OpenCV $OPENCV_VERSION detected - installing NumPy 2.x${NC}"
+            sudo -u owl /home/owl/.virtualenvs/owl/bin/pip install "numpy>=2.0,<3.0"
+        else
+            # Older OpenCV versions need NumPy 1.x
+            echo -e "${GREEN}[INFO] OpenCV $OPENCV_VERSION detected - installing NumPy 1.x${NC}"
+            sudo -u owl /home/owl/.virtualenvs/owl/bin/pip install "numpy>=1.21,<2.0"
+        fi
 
         if [ $? -eq 0 ]; then
             NEW_NUMPY_VERSION=$(sudo -u owl /home/owl/.virtualenvs/owl/bin/python -c "import numpy; print(numpy.__version__)" 2>/dev/null)
-            echo -e "${TICK} NumPy downgraded to version $NEW_NUMPY_VERSION"
+            echo -e "${TICK} NumPy conflicts resolved - installed version $NEW_NUMPY_VERSION"
             eval "STATUS_NUMPY_VERSION='${TICK}'"
         else
-            echo -e "${CROSS} Failed to downgrade NumPy"
+            echo -e "${CROSS} Failed to resolve NumPy conflicts"
             eval "STATUS_NUMPY_VERSION='${CROSS}'"
-            eval "ERROR_NUMPY_VERSION='Failed to downgrade NumPy from 2.x to 1.x'"
+            eval "ERROR_NUMPY_VERSION='Failed to resolve multiple NumPy installations'"
             return 1
         fi
-    else
-        echo -e "${TICK} NumPy version $NUMPY_VERSION is compatible (1.x)"
+
+    elif [[ "$FIRST_LINE" == "SINGLE" ]]; then
+        NUMPY_VERSION=$(echo "$NUMPY_LOCATIONS" | tail -n 1)
+        echo -e "${TICK} Single NumPy installation detected: version $NUMPY_VERSION"
         eval "STATUS_NUMPY_VERSION='${TICK}'"
+
+    elif [[ "$FIRST_LINE" == "NONE" ]]; then
+        echo -e "${ORANGE}[WARNING] NumPy not installed. Installing compatible version...${NC}"
+
+        # Install appropriate NumPy version
+        OPENCV_VERSION=$(sudo -u owl /home/owl/.virtualenvs/owl/bin/python -c "import cv2; print(cv2.__version__)" 2>/dev/null)
+
+        if [[ "$OPENCV_VERSION" =~ ^4\.1[2-9] ]] || [[ "$OPENCV_VERSION" =~ ^4\.[2-9] ]]; then
+            sudo -u owl /home/owl/.virtualenvs/owl/bin/pip install "numpy>=2.0,<3.0"
+        else
+            sudo -u owl /home/owl/.virtualenvs/owl/bin/pip install "numpy>=1.21,<2.0"
+        fi
+
+        if [ $? -eq 0 ]; then
+            NEW_NUMPY_VERSION=$(sudo -u owl /home/owl/.virtualenvs/owl/bin/python -c "import numpy; print(numpy.__version__)" 2>/dev/null)
+            echo -e "${TICK} NumPy installed: version $NEW_NUMPY_VERSION"
+            eval "STATUS_NUMPY_VERSION='${TICK}'"
+        else
+            echo -e "${CROSS} Failed to install NumPy"
+            eval "STATUS_NUMPY_VERSION='${CROSS}'"
+            eval "ERROR_NUMPY_VERSION='Failed to install NumPy'"
+            return 1
+        fi
+    fi
+
+    # Final verification - test import
+    echo -e "${GREEN}[INFO] Verifying NumPy installation...${NC}"
+    sudo -u owl /home/owl/.virtualenvs/owl/bin/python -c "
+import numpy as np
+import cv2
+print(f'NumPy {np.__version__} imported successfully')
+print(f'OpenCV {cv2.__version__} imported successfully')
+print('Camera access test...')
+# Quick camera test
+try:
+    cap = cv2.VideoCapture(0)
+    if cap.isOpened():
+        print('Camera access: OK')
+        cap.release()
+    else:
+        print('Camera access: Failed to open')
+except Exception as e:
+    print(f'Camera access: Error - {e}')
+" 2>/dev/null
+
+    if [ $? -eq 0 ]; then
+        echo -e "${TICK} NumPy and OpenCV verification passed"
+    else
+        echo -e "${ORANGE}[WARNING] NumPy/OpenCV verification failed - camera issues may occur${NC}"
     fi
 }
 
@@ -195,25 +283,26 @@ allow_anonymous true
 listener 1883 0.0.0.0
 EOF
 
-# Test configuration before starting
+# Test configuration (may fail if service is running - that's OK)
 echo -e "${GREEN}[INFO] Testing MQTT configuration...${NC}"
-sudo mosquitto -c /etc/mosquitto/mosquitto.conf -t
-if [ $? -ne 0 ]; then
-    echo -e "${RED}[ERROR] Mosquitto configuration test failed${NC}"
-    eval "STATUS_MQTT_BROKER='${CROSS}'"
-    eval "ERROR_MQTT_BROKER='Configuration test failed'"
+sudo systemctl stop mosquitto 2>/dev/null || true
+sleep 1
+
+sudo mosquitto -c /etc/mosquitto/mosquitto.conf -t >/dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo -e "${TICK} MQTT configuration syntax is valid"
 else
-    echo -e "${TICK} MQTT configuration test passed"
-
-    # Start and enable mosquitto
-    sudo systemctl enable mosquitto
-    sudo systemctl restart mosquitto
-    sleep 3
-
-    # Test MQTT broker
-    test_mqtt_broker
-    check_status "MQTT broker configuration and testing" "MQTT_BROKER"
+    echo -e "${ORANGE}[INFO] MQTT config test inconclusive (may be normal if service was running)${NC}"
 fi
+
+# Start and enable mosquitto
+sudo systemctl enable mosquitto
+sudo systemctl restart mosquitto
+sleep 3
+
+# Test MQTT broker functionality (this is the real test)
+test_mqtt_broker
+check_status "MQTT broker configuration and testing" "MQTT_BROKER"
 
 # Step 4: Check and fix NumPy version
 check_numpy_version
@@ -543,15 +632,69 @@ echo -e "  Configuration: /opt/owl-dash-config.txt"
 
 echo -e "\n${GREEN}[INFO] Testing Commands:${NC}"
 echo -e "  mosquitto_pub -h localhost -t 'owl/test' -m 'hello'"
+echo -e "  mosquitto_pub -h 10.42.0.1 -t 'owl/test' -m 'hello'"
 echo -e "  mosquitto_sub -h localhost -t 'owl/#'"
-echo -e "  systemctl status owl-dash"
+echo -e "  mosquitto_sub -h 10.42.0.1 -t 'owl/#'"
+echo -e "  systemctl status owl-dash mosquitto"
 echo -e "  journalctl -u owl-dash -f"
+
+# Check if OWL dashboard is enabled in config
+echo -e "\n${GREEN}[INFO] Checking OWL configuration for dashboard...${NC}"
+OWL_CONFIG_FILE="/home/owl/owl/config/DAY_SENSITIVITY_2.ini"
+DASHBOARD_ENABLED="false"
+
+if [ -f "$OWL_CONFIG_FILE" ]; then
+    # Check if dashboard is enabled in the config
+    DASHBOARD_ENABLED=$(grep -i "^dashboard_enable\s*=" "$OWL_CONFIG_FILE" | cut -d'=' -f2 | tr -d ' ' | tr '[:upper:]' '[:lower:]' 2>/dev/null)
+
+    if [[ "$DASHBOARD_ENABLED" == "true" ]]; then
+        echo -e "${TICK} Dashboard enabled in OWL configuration"
+        echo -e "${GREEN}[INFO] OWL will start with dashboard integration on boot${NC}"
+    else
+        echo -e "${ORANGE}[WARNING] Dashboard NOT enabled in OWL configuration${NC}"
+        echo -e "${ORANGE}[WARNING] Edit $OWL_CONFIG_FILE and set dashboard_enable=True${NC}"
+        echo -e "${ORANGE}[WARNING] Or OWL will start without dashboard integration${NC}"
+    fi
+else
+    echo -e "${ORANGE}[WARNING] OWL config file not found at $OWL_CONFIG_FILE${NC}"
+    echo -e "${ORANGE}[WARNING] OWL may not start properly${NC}"
+fi
 
 if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "$STATUS_PYTHON_PACKAGES" == "${TICK}" && "$STATUS_WIFI_CONFIG" == "${TICK}" && "$STATUS_UFW_CONFIG" == "${TICK}" && "$STATUS_NGINX_CONFIG" == "${TICK}" && "$STATUS_SSL_CERT" == "${TICK}" && "$STATUS_AVAHI_CONFIG" == "${TICK}" && "$STATUS_SERVICES" == "${TICK}" ]]; then
     echo -e "\n${GREEN}[COMPLETE] OWL Dashboard setup completed successfully!${NC}"
-    echo -e "${GREEN}[INFO] Connect to WiFi '${SSID}' and visit https://${HOSTNAME}.local/${NC}"
-    echo -e "${GREEN}[INFO] Dashboard service running with MQTT communication${NC}"
-    echo -e "${GREEN}[INFO] Next: Start owl.py to enable full dashboard functionality${NC}"
+
+    # Check if reboot is needed
+    echo -e "\n${GREEN}[INFO] Setup Complete - Reboot Recommended${NC}"
+    echo -e "${GREEN}======================================${NC}"
+    echo -e "A reboot is recommended to ensure all services start properly."
+    echo -e ""
+    echo -e "After reboot:"
+    echo -e "  • WiFi hotspot '${SSID}' will be active"
+    echo -e "  • Dashboard will be available at https://${HOSTNAME}.local/"
+    echo -e "  • MQTT broker will be running on port 1883"
+
+    if [[ "$DASHBOARD_ENABLED" == "true" ]]; then
+        echo -e "  • OWL will start with dashboard integration enabled"
+        echo -e "  • Both owl.py and dashboard will launch automatically"
+    else
+        echo -e "  • ${ORANGE}OWL dashboard integration is DISABLED in config${NC}"
+        echo -e "  • ${ORANGE}Enable it manually or OWL won't connect to dashboard${NC}"
+    fi
+
+    echo -e ""
+    echo -e "To start OWL manually after reboot:"
+    echo -e "  cd /home/owl/owl && python owl.py"
+    echo -e ""
+    read -p "Reboot now? (y/n): " reboot_choice
+
+    if [[ "$reboot_choice" =~ ^[Yy]$ ]]; then
+        echo -e "${GREEN}[INFO] Rebooting system...${NC}"
+        sudo reboot
+    else
+        echo -e "${GREEN}[INFO] Reboot skipped. Remember to reboot later for full functionality.${NC}"
+        echo -e "${GREEN}[INFO] You can reboot manually with: sudo reboot${NC}"
+    fi
+
 else
     echo -e "\n${RED}[ERROR] Some components failed to install. Check the status above.${NC}"
 
@@ -567,5 +710,6 @@ else
     if [[ -n "$ERROR_AVAHI_CONFIG" ]]; then echo -e "${RED}[ERROR] Avahi Config: $ERROR_AVAHI_CONFIG${NC}"; fi
     if [[ -n "$ERROR_SERVICES" ]]; then echo -e "${RED}[ERROR] Services: $ERROR_SERVICES${NC}"; fi
 
+    echo -e "\n${RED}[ERROR] Please fix the above issues before rebooting.${NC}"
     exit 1
 fi

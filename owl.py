@@ -340,6 +340,7 @@ class Owl:
     def hoot(self):
         self.record_video = False  # Flag to control video recording
         self.video_writer = None
+        image_out = None
 
         algorithm = self.config.get('System', 'algorithm')
         log_fps = self.config.getboolean('DataCollection', 'log_fps')
@@ -397,11 +398,6 @@ class Owl:
                         self.stop()
                         break
 
-                if self.dash:
-                    try:
-                        self.dash.update_frame(frame)
-                    except Exception as e:
-                        self.logger.error(f"Error sending frame to dashboard: {e}")
 
                 # retrieve the trackbar positions for thresholds
                 if self.show_display:
@@ -461,6 +457,17 @@ class Owl:
                                         delay=delay,
                                         time_stamp=actuation_time,
                                         duration=actuation_duration)
+
+                ##### Update Dashboard Stream #####
+                if self.dash and frame_count % 5 == 0: # send every 5th frame to the streamer to reduce overhead
+                    try:
+                        if self._detection_enable:
+                            self.dash.update_frame(image_out)
+
+                        else:
+                            self.dash.update_frame(frame)
+                    except Exception as e:
+                        self.logger.error(f"Error sending frame to dashboard: {e}")
 
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often
