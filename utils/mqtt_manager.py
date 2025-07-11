@@ -255,9 +255,6 @@ class MQTTServer:
                 cv2.setTrackbarPos("Bright-Min", self.owl_instance.window_name, self.owl_instance.brightness_min)
                 cv2.setTrackbarPos("Bright-Max", self.owl_instance.window_name, self.owl_instance.brightness_max)
 
-            sensitivity_name = "Low" if is_low_sensitivity else "High"
-            self.logger.info(f"Applied {sensitivity_name} sensitivity config from: {config_file}")
-
         except Exception as e:
             self.logger.error(f"Error applying sensitivity config: {e}")
 
