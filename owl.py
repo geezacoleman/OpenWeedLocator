@@ -422,6 +422,12 @@ class Owl:
                             filter_id=63
                         )
                     else:
+                        if self.show_display or self.dash:
+                            return_image_out = True
+
+                        else:
+                            return_image_out = False
+
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
                             frame,
                             exg_min=self.exg_min,
@@ -432,7 +438,7 @@ class Owl:
                             saturation_max=self.saturation_max,
                             brightness_min=self.brightness_min,
                             brightness_max=self.brightness_max,
-                            show_display=self.show_display,
+                            show_display=return_image_out,
                             algorithm=algorithm,
                             min_detection_area=min_detection_area,
                             invert_hue=invert_hue,
@@ -442,7 +448,7 @@ class Owl:
                     if len(weed_centres) > 0:
                         if self.dash:
                             self.dash.weed_detect_indicator()
-                        elif self.controller:
+                        if self.controller:
                             self.controller.weed_detect_indicator()
 
                     # loop over the weed centres
