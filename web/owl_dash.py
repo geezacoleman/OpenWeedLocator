@@ -220,13 +220,13 @@ class OWLDashboard:
 
             def generate():
                 last_frame_time = 0
-                frame_interval = 0.1  # 10 FPS max
+                frame_interval = 0.1
 
                 while True:
                     try:
                         current_time = time.time()
                         if current_time - last_frame_time < frame_interval:
-                            time.sleep(0.05)  # Small delay to prevent CPU spinning
+                            time.sleep(0.05)
                             continue
 
                         frame = None
@@ -359,7 +359,6 @@ class OWLDashboard:
 
         @self.app.route('/api/system_stats')
         def system_stats():
-            # Get MQTT state
             mqtt_state = {}
             if self.mqtt_client:
                 mqtt_state = self.mqtt_client.get_state()

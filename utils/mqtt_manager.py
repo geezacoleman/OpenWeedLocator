@@ -67,6 +67,7 @@ class MQTTServer:
 
         self.last_sensitivity_state = False
         self.monitoring_thread = None
+        self.heartbeat_thread = None
 
         self.last_frame_time = 0
         self.frame_interval = 0.1
@@ -97,6 +98,9 @@ class MQTTServer:
 
             with self.state_lock:
                 self.state['owl_running'] = True
+
+            self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+            self.heartbeat_thread.start()
 
             self.monitoring_thread = threading.Thread(target=self._monitor_states, daemon=True)
             self.monitoring_thread.start()
@@ -223,6 +227,16 @@ class MQTTServer:
             except Exception as e:
                 self.logger.error(f"Error in MQTT monitoring: {e}")
                 time.sleep(1)
+
+    def _heartbeat_loop(self):
+        while self.running:
+            try:
+                # Publish state every 2 seconds as heartbeat
+                self._publish_state()
+                time.sleep(2.0)
+            except Exception as e:
+                self.logger.error(f"Heartbeat error: {e}")
+                time.sleep(5.0)
 
     def _apply_sensitivity_config_change(self, is_low_sensitivity):
         if not self.owl_instance or not self.low_sensitivity_config or not self.high_sensitivity_config:
@@ -431,6 +445,9 @@ class MQTTClient:
         self.last_weed_detect = 0
         self.last_image_write = 0
 
+        self.last_heartbeat = 0
+        self.heartbeat_timeout = 5.0
+
         # Callbacks
         self.frame_callback: Optional[Callable] = None
 
@@ -495,6 +512,7 @@ class MQTTClient:
         if topic == self.topics['state']:
             with self.state_lock:
                 self.current_state = data
+                self.last_heartbeat = time.time()
 
         elif topic == self.topics['frames']:
             self._handle_frame(data)
@@ -551,6 +569,10 @@ class MQTTClient:
     def get_state(self):
         """Get current state"""
         with self.state_lock:
+            current_time = time.time()
+            if current_time - self.last_heartbeat > self.heartbeat_timeout:
+                self.current_state['owl_running'] = False
+
             return self.current_state.copy()
 
     def get_weed_detect_indicator(self):
