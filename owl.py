@@ -633,6 +633,7 @@ class Owl:
                     self.relay_controller.relay.all_off()  # Ensure all relays are off
                 except Exception as e:
                     self.logger.warning(f"Failed to turn off relays: {e}")
+
             # Stop state update thread
             if hasattr(self, 'stop_state_update'):
                 self.stop_state_update.set()

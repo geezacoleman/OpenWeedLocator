@@ -236,8 +236,6 @@ class OWLDashboard:
                         if frame is None:
                             frame = self.generate_placeholder_frame()
 
-                        frame = self.add_frame_overlay(frame)
-
                         h, w = frame.shape[:2]
                         if w > 480:
                             scale = 480 / w
@@ -765,34 +763,6 @@ class OWLDashboard:
                     'hardware_active': False,
                     'error': str(e)
                 })
-
-    def add_frame_overlay(self, frame):
-        """Add overlay information to frame (including indicators)"""
-        height, width = frame.shape[:2]
-
-        # Get current state
-        mqtt_state = {}
-        if self.mqtt_client:
-            mqtt_state = self.mqtt_client.get_state()
-
-        # Timestamp
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        cv2.putText(frame, timestamp, (10, height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-
-        # System status
-        detection_status = "ON" if mqtt_state.get('detection_enable', False) else "OFF"
-        recording_status = "ON" if mqtt_state.get('image_sample_enable', False) else "OFF"
-        sensitivity_status = "LOW" if mqtt_state.get('sensitivity_state', False) else "HIGH"
-
-        # Status text with colors
-        cv2.putText(frame, f"Detection: {detection_status}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
-                    (0, 255, 0) if mqtt_state.get('detection_enable', False) else (0, 0, 255), 1)
-        cv2.putText(frame, f"Recording: {recording_status}", (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
-                    (0, 255, 0) if mqtt_state.get('image_sample_enable', False) else (0, 0, 255), 1)
-        cv2.putText(frame, f"Sensitivity: {sensitivity_status}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
-                    (255, 255, 255), 1)
-
-        return frame
 
     def generate_placeholder_frame(self):
         """Generate placeholder frame when OWL is not running"""
