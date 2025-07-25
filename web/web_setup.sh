@@ -220,6 +220,14 @@ collect_user_input() {
 # Step 1: Collect configuration from user
 collect_user_input
 
+echo -e "${GREEN}[INFO] If you are using a wifi connection to access the Pi over SSH or for internet, your network connection will be replaced with the new OWL-WIFI hotspot.${NC}"
+echo -e "${ORANGE}[WARNING] Make sure you have physical access to the Pi in case of issues${NC}"
+read -p "Do you want to continue? (y/n): " network_warning
+if [[ ! "$network_warning" =~ ^[Yy]$ ]]; then
+    echo -e "${RED}[ERROR] Setup cancelled by user.${NC}"
+    exit 1
+fi
+
 # Step 2: Install system packages
 echo -e "${GREEN}[INFO] Installing required system packages...${NC}"
 sudo apt update
