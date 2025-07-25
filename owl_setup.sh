@@ -45,6 +45,9 @@ STATUS_BOOT_SCRIPTS=""
 STATUS_DESKTOP_ICON=""
 STATUS_DASHBOARD_DEPS=""
 STATUS_DASHBOARD=""
+STATUS_GLOBAL_NUMPY=""
+STATUS_NUMPY_COMPAT=""
+STATUS_OPT_LIBS=""
 
 ERROR_UPGRADE=""
 ERROR_CAMERA=""
@@ -57,6 +60,9 @@ ERROR_BOOT_SCRIPTS=""
 ERROR_DESKTOP_ICON=""
 ERROR_DASHBOARD_DEPS=""
 ERROR_DASHBOARD=""
+ERROR_GLOBAL_NUMPY=""
+ERROR_NUMPY_COMPAT=""
+ERROR_OPT_LIBS=""
 
 # Function to check the exit status of the last executed command
 check_status() {
@@ -181,14 +187,35 @@ check_status "Creating virtual environment 'owl'" "VENV"
 
 sleep 1s
 
+echo -e "${GREEN}[INFO] Detecting global NumPy version for compatibility...${NC}"
+GLOBAL_NUMPY_VERSION=""
+GLOBAL_NUMPY_VERSION=$(apt show python3-numpy 2>/dev/null | grep Version: | awk '{print $2}')
+
+if [ -n "$GLOBAL_NUMPY_VERSION" ]; then
+    echo -e "${TICK} Detected global NumPy version: ${GLOBAL_NUMPY_VERSION}${NC}"
+    STATUS_GLOBAL_NUMPY="${TICK}"
+else
+    echo -e "${ORANGE}[WARNING] Could not detect global python3-numpy version. Assuming 1.24.x for compatibility.${NC}"
+    GLOBAL_NUMPY_VERSION="1.24.2"
+    STATUS_GLOBAL_NUMPY="${ORANGE}[WARN]${NC}"
+    ERROR_GLOBAL_NUMPY="Could not detect global python3-numpy version."
+fi
+
+echo -e "${GREEN}[INFO] Installing optimized BLAS/LAPACK libraries for NumPy/OpenCV...${NC}"
+sudo apt-get install -y libatlas-base-dev libopenblas-dev liblapack-dev
+check_status "Installing optimized linear algebra libraries" "OPT_LIBS"
+
 # Step 7: Install OpenCV in the virtual environment
-echo -e "${GREEN}[INFO] Installing OpenCV in the 'owl' virtual environment...${NC}"
+echo -e "${GREEN}[INFO] Installing opencv-contrib-python in the 'owl' virtual environment...${NC}"
 source $HOME/.virtualenvs/owl/bin/activate
 sleep 1s
-pip3 install opencv-contrib-python
-check_status "Installing OpenCV" "OPENCV"
+pip install opencv-contrib-python
+check_status "Installing opencv-contrib-python" "OPENCV"
 
-sleep 1s
+# Dynamically downgrade NumPy in the virtual environment to match the global version
+echo -e "${GREEN}[INFO] Downgrading NumPy in 'owl' venv to match global version (${GLOBAL_NUMPY_VERSION})...${NC}"
+pip install numpy=="${GLOBAL_NUMPY_VERSION}"
+check_status "Downgrading NumPy to match global version" "NUMPY_COMPAT"
 
 # Step 8: Install OWL dependencies
 echo -e "${GREEN}[INFO] Installing the OWL Python dependencies...${NC}"
@@ -290,7 +317,10 @@ if [[ -n "$STATUS_FULL_UPGRADE" ]]; then
 fi
 
 echo -e "$STATUS_VENV Virtual Environment Created"
+echo -e "$STATUS_GLOBAL_NUMPY Global NumPy Version Detected"
+echo -e "$STATUS_OPT_LIBS Optimized Linear Algebra Libraries Installed"
 echo -e "$STATUS_OPENCV OpenCV Installed"
+echo -e "$STATUS_NUMPY_COMPAT NumPy Versions Aligned"
 echo -e "$STATUS_OWL_DEPS OWL Dependencies Installed"
 echo -e "$STATUS_BOOT_SCRIPTS Boot Scripts Moved"
 echo -e "$STATUS_DESKTOP_ICON Desktop Icon Created"

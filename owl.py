@@ -70,9 +70,7 @@ try:
     from utils.frame_reader import FrameReader
     from utils.config_manager import ConfigValidator
     from utils.log_manager import LogManager
-    from utils.mqtt_manager import MQTTServer
     import utils.error_manager as errors
-
     from version import SystemInfo, VERSION
 
 except ImportError as e:
@@ -180,6 +178,7 @@ class Owl:
         self.dash = None
         if self.config.getboolean('Dashboard', 'dashboard_enable', fallback=False):
             try:
+                from utils.mqtt_manager import MQTTServer
                 self.dash = MQTTServer(
                     broker_host='localhost',
                     broker_port=1883,
