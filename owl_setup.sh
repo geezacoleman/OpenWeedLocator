@@ -43,6 +43,7 @@ STATUS_OPENCV=""
 STATUS_OWL_DEPS=""
 STATUS_BOOT_SCRIPTS=""
 STATUS_DESKTOP_ICON=""
+STATUS_DASHBOARD_DEPS=""
 STATUS_DASHBOARD=""
 
 ERROR_UPGRADE=""
@@ -54,6 +55,7 @@ ERROR_OPENCV=""
 ERROR_OWL_DEPS=""
 ERROR_BOOT_SCRIPTS=""
 ERROR_DESKTOP_ICON=""
+ERROR_DASHBOARD_DEPS=""
 ERROR_DASHBOARD=""
 
 # Function to check the exit status of the last executed command
@@ -75,6 +77,26 @@ reload_bashrc() {
         source ~/.bashrc
         sleep 2
     fi
+}
+
+install_dashboard_dependencies() {
+  echo -e "${GREEN}[INFO] Installing dashboard Python dependencies...${NC}"
+  source $HOME/.virtualenvs/owl/bin/activate
+  pip install flask gunicorn paho-mqtt psutil boto3
+  check_status "Installing dashboard Python dependencies" "DASHBOARD_DEPS"
+
+  echo -e "${GREEN}[INFO] Verifying Python package installations...${NC}"
+  FLASK_VERSION=$(python -c "import flask; print(flask.__version__)" 2>/dev/null)
+  GUNICORN_VERSION=$(python -c "import gunicorn; print(gunicorn.__version__)" 2>/dev/null)
+  PAHO_VERSION=$(python -c "import paho.mqtt.client; print('installed')" 2>/dev/null)
+
+  if [[ -n "$FLASK_VERSION" && -n "$GUNICORN_VERSION" && "$PAHO_VERSION" == "installed" ]]; then
+      echo -e "${TICK} Flask: $FLASK_VERSION, Gunicorn: $GUNICORN_VERSION, Paho-MQTT: installed"
+      check_status "Verifying Python dependencies" "DASHBOARD_DEPS"
+  else
+      echo -e "${CROSS} Some Python packages failed to install"
+      check_status "Verifying Python dependencies" "DASHBOARD_DEPS"
+  fi
 }
 
 # Function to check if the camera is detected
@@ -236,6 +258,7 @@ case "$dashboard_choice" in
   y|Y )
     echo -e "${GREEN}[INFO] Setting up OWL Dashboard...${NC}"
     if [ -f "${SCRIPT_DIR}/web/web_setup.sh" ]; then
+      install_dashboard_dependencies
       chmod +x "${SCRIPT_DIR}/web/web_setup.sh"
       cd "$SCRIPT_DIR"  # Ensure we're in the right directory
       sudo "${SCRIPT_DIR}/web/web_setup.sh"
@@ -273,6 +296,7 @@ echo -e "$STATUS_BOOT_SCRIPTS Boot Scripts Moved"
 echo -e "$STATUS_DESKTOP_ICON Desktop Icon Created"
 
 if [[ "$STATUS_DASHBOARD" == "${TICK}" ]]; then
+    echo -e "$STATUS_DASHBOARD_DEPS Dashboard Python dependencies installed"
     echo -e "$STATUS_DASHBOARD Web Dashboard Configured"
 elif [[ "$STATUS_DASHBOARD" == "SKIPPED" ]]; then
     echo -e "${ORANGE}[SKIPPED]${NC} Web Dashboard"

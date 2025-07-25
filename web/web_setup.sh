@@ -23,8 +23,6 @@ fi
 # Initialize status tracking variables
 STATUS_PACKAGES=""
 STATUS_MQTT_BROKER=""
-STATUS_PYTHON_PACKAGES=""
-STATUS_NUMPY_VERSION=""
 STATUS_WIFI_CONFIG=""
 STATUS_UFW_CONFIG=""
 STATUS_NGINX_CONFIG=""
@@ -34,8 +32,6 @@ STATUS_SERVICES=""
 
 ERROR_PACKAGES=""
 ERROR_MQTT_BROKER=""
-ERROR_PYTHON_PACKAGES=""
-ERROR_NUMPY_VERSION=""
 ERROR_WIFI_CONFIG=""
 ERROR_UFW_CONFIG=""
 ERROR_NGINX_CONFIG=""
@@ -55,162 +51,124 @@ check_status() {
     eval "STATUS_$2='${TICK}'"
   fi
 }
+test_mqtt_broker() {
+    echo -e "${GREEN}[INFO] Testing MQTT broker...${NC}"
+    local mqtt_test_passed=false
+    local warnings=()
 
-# Function to check NumPy version and detect conflicts
-check_numpy_version() {
-    echo -e "${GREEN}[INFO] Checking NumPy installation...${NC}"
-
-    # Check for multiple NumPy installations
-    echo -e "${GREEN}[INFO] Detecting NumPy installations...${NC}"
-    NUMPY_LOCATIONS=$(sudo -u owl /home/owl/.virtualenvs/owl/bin/python -c "
-import sys
-import pkg_resources
-numpy_dists = [d for d in pkg_resources.working_set if d.project_name.lower() == 'numpy']
-if len(numpy_dists) > 1:
-    print('MULTIPLE')
-    for dist in numpy_dists:
-        print(f'{dist.version} at {dist.location}')
-elif len(numpy_dists) == 1:
-    print('SINGLE')
-    print(f'{numpy_dists[0].version}')
-else:
-    print('NONE')
-" 2>/dev/null)
-
-    if [ $? -ne 0 ]; then
-        echo -e "${ORANGE}[WARNING] NumPy detection failed. This may cause issues with OpenCV.${NC}"
-        eval "STATUS_NUMPY_VERSION='${ORANGE}[WARN]${NC}'"
-        eval "ERROR_NUMPY_VERSION='NumPy detection failed'"
+    # Test 1: Check if mosquitto service is running
+    if systemctl is-active --quiet mosquitto; then
+        echo -e "${TICK} Mosquitto service is running"
+    else
+        echo -e "${CROSS} Mosquitto service is not running"
         return 1
     fi
 
-    FIRST_LINE=$(echo "$NUMPY_LOCATIONS" | head -n 1)
-
-    if [[ "$FIRST_LINE" == "MULTIPLE" ]]; then
-        echo -e "${RED}[ERROR] Multiple NumPy installations detected!${NC}"
-        echo -e "${RED}This causes conflicts and camera access issues.${NC}"
-        echo "$NUMPY_LOCATIONS" | tail -n +2
-
-        echo -e "${GREEN}[INFO] Completely removing all NumPy installations...${NC}"
-
-        # Uninstall all NumPy packages
-        sudo -u owl /home/owl/.virtualenvs/owl/bin/pip uninstall numpy -y 2>/dev/null || true
-
-        # Clean up any remaining numpy files
-        sudo -u owl find /home/owl/.virtualenvs/owl -name "*numpy*" -type d -exec rm -rf {} + 2>/dev/null || true
-
-        # Reinstall compatible NumPy version for current OpenCV
-        echo -e "${GREEN}[INFO] Installing compatible NumPy version...${NC}"
-
-        # Check OpenCV version to determine compatible NumPy
-        OPENCV_VERSION=$(sudo -u owl /home/owl/.virtualenvs/owl/bin/python -c "import cv2; print(cv2.__version__)" 2>/dev/null)
-
-        if [[ "$OPENCV_VERSION" =~ ^4\.1[2-9] ]] || [[ "$OPENCV_VERSION" =~ ^4\.[2-9] ]]; then
-            # OpenCV 4.12+ supports NumPy 2.x
-            echo -e "${GREEN}[INFO] OpenCV $OPENCV_VERSION detected - installing NumPy 2.x${NC}"
-            sudo -u owl /home/owl/.virtualenvs/owl/bin/pip install "numpy>=2.0,<3.0"
-        else
-            # Older OpenCV versions need NumPy 1.x
-            echo -e "${GREEN}[INFO] OpenCV $OPENCV_VERSION detected - installing NumPy 1.x${NC}"
-            sudo -u owl /home/owl/.virtualenvs/owl/bin/pip install "numpy>=1.21,<2.0"
-        fi
-
-        if [ $? -eq 0 ]; then
-            NEW_NUMPY_VERSION=$(sudo -u owl /home/owl/.virtualenvs/owl/bin/python -c "import numpy; print(numpy.__version__)" 2>/dev/null)
-            echo -e "${TICK} NumPy conflicts resolved - installed version $NEW_NUMPY_VERSION"
-            eval "STATUS_NUMPY_VERSION='${TICK}'"
-        else
-            echo -e "${CROSS} Failed to resolve NumPy conflicts"
-            eval "STATUS_NUMPY_VERSION='${CROSS}'"
-            eval "ERROR_NUMPY_VERSION='Failed to resolve multiple NumPy installations'"
-            return 1
-        fi
-
-    elif [[ "$FIRST_LINE" == "SINGLE" ]]; then
-        NUMPY_VERSION=$(echo "$NUMPY_LOCATIONS" | tail -n 1)
-        echo -e "${TICK} Single NumPy installation detected: version $NUMPY_VERSION"
-        eval "STATUS_NUMPY_VERSION='${TICK}'"
-
-    elif [[ "$FIRST_LINE" == "NONE" ]]; then
-        echo -e "${ORANGE}[WARNING] NumPy not installed. Installing compatible version...${NC}"
-
-        # Install appropriate NumPy version
-        OPENCV_VERSION=$(sudo -u owl /home/owl/.virtualenvs/owl/bin/python -c "import cv2; print(cv2.__version__)" 2>/dev/null)
-
-        if [[ "$OPENCV_VERSION" =~ ^4\.1[2-9] ]] || [[ "$OPENCV_VERSION" =~ ^4\.[2-9] ]]; then
-            sudo -u owl /home/owl/.virtualenvs/owl/bin/pip install "numpy>=2.0,<3.0"
-        else
-            sudo -u owl /home/owl/.virtualenvs/owl/bin/pip install "numpy>=1.21,<2.0"
-        fi
-
-        if [ $? -eq 0 ]; then
-            NEW_NUMPY_VERSION=$(sudo -u owl /home/owl/.virtualenvs/owl/bin/python -c "import numpy; print(numpy.__version__)" 2>/dev/null)
-            echo -e "${TICK} NumPy installed: version $NEW_NUMPY_VERSION"
-            eval "STATUS_NUMPY_VERSION='${TICK}'"
-        else
-            echo -e "${CROSS} Failed to install NumPy"
-            eval "STATUS_NUMPY_VERSION='${CROSS}'"
-            eval "ERROR_NUMPY_VERSION='Failed to install NumPy'"
-            return 1
-        fi
+    # Test 2: Check if mosquitto is listening on port 1883
+    if netstat -tln 2>/dev/null | grep -q ":1883 "; then
+        echo -e "${TICK} Mosquitto is listening on port 1883"
+    elif ss -tln 2>/dev/null | grep -q ":1883 "; then
+        echo -e "${TICK} Mosquitto is listening on port 1883"
+    else
+        echo -e "${CROSS} Mosquitto is not listening on port 1883"
+        return 1
     fi
 
-    # Final verification - test import
-    echo -e "${GREEN}[INFO] Verifying NumPy installation...${NC}"
-    sudo -u owl /home/owl/.virtualenvs/owl/bin/python -c "
-import numpy as np
-import cv2
-print(f'NumPy {np.__version__} imported successfully')
-print(f'OpenCV {cv2.__version__} imported successfully')
-print('Camera access test...')
-# Quick camera test
-try:
-    cap = cv2.VideoCapture(0)
-    if cap.isOpened():
-        print('Camera access: OK')
-        cap.release()
-    else:
-        print('Camera access: Failed to open')
-except Exception as e:
-    print(f'Camera access: Error - {e}')
-" 2>/dev/null
+    # Test 3: Test local connection (localhost) - this should always work
+    echo -e "${GREEN}[INFO] Testing local MQTT connection...${NC}"
+    for attempt in 1 2 3; do
+        if timeout 5 mosquitto_pub -h localhost -t "test/owl/setup" -m "test_local_$attempt" 2>/dev/null; then
+            echo -e "${TICK} Local MQTT connection successful (attempt $attempt)"
+            mqtt_test_passed=true
+            break
+        else
+            if [ $attempt -eq 3 ]; then
+                echo -e "${CROSS} Local MQTT connection failed after 3 attempts"
+                return 1  # This is a hard failure - localhost should always work
+            else
+                echo -e "${ORANGE}[INFO] Local connection attempt $attempt failed, retrying...${NC}"
+                sleep 2
+            fi
+        fi
+    done
 
-    if [ $? -eq 0 ]; then
-        echo -e "${TICK} NumPy and OpenCV verification passed"
+    # Test 4: Test network connection (hotspot IP) - this can be flaky due to timing
+    echo -e "${GREEN}[INFO] Testing network MQTT connection (10.42.0.1)...${NC}"
+    local network_test_passed=false
+
+    # First check if the interface is up
+    if ip addr show | grep -q "10.42.0.1"; then
+        echo -e "${TICK} Hotspot interface (10.42.0.1) is configured"
+
+        # Test network connection with multiple attempts
+        for attempt in 1 2 3; do
+            if timeout 5 mosquitto_pub -h 10.42.0.1 -t "test/owl/setup" -m "test_network_$attempt" 2>/dev/null; then
+                echo -e "${TICK} Network MQTT connection successful (attempt $attempt)"
+                network_test_passed=true
+                break
+            else
+                if [ $attempt -eq 3 ]; then
+                    warnings+=("Network MQTT connection failed - may work after reboot when hotspot is fully active")
+                    echo -e "${ORANGE}[WARNING] Network MQTT connection failed - this may be normal during setup${NC}"
+                else
+                    echo -e "${ORANGE}[INFO] Network connection attempt $attempt failed, retrying...${NC}"
+                    sleep 3
+                fi
+            fi
+        done
     else
-        echo -e "${ORANGE}[WARNING] NumPy/OpenCV verification failed - camera issues may occur${NC}"
+        warnings+=("Hotspot interface not yet configured - network MQTT will be available after reboot")
+        echo -e "${ORANGE}[WARNING] Hotspot interface not ready - network access will work after reboot${NC}"
+    fi
+
+    # Test 5: Check configuration file
+    if [ -f "/etc/mosquitto/conf.d/owl.conf" ]; then
+        if grep -q "allow_anonymous true" /etc/mosquitto/conf.d/owl.conf &&
+           grep -q "listener 1883 0.0.0.0" /etc/mosquitto/conf.d/owl.conf; then
+            echo -e "${TICK} MQTT configuration file is correct"
+        else
+            echo -e "${CROSS} MQTT configuration file has issues"
+            return 1
+        fi
+    else
+        echo -e "${CROSS} MQTT configuration file missing"
+        return 1
+    fi
+
+    # Summary
+    if [ "$mqtt_test_passed" = true ]; then
+        echo -e "${TICK} MQTT broker core functionality verified"
+
+        if [ ${#warnings[@]} -gt 0 ]; then
+            echo -e "${ORANGE}[INFO] MQTT Setup Notes:${NC}"
+            for warning in "${warnings[@]}"; do
+                echo -e "${ORANGE}  • $warning${NC}"
+            done
+        fi
+
+        return 0
+    else
+        echo -e "${CROSS} MQTT broker failed core functionality tests"
+        return 1
     fi
 }
 
-# Function to test MQTT broker
-test_mqtt_broker() {
-    echo -e "${GREEN}[INFO] Testing MQTT broker...${NC}"
+final_mqtt_validation() {
+    echo -e "${GREEN}[INFO] Final MQTT connectivity validation...${NC}"
 
-    # Test if mosquitto is running
-    if systemctl is-active --quiet mosquitto; then
-        echo -e "${TICK} Mosquitto broker is running"
-
-        # Test local connection
-        timeout 5 mosquitto_pub -h localhost -t "test/owl/setup" -m "test message" 2>/dev/null
-        if [ $? -eq 0 ]; then
-            echo -e "${TICK} MQTT broker accepting local connections"
-        else
-            echo -e "${ORANGE}[WARNING] MQTT broker may not be accepting local connections${NC}"
-            return 1
-        fi
-
-        # Test network connection (hotspot IP)
-        timeout 5 mosquitto_pub -h 10.42.0.1 -t "test/owl/setup" -m "test message" 2>/dev/null
-        if [ $? -eq 0 ]; then
-            echo -e "${TICK} MQTT broker accepting network connections"
-            return 0
-        else
-            echo -e "${ORANGE}[WARNING] MQTT broker may not be accepting network connections${NC}"
-            return 1
-        fi
+    # Test local connection (this should work reliably)
+    if timeout 3 mosquitto_pub -h localhost -t "owl/test/setup" -m "setup_complete" 2>/dev/null; then
+        echo -e "${TICK} MQTT broker ready for OWL communication"
     else
-        echo -e "${CROSS} Mosquitto broker is not running"
-        return 1
+        echo -e "${ORANGE}[WARNING] Final MQTT test failed - check logs after reboot: journalctl -u mosquitto${NC}"
+        # Don't return failure here - just warn
+    fi
+
+    # Test network connection (informational only)
+    if timeout 3 mosquitto_pub -h 10.42.0.1 -t "owl/test/setup" -m "setup_complete" 2>/dev/null; then
+        echo -e "${TICK} MQTT broker ready for network clients"
+    else
+        echo -e "${ORANGE}[INFO] Network MQTT test failed - this is normal during setup, it should work after a reboot${NC}"
     fi
 }
 
@@ -265,8 +223,8 @@ collect_user_input
 # Step 2: Install system packages
 echo -e "${GREEN}[INFO] Installing required system packages...${NC}"
 sudo apt update
-sudo apt install -y nginx ufw openssl avahi-daemon mosquitto mosquitto-clients
-check_status "Installing system packages (nginx, ufw, openssl, avahi-daemon, mosquitto)" "PACKAGES"
+sudo apt install -y nginx ufw openssl avahi-daemon mosquitto mosquitto-clients net-tools
+check_status "Installing system packages (nginx, ufw, openssl, avahi-daemon, mosquitto, net-tools)" "PACKAGES"
 
 # Step 3: Configure and test MQTT broker
 echo -e "${GREEN}[INFO] Configuring MQTT broker...${NC}"
@@ -297,40 +255,31 @@ fi
 
 # Start and enable mosquitto
 sudo systemctl enable mosquitto
+echo -e "${GREEN}[INFO] Restarting MQTT service...${NC}"
 sudo systemctl restart mosquitto
-sleep 3
+
+# Wait for service to be fully ready
+echo -e "${GREEN}[INFO] Waiting for MQTT service to stabilize...${NC}"
+for i in {1..10}; do
+    if systemctl is-active --quiet mosquitto; then
+        sleep 2
+        break
+    fi
+    sleep 1
+done
+
+if ! systemctl is-active --quiet mosquitto; then
+    echo -e "${CROSS} MQTT service failed to start"
+    check_status "MQTT broker service startup" "MQTT_BROKER"
+else
+    echo -e "${TICK} MQTT service is running"
+fi
 
 # Test MQTT broker functionality (this is the real test)
 test_mqtt_broker
 check_status "MQTT broker configuration and testing" "MQTT_BROKER"
 
-# Step 4: Check and fix NumPy version
-check_numpy_version
-
-# Step 5: Install Python dependencies
-echo -e "${GREEN}[INFO] Installing Python dependencies...${NC}"
-
-# Install Flask, Gunicorn, and other web dependencies
-sudo -u owl /home/owl/.virtualenvs/owl/bin/pip install flask gunicorn psutil boto3
-
-# Install MQTT client
-sudo -u owl /home/owl/.virtualenvs/owl/bin/pip install paho-mqtt
-
-# Verify installations
-echo -e "${GREEN}[INFO] Verifying Python package installations...${NC}"
-FLASK_VERSION=$(sudo -u owl /home/owl/.virtualenvs/owl/bin/python -c "import flask; print(flask.__version__)" 2>/dev/null)
-GUNICORN_VERSION=$(sudo -u owl /home/owl/.virtualenvs/owl/bin/python -c "import gunicorn; print(gunicorn.__version__)" 2>/dev/null)
-PAHO_VERSION=$(sudo -u owl /home/owl/.virtualenvs/owl/bin/python -c "import paho.mqtt.client; print('installed')" 2>/dev/null)
-
-if [[ -n "$FLASK_VERSION" && -n "$GUNICORN_VERSION" && "$PAHO_VERSION" == "installed" ]]; then
-    echo -e "${TICK} Flask: $FLASK_VERSION, Gunicorn: $GUNICORN_VERSION, Paho-MQTT: installed"
-    check_status "Installing Python dependencies" "PYTHON_PACKAGES"
-else
-    echo -e "${CROSS} Some Python packages failed to install"
-    check_status "Installing Python dependencies" "PYTHON_PACKAGES"
-fi
-
-# Step 6: Configure WiFi hotspot with NetworkManager
+# Step 4: Configure WiFi hotspot with NetworkManager
 echo -e "${GREEN}[INFO] Setting up WiFi hotspot: ${SSID}...${NC}"
 
 # Remove existing connection if it exists
@@ -352,7 +301,7 @@ sudo nmcli connection modify "${SSID}" ipv6.method ignore
 sudo nmcli connection up "${SSID}"
 check_status "WiFi hotspot configuration" "WIFI_CONFIG"
 
-# Step 7: Configure UFW firewall
+# Step 5: Configure UFW firewall
 echo -e "${GREEN}[INFO] Configuring UFW firewall...${NC}"
 sudo ufw --force reset
 sudo ufw default deny incoming
@@ -373,7 +322,7 @@ sudo ufw allow from 10.42.0.0/24  # Allow all from hotspot network
 sudo ufw --force enable
 check_status "UFW firewall configuration" "UFW_CONFIG"
 
-# Step 8: Set hostname
+# Step 6: Set hostname
 echo -e "${GREEN}[INFO] Setting hostname to ${HOSTNAME}...${NC}"
 sudo hostnamectl set-hostname "${HOSTNAME}"
 check_status "Setting hostname" "WIFI_CONFIG"
@@ -385,7 +334,7 @@ echo "127.0.1.1 ${HOSTNAME}" | sudo tee -a /etc/hosts
 
 check_status "Setting hostname and local resolution" "WIFI_CONFIG"
 
-# Step 9: Generate SSL certificates
+# Step 7: Generate SSL certificates
 echo -e "${GREEN}[INFO] Generating SSL certificates...${NC}"
 sudo mkdir -p /etc/ssl/private
 sudo mkdir -p /etc/ssl/certs
@@ -402,7 +351,7 @@ sudo chmod 600 /etc/ssl/private/owl-dash.key
 sudo chmod 644 /etc/ssl/certs/owl-dash.crt
 check_status "SSL certificate generation" "SSL_CERT"
 
-# Step 10: Configure Nginx
+# Step 8: Configure Nginx
 echo -e "${GREEN}[INFO] Configuring Nginx...${NC}"
 
 # Remove default site
@@ -464,7 +413,7 @@ sudo ln -sf /etc/nginx/sites-available/owl-dash /etc/nginx/sites-enabled/owl-das
 sudo nginx -t
 check_status "Nginx configuration" "NGINX_CONFIG"
 
-# Step 11: Configure Avahi for .local domain
+# Step 9: Configure Avahi for .local domain
 echo -e "${GREEN}[INFO] Configuring Avahi for .local domain resolution...${NC}"
 
 # Create Avahi service file
@@ -490,7 +439,7 @@ EOF
 
 check_status "Avahi service configuration" "AVAHI_CONFIG"
 
-# Step 12: Start and enable services
+# Step 10: Start and enable services
 echo -e "${GREEN}[INFO] Starting and enabling services...${NC}"
 sudo systemctl enable avahi-daemon mosquitto nginx
 sudo systemctl start avahi-daemon
@@ -498,7 +447,7 @@ sudo systemctl restart mosquitto
 sudo systemctl restart nginx
 check_status "Starting services" "SERVICES"
 
-# Step 13: Create systemd service for OWL Dashboard
+# Step 11: Create systemd service for OWL Dashboard
 echo -e "${GREEN}[INFO] Creating systemd service for OWL Dashboard...${NC}"
 sudo tee /etc/systemd/system/owl-dash.service > /dev/null <<EOF
 [Unit]
@@ -541,7 +490,7 @@ else
     check_status "Creating and starting dashboard service" "SERVICES"
 fi
 
-# Step 14: Create configuration summary file
+# Step 12: Create configuration summary file
 echo -e "${GREEN}[INFO] Creating configuration summary...${NC}"
 sudo tee /opt/owl-dash-config.txt > /dev/null <<EOF
 OWL Dashboard Configuration
@@ -580,27 +529,10 @@ EOF
 
 sudo chmod 644 /opt/owl-dash-config.txt
 
-# Step 15: Final system validation
+# Step 13: Final system validation
 echo -e "${GREEN}[INFO] Performing final system validation...${NC}"
 
-# Test MQTT broker thoroughly
-echo -e "${GREEN}[INFO] Final MQTT connectivity test...${NC}"
-
-# Test local MQTT connection
-timeout 3 mosquitto_pub -h localhost -t "owl/test/setup" -m "setup_complete" 2>/dev/null
-if [ $? -eq 0 ]; then
-    echo -e "${TICK} MQTT broker ready for local OWL communication"
-else
-    echo -e "${ORANGE}[WARNING] MQTT local connection test failed${NC}"
-fi
-
-# Test network MQTT connection (hotspot clients)
-timeout 3 mosquitto_pub -h 10.42.0.1 -t "owl/test/setup" -m "setup_complete" 2>/dev/null
-if [ $? -eq 0 ]; then
-    echo -e "${TICK} MQTT broker ready for network communication"
-else
-    echo -e "${ORANGE}[WARNING] MQTT network connection test failed${NC}"
-fi
+final_mqtt_validation
 
 # Test dashboard service
 echo -e "${GREEN}[INFO] Testing dashboard service...${NC}"
@@ -614,8 +546,6 @@ fi
 echo -e "\n${GREEN}[INFO] OWL Dashboard Setup Summary:${NC}"
 echo -e "$STATUS_PACKAGES System Packages"
 echo -e "$STATUS_MQTT_BROKER MQTT Broker Configuration"
-echo -e "$STATUS_NUMPY_VERSION NumPy Version Check"
-echo -e "$STATUS_PYTHON_PACKAGES Python Dependencies"
 echo -e "$STATUS_WIFI_CONFIG WiFi Hotspot Configuration"
 echo -e "$STATUS_UFW_CONFIG UFW Firewall Configuration"
 echo -e "$STATUS_NGINX_CONFIG Nginx Configuration"
@@ -660,7 +590,7 @@ else
     echo -e "${ORANGE}[WARNING] OWL may not start properly${NC}"
 fi
 
-if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "$STATUS_PYTHON_PACKAGES" == "${TICK}" && "$STATUS_WIFI_CONFIG" == "${TICK}" && "$STATUS_UFW_CONFIG" == "${TICK}" && "$STATUS_NGINX_CONFIG" == "${TICK}" && "$STATUS_SSL_CERT" == "${TICK}" && "$STATUS_AVAHI_CONFIG" == "${TICK}" && "$STATUS_SERVICES" == "${TICK}" ]]; then
+if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "$STATUS_WIFI_CONFIG" == "${TICK}" && "$STATUS_UFW_CONFIG" == "${TICK}" && "$STATUS_NGINX_CONFIG" == "${TICK}" && "$STATUS_SSL_CERT" == "${TICK}" && "$STATUS_AVAHI_CONFIG" == "${TICK}" && "$STATUS_SERVICES" == "${TICK}" ]]; then
     echo -e "\n${GREEN}[COMPLETE] OWL Dashboard setup completed successfully!${NC}"
 
     # Check if reboot is needed
@@ -701,8 +631,6 @@ else
     # Show errors
     if [[ -n "$ERROR_PACKAGES" ]]; then echo -e "${RED}[ERROR] Packages: $ERROR_PACKAGES${NC}"; fi
     if [[ -n "$ERROR_MQTT_BROKER" ]]; then echo -e "${RED}[ERROR] MQTT Broker: $ERROR_MQTT_BROKER${NC}"; fi
-    if [[ -n "$ERROR_NUMPY_VERSION" ]]; then echo -e "${ORANGE}[WARNING] NumPy: $ERROR_NUMPY_VERSION${NC}"; fi
-    if [[ -n "$ERROR_PYTHON_PACKAGES" ]]; then echo -e "${RED}[ERROR] Python Packages: $ERROR_PYTHON_PACKAGES${NC}"; fi
     if [[ -n "$ERROR_WIFI_CONFIG" ]]; then echo -e "${RED}[ERROR] WiFi Config: $ERROR_WIFI_CONFIG${NC}"; fi
     if [[ -n "$ERROR_UFW_CONFIG" ]]; then echo -e "${RED}[ERROR] UFW Config: $ERROR_UFW_CONFIG${NC}"; fi
     if [[ -n "$ERROR_NGINX_CONFIG" ]]; then echo -e "${RED}[ERROR] Nginx Config: $ERROR_NGINX_CONFIG${NC}"; fi
