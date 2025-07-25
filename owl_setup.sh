@@ -189,14 +189,14 @@ sleep 1s
 
 echo -e "${GREEN}[INFO] Detecting global NumPy version for compatibility...${NC}"
 GLOBAL_NUMPY_VERSION=""
-GLOBAL_NUMPY_VERSION=$(apt show python3-numpy 2>/dev/null | grep Version: | awk '{print $2}')
+GLOBAL_NUMPY_VERSION=$(apt show python3-numpy 2>/dev/null | grep Version: | awk '{print $2}' | cut -d':' -f2 | cut -d'-' -f1)
 
 if [ -n "$GLOBAL_NUMPY_VERSION" ]; then
     echo -e "${TICK} Detected global NumPy version: ${GLOBAL_NUMPY_VERSION}${NC}"
     STATUS_GLOBAL_NUMPY="${TICK}"
 else
-    echo -e "${ORANGE}[WARNING] Could not detect global python3-numpy version. Assuming 1.24.x for compatibility.${NC}"
-    GLOBAL_NUMPY_VERSION="1.24.2"
+    echo -e "${ORANGE}[WARNING] Could not detect global python3-numpy version. Assuming 1.24.2 for compatibility.${NC}"
+    GLOBAL_NUMPY_VERSION="1.24.2" # Fallback to a known compatible version if detection fails
     STATUS_GLOBAL_NUMPY="${ORANGE}[WARN]${NC}"
     ERROR_GLOBAL_NUMPY="Could not detect global python3-numpy version."
 fi
@@ -215,7 +215,21 @@ check_status "Installing opencv-contrib-python" "OPENCV"
 # Dynamically downgrade NumPy in the virtual environment to match the global version
 echo -e "${GREEN}[INFO] Downgrading NumPy in 'owl' venv to match global version (${GLOBAL_NUMPY_VERSION})...${NC}"
 pip install numpy=="${GLOBAL_NUMPY_VERSION}"
-check_status "Downgrading NumPy to match global version" "NUMPY_COMPAT"
+if [ $? -ne 0 ]; then
+    echo -e "${RED}[FAIL] Failed to downgrade NumPy to ${GLOBAL_NUMPY_VERSION}. Trying common fallback version 1.24.2.${NC}"
+    pip install numpy==1.24.2
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}[CRITICAL ERROR] Failed to install any compatible NumPy version. This may cause issues.${NC}"
+        STATUS_NUMPY_COMPAT="${CROSS}"
+        ERROR_NUMPY_COMPAT="Could not install compatible NumPy version."
+    else
+        echo -e "${TICK} Successfully installed fallback NumPy version 1.24.2.${NC}"
+        STATUS_NUMPY_COMPAT="${TICK}"
+    fi
+else
+    echo -e "${TICK} Successfully downgraded NumPy to ${GLOBAL_NUMPY_VERSION}.${NC}"
+    STATUS_NUMPY_COMPAT="${TICK}"
+fi
 
 # Step 8: Install OWL dependencies
 echo -e "${GREEN}[INFO] Installing the OWL Python dependencies...${NC}"
