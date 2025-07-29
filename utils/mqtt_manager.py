@@ -290,7 +290,7 @@ class MQTTServer:
 
         self.last_frame_time = current_time
 
-        if not self.connected:
+        if not self.connected or not self.client.is_connected():
             return False
 
         try:

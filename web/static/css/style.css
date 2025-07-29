@@ -1531,6 +1531,10 @@ footer {
     animation: pulse 2s infinite;
 }
 
+.notification-count.hidden {
+    display: none !important;
+}
+
 @keyframes bellShake {
     0%, 100% { transform: rotate(0deg); }
     25% { transform: rotate(-10deg); }
