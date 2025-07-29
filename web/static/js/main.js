@@ -40,7 +40,11 @@ document.addEventListener('DOMContentLoaded', function() {
 function initTabs() {
     const tabLinks = document.querySelectorAll('.nav-tab');
     tabLinks.forEach(tab => {
-        tab.addEventListener('click', function() {
+        tab.addEventListener('click', function(e) {
+            if (this.classList.contains('disabled')) {
+                e.preventDefault();
+                e.stopPropagation();
+                return;}
             tabLinks.forEach(t => t.classList.remove('active'));
             this.classList.add('active');
             const tabContents = document.querySelectorAll('.tab-content');
@@ -337,8 +341,6 @@ function updateControlsTabAccess() {
                 dashboardTab.click();
             }
         }
-
-        // Add hardware priority banner to control tab content
         addHardwarePriorityBanner();
 
     } else {
@@ -346,8 +348,6 @@ function updateControlsTabAccess() {
         controlTab.classList.remove('disabled');
         controlTab.removeAttribute('title');
         controlTab.removeEventListener('click', preventControlTabClick);
-
-        // Remove hardware priority banner
         removeHardwarePriorityBanner();
     }
 }
@@ -356,15 +356,14 @@ function updateControlsTabAccess() {
  * Prevent clicking on disabled control tab
  */
 function preventControlTabClick(event) {
-    if (hardwareControllerActive) {
-        event.preventDefault();
-        event.stopPropagation();
-        showNotification(
-            'Hardware Priority',
-            `${controllerType.toUpperCase()} controller is active - use physical switches for control`,
-            'warning'
-        );
-    }
+    event.preventDefault();
+    event.stopPropagation();
+    showNotification(
+        'Hardware Priority',
+        `${controllerType.toUpperCase()} controller is active - use physical switches for control`,
+        'warning'
+    );
+    return false;
 }
 
 /**

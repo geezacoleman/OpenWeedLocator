@@ -34,7 +34,17 @@ except ImportError as e:
 
 class OWLDashboard:
     def __init__(self, config_file='../config/DAY_SENSITIVITY_2.ini'):
+        self.config = None
         self.config_file = config_file
+
+        self.controller_type = None
+
+        self.latest_frame = None
+        self.frame_lock = threading.Lock()
+        self.frame_interval = 0.1
+        self.last_yield_time = 0
+        self.disconnect_threshold = 2.0  # seconds without new frame => disconnected placeholder
+
         self.logger = logging.getLogger(__name__)
         self.load_config()
         self.setup_logging()
@@ -47,13 +57,6 @@ class OWLDashboard:
             broker_host='localhost',
             broker_port=1883,
             client_id='owl_dashboard')
-
-        self.controller_type = None
-        self.latest_frame = None
-        self.frame_lock = threading.Lock()
-        self.frame_interval = 0.1  # seconds between frames (~10 FPS)
-        self.last_yield_time = 0
-        self.disconnect_threshold = 2.0  # seconds without new frame => disconnected placeholder
 
         try:
             self.mqtt_client.start()
@@ -271,7 +274,7 @@ class OWLDashboard:
 
         @self.app.route('/api/detection/start', methods=['POST'])
         def start_detection():
-            if self.controller_type != 'none':
+            if self.controller_type == 'advanced':
                 return jsonify({
                     'success': False,
                     'message': f'{self.controller_type.upper()} controller active - use physical switches'

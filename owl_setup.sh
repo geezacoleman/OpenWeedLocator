@@ -206,11 +206,11 @@ sudo apt-get install -y libatlas-base-dev libopenblas-dev liblapack-dev
 check_status "Installing optimized linear algebra libraries" "OPT_LIBS"
 
 # Step 7: Install OpenCV in the virtual environment
-echo -e "${GREEN}[INFO] Installing opencv-contrib-python in the 'owl' virtual environment...${NC}"
+echo -e "${GREEN}[INFO] Installing opencv-contrib-python==4.10.0.84 in the 'owl' virtual environment...${NC}"
 source $HOME/.virtualenvs/owl/bin/activate
 sleep 1s
-pip install opencv-contrib-python
-check_status "Installing opencv-contrib-python" "OPENCV"
+pip install opencv-contrib-python==4.10.0.84
+check_status "Installing opencv-contrib-python==4.10.0.84" "OPENCV"
 
 # Dynamically downgrade NumPy in the virtual environment to match the global version
 echo -e "${GREEN}[INFO] Downgrading NumPy in 'owl' venv to match global version (${GLOBAL_NUMPY_VERSION})...${NC}"
