@@ -371,7 +371,6 @@ server {
     listen 80;
     listen 10.42.0.1:80;
     server_name ${HOSTNAME}.local 10.42.0.1 _;
-
     return 301 https://\$host\$request_uri;
 }
 
@@ -385,7 +384,7 @@ server {
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_ciphers         HIGH:!aNULL:!MD5;
 
-    # OWL Dashboard Flask app
+    # OWL Dashboard Flask app (Port 8000)
     location / {
         proxy_pass         http://127.0.0.1:8000;
         proxy_set_header   Host \$host;
@@ -394,21 +393,24 @@ server {
         proxy_set_header   X-Forwarded-Proto \$scheme;
         proxy_read_timeout 300s;
         proxy_connect_timeout 75s;
-
-        # WebSocket support for real-time updates
         proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header   Upgrade \$http_upgrade;
+        proxy_set_header   Connection "upgrade";
+    }
+
+    # Proxy for the MJPEG video stream from owl.py (Port 8001)
+    location /video_feed {
+        proxy_pass http://127.0.0.1:8001/stream.mjpg;
+        proxy_set_header Host \$host;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 300s;
+        chunked_transfer_encoding off;
     }
 
     # MQTT status endpoint for debugging
     location /mqtt-status {
-        return 200 "<html><body><h1>MQTT Status</h1><p>MQTT Broker: localhost:1883</p><p>Status: Running</p><p>Test: mosquitto_pub -h localhost -t test/message -m 'Hello'</p></body></html>";
-        add_header Content-Type text/html;
-    }
-
-    location /ssl-help {
-        return 200 "<html><body><h1>OWL Dashboard Access</h1><p>To access the dashboard:</p><ol><li>Visit <a href='https://${HOSTNAME}.local/'>https://${HOSTNAME}.local/</a> or <a href='https://10.42.0.1/'>https://10.42.0.1/</a></li><li>If you see a security warning, click 'Advanced'</li><li>Click 'Continue to ${HOSTNAME}.local (unsafe)'</li><li>You will then see the OWL dashboard</li></ol></body></html>";
+        return 200 "<html><body><h1>MQTT Status</h1><p>MQTT Broker: localhost:1883</p><p>Status: Running</p></body></html>";
         add_header Content-Type text/html;
     }
 }

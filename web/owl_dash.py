@@ -10,14 +10,14 @@ for monitoring and control using MQTT for inter-process communication.
 
 import os
 import sys
-import time
 import threading
 import logging
 import subprocess
 import configparser
 from pathlib import Path
 from datetime import datetime
-
+import urllib.request
+import urllib.error
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utils.mqtt_manager import MQTTClient
 from utils.upload_manager import get_uploader
@@ -217,61 +217,6 @@ class OWLDashboard:
             """Main dashboard page"""
             return render_template('index.html')
 
-        @self.app.route('/video_feed')
-        def video_feed():
-            """Video streaming route optimized for multiple clients"""
-
-            def generate():
-                last_frame_time = 0
-                frame_interval = 0.1
-
-                while True:
-                    try:
-                        current_time = time.time()
-                        if current_time - last_frame_time < frame_interval:
-                            time.sleep(0.05)
-                            continue
-
-                        frame = None
-                        if self.mqtt_client:
-                            frame = self.mqtt_client.get_latest_frame()
-
-                        if frame is None:
-                            frame = self.generate_placeholder_frame()
-
-                        h, w = frame.shape[:2]
-                        if w > 480:
-                            scale = 480 / w
-                            frame = cv2.resize(frame, (int(w * scale), int(h * scale)))
-
-                        success, buffer = cv2.imencode('.jpg', frame,
-                                                       [cv2.IMWRITE_JPEG_QUALITY, 60])  # Lower quality for bandwidth
-
-                        if success:
-                            frame_bytes = buffer.tobytes()
-                            yield (b'--frame\r\n'
-                                   b'Content-Type: image/jpeg\r\n'
-                                   b'Cache-Control: no-cache, no-store, must-revalidate\r\n'
-                                   b'Pragma: no-cache\r\n'
-                                   b'Expires: 0\r\n\r\n' + frame_bytes + b'\r\n')
-
-                            last_frame_time = current_time
-
-                    except GeneratorExit:
-                        break
-                    except Exception as e:
-                        self.logger.error(f"Video feed error: {e}")
-                        time.sleep(1)
-
-            return Response(generate(),
-                            mimetype='multipart/x-mixed-replace; boundary=frame',
-                            headers={
-                                'Cache-Control': 'no-cache, no-store, must-revalidate',
-                                'Pragma': 'no-cache',
-                                'Expires': '0',
-                                'Connection': 'close'
-                            })
-
         @self.app.route('/api/detection/start', methods=['POST'])
         def start_detection():
             if self.controller_type == 'advanced':
@@ -379,28 +324,26 @@ class OWLDashboard:
 
         @self.app.route('/api/download_frame', methods=['POST'])
         def download_frame():
+            # This endpoint now acts as a proxy to fetch the frame from owl.py's server
+            stream_url = 'http://127.0.0.1:8001/latest_frame.jpg'
             try:
-                # Get latest frame from MQTT
-                frame = None
-                if self.mqtt_client:
-                    frame = self.mqtt_client.get_latest_frame()
-
-                if frame is None:
-                    return jsonify({'error': 'No frame available'}), 404
+                with urllib.request.urlopen(stream_url, timeout=2) as response:
+                    frame_data = response.read()
 
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                success, buffer = cv2.imencode('.jpg', frame)
-                if not success:
-                    return jsonify({'error': 'Failed to encode image'}), 500
-
                 filename = f'owl_frame_{timestamp}.jpg'
+
                 return Response(
-                    buffer.tobytes(),
+                    frame_data,
                     mimetype='image/jpeg',
                     headers={'Content-Disposition': f'attachment; filename={filename}'}
                 )
+            except urllib.error.URLError as e:
+                self.logger.error(f"Error proxying frame download: {e}")
+                return jsonify(
+                    {'error': 'Failed to retrieve frame from OWL. Is it running?'}), 503  # Service Unavailable
             except Exception as e:
-                self.logger.error(f"Error downloading frame: {e}")
+                self.logger.error(f"Unexpected error during frame download: {e}")
                 return jsonify({'error': str(e)}), 500
 
         @self.app.route('/static/<path:filename>')

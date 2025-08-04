@@ -1,3 +1,6 @@
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
+import io
 import cv2
 import time
 
@@ -21,6 +24,69 @@ try:
 
 except Exception as e:
     PICAMERA_VERSION = None
+
+class StreamingHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        owl = self.server.owl_instance
+
+        if self.path == '/stream.mjpg':
+            self.send_response(200)
+            self.send_header('Age', 0)
+            self.send_header('Cache-Control', 'no-cache, private')
+            self.send_header('Pragma', 'no-cache')
+            self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=FRAME')
+            self.end_headers()
+            try:
+                while True:
+                    frame = owl.get_latest_stream_frame()
+                    if frame is not None:
+                        # Encode the frame as JPEG with a specified quality
+                        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                        if not ret:
+                            continue
+
+                        # Stream the frame to the client
+                        self.wfile.write(b'--FRAME\r\n')
+                        self.send_header('Content-Type', 'image/jpeg')
+                        self.send_header('Content-Length', len(buffer))
+                        self.end_headers()
+                        self.wfile.write(buffer)
+                        self.wfile.write(b'\r\n')
+
+                    # Control the frame rate of the stream
+                    time.sleep(1 / 30)  # Aim for ~30 FPS
+            except Exception as e:
+                owl.logger.warning(f'Removed streaming client {self.client_address}: {e}')
+
+        elif self.path == '/latest_frame.jpg':
+            try:
+                frame = owl.get_latest_frame_for_stream()
+                if frame is not None:
+                    ret, buffer = cv2.imencode('.jpg', frame,
+                                               [cv2.IMWRITE_JPEG_QUALITY, 95])  # Higher quality for download
+                    if ret:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'image/jpeg')
+                        self.send_header('Content-Length', len(buffer))
+                        self.end_headers()
+                        self.wfile.write(buffer)
+                        return
+
+                self.send_error(404, 'No frame available')
+            except Exception as e:
+                owl.logger.error(f"Could not serve latest_frame.jpg: {e}")
+                self.send_error(500)
+
+        else:
+            self.send_error(404)
+            self.end_headers()
+
+    class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+            """Handle requests in a separate thread."""
+
+    def __init__(self, server_address, RequestHandlerClass, owl_instance):
+        self.owl_instance = owl_instance
+        super().__init__(server_address, RequestHandlerClass)
 
 # class to support webcams
 class WebcamStream:

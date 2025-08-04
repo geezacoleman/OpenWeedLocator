@@ -37,7 +37,6 @@ class MQTTServer:
         self.topics = {
             'commands': 'owl/commands',  # Dashboard sends commands here
             'state': 'owl/state',  # Owl publishes state here
-            'frames': 'owl/frames',  # Owl publishes frames here
             'gps': 'owl/gps',  # Dashboard sends GPS here
             'status': 'owl/status',  # System status
             'indicators': 'owl/indicators'  # Weed detection, image write indicators
@@ -68,9 +67,6 @@ class MQTTServer:
         self.last_sensitivity_state = False
         self.monitoring_thread = None
         self.heartbeat_thread = None
-
-        self.last_frame_time = 0
-        self.frame_interval = 0.1
 
         # MQTT client
         self.client = mqtt.Client(client_id=self.client_id)
@@ -279,63 +275,6 @@ class MQTTServer:
                 state_msg = json.dumps(self.state)
                 self.client.publish(self.topics['state'], state_msg, retain=True)
 
-    def update_frame(self, frame):
-        """
-        Throttle frame publishing to 10 FPS max and encode the given OpenCV frame as JPEG
-        """
-        # Throttle frames to 10 FPS
-        current_time = time.time()
-        if current_time - self.last_frame_time < self.frame_interval:
-            return True  # Skip this frame to maintain 10 FPS
-
-        self.last_frame_time = current_time
-
-        if not self.connected or not self.client.is_connected():
-            return False
-
-        try:
-            # Integer-only parameters—True is not allowed here
-            params = [
-                cv2.IMWRITE_JPEG_QUALITY, 70,
-                cv2.IMWRITE_JPEG_OPTIMIZE, 1
-            ]
-            success, buffer = cv2.imencode('.jpg', frame, params)
-            if not success:
-                self.logger.error("Failed to JPEG-encode frame")
-                return False
-
-            img_data = buffer.tobytes()
-
-            # Resize if too large (MQTT message size limits)
-            if len(img_data) > 512 * 1024:  # 512KB limit
-                h, w = frame.shape[:2]
-                scale = 640 / w if w > 640 else 1
-                small = cv2.resize(frame, (int(w * scale), int(h * scale)))
-                success, buffer = cv2.imencode('.jpg', small, [cv2.IMWRITE_JPEG_QUALITY, 60])
-                img_data = buffer.tobytes()
-                if not success:
-                    self.logger.error("Failed to encode downscaled frame")
-                    return False
-
-            # Encode as base64 for JSON
-            img_b64 = base64.b64encode(img_data).decode('utf-8')
-            frame_msg = json.dumps({
-                'image': img_b64,
-                'timestamp': time.time(),
-                'encoding': 'jpeg_base64'
-            })
-
-            rc, _ = self.client.publish(self.topics['frames'], frame_msg, qos=0)
-            if rc != mqtt.MQTT_ERR_SUCCESS:
-                self.logger.error(f"MQTT publish error rc={rc}")
-                return False
-
-            return True
-
-        except Exception as e:
-            self.logger.error(f"Error publishing frame: {e}")
-            return False
-
     def weed_detect_indicator(self):
         """Send weed detection indicator to dashboard (replaces DashboardController method)"""
         if self.connected:
@@ -415,7 +354,7 @@ class MQTTServer:
 class MQTTClient:
     """
     MQTT IPC Client for owl_dash.py
-    Sends commands to owl.py and receives state/frames
+    Sends commands to owl.py and receives state
     """
 
     def __init__(self, broker_host='localhost', broker_port=1883, client_id='owl_dashboard'):
@@ -428,7 +367,6 @@ class MQTTClient:
         self.topics = {
             'commands': 'owl/commands',
             'state': 'owl/state',
-            'frames': 'owl/frames',
             'gps': 'owl/gps',
             'status': 'owl/status',
             'indicators': 'owl/indicators'
@@ -436,10 +374,7 @@ class MQTTClient:
 
         # Current state cache
         self.current_state = {}
-        self.latest_frame = None
         self.state_lock = threading.RLock()
-        self.last_frame_time = 0
-        self.frame_timeout = 5.0
 
         # Indicators
         self.last_weed_detect = 0
@@ -448,8 +383,6 @@ class MQTTClient:
         self.last_heartbeat = 0
         self.heartbeat_timeout = 5.0
 
-        # Callbacks
-        self.frame_callback: Optional[Callable] = None
 
         # MQTT client
         self.client = mqtt.Client(client_id=self.client_id)
@@ -482,7 +415,6 @@ class MQTTClient:
 
             # Subscribe to all relevant topics
             client.subscribe(self.topics['state'])
-            client.subscribe(self.topics['frames'])
             client.subscribe(self.topics['status'])
             client.subscribe(self.topics['indicators'])
 
@@ -514,37 +446,11 @@ class MQTTClient:
                 self.current_state = data
                 self.last_heartbeat = time.time()
 
-        elif topic == self.topics['frames']:
-            self._handle_frame(data)
-
         elif topic == self.topics['status']:
             self.logger.info(f"OWL status: {data}")
 
         elif topic == self.topics['indicators']:
             self._handle_indicator(data)
-
-    def _handle_frame(self, frame_data):
-        """Handle incoming video frame"""
-        try:
-            img_b64 = frame_data.get('image')
-            if img_b64:
-                # Decode base64
-                img_data = base64.b64decode(img_b64)
-
-                # Decode JPEG
-                img_array = np.frombuffer(img_data, dtype=np.uint8)
-                frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-
-                if frame is not None:
-                    self.latest_frame = frame
-                    self.last_frame_time = time.time()  # Update frame timestamp
-
-                    # Call frame callback if set
-                    if self.frame_callback:
-                        self.frame_callback(frame)
-
-        except Exception as e:
-            self.logger.error(f"Error decoding frame: {e}")
 
     def _handle_indicator(self, indicator_data):
         """Handle indicator messages (weed detection, image write)"""
@@ -559,12 +465,6 @@ class MQTTClient:
 
         except Exception as e:
             self.logger.error(f"Error handling indicator: {e}")
-
-    def get_latest_frame(self):
-        """Get the latest frame, return None if too old"""
-        if time.time() - self.last_frame_time > self.frame_timeout:
-            return None  # Force placeholder
-        return self.latest_frame
 
     def get_state(self):
         """Get current state"""

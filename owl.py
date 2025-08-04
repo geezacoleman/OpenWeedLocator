@@ -63,7 +63,7 @@ try:
     from utils.input_manager import UteController, AdvancedController, get_rpi_version
     from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator
     from utils.directory_manager import DirectorySetup
-    from utils.video_manager import VideoStream
+    from utils.video_manager import VideoStream, StreamingHandler, ThreadedHTTPServer
     from utils.image_sampler import ImageRecorder
     from utils.algorithms import fft_blur
     from utils.greenonbrown import GreenOnBrown
@@ -176,6 +176,7 @@ class Owl:
 
         # Dashboard setup
         self.dash = None
+        self.latest_stream_frame = None
         if self.config.getboolean('Dashboard', 'dashboard_enable', fallback=False):
             try:
                 from utils.mqtt_manager import MQTTServer
@@ -193,6 +194,10 @@ class Owl:
                 self.dash.start()
 
                 self.logger.info("MQTT Dashboard integration enabled")
+
+                self.stream_lock = threading.Lock()
+                self.start_streaming_server()
+                self.logger.info("HTTPS video streaming started")
 
             except Exception as e:
                 self.logger.warning(f"Dashboard not available: {e}")
@@ -469,11 +474,12 @@ class Owl:
                 ##### Update Dashboard Stream #####
                 if self.dash and frame_count % 5 == 0: # send every 5th frame to the streamer to reduce overhead
                     try:
-                        if self._detection_enable:
-                            self.dash.update_frame(image_out)
-
+                        if self._detection_enable and image_out is not None:
+                            final_frame_to_stream = image_out
                         else:
-                            self.dash.update_frame(frame)
+                            final_frame_to_stream = frame
+
+                        self.set_latest_stream_frame(final_frame_to_stream)
                     except Exception as e:
                         self.logger.error(f"Error sending frame to dashboard: {e}")
 
@@ -486,8 +492,8 @@ class Owl:
                         save_boxes = None
                         save_centres = None
                         if self.sample_method != 'whole' and self._detection_enable:
-                            save_boxes = boxes  # Assuming 'boxes' from detection
-                            save_centres = weed_centres  # Assuming 'weed_centres' from detection
+                            save_boxes = boxes
+                            save_centres = weed_centres
 
                         self.image_recorder.add_frame(frame=frame,
                                                       frame_id=frame_count,
@@ -761,6 +767,28 @@ class Owl:
             self.status_indicator.error(1)
             self.stop()
             raise errors.CameraInitError(str(e)) from e
+
+    def start_streaming_server(self):
+        """Initializes and starts the MJPEG streaming server in a background thread."""
+        try:
+            self.logger.info("Starting MJPEG streaming server on port 8001")
+            server_address = ('0.0.0.0', 8001)
+            httpd = ThreadedHTTPServer(server_address, StreamingHandler, owl_instance=self)
+            server_thread = threading.Thread(target=httpd.serve_forever)
+            server_thread.daemon = True
+            server_thread.start()
+        except Exception as e:
+            self.logger.error(f"Failed to start MJPEG streaming server: {e}", exc_info=True)
+
+    def set_latest_stream_frame(self, frame):
+        """Thread-safe method to update the frame for the stream."""
+        with self.stream_lock:
+            self.latest_stream_frame = frame.copy()
+
+    def get_latest_stream_frame(self):
+        """Thread-safe method to get the latest frame for the stream."""
+        with self.stream_lock:
+            return self.latest_stream_frame
 
     def update_state(self):
         """Update local state from MQTT server or local hardware controllers"""
