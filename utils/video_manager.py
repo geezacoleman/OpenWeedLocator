@@ -1,6 +1,6 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
-import io
+from urllib.parse import urlparse
 import cv2
 import time
 
@@ -27,9 +27,12 @@ except Exception as e:
 
 class StreamingHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        parsed_path = urlparse(self.path)
+        main_path = parsed_path.path
+
         owl = self.server.owl_instance
 
-        if self.path == '/stream.mjpg':
+        if main_path == '/stream.mjpg':
             self.send_response(200)
             self.send_header('Age', 0)
             self.send_header('Cache-Control', 'no-cache, private')
@@ -40,12 +43,10 @@ class StreamingHandler(BaseHTTPRequestHandler):
                 while True:
                     frame = owl.get_latest_stream_frame()
                     if frame is not None:
-                        # Encode the frame as JPEG with a specified quality
-                        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                        ret, buffer = cv2.imencode('.jpg', frame,
+                                                   [cv2.IMWRITE_JPEG_QUALITY, 70])
                         if not ret:
                             continue
-
-                        # Stream the frame to the client
                         self.wfile.write(b'--FRAME\r\n')
                         self.send_header('Content-Type', 'image/jpeg')
                         self.send_header('Content-Length', len(buffer))
@@ -53,14 +54,13 @@ class StreamingHandler(BaseHTTPRequestHandler):
                         self.wfile.write(buffer)
                         self.wfile.write(b'\r\n')
 
-                    # Control the frame rate of the stream
                     time.sleep(1 / 30)  # Aim for ~30 FPS
             except Exception as e:
                 owl.logger.warning(f'Removed streaming client {self.client_address}: {e}')
 
-        elif self.path == '/latest_frame.jpg':
+        elif main_path == '/latest_frame.jpg':
             try:
-                frame = owl.get_latest_frame_for_stream()
+                frame = owl.get_latest_stream_frame()
                 if frame is not None:
                     ret, buffer = cv2.imencode('.jpg', frame,
                                                [cv2.IMWRITE_JPEG_QUALITY, 95])  # Higher quality for download
