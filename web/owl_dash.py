@@ -804,7 +804,7 @@ class OWLDashboard:
                 'disk_used': 0,
                 'disk_total': 0,
                 'usb_devices': [],
-                'fan_status': 'error',
+                'fan_status': {'is_rpi5': False, 'mode': 'error'},
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
 
