@@ -48,6 +48,7 @@ class MQTTServer:
             'image_sample_enable': False,
             'sensitivity_state': False,  # False = High, True = Low
             'owl_running': False,  # Will be set to True when server starts
+            'stream_active': False,
             'gps_latitude': 0.0,
             'gps_longitude': 0.0,
             'gps_accuracy': 0.0,
@@ -327,6 +328,14 @@ class MQTTServer:
                 'timestamp': self.state['gps_timestamp']
             }
 
+    def set_stream_status(self, is_active: bool):
+        """Allows the main Owl instance to report the video stream status."""
+        with self.state_lock:
+            if self.state.get('stream_active') != is_active:
+                self.state['stream_active'] = is_active
+                self.state['last_update'] = time.time()
+                self._publish_state()
+
     def set_image_sample_enable(self, value):
         """Set image sampling state (for owl.py internal use)"""
         with self.state_lock:
@@ -348,7 +357,6 @@ class MQTTServer:
             self.state['last_update'] = time.time()
         self._publish_state()
 
-        # Apply the sensitivity config change immediately
         self._apply_sensitivity_config_change(value)
 
 class MQTTClient:

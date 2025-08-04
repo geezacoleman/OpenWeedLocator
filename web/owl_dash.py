@@ -316,6 +316,7 @@ class OWLDashboard:
                 'image_sample_enable': mqtt_state.get('image_sample_enable', False),
                 'sensitivity_state': mqtt_state.get('sensitivity_state', False),
                 'owl_running': mqtt_state.get('owl_running', False),
+                'stream_active': mqtt_state.get('stream_active', False),
                 'weed_detect_indicator': self.mqtt_client.get_weed_detect_indicator() if self.mqtt_client else False,
                 'image_write_indicator': self.mqtt_client.get_image_write_indicator() if self.mqtt_client else False
             })

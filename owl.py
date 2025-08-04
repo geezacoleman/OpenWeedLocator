@@ -10,6 +10,9 @@ from datetime import datetime
 from multiprocessing import Process, Value
 from pathlib import Path
 
+from utils.error_manager import MJPEGStreamError
+
+
 def get_python_env():
     """Get current Python environment status"""
     venv = os.environ.get('VIRTUAL_ENV')
@@ -176,6 +179,7 @@ class Owl:
 
         # Dashboard setup
         self.dash = None
+        self.stream_active = None
         self.latest_stream_frame = None
         if self.config.getboolean('Dashboard', 'dashboard_enable', fallback=False):
             try:
@@ -195,13 +199,22 @@ class Owl:
 
                 self.logger.info("MQTT Dashboard integration enabled")
 
+            except Exception as e:
+                self.dash = None
+                raise errors.MQTTConnectionError(host='localhost', port=1883, original_error=e)
+
+            try:
                 self.stream_lock = threading.Lock()
                 self.start_streaming_server()
-                self.logger.info("HTTPS video streaming started")
+                self.stream_active = True  # IMPORTANT: Set status to True on success
+                self.logger.info("MJPEG video streaming server started successfully")
 
-            except Exception as e:
-                self.logger.warning(f"Dashboard not available: {e}")
-                self.dash = None
+            except MJPEGStreamError as e:
+                self.logger.warning(f"Could not start MJPEG stream, but core functions will continue: {e}")
+                self.stream_active = False
+
+            if self.dash:
+                self.dash.set_stream_status(self.stream_active)
 
         # GPS setup (only if enabled in config)
         self.gps_source = self.config.get('System', 'gps_source', fallback='none').lower()
@@ -218,7 +231,7 @@ class Owl:
 
         if self.controller_type not in {'none', 'ute', 'advanced'}:
             self.logger.error(f"Invalid controller type: {self.controller_type}")
-            raise errors.ControllerTypeError(self.config.get('Controller', 'controller_type'))
+            raise errors.ControllerTypeError(self.controller_type, valid_types=list({'none', 'ute', 'advanced'}))
 
         if self.controller_type != 'none' and not self.dash:
             self.detection_enable = Value('b', False)
@@ -770,15 +783,23 @@ class Owl:
 
     def start_streaming_server(self):
         """Initializes and starts the MJPEG streaming server in a background thread."""
+        host = '0.0.0.0'
+        port = 8001
         try:
-            self.logger.info("Starting MJPEG streaming server on port 8001")
-            server_address = ('0.0.0.0', 8001)
+            self.logger.info(f"Starting MJPEG streaming server on port {port}")
+            server_address = (host, port)
             httpd = ThreadedHTTPServer(server_address, StreamingHandler, owl_instance=self)
+
             server_thread = threading.Thread(target=httpd.serve_forever)
             server_thread.daemon = True
             server_thread.start()
+
+        except OSError as e:
+            self.logger.error(f"Failed to start MJPEG streaming server on port {port}: {e}", exc_info=True)
+            raise errors.MJPEGStreamError(host=host, port=port, original_error=e) from e
         except Exception as e:
-            self.logger.error(f"Failed to start MJPEG streaming server: {e}", exc_info=True)
+            self.logger.error(f"An unexpected error occurred while starting MJPEG streaming server: {e}", exc_info=True)
+            raise errors.MJPEGStreamError(host=host, port=port, original_error=e) from e
 
     def set_latest_stream_frame(self, frame):
         """Thread-safe method to update the frame for the stream."""

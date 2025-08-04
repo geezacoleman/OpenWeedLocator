@@ -113,30 +113,32 @@ class USBMountError(USBError):
 
 
 class USBWriteError(USBError):
-    """Raised when there are issues writing to a USB device"""
+    """Raised when there are issues writing to a USB device."""
 
     def __init__(self, device: str = None, message: str = None):
+        # 1. Call super() first with details
         super().__init__(
-            message=None,
             details={'device': device} if device else {}
         )
 
-        if not message:
-            message = (
-                    self.format_error_header("USB Write Error") +
-                    self.format_section(
-                        "Problem",
-                        f"Failed to write to USB device: {self.colorize(str(device), 'WHITE', bold=True)}"
-                    ) +
-                    self.format_section(
-                        "Solutions",
-                        "1. Check if device is write-protected\n"
-                        "2. Verify available space\n"
-                        "3. Check file system permissions"
-                    )
-            )
+        # 2. Build the detailed message
+        #    (Use a different variable name to avoid confusion with the 'message' argument)
+        formatted_message = (
+                self.format_error_header("USB Write Error") +
+                self.format_section(
+                    "Problem",
+                    f"Failed to write to the USB device: {self.colorize(str(device), 'WHITE', bold=True)}"
+                ) +
+                self.format_section(
+                    "Common Solutions",
+                    "1. Check if the device is physically write-protected (e.g., a switch on an SD card adapter).\n"
+                    "2. Verify there is sufficient free space on the device.\n"
+                    "3. Check the file system permissions (e.g., `ls -l /media/owl/`)."
+                )
+        )
 
-        self.args = (message,)
+        # 3. Set the final message for the exception
+        self.args = (formatted_message,)
 
 
 class NoWritableUSBError(USBError):
@@ -332,6 +334,30 @@ class ControllerConfigError(OWLControllerError):
             )
         )
         self.args = (message,)
+
+
+class ControllerTypeError(OWLControllerError):
+    """Raised when an invalid controller type is specified in the config."""
+    def __init__(self, invalid_type: str, valid_types: List[str]):
+        super().__init__(
+            details={
+                'invalid_type': invalid_type,
+                'valid_types': valid_types
+            }
+        )
+        formatted_message = (
+            self.format_error_header("Invalid Controller Type") +
+            self.format_section(
+                "Problem",
+                f"The controller type '{self.colorize(invalid_type, 'WHITE', bold=True)}' is not recognized."
+            ) +
+            self.format_section(
+                "Valid Options",
+                "Please use one of the following in your config file under the [Controller] section.\nPay careful attention to spelling and spaces:\n" +
+                "\n".join(f"• {v_type}" for v_type in valid_types)
+            )
+        )
+        self.args = (formatted_message,)
 
 
 class OWLConfigError(OWLError):
@@ -918,6 +944,46 @@ class CameraInitError(OWLError):
         )
         self.args = (message,)
 
+### VIDEO STREAMING ERRORS ###
+class MJPEGStreamError(OWLError):
+    """Raised when the internal MJPEG streaming server fails to start."""
+
+    def __init__(self, host: str, port: int, original_error: Exception = None):
+        super().__init__(
+            details={
+                'host': host,
+                'port': port,
+                'original_error': str(original_error)
+            }
+        )
+
+        formatted_message = (
+            self.format_error_header("MJPEG Video Stream Error") +
+            self.format_section(
+                "Problem",
+                f"The internal video streaming server failed to start on address "
+                f"{self.colorize(f'{host}:{port}', 'WHITE', bold=True)}."
+            ) +
+            self.format_section(
+                "Likely Cause",
+                "The port is already being used by another application. This often happens if a "
+                "previous OWL session did not shut down correctly."
+            ) +
+            self.format_section(
+                "How to Fix",
+                "1. Check if another `owl.py` process is running:\n"
+                f"   {self.colorize('pgrep -f owl.py', 'WHITE')}\n"
+                "   If this returns a number (a PID), stop it with:\n"
+                f"   {self.colorize('kill <PID>', 'WHITE')}\n\n"
+                "2. Find out which process is using the port with this command:\n"
+                f"   {self.colorize(f'sudo lsof -i :{port}', 'WHITE')}\n\n"
+                "3. If the port is essential for another service, you can change the stream port "
+                "inside `owl.py` in the `start_streaming_server` method."
+            )
+        )
+
+        self.args = (formatted_message,)
+
 
 ### DASHBOARD RELATED ERRORS ###
 class DashboardError(OWLError):
@@ -925,58 +991,34 @@ class DashboardError(OWLError):
     pass
 
 
-class StreamInitError(DashboardError):
-    """Raised when the dashboard stream fails to initialize."""
-
-    def __init__(self, reason: str = None):
+class MQTTConnectionError(DashboardError):
+    """Raised when the application cannot connect to the MQTT broker."""
+    def __init__(self, host: str, port: int, original_error: Exception = None):
         super().__init__(
-            message=None,
-            details={'reason': reason}
-        )
-
-        message = (
-                self.format_error_header("Dashboard Stream Error") +
-                self.format_section(
-                    "Problem",
-                    f"Failed to initialize dashboard stream\n"
-                    f"Reason: {self.colorize(reason, 'WHITE', bold=True)}"
-                ) +
-                self.format_section(
-                    "Fix",
-                    "1. Check if port 5000 is available\n"
-                    "2. Verify Flask server can start\n"
-                    "3. Ensure sufficient system resources\n"
-                    "4. Check network connectivity"
-                )
-        )
-        self.args = (message,)
-
-
-class StreamUpdateError(DashboardError):
-    """Raised when updating the stream frame fails."""
-
-    def __init__(self, frame_size: Optional[tuple] = None, reason: str = None):
-        super().__init__(
-            message=None,
             details={
-                'frame_size': frame_size,
-                'reason': reason
+                'host': host,
+                'port': port,
+                'original_error': str(original_error)
             }
         )
-
-        message = (
-                self.format_error_header("Stream Update Error") +
-                self.format_section(
-                    "Problem",
-                    f"Failed to update stream frame\n" +
-                    (f"Frame size: {frame_size}\n" if frame_size else "") +
-                    f"Reason: {self.colorize(reason, 'WHITE', bold=True)}"
-                ) +
-                self.format_section(
-                    "Fix",
-                    "1. Check frame format is correct\n"
-                    "2. Verify frame is not corrupted\n"
-                    "3. Ensure sufficient memory available"
-                )
+        formatted_message = (
+            self.format_error_header("MQTT Broker Connection Error") +
+            self.format_section(
+                "Problem",
+                f"Could not connect to the MQTT broker at {self.colorize(f'{host}:{port}', 'WHITE', bold=True)}."
+            ) +
+            self.format_section(
+                "Likely Cause",
+                "The Mosquitto MQTT service is not running or has failed."
+            ) +
+            self.format_section(
+                "How to Fix",
+                "1. Check the status of the service using this command in the terminal:\n"
+                f"   {self.colorize('sudo systemctl status mosquitto', 'WHITE')}\n\n"
+                "2. If it's not running, start it with:\n"
+                f"   {self.colorize('sudo systemctl start mosquitto', 'WHITE')}\n\n"
+                "3. To view detailed logs for the broker, use:\n"
+                f"   {self.colorize('journalctl -u mosquitto -f', 'WHITE')}"
+            )
         )
-        self.args = (message,)
+        self.args = (formatted_message,)

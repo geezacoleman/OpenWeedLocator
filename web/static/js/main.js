@@ -1079,7 +1079,17 @@ function updateSystemStats() {
                     statusText.textContent = 'OWL Offline';
                 }
             }
-
+            const streamOverlay = document.getElementById('stream-status-overlay');
+            const streamImg = document.getElementById('stream-img');
+            if (streamOverlay && streamImg) {
+                if (data.stream_active) {
+                    streamOverlay.classList.add('hidden');
+                    streamImg.style.display = 'block'; // Make sure image is visible
+                } else {
+                    streamOverlay.classList.remove('hidden');
+                    streamImg.style.display = 'none'; // Hide the broken image icon
+                }
+            }
             // Update control status displays
             const controlDetectionStatus = document.getElementById('controlDetectionStatus');
             if (controlDetectionStatus) {
