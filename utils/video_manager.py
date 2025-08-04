@@ -81,8 +81,8 @@ class StreamingHandler(BaseHTTPRequestHandler):
             self.send_error(404)
             self.end_headers()
 
-    class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
-            """Handle requests in a separate thread."""
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    """Handle requests in a separate thread and hold a reference to the Owl instance."""
 
     def __init__(self, server_address, RequestHandlerClass, owl_instance):
         self.owl_instance = owl_instance
