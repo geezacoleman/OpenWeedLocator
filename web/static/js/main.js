@@ -25,6 +25,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initUploadTab();
     initNotifications();
     initHardwareControllerCheck();
+    initFanControl();
 
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     if (fullscreenBtn) {
@@ -922,6 +923,72 @@ function downloadLogs() {
 }
 
 /**
+ * Initialize fan control button listener.
+ */
+function initFanControl() {
+    const fanBtn = document.getElementById('fanControlBtn');
+    if (fanBtn) {
+        fanBtn.addEventListener('click', toggleFanMode);
+    }
+}
+
+/**
+ * Sends a toggle request to the backend to switch between 'Auto' and '100%'.
+ */
+function toggleFanMode() {
+    const fanBtn = document.getElementById('fanControlBtn');
+    if (!fanBtn || fanBtn.classList.contains('disabled')) return;
+
+    // Provide immediate visual feedback and prevent multiple clicks
+    fanBtn.classList.add('disabled');
+
+    // Send a simple POST request to the new toggle endpoint
+    apiRequest('/api/fan/toggle', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Update the UI with the new mode returned by the server
+                updateFanDisplay({ is_rpi5: true, mode: data.mode });
+                const displayMode = data.mode.charAt(0).toUpperCase() + data.mode.slice(1);
+                showNotification('Success', `Fan mode set to ${displayMode}`, 'success', 2000);
+            } else {
+                throw new Error(data.error || 'Failed to toggle fan mode');
+            }
+        })
+        .catch(error => {
+            showNotification('Error', error.message, 'error');
+            // On failure, re-sync the UI with the actual state from the server
+            updateSystemStats();
+        })
+        .finally(() => {
+            // Re-enable the button after a short delay
+            setTimeout(() => fanBtn.classList.remove('disabled'), 500);
+        });
+}
+
+/**
+ * Updates the fan control UI based on status from the backend.
+ * @param {object} fanStatus - The fan status object from the API.
+ */
+function updateFanDisplay(fanStatus) {
+    const fanBtn = document.getElementById('fanControlBtn');
+    const fanText = document.getElementById('fanModeText');
+    if (!fanBtn || !fanText) return; // Exit if the elements don't exist
+
+    if (fanStatus && fanStatus.is_rpi5) {
+        // It's a Pi 5, so make sure the button is visible
+        fanBtn.classList.remove('hidden');
+
+        // Use the mode from the backend ('auto' or '100%') and capitalize it for display
+        const displayMode = fanStatus.mode.charAt(0).toUpperCase() + fanStatus.mode.slice(1);
+        fanText.textContent = displayMode;
+    } else {
+        // Not a Pi 5 or an error occurred, so hide the button
+        fanBtn.classList.add('hidden');
+    }
+}
+
+/**
  * Initialize GPS functionality
  */
 function initGPS() {
@@ -1063,6 +1130,9 @@ function updateSystemStats() {
                 diskElement.textContent = `${data.disk_percent}%`;
                 diskElement.style.color = getColorForValue(data.disk_percent, 100);
             }
+
+            // Fan Status
+            updateFanDisplay(data.fan_status);
 
             // Update detection status boxes with colors
             updateDetectionStatusBoxes(data);

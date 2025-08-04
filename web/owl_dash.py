@@ -21,6 +21,7 @@ import urllib.error
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utils.mqtt_manager import MQTTClient
 from utils.upload_manager import get_uploader
+from utils.input_manager import get_rpi_version
 
 try:
     from flask import Flask, Response, render_template, request, jsonify, send_from_directory, send_file
@@ -711,23 +712,45 @@ class OWLDashboard:
                     'error': str(e)
                 })
 
-    def generate_placeholder_frame(self):
-        """Generate placeholder frame when OWL is not running"""
-        frame = np.zeros((480, 640, 3), dtype=np.uint8)
-
-        # Add OWL logo area (placeholder)
-        cv2.rectangle(frame, (270, 190), (370, 290), (60, 60, 60), -1)
-        cv2.putText(frame, "OWL", (295, 245), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-
-        # Add status text
-        cv2.putText(frame, "OWL Not Running", (220, 320), cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 255), 2)
-        cv2.putText(frame, "Dashboard Active", (230, 360), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
-
-        return frame
+        @self.app.route('/api/fan/toggle', methods=['POST'])
+        def toggle_fan_mode():
+            if get_rpi_version() != 'rpi-5':
+                return jsonify({'success': False, 'error': 'Not a Raspberry Pi 5'}), 403
+            try:
+                res = subprocess.run(['pinctrl', 'FAN_PWM', 'g'], capture_output=True, text=True, check=True)
+                is_auto = 'a0' in res.stdout
+                if is_auto:
+                    cmd = ['sudo', 'pinctrl', 'FAN_PWM', 'op', 'dl']
+                    new_mode = '100%'
+                else:
+                    cmd = ['sudo', 'pinctrl', 'FAN_PWM', 'a0']
+                    new_mode = 'auto'
+                self.logger.info(f"Toggling fan to: {new_mode}")
+                subprocess.run(cmd, check=True)
+                return jsonify({'success': True, 'mode': new_mode})
+            except (subprocess.CalledProcessError, Exception) as e:
+                self.logger.error(f"Failed to toggle fan mode: {e}")
+                return jsonify({'success': False, 'error': 'Fan control command failed'}), 500
 
     def get_system_stats(self):
         """Get system statistics"""
         try:
+            # Fan Status
+            fan_status = {'is_rpi5': False, 'mode': 'unavailable'}
+            rpi_version = get_rpi_version()
+
+            if rpi_version == 'rpi-5':
+                fan_status['is_rpi5'] = True
+                try:
+                    res = subprocess.run(['pinctrl', 'FAN_PWM', 'g'], capture_output=True, text=True, check=True)
+                    if 'a0' in res.stdout:
+                        fan_status['mode'] = 'auto'
+                    else:
+                        fan_status['mode'] = '100%'
+                except Exception as e:
+                    self.logger.warning(f"Could not determine fan state: {e}")
+                    fan_status['mode'] = 'error'
+
             # CPU and memory stats
             cpu_percent = psutil.cpu_percent(interval=0.1)
             memory = psutil.virtual_memory()
@@ -766,6 +789,7 @@ class OWLDashboard:
                 'disk_used': round(disk.used / (1024 ** 3), 1),
                 'disk_total': round(disk.total / (1024 ** 3), 1),
                 'usb_devices': usb_devices,
+                'fan_status': fan_status,
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
         except Exception as e:
@@ -780,6 +804,7 @@ class OWLDashboard:
                 'disk_used': 0,
                 'disk_total': 0,
                 'usb_devices': [],
+                'fan_status': 'error',
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
 

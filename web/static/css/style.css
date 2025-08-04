@@ -1850,6 +1850,29 @@ footer {
     }
 }
 
+/* -- Fan Control Button -- */
+.fan-control-button {
+    cursor: pointer;
+    transition: background 0.2s ease-in-out, transform 0.2s;
+}
+
+.fan-control-button:hover:not(.disabled) {
+    background: linear-gradient(135deg, #e9ecef 0%, #dce1e8 100%);
+    transform: translateY(-2px);
+}
+
+.fan-control-button.disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.fan-icon {
+    width: 1em;
+    height: 1em;
+    vertical-align: -0.15em;
+    margin-right: 0.3em;
+}
+
 /* Disabled tab styling */
 .nav-tab.disabled {
     opacity: 0.5;
