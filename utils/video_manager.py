@@ -55,6 +55,10 @@ class StreamingHandler(BaseHTTPRequestHandler):
                         self.wfile.write(b'\r\n')
 
                     time.sleep(1 / 30)  # Aim for ~30 FPS
+
+            except BrokenPipeError:
+                owl.logger.info(f"Streaming client disconnected (expected): {self.client_address}")
+
             except Exception as e:
                 owl.logger.warning(f'Removed streaming client {self.client_address}: {e}')
 

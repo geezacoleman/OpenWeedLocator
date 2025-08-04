@@ -471,7 +471,7 @@ User=owl
 Group=owl
 WorkingDirectory=/home/owl/owl/web
 Environment="PATH=/home/owl/.virtualenvs/owl/bin"
-ExecStart=/home/owl/.virtualenvs/owl/bin/gunicorn --bind 127.0.0.1:8000 --workers 2 --timeout 300 owl_dash:app
+ExecStart=/home/owl/.virtualenvs/owl/bin/gunicorn --bind 127.0.0.1:8000 --workers 1 --timeout 300 owl_dash:app
 Restart=always
 RestartSec=3
 KillMode=mixed
