@@ -29,6 +29,7 @@ STATUS_NGINX_CONFIG=""
 STATUS_SSL_CERT=""
 STATUS_AVAHI_CONFIG=""
 STATUS_SERVICES=""
+STATUS_FAN_PERMISSIONS=""
 
 ERROR_PACKAGES=""
 ERROR_MQTT_BROKER=""
@@ -38,6 +39,7 @@ ERROR_NGINX_CONFIG=""
 ERROR_SSL_CERT=""
 ERROR_AVAHI_CONFIG=""
 ERROR_SERVICES=""
+ERROR_FAN_PERMISSIONS=""
 
 # Function to check the exit status of the last executed command
 check_status() {
@@ -217,6 +219,27 @@ collect_user_input() {
     HOSTNAME="owl-${OWL_ID}"
 }
 
+setup_fan_permissions() {
+    echo -e "${GREEN}[INFO] Configuring sudo permissions for Pi 5 fan control...${NC}"
+
+    local SUDOERS_FILE="/etc/sudoers.d/99-owl-fan-control"
+
+    sudo tee "$SUDOERS_FILE" > /dev/null <<EOF
+# This file is managed by the OWL setup script.
+# It allows the 'owl' user to toggle the Raspberry Pi 5 fan
+# without needing a password, which is required for the web dashboard.
+
+# Define a list of the ONLY two commands the user is allowed to run.
+Cmnd_Alias OWL_FAN_TOGGLE = /usr/bin/pinctrl FAN_PWM a0, /usr/bin/pinctrl FAN_PWM op dl
+
+# Grant the 'owl' user permission to run ONLY the commands in the alias.
+owl ALL=(ALL) NOPASSWD: OWL_FAN_TOGGLE
+EOF
+    sudo chmod 0440 "$SUDOERS_FILE"
+
+    check_status "Fan control sudo permissions" "FAN_PERMISSIONS"
+}
+
 # Step 1: Collect configuration from user
 collect_user_input
 
@@ -341,6 +364,8 @@ echo "127.0.0.1 ${HOSTNAME}" | sudo tee -a /etc/hosts
 echo "127.0.1.1 ${HOSTNAME}" | sudo tee -a /etc/hosts
 
 check_status "Setting hostname and local resolution" "WIFI_CONFIG"
+
+setup_fan_permissions
 
 # Step 7: Generate SSL certificates
 echo -e "${GREEN}[INFO] Generating SSL certificates...${NC}"
@@ -558,6 +583,7 @@ echo -e "$STATUS_PACKAGES System Packages"
 echo -e "$STATUS_MQTT_BROKER MQTT Broker Configuration"
 echo -e "$STATUS_WIFI_CONFIG WiFi Hotspot Configuration"
 echo -e "$STATUS_UFW_CONFIG UFW Firewall Configuration"
+echo -e "$STATUS_FAN_PERMISSIONS Fan Control Permissions"
 echo -e "$STATUS_NGINX_CONFIG Nginx Configuration"
 echo -e "$STATUS_SSL_CERT SSL Certificate Generation"
 echo -e "$STATUS_AVAHI_CONFIG Avahi Service Configuration"
@@ -600,7 +626,7 @@ else
     echo -e "${ORANGE}[WARNING] OWL may not start properly${NC}"
 fi
 
-if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "$STATUS_WIFI_CONFIG" == "${TICK}" && "$STATUS_UFW_CONFIG" == "${TICK}" && "$STATUS_NGINX_CONFIG" == "${TICK}" && "$STATUS_SSL_CERT" == "${TICK}" && "$STATUS_AVAHI_CONFIG" == "${TICK}" && "$STATUS_SERVICES" == "${TICK}" ]]; then
+if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "$STATUS_WIFI_CONFIG" == "${TICK}" && "$STATUS_UFW_CONFIG" == "${TICK}" && "$STATUS_NGINX_CONFIG" == "${TICK}" && "$STATUS_SSL_CERT" == "${TICK}" && "$STATUS_AVAHI_CONFIG" == "${TICK}" && "$STATUS_SERVICES" == "${TICK}" && "$STATUS_FAN_PERMISSIONS" == "${TICK}" ]]; then
     echo -e "\n${GREEN}[COMPLETE] OWL Dashboard setup completed successfully!${NC}"
 
     # Check if reboot is needed
@@ -643,6 +669,7 @@ else
     if [[ -n "$ERROR_MQTT_BROKER" ]]; then echo -e "${RED}[ERROR] MQTT Broker: $ERROR_MQTT_BROKER${NC}"; fi
     if [[ -n "$ERROR_WIFI_CONFIG" ]]; then echo -e "${RED}[ERROR] WiFi Config: $ERROR_WIFI_CONFIG${NC}"; fi
     if [[ -n "$ERROR_UFW_CONFIG" ]]; then echo -e "${RED}[ERROR] UFW Config: $ERROR_UFW_CONFIG${NC}"; fi
+    if [[ -n "$ERROR_FAN_PERMISSIONS" ]]; then echo -e "${RED}[ERROR] Fan Permissions: $ERROR_FAN_PERMISSIONS${NC}"; fi
     if [[ -n "$ERROR_NGINX_CONFIG" ]]; then echo -e "${RED}[ERROR] Nginx Config: $ERROR_NGINX_CONFIG${NC}"; fi
     if [[ -n "$ERROR_SSL_CERT" ]]; then echo -e "${RED}[ERROR] SSL Cert: $ERROR_SSL_CERT${NC}"; fi
     if [[ -n "$ERROR_AVAHI_CONFIG" ]]; then echo -e "${RED}[ERROR] Avahi Config: $ERROR_AVAHI_CONFIG${NC}"; fi
