@@ -728,6 +728,7 @@ class OWLDashboard:
                 self.logger.info(f"Toggling fan to: {new_mode}")
                 subprocess.run(cmd, check=True)
                 return jsonify({'success': True, 'mode': new_mode})
+
             except (subprocess.CalledProcessError, Exception) as e:
                 self.logger.error(f"Failed to toggle fan mode: {e}")
                 return jsonify({'success': False, 'error': 'Fan control command failed'}), 500

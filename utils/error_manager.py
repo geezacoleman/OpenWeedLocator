@@ -1022,3 +1022,45 @@ class MQTTConnectionError(DashboardError):
             )
         )
         self.args = (formatted_message,)
+
+
+### RASPBERRY PI VERSION ERRORS ###
+class RPVersionError(OWLError):
+    """
+    A non-blocking warning raised when the Raspberry Pi version cannot be determined.
+    This is logged but does not stop the application, though some features may be disabled.
+    """
+    def __init__(self, original_error: str = "Reason unknown"):
+        super().__init__(
+            details={
+                'original_error': original_error,
+                'os_platform': sys.platform
+            }
+        )
+
+        formatted_message = (
+            self.format_error_header("Raspberry Pi Version Warning") +
+            self.format_section(
+                "Problem",
+                "Could not automatically determine the Raspberry Pi model."
+            ) +
+            self.format_section(
+                "Impact",
+                "The application will continue to run, but hardware-specific features "
+                f"(like {self.colorize('Raspberry Pi 5 Fan Control', 'WHITE', bold=True)}) will be disabled."
+            ) +
+            self.format_section(
+                "Likely Cause",
+                "• The script is running on a non-Raspberry Pi device (e.g., a laptop or VM).\n"
+                "• The operating system is not a standard Raspberry Pi OS distribution.\n"
+                f"• The device-tree model file is missing or inaccessible. Original Error: {original_error}"
+            ) +
+            self.format_section(
+                "Verification (on the device)",
+                "You can manually check for the model file in the terminal with:\n"
+                f"  {self.colorize('cat /proc/device-tree/model', 'WHITE')}\n\n"
+                "If this command works, but the error persists, please raise an issue on GitHub."
+            )
+        )
+
+        self.args = (formatted_message,)

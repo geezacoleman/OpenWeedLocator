@@ -1,9 +1,10 @@
 import time
 import platform
 import configparser
-import subprocess
 import cv2
 import logging
+
+import utils.error_manager as errors
 
 logger = logging.getLogger(__name__)
 
@@ -264,9 +265,15 @@ class AdvancedController:
         }
 
 def get_rpi_version():
+    """
+    Determines the Raspberry Pi model by reading the device-tree model file.
+    This method is more reliable as it reads the file directly instead of
+    relying on the 'cat' command, avoiding PATH issues.
+    """
+    model_file = "/proc/device-tree/model"
     try:
-        cmd = ["cat", "/proc/device-tree/model"]
-        model = subprocess.check_output(cmd).decode('utf-8').rstrip('\x00').strip()
+        with open(model_file, 'r') as f:
+            model = f.read().strip().rstrip('\x00') # Read and clean the string
 
         if 'Pi 5' in model:
             return 'rpi-5'
@@ -275,12 +282,13 @@ def get_rpi_version():
         elif 'Pi 3' in model:
             return 'rpi-3'
         else:
-            return 'non-rpi'
+            return 'rpi-other'
 
     except FileNotFoundError:
+        logging.warning(errors.RPVersionError(original_error="The model file '/proc/device-tree/model' was not found."))
         return 'non-rpi'
-    except subprocess.CalledProcessError:
-
-        raise ValueError("Error reading Raspberry Pi version.")
+    except Exception as e:
+        logging.error(errors.RPVersionError(original_error=str(e)))
+        return 'non-rpi'
 
 
