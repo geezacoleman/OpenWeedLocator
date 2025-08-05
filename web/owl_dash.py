@@ -717,13 +717,13 @@ class OWLDashboard:
             if get_rpi_version() != 'rpi-5':
                 return jsonify({'success': False, 'error': 'Not a Raspberry Pi 5'}), 403
             try:
-                res = subprocess.run(['pinctrl', 'FAN_PWM', 'g'], capture_output=True, text=True, check=True)
+                res = subprocess.run(['/usr/bin/pinctrl', 'FAN_PWM', 'g'], capture_output=True, text=True, check=True)
                 is_auto = 'a0' in res.stdout
                 if is_auto:
-                    cmd = ['sudo', 'pinctrl', 'FAN_PWM', 'op', 'dl']
+                    cmd = ['/usr/bin/sudo', '/usr/bin/pinctrl', 'FAN_PWM', 'op', 'dl']
                     new_mode = '100%'
                 else:
-                    cmd = ['sudo', 'pinctrl', 'FAN_PWM', 'a0']
+                    cmd = ['/usr/bin/sudo', '/usr/bin/pinctrl', 'FAN_PWM', 'a0']
                     new_mode = 'auto'
                 self.logger.info(f"Toggling fan to: {new_mode}")
                 subprocess.run(cmd, check=True)
@@ -743,7 +743,7 @@ class OWLDashboard:
             if rpi_version == 'rpi-5':
                 fan_status['is_rpi5'] = True
                 try:
-                    res = subprocess.run(['pinctrl', 'FAN_PWM', 'g'], capture_output=True, text=True, check=True)
+                    res = subprocess.run(['/usr/bin/pinctrl', 'FAN_PWM', 'g'], capture_output=True, text=True, check=True)
                     if 'a0' in res.stdout:
                         fan_status['mode'] = 'auto'
                     else:
