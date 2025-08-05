@@ -743,7 +743,7 @@ class OWLDashboard:
             if rpi_version == 'rpi-5':
                 fan_status['is_rpi5'] = True
                 try:
-                    res = subprocess.run(['/usr/bin/pinctrl', 'FAN_PWM', 'g'], capture_output=True, text=True, check=True)
+                    res = subprocess.run(['/usr/bin/sudo', '/usr/bin/pinctrl', 'FAN_PWM', 'g'], capture_output=True, text=True, check=True)
                     if 'a0' in res.stdout:
                         fan_status['mode'] = 'auto'
                     else:
