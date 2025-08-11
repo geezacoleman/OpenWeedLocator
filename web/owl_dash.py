@@ -717,37 +717,32 @@ class OWLDashboard:
             if get_rpi_version() != 'rpi-5':
                 return jsonify({'success': False, 'error': 'Not a Raspberry Pi 5'}), 403
             try:
-                res = subprocess.run(['/usr/bin/pinctrl', 'FAN_PWM', 'g'], capture_output=True, text=True, check=True)
-                is_auto = 'a0' in res.stdout
+                out = self._run_pinctrl('FAN_PWM', 'g')
+                is_auto = 'a0' in out
                 if is_auto:
-                    cmd = ['/usr/bin/sudo', '/usr/bin/pinctrl', 'FAN_PWM', 'op', 'dl']
                     new_mode = '100%'
+                    self._run_pinctrl('FAN_PWM', 'op', 'dl')
                 else:
-                    cmd = ['/usr/bin/sudo', '/usr/bin/pinctrl', 'FAN_PWM', 'a0']
                     new_mode = 'auto'
-                self.logger.info(f"Toggling fan to: {new_mode}")
-                subprocess.run(cmd, check=True)
+                    self._run_pinctrl('FAN_PWM', 'a0')
+                self.logger.info(f"Toggled fan to: {new_mode}")
                 return jsonify({'success': True, 'mode': new_mode})
-
-            except (subprocess.CalledProcessError, Exception) as e:
+            except Exception as e:
                 self.logger.error(f"Failed to toggle fan mode: {e}")
-                return jsonify({'success': False, 'error': 'Fan control command failed'}), 500
+                return jsonify({'success': False, 'error': str(e)}), 500
 
     def get_system_stats(self):
         """Get system statistics"""
+        # Fan control
         try:
-            # Fan Status
             fan_status = {'is_rpi5': False, 'mode': 'unavailable'}
             rpi_version = get_rpi_version()
 
             if rpi_version == 'rpi-5':
                 fan_status['is_rpi5'] = True
                 try:
-                    res = subprocess.run(['/usr/bin/sudo', '/usr/bin/pinctrl', 'FAN_PWM', 'g'], capture_output=True, text=True, check=True)
-                    if 'a0' in res.stdout:
-                        fan_status['mode'] = 'auto'
-                    else:
-                        fan_status['mode'] = '100%'
+                    out = self._run_pinctrl('FAN_PWM', 'g')
+                    fan_status['mode'] = 'auto' if 'a0' in out else '100%'
                 except Exception as e:
                     self.logger.warning(f"Could not determine fan state: {e}")
                     fan_status['mode'] = 'error'
@@ -808,6 +803,16 @@ class OWLDashboard:
                 'fan_status': {'is_rpi5': False, 'mode': 'error'},
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
+
+    def _run_pinctrl(self, *args):
+        cmd = ['/usr/bin/sudo', '-n', '/usr/bin/pinctrl', *args]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+
+        if res.returncode != 0:
+            err = (res.stderr or res.stdout).strip()
+            raise RuntimeError(f"pinctrl {' '.join(args)} failed: {err}")
+
+        return res.stdout
 
     def stop(self):
         """Stop the dashboard"""

@@ -223,20 +223,25 @@ setup_fan_permissions() {
     echo -e "${GREEN}[INFO] Configuring sudo permissions for Pi 5 fan control...${NC}"
 
     local SUDOERS_FILE="/etc/sudoers.d/99-owl-fan-control"
+    # Resolve absolute path to pinctrl (fallback to /usr/bin/pinctrl)
+    local PINCTRL_BIN
+    PINCTRL_BIN="$(command -v pinctrl 2>/dev/null || echo /usr/bin/pinctrl)"
 
     sudo tee "$SUDOERS_FILE" > /dev/null <<EOF
-# This file is managed by the OWL setup script.
-# It allows the 'owl' user to toggle the Raspberry Pi 5 fan
-# without needing a password, which is required for the web dashboard.
+# Managed by OWL web_setup.sh
+# Allow 'owl' to control Raspberry Pi 5 fan without a password.
+# We restrict to EXACT command lines to minimize risk.
 
-# Define a list of the ONLY two commands the user is allowed to run.
-Cmnd_Alias OWL_FAN_TOGGLE = /usr/bin/pinctrl FAN_PWM a0, /usr/bin/pinctrl FAN_PWM op dl
+Cmnd_Alias OWL_FAN_TOGGLE = \
+    ${PINCTRL_BIN} FAN_PWM a0, \
+    ${PINCTRL_BIN} FAN_PWM op dl, \
+    ${PINCTRL_BIN} FAN_PWM g
 
-# Grant the 'owl' user permission to run ONLY the commands in the alias.
-owl ALL=(ALL) NOPASSWD: OWL_FAN_TOGGLE
+owl ALL=(root) NOPASSWD: OWL_FAN_TOGGLE
+Defaults:owl secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 EOF
-    sudo chmod 0440 "$SUDOERS_FILE"
 
+    sudo chmod 0440 "$SUDOERS_FILE"
     check_status "Fan control sudo permissions" "FAN_PERMISSIONS"
 }
 
