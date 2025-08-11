@@ -739,12 +739,19 @@ class OWLDashboard:
         """Get system statistics"""
         # Fan control
         try:
-            fan_status = {'is_rpi5': False, 'mode': 'unavailable'}
+            fan_status = {'is_rpi5': False, 'mode': 'unavailable', 'rpm': 0}
             rpi_version = get_rpi_version()
 
             if rpi_version == 'rpi-5':
                 fan_status['is_rpi5'] = True
                 fan_status['mode'] = self.fan_state
+
+                cmd = ['cat', '/sys/devices/platform/cooling_fan/hwmon/*/fan1_input', *args]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+
+                if result.returncode != 0:
+                    err = (result.stderr or result.stdout).strip()
+                    raise RuntimeError(f"pinctrl {cmd} failed: {err}")
 
             # CPU and memory stats
             cpu_percent = psutil.cpu_percent(interval=0.1)
@@ -757,6 +764,7 @@ class OWLDashboard:
                                         capture_output=True, text=True)
                 if result.returncode == 0:
                     cpu_temp = float(result.stdout.replace('temp=', '').replace("'C\n", ''))
+
             except:
                 pass
 
@@ -799,7 +807,7 @@ class OWLDashboard:
                 'disk_used': 0,
                 'disk_total': 0,
                 'usb_devices': [],
-                'fan_status': {'is_rpi5': False, 'mode': 'error'},
+                'fan_status': {'is_rpi5': False, 'mode': 'error', 'rpm': 0},
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
 

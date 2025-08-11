@@ -972,16 +972,19 @@ function toggleFanMode() {
  */
 function updateFanDisplay(fanStatus) {
     const fanBtn = document.getElementById('fanControlBtn');
-    const fanText = document.getElementById('fanModeText');
-    if (!fanBtn || !fanText) return; // Exit if the elements don't exist
+    const fanMdText = document.getElementById('fanModeText');
+    const fanRPMText = document.getElementById('fanRPMText')
+    if (!fanBtn || !fanMdText || !fanRPMText) return; // Exit if the elements don't exist
 
     if (fanStatus && fanStatus.is_rpi5) {
-        // It's a Pi 5, so make sure the button is visible
         fanBtn.classList.remove('hidden');
 
         // Use the mode from the backend ('auto' or '100%') and capitalize it for display
         const displayMode = fanStatus.mode.charAt(0).toUpperCase() + fanStatus.mode.slice(1);
-        fanText.textContent = displayMode;
+        fanMdText.textContent = displayMode;
+
+        fanRPMText.textContent = fanStatus.rpm.toString()
+
     } else {
         // Not a Pi 5 or an error occurred, so hide the button
         fanBtn.classList.add('hidden');
@@ -1133,6 +1136,9 @@ function updateSystemStats() {
 
             // Fan Status
             updateFanDisplay(data.fan_status);
+
+            // Fan RPM
+            updateFanDisplay(data.fan_rpm);
 
             // Update detection status boxes with colors
             updateDetectionStatusBoxes(data);
