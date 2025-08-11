@@ -221,23 +221,18 @@ body {
     line-height: 1.6rem;
 }
 
-/* Detection Grid - Improved with colored boxes */
-.detection-grid {
-    display: grid;
-    gap: 1rem;
-}
-
 .detection-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 1rem;
+
     padding: 1.5rem;
     border-radius: 8px;
     border: 2px solid transparent;
     transition: all 0.3s ease;
     background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
 }
-
 .detection-item.status-enabled {
     background: linear-gradient(135deg, var(--success) 0%, #27ae60 100%);
     color: white;
@@ -272,6 +267,35 @@ body {
     margin: 0 0 0.5rem 0;
     font-size: 1.1rem;
     font-weight: 600;
+}
+
+.detection-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.detection-actions .control-btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    min-width: 70px;
+    text-transform: none;
+    letter-spacing: 0;
+    box-shadow: none;
+}
+
+.detection-actions .control-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+}
+
+.detection-actions .control-btn.hardware-disabled::before {
+    content: '🔒';
+    font-size: 1rem;
+    font-weight: normal;
+    text-shadow: none;
+    color: white;
 }
 
 .status-text {
@@ -1880,31 +1904,6 @@ footer {
     margin-right: 0.3em;
 }
 
-/* Disabled tab styling */
-.nav-tab.disabled {
-    opacity: 0.5;
-    cursor: not-allowed !important;
-    color: #999 !important;
-    background: #f8f9fa !important;
-    border-bottom-color: transparent !important;
-    position: relative;
-}
-
-.nav-tab.disabled::after {
-    content: '🔒';
-    position: absolute;
-    top: 50%;
-    right: 0.5rem;
-    transform: translateY(-50%);
-    font-size: 0.8rem;
-}
-
-.nav-tab.disabled:hover {
-    background: #f8f9fa !important;
-    color: #999 !important;
-    transform: none !important;
-}
-
 /* Hardware priority banner */
 .hardware-priority-banner {
     background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
@@ -2012,5 +2011,22 @@ footer {
     .control-btn.hardware-disabled::before {
         content: '🔒';
         font-size: 0.8rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .detection-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.75rem;
+    }
+
+    .detection-content {
+        width: 100%;
+    }
+
+    .detection-actions {
+        width: 100%;
+        justify-content: flex-end;
     }
 }

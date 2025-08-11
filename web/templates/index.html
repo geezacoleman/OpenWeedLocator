@@ -40,9 +40,6 @@
             <div class="nav-tab" data-tab="stream">
                 <span class="tab-text">Stream</span>
             </div>
-            <div class="nav-tab" data-tab="control">
-                <span class="tab-text">Controls</span>
-            </div>
             <div class="nav-tab" data-tab="storage">
                 <span class="tab-text">Storage</span>
             </div>
@@ -106,28 +103,39 @@
                 </div>
 
                 <div class="card detection-card">
-                    <h2>Detection Status</h2>
+                    <h2>Controls</h2>
                     <div class="detection-grid">
+                        <!-- Detection Item -->
                         <div class="detection-item" id="detectionStatusBox">
                             <div class="detection-content">
                                 <h4>Weed Detection</h4>
                                 <div class="status-text" id="detectionText">Disabled</div>
                             </div>
-                            <div class="status-indicator-large" id="detectionIndicator"></div>
+                            <div class="detection-actions">
+                                <button id="start-detection" class="control-btn success">Start</button>
+                                <button id="stop-detection" class="control-btn danger">Stop</button>
+                            </div>
                         </div>
+                        <!-- Recording Item -->
                         <div class="detection-item" id="recordingStatusBox">
                             <div class="detection-content">
                                 <h4>Image Recording</h4>
                                 <div class="status-text" id="recordingText">Stopped</div>
                             </div>
-                            <div class="status-indicator-large" id="recordingIndicator"></div>
+                            <div class="detection-actions">
+                                <button id="start-recording" class="control-btn primary">Record</button>
+                                <button id="stop-recording" class="control-btn secondary">Stop</button>
+                            </div>
                         </div>
+                        <!-- Sensitivity Item -->
                         <div class="detection-item" id="sensitivityStatusBox">
                             <div class="detection-content">
-                                <h4>Sensitivity Level</h4>
+                                <h4>Sensitivity</h4>
                                 <div class="status-text" id="sensitivityText">High</div>
                             </div>
-                            <div class="status-indicator-large" id="sensitivityIndicator"></div>
+                            <div class="detection-actions">
+                                <button id="toggle-sensitivity" class="control-btn accent">Toggle</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -173,61 +181,6 @@
                 </div>
             </div>
         </div>
-
-        <!-- Control Tab -->
-        <div id="control" class="tab-content">
-            <div class="control-grid">
-                <div class="card control-card">
-                    <h2>Detection Control</h2>
-                    <div class="control-section">
-                        <div class="control-buttons">
-                            <button id="start-detection" class="control-btn success">
-                                Start Detection
-                            </button>
-                            <button id="stop-detection" class="control-btn danger">
-                                Stop Detection
-                            </button>
-                        </div>
-                        <div class="control-info">
-                            <p>Current Status: <span id="controlDetectionStatus">Disabled</span></p>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="card control-card">
-                    <h2>Recording Control</h2>
-                    <div class="control-section">
-                        <div class="control-buttons">
-                            <button id="start-recording" class="control-btn primary">
-                                Start Recording
-                            </button>
-                            <button id="stop-recording" class="control-btn secondary">
-                                Stop Recording
-                            </button>
-                        </div>
-                        <div class="control-info">
-                            <p>Current Status: <span id="controlRecordingStatus">Stopped</span></p>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="card control-card">
-                    <h2>Sensitivity Control</h2>
-                    <div class="control-section">
-                        <div class="control-buttons">
-                            <button id="toggle-sensitivity" class="control-btn accent">
-                                Toggle Sensitivity
-                            </button>
-                        </div>
-                        <div class="control-info">
-                            <p>Current Level: <span id="controlSensitivityStatus">High</span></p>
-                            <p class="control-description">High = More sensitive to small weeds<br>Low = Less sensitive, fewer false positives</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
         <!-- Storage Tab -->
         <div id="storage" class="tab-content">
             <div class="storage-container">

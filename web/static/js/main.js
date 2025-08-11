@@ -288,7 +288,6 @@ function checkHardwareControllerStatus() {
             controllerType = data.controller_type;
 
             // Update UI based on hardware status
-            updateControlsTabAccess();
             updateControlButtons();
 
             // Show notification when hardware status changes
@@ -315,56 +314,8 @@ function checkHardwareControllerStatus() {
             // Default to no hardware controller on error
             hardwareControllerActive = false;
             controllerType = 'none';
-            updateControlsTabAccess();
             updateControlButtons();
         });
-}
-
-/**
- * Update Controls tab accessibility based on hardware status
- */
-function updateControlsTabAccess() {
-    const controlTab = document.querySelector('.nav-tab[data-tab="control"]');
-    if (!controlTab) return;
-
-    if (hardwareControllerActive) {
-        // Disable the Controls tab
-        controlTab.classList.add('disabled');
-        controlTab.setAttribute('title', `${controllerType.toUpperCase()} controller active - use physical switches`);
-
-        // Add click prevention
-        controlTab.addEventListener('click', preventControlTabClick);
-
-        // If currently on control tab, switch to dashboard
-        if (controlTab.classList.contains('active')) {
-            const dashboardTab = document.querySelector('.nav-tab[data-tab="dashboard"]');
-            if (dashboardTab) {
-                dashboardTab.click();
-            }
-        }
-        addHardwarePriorityBanner();
-
-    } else {
-        // Enable the Controls tab
-        controlTab.classList.remove('disabled');
-        controlTab.removeAttribute('title');
-        controlTab.removeEventListener('click', preventControlTabClick);
-        removeHardwarePriorityBanner();
-    }
-}
-
-/**
- * Prevent clicking on disabled control tab
- */
-function preventControlTabClick(event) {
-    event.preventDefault();
-    event.stopPropagation();
-    showNotification(
-        'Hardware Priority',
-        `${controllerType.toUpperCase()} controller is active - use physical switches for control`,
-        'warning'
-    );
-    return false;
 }
 
 /**
@@ -973,7 +924,7 @@ function toggleFanMode() {
 function updateFanDisplay(fanStatus) {
     const fanBtn = document.getElementById('fanControlBtn');
     const fanMdText = document.getElementById('fanModeText');
-    const fanRPMText = document.getElementById('fanRPMText'); // Correctly gets the element
+    const fanRPMText = document.getElementById('fanRPMText');
     if (!fanBtn || !fanMdText || !fanRPMText) return;
 
     if (fanStatus && fanStatus.is_rpi5) {
@@ -981,13 +932,9 @@ function updateFanDisplay(fanStatus) {
 
         const displayMode = fanStatus.mode.charAt(0).toUpperCase() + fanStatus.mode.slice(1);
         fanMdText.textContent = displayMode;
-
-        // Display the RPM with units for clarity.
-        // RPM is only reported in 'auto' mode. It will show 0 in manual '100%' mode.
         fanRPMText.textContent = `${fanStatus.rpm} RPM`;
 
     } else {
-        // Not a Pi 5 or an error occurred, so hide everything
         fanBtn.classList.add('hidden');
     }
 }
