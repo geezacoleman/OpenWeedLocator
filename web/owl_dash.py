@@ -46,6 +46,8 @@ class OWLDashboard:
         self.last_yield_time = 0
         self.disconnect_threshold = 2.0  # seconds without new frame => disconnected placeholder
 
+        self.fan_state = 'auto'
+
         self.logger = logging.getLogger(__name__)
         self.load_config()
         self.setup_logging()
@@ -717,16 +719,18 @@ class OWLDashboard:
             if get_rpi_version() != 'rpi-5':
                 return jsonify({'success': False, 'error': 'Not a Raspberry Pi 5'}), 403
             try:
-                out = self._run_pinctrl('FAN_PWM', 'g')
-                is_auto = 'a0' in out
-                if is_auto:
+                if self.fan_state == 'auto':
                     new_mode = '100%'
                     self._run_pinctrl('FAN_PWM', 'op', 'dl')
+                    self.fan_state = new_mode
                 else:
                     new_mode = 'auto'
                     self._run_pinctrl('FAN_PWM', 'a0')
+                    self.fan_state = new_mode
+
                 self.logger.info(f"Toggled fan to: {new_mode}")
                 return jsonify({'success': True, 'mode': new_mode})
+
             except Exception as e:
                 self.logger.error(f"Failed to toggle fan mode: {e}")
                 return jsonify({'success': False, 'error': str(e)}), 500
@@ -735,18 +739,6 @@ class OWLDashboard:
         """Get system statistics"""
         # Fan control
         try:
-            fan_status = {'is_rpi5': False, 'mode': 'unavailable'}
-            rpi_version = get_rpi_version()
-
-            if rpi_version == 'rpi-5':
-                fan_status['is_rpi5'] = True
-                try:
-                    out = self._run_pinctrl('FAN_PWM', 'g')
-                    fan_status['mode'] = 'auto' if 'a0' in out else '100%'
-                except Exception as e:
-                    self.logger.warning(f"Could not determine fan state: {e}")
-                    fan_status['mode'] = 'error'
-
             # CPU and memory stats
             cpu_percent = psutil.cpu_percent(interval=0.1)
             memory = psutil.virtual_memory()
@@ -785,7 +777,7 @@ class OWLDashboard:
                 'disk_used': round(disk.used / (1024 ** 3), 1),
                 'disk_total': round(disk.total / (1024 ** 3), 1),
                 'usb_devices': usb_devices,
-                'fan_status': fan_status,
+                'fan_status': self.fan_state,
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
         except Exception as e:

@@ -234,8 +234,7 @@ setup_fan_permissions() {
 
 Cmnd_Alias OWL_FAN_TOGGLE = \
     ${PINCTRL_BIN} FAN_PWM a0, \
-    ${PINCTRL_BIN} FAN_PWM op dl, \
-    ${PINCTRL_BIN} FAN_PWM g
+    ${PINCTRL_BIN} FAN_PWM op dl
 
 owl ALL=(root) NOPASSWD: OWL_FAN_TOGGLE
 Defaults:owl secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
