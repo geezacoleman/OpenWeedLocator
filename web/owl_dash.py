@@ -739,6 +739,13 @@ class OWLDashboard:
         """Get system statistics"""
         # Fan control
         try:
+            fan_status = {'is_rpi5': False, 'mode': 'unavailable'}
+            rpi_version = get_rpi_version()
+
+            if rpi_version == 'rpi-5':
+                fan_status['is_rpi5'] = True
+                fan_status['mode'] = self.fan_state
+
             # CPU and memory stats
             cpu_percent = psutil.cpu_percent(interval=0.1)
             memory = psutil.virtual_memory()
@@ -777,7 +784,7 @@ class OWLDashboard:
                 'disk_used': round(disk.used / (1024 ** 3), 1),
                 'disk_total': round(disk.total / (1024 ** 3), 1),
                 'usb_devices': usb_devices,
-                'fan_status': self.fan_state,
+                'fan_status': fan_status,
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
         except Exception as e:
