@@ -10,6 +10,7 @@ for monitoring and control using MQTT for inter-process communication.
 
 import os
 import sys
+import glob
 import threading
 import logging
 import subprocess
@@ -746,13 +747,17 @@ class OWLDashboard:
                 fan_status['is_rpi5'] = True
                 fan_status['mode'] = self.fan_state
 
-                cmd = ['cat', '/sys/devices/platform/cooling_fan/hwmon/*/fan1_input']
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                fan_status['rpm'] = int(result.stdout)
+                rpm_files = glob.glob('/sys/devices/platform/cooling_fan/hwmon/*/fan1_input')
 
-                if result.returncode != 0:
-                    err = (result.stderr or result.stdout).strip()
-                    raise RuntimeError(f"pinctrl {cmd} failed: {err}")
+                if rpm_files:
+                    try:
+                        with open(rpm_files[0], 'r') as f:
+                            fan_status['rpm'] = int(f.read().strip())
+                    except (IOError, ValueError) as e:
+                        self.logger.warning(f"Could not read fan RPM: {e}")
+                        fan_status['rpm'] = 0
+                else:
+                    fan_status['rpm'] = 0
 
             # CPU and memory stats
             cpu_percent = psutil.cpu_percent(interval=0.1)

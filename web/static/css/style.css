@@ -209,9 +209,16 @@ body {
 }
 
 .status-value {
-    font-size: 1rem;
+    font-size: 2rem;
     font-weight: bold;
     color: var(--primary);
+}
+
+.status-value-two-line {
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: var(--primary);
+    line-height: 1.6rem;
 }
 
 /* Detection Grid - Improved with colored boxes */
