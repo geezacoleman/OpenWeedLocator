@@ -746,8 +746,9 @@ class OWLDashboard:
                 fan_status['is_rpi5'] = True
                 fan_status['mode'] = self.fan_state
 
-                cmd = ['cat', '/sys/devices/platform/cooling_fan/hwmon/*/fan1_input', *args]
+                cmd = ['cat', '/sys/devices/platform/cooling_fan/hwmon/*/fan1_input']
                 result = subprocess.run(cmd, capture_output=True, text=True)
+                fan_status['rpm'] = int(result.stdout)
 
                 if result.returncode != 0:
                     err = (result.stderr or result.stdout).strip()
