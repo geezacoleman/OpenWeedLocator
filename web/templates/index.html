@@ -51,54 +51,56 @@
         <!-- Dashboard Tab -->
         <div id="dashboard" class="tab-content active">
             <div class="dashboard-grid">
-                <div class="card status-card">
-                    <h2>System Status</h2>
-                    <div class="status-grid">
-
-                        <!-- Item 1: CPU Temp -->
-                        <div class="status-item">
-                            <div class="status-info">
-                                <h3>CPU Temp</h3>
-                                <div class="status-value" id="cpuTemp">0°C</div>
+                <div class="card status-card expanded" id="systemStatusCard">
+                    <!-- 1. Visible header -->
+                    <div class="card-header">
+                        <div class="card-header-title">
+                            <h2>System Status</h2>
+                            <!-- CPU Temp in header -->
+                            <div class="status-item-inline">
+                                <span class="status-inline-label">CPU Temp:</span>
+                                <span class="status-inline-value" id="cpuTemp">0°C</span>
                             </div>
                         </div>
+                        <span class="toggle-icon">▼</span>
+                    </div>
 
-                        <!-- Item 2: Fan Control Button -->
-                        <div class="status-item fan-control-button hidden" id="fanControlBtn">
-                            <div class="status-info">
-                                <h3>
-                                    <svg class="fan-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M12,10.5C11.17,10.5 10.5,11.17 10.5,12C10.5,12.83 11.17,13.5 12,13.5C12.83,13.5 13.5,12.83 13.5,12C13.5,11.17 12.83,10.5 12,10.5M12,2C6.4,2 2,6.4 2,12C2,17.6 6.4,22 12,22C17.6,22 22,17.6 22,12C22,6.4 17.6,2 12,2M16.9,15.5L15.5,16.9L12,13.41L8.5,16.9L7.09,15.5L10.59,12L7.09,8.5L8.5,7.09L12,10.59L15.5,7.09L16.9,8.5L13.41,12L16.9,15.5Z" /></svg>
-                                    Fan Speed
-                                </h3>
-                                <div class="status-value-two-line" id="fanModeText">Auto</div>
-                                <div class="status-value-two-line" id="fanRPMText">0 RPM</div>
+                    <!-- 2. Collapsible content -->
+                    <div class="collapsible-content">
+                        <div class="status-grid">
+                            <!-- Fan Control Button -->
+                            <div class="status-item fan-control-button hidden" id="fanControlBtn">
+                                <div class="status-info">
+                                    <h3>
+                                        <svg class="fan-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M12,10.5C11.17,10.5 10.5,11.17 10.5,12C10.5,12.83 11.17,13.5 12,13.5C12.83,13.5 13.5,12.83 13.5,12C13.5,11.17 12.83,10.5 12,10.5M12,2C6.4,2 2,6.4 2,12C2,17.6 6.4,22 12,22C17.6,22 22,17.6 22,12C22,6.4 17.6,2 12,2M16.9,15.5L15.5,16.9L12,13.41L8.5,16.9L7.09,15.5L10.59,12L7.09,8.5L8.5,7.09L12,10.59L15.5,7.09L16.9,8.5L13.41,12L16.9,15.5Z" /></svg>
+                                        Fan Speed
+                                    </h3>
+                                    <div class="status-value-two-line" id="fanModeText">Auto</div>
+                                    <div class="status-value-two-line" id="fanRPMText">0 RPM</div>
+                                </div>
+                            </div>
+                            <!-- CPU Usage -->
+                            <div class="status-item">
+                                <div class="status-info">
+                                    <h3>CPU Usage</h3>
+                                    <div class="status-value" id="cpuUsage">0%</div>
+                                </div>
+                            </div>
+                            <!-- Memory -->
+                            <div class="status-item">
+                                <div class="status-info">
+                                    <h3>Memory</h3>
+                                    <div class="status-value" id="memoryUsage">0%</div>
+                                </div>
+                            </div>
+                            <!-- Disk -->
+                            <div class="status-item">
+                                <div class="status-info">
+                                    <h3>Disk</h3>
+                                    <div class="status-value" id="diskUsage">0%</div>
+                                </div>
                             </div>
                         </div>
-
-                        <!-- Item 3: CPU Usage -->
-                        <div class="status-item">
-                            <div class="status-info">
-                                <h3>CPU Usage</h3>
-                                <div class="status-value" id="cpuUsage">0%</div>
-                            </div>
-                        </div>
-
-                        <!-- Item 4: Memory -->
-                        <div class="status-item">
-                            <div class="status-info">
-                                <h3>Memory</h3>
-                                <div class="status-value" id="memoryUsage">0%</div>
-                            </div>
-                        </div>
-
-                        <!-- Item 5: Disk -->
-                        <div class="status-item">
-                            <div class="status-info">
-                                <h3>Disk</h3>
-                                <div class="status-value" id="diskUsage">0%</div>
-                            </div>
-                        </div>
-
                     </div>
                 </div>
 

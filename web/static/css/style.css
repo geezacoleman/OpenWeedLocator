@@ -2030,3 +2030,65 @@ footer {
         justify-content: flex-end;
     }
 }
+
+.status-card .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    padding: 0 0 1rem 0;
+}
+
+.card-header-title {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.status-item-inline {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: #f0f2f5;
+    padding: 0.25rem 0.75rem;
+    border-radius: 15px;
+}
+
+.status-inline-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--secondary);
+}
+
+.status-inline-value {
+    font-size: 0.9rem;
+    font-weight: bold;
+    color: var(--primary);
+}
+
+.toggle-icon {
+    font-size: 1.5rem;
+    color: var(--accent);
+    transition: transform 0.3s ease-in-out;
+}
+
+.collapsible-content {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.35s ease-out;
+}
+
+.status-card.expanded .collapsible-content {
+    max-height: 500px;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+}
+
+.status-card.expanded .toggle-icon {
+    transform: rotate(0deg);
+}
+
+.status-card:not(.expanded) .toggle-icon {
+    transform: rotate(-90deg);
+}

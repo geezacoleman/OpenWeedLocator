@@ -1,14 +1,10 @@
 let isGpsEnabled = true;
 let gpsWatchId = null;
 let gpsData = null;
-let isRecording = false;
-let recordingStartTime = null;
 let zoomLevel = 1;
 let updateInterval = null;
 let pendingRequests = {};
-const MAX_RECORDING_TIME = 30; // seconds
-const ESTIMATED_BITRATE = 2000000; // bits per second
-const SYSTEM_UPDATE_INTERVAL = 5000; // Reduced polling frequency
+const SYSTEM_UPDATE_INTERVAL = 5000;
 const zoomStep = 0.2;
 const maxZoom = 3;
 const minZoom = 1;
@@ -26,6 +22,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initNotifications();
     initHardwareControllerCheck();
     initFanControl();
+    initCollapsibleSections();
 
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     if (fullscreenBtn) {
@@ -1433,6 +1430,21 @@ function clearAllNotifications() {
 let uploadProgressInterval = null;
 let selectedUploadDirectory = null;
 let uploadInProgress = false;
+
+/**
+ * Initialize collapsible card sections
+ */
+function initCollapsibleSections() {
+    const card = document.getElementById('systemStatusCard');
+    if (!card) return;
+
+    const header = card.querySelector('.card-header');
+    if (!header) return;
+
+    header.addEventListener('click', () => {
+        card.classList.toggle('expanded');
+    });
+}
 
 /**
  * Initialize upload tab functionality
