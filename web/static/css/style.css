@@ -2092,3 +2092,4 @@ footer {
 .status-card:not(.expanded) .toggle-icon {
     transform: rotate(-90deg);
 }
+.status-card.expanded .status-item-inline { display: none; }

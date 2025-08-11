@@ -1128,6 +1128,13 @@ function updateSystemStats() {
             if (timestampElement) {
                 timestampElement.textContent = data.timestamp || new Date().toLocaleString();
             }
+
+            const statusCard = document.getElementById('systemStatusCard');
+            if (statusCard && statusCard.classList.contains('expanded')) {
+                const content = statusCard.querySelector('.collapsible-content');
+            if (content) content.style.maxHeight = content.scrollHeight + 'px';
+}
+
         })
         .catch(error => console.error('Error fetching system stats:', error));
 }
@@ -1439,10 +1446,39 @@ function initCollapsibleSections() {
     if (!card) return;
 
     const header = card.querySelector('.card-header');
-    if (!header) return;
+    const content = card.querySelector('.collapsible-content');
+    if (!header || !content) return;
+
+    const setExpandedHeight = () => {
+        // measure the real content height each time
+        content.style.maxHeight = content.scrollHeight + 'px';
+    };
+
+    const expand = () => {
+        card.classList.add('expanded');
+        setExpandedHeight();
+    };
+
+    const collapse = () => {
+        card.classList.remove('expanded');
+        content.style.maxHeight = '0px';
+    };
+
+    // initial state
+    if (card.classList.contains('expanded')) {
+        setExpandedHeight();
+    } else {
+        content.style.maxHeight = '0px';
+    }
 
     header.addEventListener('click', () => {
-        card.classList.toggle('expanded');
+        if (card.classList.contains('expanded')) collapse();
+        else expand();
+    });
+
+    // keep height correct on resize
+    window.addEventListener('resize', () => {
+        if (card.classList.contains('expanded')) setExpandedHeight();
     });
 }
 
