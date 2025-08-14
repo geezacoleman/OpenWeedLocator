@@ -105,7 +105,6 @@ install_dashboard_dependencies() {
   fi
 }
 
-# Function to check if the camera is detected
 check_camera_connection() {
   echo -e "${GREEN}[INFO] Checking for connected Raspberry Pi camera...${NC}"
   while true; do
@@ -291,11 +290,6 @@ chmod a+x owl.py
 
 setup_owl_systemd_service
 check_status "Creating OWL systemd service" "OWL_SERVICE"
-
-# Add boot script to cron
-echo -e "${GREEN}[INFO] Adding boot script to cron...${NC}"
-(crontab -l 2>/dev/null; echo "@reboot /usr/local/bin/owl_boot_wrapper.sh > /home/launch.log 2>&1") | sudo crontab -
-check_status "Adding boot script to cron" "BOOT_SCRIPTS"
 
 # Step 10: Set desktop background - check for wayland or X11
 echo -e "${GREEN}[INFO] Setting desktop background...${NC}"
