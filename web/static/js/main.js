@@ -23,6 +23,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initHardwareControllerCheck();
     initFanControl();
     initCollapsibleSections();
+    initPowerButton();
 
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     if (fullscreenBtn) {
@@ -90,6 +91,17 @@ function initStorageTab() {
         fileList.parentNode.insertBefore(breadcrumbDiv, fileList);
     }
 }
+
+/**
+ * Initializes the OWL power button event listener.
+ */
+function initPowerButton() {
+    const powerBtn = document.getElementById('owlPowerBtn');
+    if (powerBtn) {
+        powerBtn.addEventListener('click', toggleOwlPower);
+    }
+}
+
 /**
  * Initialize control buttons with debouncing
  */
@@ -186,6 +198,69 @@ function updateZoom() {
     const img = document.querySelector('.zoom-image');
     if (img) img.style.transform = `scale(${zoomLevel})`;
 }
+
+/**
+ * Handles the click event for the power button, displaying detailed feedback.
+ */
+function toggleOwlPower() {
+    const powerBtn = document.getElementById('owlPowerBtn');
+    const currentState = powerBtn.dataset.state;
+
+    if (currentState === 'pending') return;
+
+    updatePowerButton('pending');
+
+    const endpoint = (currentState === 'on') ? '/api/owl/stop' : '/api/owl/start';
+    const action = (currentState === 'on') ? 'Stopping' : 'Starting';
+
+    apiRequest(endpoint, { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Success', data.message, 'success', 3000);
+            } else {
+                throw new Error(data.error || `Failed to ${action.toLowerCase()} OWL service`);
+            }
+        })
+        .catch(error => {
+            showNotification('Error', error.message, 'error', 8000); // Show errors for longer
+        })
+        .finally(() => {
+            setTimeout(updateSystemStats, 2000);
+        });
+}
+
+/**
+ * Updates the power button's appearance and state based on data from the backend.
+ * @param {string} state - The current state ('on', 'off', or 'pending').
+ */
+function updatePowerButton(state) {
+    const powerBtn = document.getElementById('owlPowerBtn');
+    const powerText = powerBtn.querySelector('.power-text');
+    if (!powerBtn || !powerText) return;
+
+    powerBtn.dataset.state = state;
+    powerBtn.classList.remove('status-on', 'status-off', 'status-pending');
+
+    switch (state) {
+        case 'on':
+            powerBtn.classList.add('status-on');
+            powerText.textContent = "Running";
+            powerBtn.title = "Stop OWL Process";
+            break;
+        case 'off':
+            powerBtn.classList.add('status-off');
+            powerText.textContent = "Stopped";
+            powerBtn.title = "Start OWL Process";
+            break;
+        case 'pending':
+            powerBtn.classList.add('status-pending');
+            powerText.textContent = "Pending...";
+            powerBtn.title = "Action in progress...";
+            break;
+    }
+}
+
 
 /**
  * Setup video stream with cache busting
@@ -1086,15 +1161,17 @@ function updateSystemStats() {
             updateDetectionStatusBoxes(data);
 
             // Update OWL status indicator in header
+            updatePowerButton(data.owl_running ? 'on' : 'off');
+
             const statusDot = document.getElementById('statusDot');
             const statusText = document.getElementById('statusText');
             if (statusDot && statusText) {
                 if (data.owl_running) {
                     statusDot.classList.add('connected');
-                    statusText.textContent = 'OWL Running';
+                    statusText.textContent = 'Online';
                 } else {
                     statusDot.classList.remove('connected');
-                    statusText.textContent = 'OWL Offline';
+                    statusText.textContent = 'Offline';
                 }
             }
             const streamOverlay = document.getElementById('stream-status-overlay');

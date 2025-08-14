@@ -2093,3 +2093,39 @@ footer {
     transform: rotate(-90deg);
 }
 .status-card.expanded .status-item-inline { display: none; }
+
+/* Power button styling */
+.power-control {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.8rem;
+    margin-right: 1rem;
+    border-radius: 20px;
+    cursor: pointer;
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    transition: all 0.2s ease-in-out;
+}
+.power-control:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+.power-icon {
+    width: 20px;
+    height: 20px;
+    transition: transform 0.3s ease;
+}
+.power-text {
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+/* States */
+.power-control.status-on {
+    background: var(--success);
+}
+.power-control.status-off {
+    background: var(--danger);
+}
+.power-control.status-pending .power-icon {
+    animation: spin 1.5s linear infinite;
+}

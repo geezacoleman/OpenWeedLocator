@@ -23,6 +23,15 @@
                     <span class="notification-count hidden" id="notificationCount">0</span>
                 </div>
 
+                <div class="power-control" id="owlPowerBtn" title="Toggle OWL Process">
+                    <div class="power-icon-container">
+                        <svg class="power-icon" viewBox="0 0 24 24">
+                            <path fill="currentColor" d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M11,10V14H13V10H11Z" />
+                        </svg>
+                    </div>
+                    <span class="power-text">Loading...</span>
+                </div>
+
                 <div class="owl-status" id="owlStatus">
                     <span class="status-dot" id="statusDot"></span>
                     <span id="statusText">Connecting...</span>
@@ -111,43 +120,72 @@
                     </div>
                 </div>
 
-                <div class="card detection-card">
-                    <h2>Controls</h2>
-                    <div class="detection-grid">
-                        <!-- Detection Item -->
-                        <div class="detection-item" id="detectionStatusBox">
-                            <div class="detection-content">
-                                <h4>Weed Detection</h4>
-                                <div class="status-text" id="detectionText">Disabled</div>
-                            </div>
-                            <div class="detection-actions">
-                                <button id="start-detection" class="control-btn success">Start</button>
-                                <button id="stop-detection" class="control-btn danger">Stop</button>
-                            </div>
-                        </div>
-                        <!-- Recording Item -->
-                        <div class="detection-item" id="recordingStatusBox">
-                            <div class="detection-content">
-                                <h4>Image Recording</h4>
-                                <div class="status-text" id="recordingText">Stopped</div>
-                            </div>
-                            <div class="detection-actions">
-                                <button id="start-recording" class="control-btn primary">Record</button>
-                                <button id="stop-recording" class="control-btn secondary">Stop</button>
-                            </div>
-                        </div>
-                        <!-- Sensitivity Item -->
-                        <div class="detection-item" id="sensitivityStatusBox">
-                            <div class="detection-content">
-                                <h4>Sensitivity</h4>
-                                <div class="status-text" id="sensitivityText">High</div>
-                            </div>
-                            <div class="detection-actions">
-                                <button id="toggle-sensitivity" class="control-btn accent">Toggle</button>
-                            </div>
-                        </div>
+                <div class="card detection-card" id="cameraControlsCard">
+                  <div class="card-title-row">
+                    <h2>Camera Controls</h2>
+                    <span class="status-chip" id="detectStatusChip">
+                      <span class="dot"></span><span id="detectStatusText">Stopped</span>
+                    </span>
+                  </div>
+
+                  <!-- Big switches -->
+                  <div class="controls-stack">
+                    <!-- Detection switch -->
+                    <button class="owl-switch" id="detectSwitch" aria-pressed="false">
+                      <span class="switch-label">
+                        <svg aria-hidden viewBox="0 0 24 24" class="switch-icon">
+                          <path fill="currentColor" d="M16,7V4A2,2 0 0,0 14,2H10A2,2 0 0,0 8,4V7H16M7,9H17A2,2 0 0,1 19,11V20A2,2 0 0,1 17,22H7A2,2 0 0,1 5,20V11A2,2 0 0,1 7,9Z" />
+                        </svg>
+                        <strong>Detection</strong>
+                      </span>
+                      <span class="switch-track"><span class="switch-thumb"></span></span>
+                      <span class="switch-state" id="detectSwitchState">OFF</span>
+                    </button>
+
+                    <!-- Recording switch -->
+                    <button class="owl-switch owl-switch--record" id="recordSwitch" aria-pressed="false">
+                      <span class="switch-label">
+                        <svg aria-hidden viewBox="0 0 24 24" class="switch-icon">
+                          <path fill="currentColor" d="M12,2A10,10 0 1,0 22,12A10,10 0 0,0 12,2Z" />
+                        </svg>
+                        <strong>Recording</strong>
+                      </span>
+                      <span class="switch-track"><span class="switch-thumb"></span></span>
+                      <span class="switch-state" id="recordSwitchState">OFF</span>
+                    </button>
+                  </div>
+
+                  <!-- Same-row -->
+                  <div class="two-up">
+                    <!-- Sensitivity (segmented) -->
+                    <div class="control-tile">
+                      <div class="tile-label">Sensitivity</div>
+                      <div class="segmented">
+                        <button class="seg-btn" data-sens="Low">Low</button>
+                        <button class="seg-btn active" data-sens="Med">Med</button>
+                        <button class="seg-btn" data-sens="High">High</button>
+                      </div>
                     </div>
+
+                    <!-- Fan (Auto / 100%) -->
+                    <div class="control-tile">
+                      <div class="tile-label">Fan</div>
+                      <div class="segmented">
+                        <button class="seg-btn active" data-fan="auto">Auto</button>
+                        <button class="seg-btn" data-fan="100">100%</button>
+                      </div>
+                      <div class="tile-subtle" id="fanRpmReadout">—</div>
+                    </div>
+                  </div>
+
+                  <!-- Metrics footer with gradients -->
+                  <div class="metrics-row">
+                    <span class="metric-chip cpu" id="chipCpu">CPU <strong id="cpuChipVal">0%</strong></span>
+                    <span class="metric-chip mem" id="chipMem">Mem <strong id="memChipVal">0%</strong></span>
+                    <span class="metric-chip temp" id="chipTemp">Temp <strong id="tempChipVal">0°C</strong></span>
+                  </div>
                 </div>
+
             </div>
         </div>
 

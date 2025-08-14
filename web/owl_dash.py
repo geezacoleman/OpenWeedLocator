@@ -11,6 +11,7 @@ for monitoring and control using MQTT for inter-process communication.
 import os
 import sys
 import glob
+import shutil
 import threading
 import logging
 import subprocess
@@ -72,6 +73,30 @@ class OWLDashboard:
         self.setup_routes()
 
         self.logger.info("OWL Dashboard initialized")
+
+    def get_owl_service_state(self):
+        """Return the true systemd state of owl.service."""
+        try:
+            result = self._run_systemctl_command(["is-active", "owl.service"])
+            is_active = result.stdout.strip() == "active"
+            return {"active": is_active, "status": result.stdout.strip()}
+        except Exception as e:
+            self.logger.warning(f"Could not get owl.service state: {e}")
+            return {"active": False, "status": "unknown"}
+
+    def control_owl_service(self, action):
+        """Start or stop the owl.service, returning a detailed result."""
+        if action not in ("start", "stop"):
+            return False, "Invalid action specified"
+        try:
+            result = self._run_systemctl_command([action, "owl.service"], needs_sudo=True)
+            if result.returncode == 0:
+                return True, f"OWL service '{action}' command issued successfully."
+            else:
+                error_message = result.stderr.strip() or f"Failed to {action} owl.service."
+                return False, error_message
+        except Exception as e:
+            return False, f"An unexpected error occurred: {str(e)}"
 
     def load_config(self):
         """Load configuration from config file"""
@@ -220,6 +245,24 @@ class OWLDashboard:
         def index():
             """Main dashboard page"""
             return render_template('index.html')
+
+        @self.app.route('/api/owl/start', methods=['POST'])
+        def start_owl():
+            """Starts the owl.service using the robust control method."""
+            ok, message = self.control_owl_service('start')
+            if ok:
+                return jsonify({'success': True, 'message': message})
+            else:
+                return jsonify({'success': False, 'error': message}), 500
+
+        @self.app.route('/api/owl/stop', methods=['POST'])
+        def stop_owl():
+            """Stops the owl.service using the robust control method."""
+            ok, message = self.control_owl_service('stop')
+            if ok:
+                return jsonify({'success': True, 'message': message})
+            else:
+                return jsonify({'success': False, 'error': message}), 500
 
         @self.app.route('/api/detection/start', methods=['POST'])
         def start_detection():
@@ -746,85 +789,90 @@ class OWLDashboard:
             return jsonify(errors)
 
     def get_system_stats(self):
-        """Get system statistics"""
-        # Fan control
+        """
+        Get system statistics with robust, component-level error handling.
+        This function is designed to always return a complete dictionary, even if some
+        underlying system commands fail.
+        """
+        # 1. Start with a default dictionary. This guarantees that the frontend
+        #    will always receive all the keys it expects, preventing JavaScript errors.
+        stats = {
+            'cpu_percent': 0,
+            'cpu_temp': 0,
+            'memory_percent': 0,
+            'memory_used': 0,
+            'memory_total': 0,
+            'disk_percent': 0,
+            'disk_used': 0,
+            'disk_total': 0,
+            'usb_devices': [],
+            'fan_status': {'is_rpi5': False, 'mode': 'error', 'rpm': 0},
+            'owl_running': False,
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+
         try:
-            fan_status = {'is_rpi5': False, 'mode': 'unavailable', 'rpm': 0}
+            service_state = self.get_owl_service_state()
+            stats['owl_running'] = service_state['active']
+
             rpi_version = get_rpi_version()
-
             if rpi_version == 'rpi-5':
-                fan_status['is_rpi5'] = True
-                fan_status['mode'] = self.fan_state
+                stats['fan_status']['is_rpi5'] = True
+                try:
+                    res = subprocess.run(['pinctrl', 'FAN_PWM', 'g'], capture_output=True, text=True, check=True)
+                    stats['fan_status']['mode'] = 'auto' if 'a0' in res.stdout else '100%'
 
-                rpm_files = glob.glob('/sys/devices/platform/cooling_fan/hwmon/*/fan1_input')
-
-                if rpm_files:
-                    try:
+                    rpm_files = glob.glob('/sys/devices/platform/cooling_fan/hwmon/*/fan1_input')
+                    if rpm_files:
                         with open(rpm_files[0], 'r') as f:
-                            fan_status['rpm'] = int(f.read().strip())
-                    except (IOError, ValueError) as e:
-                        self.logger.warning(f"Could not read fan RPM: {e}")
-                        fan_status['rpm'] = 0
-                else:
-                    fan_status['rpm'] = 0
+                            stats['fan_status']['rpm'] = int(f.read().strip())
+                except Exception as e:
+                    self.logger.warning(f"Could not determine full fan state: {e}")
 
-            # CPU and memory stats
             cpu_percent = psutil.cpu_percent(interval=0.1)
             memory = psutil.virtual_memory()
-
-            # CPU temperature
-            cpu_temp = 0
-            try:
-                result = subprocess.run(['/usr/bin/vcgencmd', 'measure_temp'],
-                                        capture_output=True, text=True)
-                if result.returncode == 0:
-                    cpu_temp = float(result.stdout.replace('temp=', '').replace("'C\n", ''))
-
-            except:
-                pass
-
-            # USB devices
-            usb_devices = []
-            try:
-                result = subprocess.run(['lsusb'], capture_output=True, text=True)
-                if result.returncode == 0:
-                    for line in result.stdout.split('\n'):
-                        if 'Camera' in line or 'Webcam' in line:
-                            usb_devices.append(line.strip())
-            except:
-                pass
-
-            # Disk usage
             disk = psutil.disk_usage('/')
 
-            return {
+            stats.update({
                 'cpu_percent': round(cpu_percent, 1),
-                'cpu_temp': round(cpu_temp, 1),
                 'memory_percent': round(memory.percent, 1),
                 'memory_used': round(memory.used / (1024 ** 3), 1),
                 'memory_total': round(memory.total / (1024 ** 3), 1),
                 'disk_percent': round(disk.percent, 1),
                 'disk_used': round(disk.used / (1024 ** 3), 1),
                 'disk_total': round(disk.total / (1024 ** 3), 1),
-                'usb_devices': usb_devices,
-                'fan_status': fan_status,
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
+            })
+
+            try:
+                result = subprocess.run(['/usr/bin/vcgencmd', 'measure_temp'], capture_output=True, text=True)
+                if result.returncode == 0:
+                    stats['cpu_temp'] = round(float(result.stdout.replace('temp=', '').replace("'C\n", '')), 1)
+            except FileNotFoundError:
+                pass
+
+            try:
+                result = subprocess.run(['lsusb'], capture_output=True, text=True)
+                if result.returncode == 0:
+                    stats['usb_devices'] = [line.strip() for line in result.stdout.split('\n') if
+                                            'Camera' in line or 'Webcam' in line]
+            except Exception:
+                pass
+
         except Exception as e:
-            self.logger.error(f"Error getting system stats: {e}")
-            return {
-                'cpu_percent': 0,
-                'cpu_temp': 0,
-                'memory_percent': 0,
-                'memory_used': 0,
-                'memory_total': 0,
-                'disk_percent': 0,
-                'disk_used': 0,
-                'disk_total': 0,
-                'usb_devices': [],
-                'fan_status': {'is_rpi5': False, 'mode': 'error', 'rpm': 0},
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
+            self.logger.error(f"A critical error occurred while getting system stats: {e}")
+            return stats
+
+        mqtt_state = self.mqtt_client.get_state() if self.mqtt_client else {}
+        stats.update({
+            'detection_enable': mqtt_state.get('detection_enable', False),
+            'image_sample_enable': mqtt_state.get('image_sample_enable', False),
+            'sensitivity_state': mqtt_state.get('sensitivity_state', False),
+            'stream_active': mqtt_state.get('stream_active', False),
+            'weed_detect_indicator': self.mqtt_client.get_weed_detect_indicator() if self.mqtt_client else False,
+            'image_write_indicator': self.mqtt_client.get_image_write_indicator() if self.mqtt_client else False
+        })
+
+        return stats
 
     def _run_pinctrl(self, *args):
         cmd = ['/usr/bin/sudo', '-n', '/usr/bin/pinctrl', *args]
@@ -835,6 +883,22 @@ class OWLDashboard:
             raise RuntimeError(f"pinctrl {' '.join(args)} failed: {err}")
 
         return res.stdout
+
+    def _get_systemctl_path(self):
+        """Find the absolute path to the systemctl executable for reliability."""
+        return shutil.which("systemctl") or "/bin/systemctl"
+
+    def _run_systemctl_command(self, args, needs_sudo=False):
+        """A robust wrapper for running systemctl commands."""
+        systemctl_path = self._get_systemctl_path()
+        if not os.path.exists(systemctl_path):
+            raise FileNotFoundError("systemctl executable not found")
+
+        cmd = [systemctl_path] + args
+        if needs_sudo:
+            cmd.insert(0, 'sudo')
+
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=5)
 
     def stop(self):
         """Stop the dashboard"""

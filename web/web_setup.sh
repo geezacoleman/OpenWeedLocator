@@ -30,6 +30,7 @@ STATUS_SSL_CERT=""
 STATUS_AVAHI_CONFIG=""
 STATUS_SERVICES=""
 STATUS_FAN_PERMISSIONS=""
+STATUS_SERVICE_PERMISSIONS=""
 
 ERROR_PACKAGES=""
 ERROR_MQTT_BROKER=""
@@ -40,6 +41,7 @@ ERROR_SSL_CERT=""
 ERROR_AVAHI_CONFIG=""
 ERROR_SERVICES=""
 ERROR_FAN_PERMISSIONS=""
+ERROR_SERVICE_PERMISSIONS=""
 
 # Function to check the exit status of the last executed command
 check_status() {
@@ -289,6 +291,28 @@ EOF
     check_status "Fan control sudo permissions" "FAN_PERMISSIONS"
 }
 
+setup_service_control_permissions() {
+    echo -e "${GREEN}[INFO] Configuring sudo permissions for OWL service control...${NC}"
+
+    local SUDOERS_FILE="/etc/sudoers.d/97-owl-service-control"
+
+    sudo tee "$SUDOERS_FILE" > /dev/null <<EOF
+# This file is managed by the OWL setup script.
+# It allows the 'owl' user to start and stop the main owl.service
+# without a password, which is required for the web dashboard power button.
+
+Cmnd_Alias OWL_SERVICE_CMDS = /bin/systemctl start owl.service, /bin/systemctl stop owl.service, /bin/systemctl restart owl.service
+
+# Grant the 'owl' user permission to run ONLY the commands in the alias.
+owl ALL=(ALL) NOPASSWD: OWL_SERVICE_CMDS
+EOF
+
+    # Sudoers files require strict permissions to be active.
+    sudo chmod 0440 "$SUDOERS_FILE"
+
+    check_status "Service control sudo permissions" "SERVICE_PERMISSIONS"
+}
+
 # Step 1: Collect configuration from user
 collect_user_input
 
@@ -414,7 +438,9 @@ echo "127.0.1.1 ${HOSTNAME}" | sudo tee -a /etc/hosts
 
 check_status "Setting hostname and local resolution" "WIFI_CONFIG"
 
+# Set the permissions for each service
 setup_fan_permissions
+setup_service_control_permissions
 
 # Step 7: Generate SSL certificates
 echo -e "${GREEN}[INFO] Generating SSL certificates...${NC}"
@@ -719,6 +745,7 @@ else
     if [[ -n "$ERROR_WIFI_CONFIG" ]]; then echo -e "${RED}[ERROR] WiFi Config: $ERROR_WIFI_CONFIG${NC}"; fi
     if [[ -n "$ERROR_UFW_CONFIG" ]]; then echo -e "${RED}[ERROR] UFW Config: $ERROR_UFW_CONFIG${NC}"; fi
     if [[ -n "$ERROR_FAN_PERMISSIONS" ]]; then echo -e "${RED}[ERROR] Fan Permissions: $ERROR_FAN_PERMISSIONS${NC}"; fi
+    if [[ -n "$ERROR_SERVICE_PERMISSIONS" ]]; then echo -e "${RED}[ERROR] OWL Service Permissions: $ERROR_SERVICE_PERMISSIONS${NC}"; fi
     if [[ -n "$ERROR_NGINX_CONFIG" ]]; then echo -e "${RED}[ERROR] Nginx Config: $ERROR_NGINX_CONFIG${NC}"; fi
     if [[ -n "$ERROR_SSL_CERT" ]]; then echo -e "${RED}[ERROR] SSL Cert: $ERROR_SSL_CERT${NC}"; fi
     if [[ -n "$ERROR_AVAHI_CONFIG" ]]; then echo -e "${RED}[ERROR] Avahi Config: $ERROR_AVAHI_CONFIG${NC}"; fi
