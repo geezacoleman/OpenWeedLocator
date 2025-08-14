@@ -862,7 +862,7 @@ class OWLDashboard:
             # USB devices
             usb_devices = []
             try:
-                result = subprocess.run(['lsusb'], capture_output=True, text=True)
+                result = subprocess.run(['/usr/bin/lsusb'], capture_output=True, text=True)
                 if result.returncode == 0:
                     for line in result.stdout.split('\n'):
                         if 'Camera' in line or 'Webcam' in line:
