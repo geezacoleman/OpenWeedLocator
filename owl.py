@@ -161,6 +161,7 @@ class Owl:
         # instantiate the relay controller - successful start should beep the buzzer
         try:
             self.relay_controller = RelayController(relay_dict=self.relay_dict)
+
         except errors.OWLAlreadyRunningError:
             self.logger.critical("OWL initialization failed: GPIO pin conflict. Another OWL instance may be running.",
                                  exc_info=True)

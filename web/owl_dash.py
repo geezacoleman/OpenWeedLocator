@@ -345,7 +345,7 @@ class OWLDashboard:
                 lon = float(gps_data.get('longitude', 0.0))
                 accuracy = float(gps_data.get('accuracy', 0.0))
                 result = self.mqtt_client.update_gps(lat, lon, accuracy)
-                self.logger.info(f"GPS updated: lat={lat}, lon={lon}")
+                # self.logger.info(f"GPS updated: lat={lat}, lon={lon}")
                 return jsonify(result)
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)})
@@ -819,13 +819,18 @@ class OWLDashboard:
             if rpi_version == 'rpi-5':
                 stats['fan_status']['is_rpi5'] = True
                 try:
-                    res = subprocess.run(['pinctrl', 'FAN_PWM', 'g'], capture_output=True, text=True, check=True)
-                    stats['fan_status']['mode'] = 'auto' if 'a0' in res.stdout else '100%'
-
                     rpm_files = glob.glob('/sys/devices/platform/cooling_fan/hwmon/*/fan1_input')
+
                     if rpm_files:
-                        with open(rpm_files[0], 'r') as f:
-                            stats['fan_status']['rpm'] = int(f.read().strip())
+                        try:
+                            with open(rpm_files[0], 'r') as f:
+                                stats['fan_status']['rpm'] = int(f.read().strip())
+                        except (IOError, ValueError) as e:
+                            self.logger.warning(f"Could not read fan RPM: {e}")
+                            stats['fan_status']['rpm'] = 0
+                    else:
+                        stats['fan_status']['rpm'] = 0
+
                 except Exception as e:
                     self.logger.warning(f"Could not determine full fan state: {e}")
 
@@ -886,7 +891,14 @@ class OWLDashboard:
 
     def _get_systemctl_path(self):
         """Find the absolute path to the systemctl executable for reliability."""
-        return shutil.which("systemctl") or "/bin/systemctl"
+        path = shutil.which("systemctl")
+        if path:
+            return path
+        if os.path.exists("/usr/bin/systemctl"):
+            return "/usr/bin/systemctl"
+        if os.path.exists("/bin/systemctl"):
+            return "/bin/systemctl"
+        return "systemctl"
 
     def _run_systemctl_command(self, args, needs_sudo=False):
         """A robust wrapper for running systemctl commands."""
