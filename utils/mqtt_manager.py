@@ -8,11 +8,10 @@ import json
 import time
 import threading
 import logging
-import base64
 import cv2
-import numpy as np
 import configparser
-from typing import Optional, Callable
+
+from collections import deque
 
 try:
     import paho.mqtt.client as mqtt
@@ -39,10 +38,11 @@ class MQTTServer:
             'state': 'owl/state',  # Owl publishes state here
             'gps': 'owl/gps',  # Dashboard sends GPS here
             'status': 'owl/status',  # System status
-            'indicators': 'owl/indicators'  # Weed detection, image write indicators
+            'indicators': 'owl/indicators',  # Weed detection, image write indicators
+            'errors': 'owl/errors' # Logs errors on MQTT
         }
 
-        # Current state (replaces multiprocessing.Value objects)
+        # Current state
         self.state = {
             'detection_enable': False,
             'image_sample_enable': False,
@@ -245,7 +245,7 @@ class MQTTServer:
             config = configparser.ConfigParser()
             config.read(config_file)
 
-            # Update owl instance settings (exactly like DashboardController does)
+            # Update owl instance settings
             self.owl_instance.exg_min = config.getint('GreenOnBrown', 'exg_min')
             self.owl_instance.exg_max = config.getint('GreenOnBrown', 'exg_max')
             self.owl_instance.hue_min = config.getint('GreenOnBrown', 'hue_min')
@@ -255,7 +255,7 @@ class MQTTServer:
             self.owl_instance.brightness_min = config.getint('GreenOnBrown', 'brightness_min')
             self.owl_instance.brightness_max = config.getint('GreenOnBrown', 'brightness_max')
 
-            # Update trackbars if show_display is True (like DashboardController does)
+            # Update trackbars if show_display is True
             if self.owl_instance.show_display:
                 cv2.setTrackbarPos("ExG-Min", self.owl_instance.window_name, self.owl_instance.exg_min)
                 cv2.setTrackbarPos("ExG-Max", self.owl_instance.window_name, self.owl_instance.exg_max)
@@ -377,8 +377,12 @@ class MQTTClient:
             'state': 'owl/state',
             'gps': 'owl/gps',
             'status': 'owl/status',
-            'indicators': 'owl/indicators'
+            'indicators': 'owl/indicators',
+            'errors': 'owl/errors',
         }
+
+        # set up the error log
+        self.error_log = deque(maxlen=20)
 
         # Current state cache
         self.current_state = {}
@@ -425,6 +429,7 @@ class MQTTClient:
             client.subscribe(self.topics['state'])
             client.subscribe(self.topics['status'])
             client.subscribe(self.topics['indicators'])
+            client.subscribe(self.topics['errors'])
 
         else:
             self.logger.error(f"Failed to connect to MQTT broker: {rc}")
@@ -460,6 +465,9 @@ class MQTTClient:
         elif topic == self.topics['indicators']:
             self._handle_indicator(data)
 
+        elif topic == self.topics['errors']:
+            self._handle_error(data)
+
     def _handle_indicator(self, indicator_data):
         """Handle indicator messages (weed detection, image write)"""
         try:
@@ -473,6 +481,22 @@ class MQTTClient:
 
         except Exception as e:
             self.logger.error(f"Error handling indicator: {e}")
+
+    def _handle_error(self, error_data):
+        """Handles incoming error messages from owl.py"""
+        try:
+            self.logger.warning(f"Received error from owl.py: {error_data.get('message')}")
+            with self.state_lock:
+                self.error_log.append(error_data)
+        except Exception as e:
+            self.logger.error(f"Error while processing error message: {e}")
+
+    def get_and_clear_errors(self):
+        """Atomically retrieves and clears the current error log."""
+        with self.state_lock:
+            errors_to_send = list(self.error_log)
+            self.error_log.clear()
+        return errors_to_send
 
     def get_state(self):
         """Get current state"""

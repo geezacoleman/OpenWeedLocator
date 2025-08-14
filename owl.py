@@ -72,7 +72,7 @@ try:
     from utils.greenonbrown import GreenOnBrown
     from utils.frame_reader import FrameReader
     from utils.config_manager import ConfigValidator
-    from utils.log_manager import LogManager
+    from utils.log_manager import LogManager, MQTTLogHandler
     import utils.error_manager as errors
     from version import SystemInfo, VERSION
 
@@ -199,8 +199,14 @@ class Owl:
 
                 self.logger.info("MQTT Dashboard integration enabled")
 
+                LogManager.add_mqtt_handler(
+                    mqtt_client=self.dash.client,
+                    mqtt_error_topic=self.dash.topics['errors']
+                )
+
             except Exception as e:
                 self.dash = None
+                self.logger.critical("Failed to initialize MQTT server. Dashboard disabled.")
                 raise errors.MQTTConnectionError(host='localhost', port=1883, original_error=e)
 
             try:
@@ -253,10 +259,18 @@ class Owl:
             self.save_directory = self.config.get('DataCollection', 'save_directory')
             self.camera_name = self.config.get('DataCollection', 'camera_name')
 
-            self.directory_manager = DirectorySetup(save_directory=self.save_directory)
-            self.save_directory, self.save_subdirectory = self.directory_manager.setup_directories()
+            try:
+                self.directory_manager = DirectorySetup(save_directory=self.save_directory)
+                self.save_directory, self.save_subdirectory = self.directory_manager.setup_directories()
 
-            self.image_recorder = ImageRecorder(save_directory=self.save_subdirectory, mode=self.sample_method)
+                self.image_recorder = ImageRecorder(save_directory=self.save_subdirectory, mode=self.sample_method)
+
+            except (errors.NoWritableUSBError, errors.USBMountError, errors.USBWriteError,
+                    errors.StorageSystemError) as e:
+                self.logger.critical(str(e))
+                self.stop()
+                raise
+
         ############################
 
         # initialise controller buttons and async management
@@ -762,13 +776,13 @@ class Owl:
             return media_source
 
         except IndexError as e:
-            self.logger.error("Camera index not found", exc_info=True)
+            self.logger.critical("Camera index not found", exc_info=True)
             self.status_indicator.error(2)
             self.stop()
             raise errors.CameraNotFoundError(error_type="Camera Not Found", original_error=str(e))
 
         except ModuleNotFoundError as e:
-            self.logger.error(e, exc_info=True)
+            self.logger.critical(e, exc_info=True)
             module_name = str(e).split("'")[-2]
             self.status_indicator.error(1)
             self.stop()
@@ -776,7 +790,7 @@ class Owl:
 
         except Exception as e:
             error_msg = f"[CRITICAL ERROR] Failed to initialize camera: {str(e)}"
-            self.logger.error(error_msg)
+            self.logger.critical(error_msg)
             self.status_indicator.error(1)
             self.stop()
             raise errors.CameraInitError(str(e)) from e

@@ -3,6 +3,7 @@ import json
 import queue
 import sys
 
+from datetime import datetime
 from pathlib import Path
 from queue import Queue
 from threading import Thread, Event
@@ -105,11 +106,36 @@ class LogManager:
         # Configure detection logger
         detection_logger = logging.getLogger('detection')
         detection_logger.handlers = [detection_handler]
-        detection_logger.propagate = False  # Don't propagate to root logger
+        detection_logger.propagate = False
 
         # Update the instance-level loggers
         instance.logger = root_logger
         instance.detection_logger = detection_logger
+
+    @classmethod
+    def add_mqtt_handler(cls, mqtt_client, mqtt_error_topic):
+        """
+        Dynamically adds an MQTT handler to the root logger after it has been set up.
+        """
+        if not mqtt_client or not mqtt_error_topic:
+            logging.getLogger().warning("MQTT client or topic not provided; skipping MQTT handler setup.")
+            return
+
+        try:
+            root_logger = logging.getLogger()
+
+            if any(isinstance(h, MQTTLogHandler) for h in root_logger.handlers):
+                root_logger.info("MQTTLogHandler already attached. Skipping.")
+                return
+
+            mqtt_handler = MQTTLogHandler(client=mqtt_client, topic=mqtt_error_topic)
+            mqtt_handler.setLevel(logging.ERROR)
+            mqtt_handler.setFormatter(logging.Formatter('%(message)s'))
+            root_logger.addHandler(mqtt_handler)
+            root_logger.info(
+                "MQTT logging handler successfully added. Critical errors will now be sent to the dashboard.")
+        except Exception as e:
+            logging.getLogger().error(f"Failed to add MQTT logging handler: {e}")
 
     @classmethod
     def get_logger(cls, name: str) -> logging.Logger:
@@ -160,3 +186,42 @@ class LogManager:
         """Stop the background worker"""
         self.stop_event.set()
         self.worker.join()
+
+
+class MQTTLogHandler(logging.Handler):
+    """
+    A logging handler that publishes log records to an MQTT topic.
+    """
+
+    def __init__(self, client, topic, qos=1, retain=False):
+        super().__init__()
+        self.client = client
+        self.topic = topic
+        self.qos = qos
+        self.retain = retain
+        self._publishing = False
+
+    def emit(self, record):
+        """
+        Formats and publishes a log record to the MQTT topic.
+        """
+        if self._publishing:
+            return
+
+        try:
+            self._publishing = True
+
+            if record.levelno < logging.ERROR:
+                return
+            payload = {
+                "level": record.levelname,
+                "message": self.format(record),
+                "timestamp": datetime.fromtimestamp(record.created).isoformat()
+            }
+
+            self.client.publish(self.topic, json.dumps(payload), self.qos, self.retain)
+
+        except Exception:
+            self.handleError(record)
+        finally:
+            self._publishing = False

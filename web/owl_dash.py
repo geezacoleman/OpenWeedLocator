@@ -736,6 +736,15 @@ class OWLDashboard:
                 self.logger.error(f"Failed to toggle fan mode: {e}")
                 return jsonify({'success': False, 'error': str(e)}), 500
 
+        @self.app.route('/api/get_errors', methods=['GET'])
+        def get_errors():
+            """Endpoint for the frontend to poll for new errors from owl.py."""
+            if not self.mqtt_client:
+                return jsonify([])
+
+            errors = self.mqtt_client.get_and_clear_errors()
+            return jsonify(errors)
+
     def get_system_stats(self):
         """Get system statistics"""
         # Fan control

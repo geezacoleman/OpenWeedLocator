@@ -157,16 +157,12 @@ test_mqtt_broker() {
 
 final_mqtt_validation() {
     echo -e "${GREEN}[INFO] Final MQTT connectivity validation...${NC}"
-
-    # Test local connection (this should work reliably)
     if timeout 3 mosquitto_pub -h localhost -t "owl/test/setup" -m "setup_complete" 2>/dev/null; then
         echo -e "${TICK} MQTT broker ready for OWL communication"
     else
         echo -e "${ORANGE}[WARNING] Final MQTT test failed - check logs after reboot: journalctl -u mosquitto${NC}"
-        # Don't return failure here - just warn
     fi
 
-    # Test network connection (informational only)
     if timeout 3 mosquitto_pub -h 10.42.0.1 -t "owl/test/setup" -m "setup_complete" 2>/dev/null; then
         echo -e "${TICK} MQTT broker ready for network clients"
     else
@@ -174,7 +170,41 @@ final_mqtt_validation() {
     fi
 }
 
-# Function to collect user input
+# Adds the * as you type the password for a more familiar usecase
+read_password_masked() {
+    local prompt="$1"
+    local password=""
+    local char
+
+    printf "%s" "$prompt"
+
+    while IFS= read -r -s -n1 char; do
+        if [ -z "$char" ]; then
+            break
+        fi
+
+        case "$char" in
+            $'\n'|$'\r'|$'\x0a'|$'\x0d')
+                break
+                ;;
+            $'\177'|$'\b')
+                if [ -n "$password" ]; then
+                    password=${password%?}
+                    printf '\b \b'
+                fi
+                ;;
+            *)
+                password+="$char"
+                printf '*'
+                ;;
+        esac
+    done
+
+    printf '\n'
+    REPLY="$password"
+}
+
+# Collect user input
 collect_user_input() {
     echo -e "${GREEN}[INFO] OWL Dashboard Setup Configuration${NC}"
     echo -e "${GREEN}=======================================${NC}"
@@ -191,14 +221,29 @@ collect_user_input() {
 
     SSID="OWL-WIFI-${OWL_ID}"
 
-    # Get WiFi password
     while true; do
-        read -s -p "Enter WiFi password (minimum 8 characters): " WIFI_PASSWORD
-        echo
+        read_password_masked "Enter WiFi password (minimum 8 characters): "
+        WIFI_PASSWORD="$REPLY"
+
         if [ ${#WIFI_PASSWORD} -lt 8 ]; then
             echo -e "${RED}[ERROR] Password must be at least 8 characters long.${NC}"
-        else
+            continue
+        fi
+
+        read_password_masked "Re-enter WiFi password to confirm: "
+        WIFI_PASSWORD_CONFIRM="$REPLY"
+
+        if [ "$WIFI_PASSWORD" != "$WIFI_PASSWORD_CONFIRM" ]; then
+            echo -e "${RED}[ERROR] Passwords do not match. Please try again.${NC}"
+            continue
+        fi
+
+        # Final confirmation before accepting
+        read -p "Confirm and save this password? (y/n): " pass_confirm
+        if [[ "$pass_confirm" =~ ^[Yy]$ ]]; then
             break
+        else
+            echo -e "${ORANGE}[INFO] Enter the password again.${NC}"
         fi
     done
 

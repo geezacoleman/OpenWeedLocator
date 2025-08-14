@@ -1137,7 +1137,30 @@ function updateSystemStats() {
 
         })
         .catch(error => console.error('Error fetching system stats:', error));
+    checkForErrors();
 }
+
+/**
+ * Polls the backend for errors from owl.py and displays them as notifications.
+ */
+function checkForErrors() {
+    apiRequest('/api/get_errors')
+        .then(response => response.json())
+        .then(errors => {
+            if (errors && errors.length > 0) {
+                errors.forEach(error => {
+                    const title = `OWL Error: ${error.level || 'ERROR'}`;
+                    const message = error.message || 'An unknown error occurred.';
+
+                    showNotification(title, message, 'error', 0);
+                });
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching owl.py errors:', error);
+        });
+}
+
 
 /**
  * Update the colored detection status boxes
