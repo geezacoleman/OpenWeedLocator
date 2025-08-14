@@ -806,7 +806,7 @@ class OWLDashboard:
             'disk_used': 0,
             'disk_total': 0,
             'usb_devices': [],
-            'fan_status': {'is_rpi5': False, 'mode': 'error', 'rpm': 0},
+            'fan_status': {'is_rpi5': False, 'mode': 'unavailable', 'rpm': 0},
             'owl_running': False,
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
@@ -818,6 +818,8 @@ class OWLDashboard:
             rpi_version = get_rpi_version()
             if rpi_version == 'rpi-5':
                 stats['fan_status']['is_rpi5'] = True
+                stats['fan_status']['mode'] = self.fan_state
+
                 try:
                     rpm_files = glob.glob('/sys/devices/platform/cooling_fan/hwmon/*/fan1_input')
 
@@ -852,15 +854,22 @@ class OWLDashboard:
                 result = subprocess.run(['/usr/bin/vcgencmd', 'measure_temp'], capture_output=True, text=True)
                 if result.returncode == 0:
                     stats['cpu_temp'] = round(float(result.stdout.replace('temp=', '').replace("'C\n", '')), 1)
-            except FileNotFoundError:
+
+            except Exception as e:
+                self.logger.warning(f"Temp. retrieval error: {e}")
                 pass
 
+            # USB devices
+            usb_devices = []
             try:
                 result = subprocess.run(['lsusb'], capture_output=True, text=True)
                 if result.returncode == 0:
-                    stats['usb_devices'] = [line.strip() for line in result.stdout.split('\n') if
-                                            'Camera' in line or 'Webcam' in line]
-            except Exception:
+                    for line in result.stdout.split('\n'):
+                        if 'Camera' in line or 'Webcam' in line:
+                            usb_devices.append(line.strip())
+
+            except Exception as e:
+                self.logger.warning(f"USB devices retrieval error: {e}")
                 pass
 
         except Exception as e:
