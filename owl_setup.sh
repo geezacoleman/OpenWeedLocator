@@ -41,7 +41,7 @@ STATUS_FULL_UPGRADE=""
 STATUS_VENV=""
 STATUS_OPENCV=""
 STATUS_OWL_DEPS=""
-STATUS_BOOT_SCRIPTS=""
+STATUS_OWL_SERVICE=""
 STATUS_DESKTOP_ICON=""
 STATUS_DASHBOARD_DEPS=""
 STATUS_DASHBOARD=""
@@ -56,7 +56,7 @@ ERROR_FULL_UPGRADE=""
 ERROR_VENV=""
 ERROR_OPENCV=""
 ERROR_OWL_DEPS=""
-ERROR_BOOT_SCRIPTS=""
+ERROR_OWL_SERVICE=""
 ERROR_DESKTOP_ICON=""
 ERROR_DASHBOARD_DEPS=""
 ERROR_DASHBOARD=""
@@ -118,6 +118,54 @@ check_camera_connection() {
       return 0
     fi
   done
+}
+
+setup_owl_systemd_service() {
+  echo -e "${GREEN}[INFO] Creating systemd service for OWL...${NC}"
+
+  local SERVICE_FILE="/etc/systemd/system/owl.service"
+  local VENV_BIN="$HOME/.virtualenvs/owl/bin"
+  local PROJECT_DIR="$SCRIPT_DIR"
+  local RUN_USER="$CURRENT_USER"
+
+  # Create unit
+  sudo tee "$SERVICE_FILE" > /dev/null <<EOF
+[Unit]
+Description=OpenWeedLocator (OWL) Main Application
+After=network-online.target mosquitto.service
+Wants=network-online.target mosquitto.service
+
+[Service]
+Type=simple
+User=$RUN_USER
+Group=$RUN_USER
+WorkingDirectory=$PROJECT_DIR
+Environment="PATH=$VENV_BIN:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=$VENV_BIN/python -u $PROJECT_DIR/owl.py
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  sudo systemctl daemon-reload
+  sudo systemctl enable owl.service
+  sudo systemctl start owl.service
+
+  if systemctl is-active --quiet owl.service; then
+    echo -e "${TICK} OWL systemd service is active"
+    STATUS_OWL_SERVICE="${TICK}"
+  else
+    echo -e "${CROSS} OWL systemd service failed to start"
+    systemctl status owl.service --no-pager -l || true
+    STATUS_OWL_SERVICE="${CROSS}"
+    ERROR_OWL_SERVICE="owl.service failed to start"
+    return 1
+  fi
 }
 
 # Step 1: Perform a normal system update and upgrade
@@ -238,18 +286,11 @@ pip install -r requirements.txt
 check_status "Installing dependencies from requirements.txt" "OWL_DEPS"
 
 # Step 9: Make scripts executable and set up boot configuration
-echo -e "${GREEN}[INFO] Making scripts executable...${NC}"
+echo -e "${GREEN}[INFO] Setting up OWL to start on boot with systemd...${NC}"
 chmod a+x owl.py
-check_status "Making owl.py executable" "BOOT_SCRIPTS"
 
-chmod a+x owl_boot.sh
-chmod a+x owl_boot_wrapper.sh
-check_status "Making boot scripts executable" "BOOT_SCRIPTS"
-
-echo -e "${GREEN}[INFO] Moving boot scripts...${NC}"
-sudo mv owl_boot.sh /usr/local/bin/
-sudo mv owl_boot_wrapper.sh /usr/local/bin/
-check_status "Moving boot scripts" "BOOT_SCRIPTS"
+setup_owl_systemd_service
+check_status "Creating OWL systemd service" "OWL_SERVICE"
 
 # Add boot script to cron
 echo -e "${GREEN}[INFO] Adding boot script to cron...${NC}"
@@ -336,7 +377,7 @@ echo -e "$STATUS_OPT_LIBS Optimized Linear Algebra Libraries Installed"
 echo -e "$STATUS_OPENCV OpenCV Installed"
 echo -e "$STATUS_NUMPY_COMPAT NumPy Versions Aligned"
 echo -e "$STATUS_OWL_DEPS OWL Dependencies Installed"
-echo -e "$STATUS_BOOT_SCRIPTS Boot Scripts Moved"
+echo -e "$STATUS_OWL_SERVICE OWL Service (systemd) Started"
 echo -e "$STATUS_DESKTOP_ICON Desktop Icon Created"
 
 if [[ "$STATUS_DASHBOARD" == "${TICK}" ]]; then
