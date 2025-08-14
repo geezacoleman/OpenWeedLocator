@@ -124,10 +124,7 @@ setup_owl_systemd_service() {
 
   local SERVICE_FILE="/etc/systemd/system/owl.service"
   local VENV_BIN="$HOME/.virtualenvs/owl/bin"
-  local PROJECT_DIR="$SCRIPT_DIR"
-  local RUN_USER="$CURRENT_USER"
 
-  # Create unit
   sudo tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
 Description=OpenWeedLocator (OWL) Main Application
@@ -136,12 +133,12 @@ Wants=network-online.target mosquitto.service
 
 [Service]
 Type=simple
-User=$RUN_USER
-Group=$RUN_USER
-WorkingDirectory=$PROJECT_DIR
+User=$CURRENT_USER
+Group=$(id -g -n $CURRENT_USER)
+WorkingDirectory=$SCRIPT_DIR
 Environment="PATH=$VENV_BIN:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="PYTHONUNBUFFERED=1"
-ExecStart=$VENV_BIN/python -u $PROJECT_DIR/owl.py
+ExecStart=$VENV_BIN/python -u $SCRIPT_DIR/owl.py
 Restart=always
 RestartSec=5
 KillMode=mixed
@@ -153,14 +150,20 @@ EOF
 
   sudo systemctl daemon-reload
   sudo systemctl enable owl.service
+
+  echo -e "${GREEN}[INFO] Starting OWL service...${NC}"
   sudo systemctl start owl.service
+
+  sleep 2
 
   if systemctl is-active --quiet owl.service; then
     echo -e "${TICK} OWL systemd service is active"
     STATUS_OWL_SERVICE="${TICK}"
   else
     echo -e "${CROSS} OWL systemd service failed to start"
+    echo -e "${ORANGE}[INFO] Showing service logs for debugging:${NC}"
     systemctl status owl.service --no-pager -l || true
+    echo -e "${ORANGE}[INFO] For live logs, run: journalctl -u owl.service -f${NC}"
     STATUS_OWL_SERVICE="${CROSS}"
     ERROR_OWL_SERVICE="owl.service failed to start"
     return 1
