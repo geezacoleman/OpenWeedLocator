@@ -89,13 +89,23 @@ class OWLDashboard:
         if action not in ("start", "stop"):
             return False, "Invalid action specified"
         try:
+            self.logger.info(f"Attempting to run systemctl action: '{action}'")
+
             result = self._run_systemctl_command([action, "owl.service"], needs_sudo=True)
+
+            self.logger.info(f"systemctl command finished with return code: {result.returncode}")
+            if result.stdout:
+                self.logger.info(f"systemctl stdout: {result.stdout.strip()}")
+            if result.stderr:
+                self.logger.error(f"systemctl stderr: {result.stderr.strip()}")
+
             if result.returncode == 0:
                 return True, f"OWL service '{action}' command issued successfully."
             else:
                 error_message = result.stderr.strip() or f"Failed to {action} owl.service."
                 return False, error_message
         except Exception as e:
+            self.logger.error(f"An unexpected Python error occurred in control_owl_service: {e}", exc_info=True)
             return False, f"An unexpected error occurred: {str(e)}"
 
     def load_config(self):

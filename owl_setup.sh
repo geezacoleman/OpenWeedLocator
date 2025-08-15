@@ -15,16 +15,15 @@ if [ "$SUDO_USER" ]; then
    exit 1
 fi
 
-if pgrep -f "owl.py" > /dev/null; then
-    echo -e "${ORANGE}[WARNING] owl.py is already running from a previous installation."
-    echo -e "${ORANGE}It is unlikely you need to run this script a second time, consider running 'python owl.py --focus or --show-display instead if you just need the display."
-    read -p "Otherwise, please enter 'y' to stop the currently running instance of owl.py to continue: (y/n): " stop_choice
+if systemctl is-active --quiet owl.service; then
+    echo -e "${ORANGE}[WARNING] The owl.service is currently running.${NC}"
+    read -p "Do you want to stop the service to continue with the installation? (y/n): " stop_choice
     if [[ "$stop_choice" =~ ^[Yy]$ ]]; then
-        pkill -f "owl.py"
-        echo -e "${GREEN}[INFO] owl.py process has been stopped. Continuing..."
+        echo -e "${GREEN}[INFO] Stopping owl.service...${NC}"
+        sudo systemctl stop owl.service
         sleep 2
     else
-        echo -e "${RED}[ERROR] Please stop the running owl.py process before running this script."
+        echo -e "${RED}[ERROR] Please stop the owl.service before running this script (sudo systemctl stop owl.service).${NC}"
         exit 1
     fi
 fi
