@@ -21,9 +21,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initUploadTab();
     initNotifications();
     initHardwareControllerCheck();
-    initFanControl();
-    initCollapsibleSections();
-    initPowerButton();
+    initDashboardControls();
 
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     if (fullscreenBtn) {
@@ -92,16 +90,152 @@ function initStorageTab() {
     }
 }
 
-/**
- * Initializes the OWL power button event listener.
- */
-function initPowerButton() {
+
+function initDashboardControls() {
+    // Power button
     const powerBtn = document.getElementById('owlPowerBtn');
     if (powerBtn) {
-        powerBtn.addEventListener('click', toggleOwlPower);
+        powerBtn.addEventListener('click', () => {
+            const isOn = powerBtn.getAttribute('aria-pressed') === 'true';
+            const fn = isOn ? stopOwl : startOwl;
+            fn()
+                .then(() => updateSystemStats())
+                .catch(err => showNotification('Error', err.message || 'Power action failed', 'error'));
+        });
+    }
+
+    // Detection
+    const detectBtn = document.getElementById('detectSwitch');
+    if (detectBtn) {
+        detectBtn.addEventListener('click', () => {
+            const isOn = detectBtn.getAttribute('aria-pressed') === 'true';
+            const fn = isOn ? stopDetection : startDetection;
+            fn()
+                .then(() => updateSystemStats())
+                .catch(err => showNotification('Error', err.message || 'Detection action failed', 'error'));
+        });
+    }
+
+    // Recording
+    const recordBtn = document.getElementById('recordSwitch');
+    if (recordBtn) {
+        recordBtn.addEventListener('click', () => {
+            const isOn = recordBtn.getAttribute('aria-pressed') === 'true';
+            const fn = isOn ? stopRecording : startRecording;
+            fn()
+                .then(() => updateSystemStats())
+                .catch(err => showNotification('Error', err.message || 'Recording action failed', 'error'));
+        });
+    }
+
+    // Sensitivity (Low / High)
+    const sensBtns = document.querySelectorAll('.seg-btn[data-sens]');
+    sensBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            setSegActive(sensBtns, btn);
+            const level = btn.dataset.sens.toLowerCase(); // "low" | "high"
+            setSensitivity(level)
+                .then(() => updateSystemStats())
+                .catch(err => showNotification('Error', err.message || 'Failed to set sensitivity', 'error'));
+        });
+    });
+
+    // Fan (Auto / 100)
+    const fanBtns = document.querySelectorAll('.seg-btn[data-fan]');
+    fanBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            setSegActive(fanBtns, btn);
+            const mode = btn.dataset.fan; // "auto" | "100"
+            setFanMode(mode)
+                .then(() => updateSystemStats())
+                .catch(err => showNotification('Error', err.message || 'Failed to set fan mode', 'error'));
+        });
+    });
+}
+
+function startOwl() {
+    return apiRequest('/api/owl/start', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Success', data.message || 'OWL service starting...', 'success');
+            } else {
+                throw new Error(data.error || 'Failed to start OWL service');
+            }
+        });
+}
+
+function stopOwl() {
+    return apiRequest('/api/owl/stop', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Success', data.message || 'OWL service stopping...', 'success');
+            } else {
+                throw new Error(data.error || 'Failed to stop OWL service');
+            }
+        });
+}
+
+function setSegActive(nodeList, activeBtn) {
+    nodeList.forEach(b => b.classList.toggle('active', b === activeBtn));
+}
+
+function setSwitchVisualState(btn, on, kind) {
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    const stateSpan = btn.querySelector('.switch-state');
+    if (stateSpan) stateSpan.textContent = on ? 'ON' : 'OFF';
+
+    if (kind === 'detect') {
+        setStatusChip(document.getElementById('detectStatusChip'), on);
     }
 }
 
+function setStatusChip(chip, on) {
+    if (!chip) return;
+    chip.classList.toggle('on', on);
+    const txt = chip.querySelector('#detectStatusText');
+    if (txt) txt.textContent = on ? 'Running' : 'Stopped';
+}
+
+function setSensitivity(level) {
+    // Note: level parameter is ignored for toggling
+    // But kept for future compatibility when we might want specific levels
+    return apiRequest('/api/sensitivity/set', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({})
+    })
+        .then(r => r.json())
+        .then(d => {
+            if (!d.success) throw new Error(d.error || 'Failed to set sensitivity');
+            showNotification('Success', d.message || 'Sensitivity toggled', 'success', 2000);
+            updateSystemStats();
+        })
+        .catch(err => {
+            showNotification('Error', err.message || 'Failed to set sensitivity', 'error');
+            throw err;
+        });
+}
+function setFanMode(mode) {
+    // Note: mode parameter is ignored since we're toggling
+    // But kept for future compatibility when we might want specific modes
+    return apiRequest('/api/fan/set', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ mode: mode })
+    })
+        .then(r => r.json())
+        .then(d => {
+            if (!d.success) throw new Error(d.error || 'Failed to set fan mode');
+            showNotification('Success', d.message || 'Fan mode toggled', 'success', 2000);
+            updateSystemStats();
+        })
+        .catch(err => {
+            showNotification('Error', err.message || 'Failed to set fan mode', 'error');
+            throw err;
+        });
+}
 /**
  * Initialize control buttons with debouncing
  */
@@ -112,7 +246,6 @@ function initControlButtons() {
         'stop-recording': stopRecording,
         'start-detection': startDetection,
         'stop-detection': stopDetection,
-        'toggle-sensitivity': toggleSensitivity,
         'refreshStreamBtn': refreshVideoStream
     };
 
@@ -197,68 +330,6 @@ function resetZoom() {
 function updateZoom() {
     const img = document.querySelector('.zoom-image');
     if (img) img.style.transform = `scale(${zoomLevel})`;
-}
-
-/**
- * Handles the click event for the power button, displaying detailed feedback.
- */
-function toggleOwlPower() {
-    const powerBtn = document.getElementById('owlPowerBtn');
-    const currentState = powerBtn.dataset.state;
-
-    if (currentState === 'pending') return;
-
-    updatePowerButton('pending');
-
-    const endpoint = (currentState === 'on') ? '/api/owl/stop' : '/api/owl/start';
-    const action = (currentState === 'on') ? 'Stopping' : 'Starting';
-
-    apiRequest(endpoint, { method: 'POST' })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                showNotification('Success', data.message, 'success', 3000);
-            } else {
-                throw new Error(data.error || `Failed to ${action.toLowerCase()} OWL service`);
-            }
-        })
-        .catch(error => {
-            showNotification('Error', error.message, 'error', 8000); // Show errors for longer
-        })
-        .finally(() => {
-            setTimeout(updateSystemStats, 2000);
-        });
-}
-
-/**
- * Updates the power button's appearance and state based on data from the backend.
- * @param {string} state - The current state ('on', 'off', or 'pending').
- */
-function updatePowerButton(state) {
-    const powerBtn = document.getElementById('owlPowerBtn');
-    const powerText = powerBtn.querySelector('.power-text');
-    if (!powerBtn || !powerText) return;
-
-    powerBtn.dataset.state = state;
-    powerBtn.classList.remove('status-on', 'status-off', 'status-pending');
-
-    switch (state) {
-        case 'on':
-            powerBtn.classList.add('status-on');
-            powerText.textContent = "Running";
-            powerBtn.title = "Stop OWL Process";
-            break;
-        case 'off':
-            powerBtn.classList.add('status-off');
-            powerText.textContent = "Stopped";
-            powerBtn.title = "Start OWL Process";
-            break;
-        case 'pending':
-            powerBtn.classList.add('status-pending');
-            powerText.textContent = "Pending...";
-            powerBtn.title = "Action in progress...";
-            break;
-    }
 }
 
 
@@ -660,39 +731,6 @@ function stopDetection() {
 }
 
 /**
- * Toggle sensitivity
- */
-function toggleSensitivity() {
-    // Check for hardware controller first
-    if (hardwareControllerActive) {
-        showNotification(
-            'Hardware Priority',
-            `Use the sensitivity switch on your ${controllerType.toUpperCase()} controller`,
-            'warning'
-        );
-        return;
-    }
-
-    showNotification('Info', 'Toggling sensitivity...', 'info');
-
-    apiRequest('/api/sensitivity/toggle', { method: 'POST' })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                showNotification('Success', data.message || 'Sensitivity toggled', 'success');
-                updateSystemStats(); // Refresh UI immediately
-            } else {
-                throw new Error(data.message || 'Failed to toggle sensitivity');
-            }
-        })
-        .catch(error => {
-            showNotification('Error', error.message || 'Failed to toggle sensitivity', 'error');
-            console.error('Sensitivity toggle error:', error);
-        });
-}
-let currentDirectory = '/media';
-
-/**
  * Load storage data (USB devices and files)
  */
 function loadStorageData() {
@@ -946,72 +984,6 @@ function downloadLogs() {
 }
 
 /**
- * Initialize fan control button listener.
- */
-function initFanControl() {
-    const fanBtn = document.getElementById('fanControlBtn');
-    if (fanBtn) {
-        fanBtn.addEventListener('click', toggleFanMode);
-    }
-}
-
-/**
- * Sends a toggle request to the backend to switch between 'Auto' and '100%'.
- */
-function toggleFanMode() {
-    const fanBtn = document.getElementById('fanControlBtn');
-    if (!fanBtn || fanBtn.classList.contains('disabled')) return;
-
-    // Provide immediate visual feedback and prevent multiple clicks
-    fanBtn.classList.add('disabled');
-
-    // Send a simple POST request to the new toggle endpoint
-    apiRequest('/api/fan/toggle', { method: 'POST' })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                // Update the UI with the new mode returned by the server
-                updateFanDisplay({ is_rpi5: true, mode: data.mode });
-                const displayMode = data.mode.charAt(0).toUpperCase() + data.mode.slice(1);
-                showNotification('Success', `Fan mode set to ${displayMode}`, 'success', 2000);
-            } else {
-                throw new Error(data.error || 'Failed to toggle fan mode');
-            }
-        })
-        .catch(error => {
-            showNotification('Error', error.message, 'error');
-            // On failure, re-sync the UI with the actual state from the server
-            updateSystemStats();
-        })
-        .finally(() => {
-            // Re-enable the button after a short delay
-            setTimeout(() => fanBtn.classList.remove('disabled'), 500);
-        });
-}
-
-/**
- * Updates the fan control UI based on status from the backend.
- * @param {object} fanStatus - The fan status object from the API.
- */
-function updateFanDisplay(fanStatus) {
-    const fanBtn = document.getElementById('fanControlBtn');
-    const fanMdText = document.getElementById('fanModeText');
-    const fanRPMText = document.getElementById('fanRPMText');
-    if (!fanBtn || !fanMdText || !fanRPMText) return;
-
-    if (fanStatus && fanStatus.is_rpi5) {
-        fanBtn.classList.remove('hidden');
-
-        const displayMode = fanStatus.mode.charAt(0).toUpperCase() + fanStatus.mode.slice(1);
-        fanMdText.textContent = displayMode;
-        fanRPMText.textContent = `${fanStatus.rpm} RPM`;
-
-    } else {
-        fanBtn.classList.add('hidden');
-    }
-}
-
-/**
  * Initialize GPS functionality
  */
 function initGPS() {
@@ -1124,97 +1096,105 @@ function startUpdateInterval() {
 
 function updateSystemStats() {
     apiRequest('/api/system_stats')
-        .then(response => response.json())
+        .then(r => r.json())
         .then(data => {
-            // CPU Usage
-            const cpuElement = document.getElementById('cpuUsage');
-            if (cpuElement) {
-                cpuElement.textContent = `${data.cpu_percent}%`;
-                cpuElement.style.color = getColorForValue(data.cpu_percent, 100);
+            // Gradient chips
+            setText('cpuChipVal', `${data.cpu_percent}%`);
+            setText('memChipVal', `${data.memory_percent}%`);
+            setText('tempChipVal', `${data.cpu_temp}°C`);
+
+            // Power button reflects owl_running
+            setPowerButtonState(!!data.owl_running);
+
+            // Detection & recording big switches (and status chip)
+            const detectionOn = !!(data.detection_running ?? data.detection_enable);
+            const recordingOn = !!(data.recording ?? data.image_sample_enable);
+
+            syncSwitch('detectSwitch', detectionOn);
+            syncSwitch('recordSwitch', recordingOn);
+            setStatusChip(document.getElementById('detectStatusChip'), detectionOn);
+
+            // Sensitivity Low/High
+            const sensLabel = normalizeSensitivity(data); // "Low" | "High"
+            document.querySelectorAll('.seg-btn[data-sens]').forEach(b => {
+                b.classList.toggle('active', b.dataset.sens === sensLabel);
+            });
+
+            // Fan Auto/100 + RPM
+            const fanMode = normalizeFanMode(data.fan_status); // "auto" | "100"
+            document.querySelectorAll('.seg-btn[data-fan]').forEach(b => {
+                b.classList.toggle('active', b.dataset.fan === fanMode);
+            });
+            const rpmEl = document.getElementById('fanRpmReadout');
+            if (rpmEl) {
+                const rpm = data?.fan_status?.rpm;
+                rpmEl.textContent = (typeof rpm === 'number') ? `${rpm} rpm` : '—';
             }
 
-            // CPU Temperature
-            const tempElement = document.getElementById('cpuTemp');
-            if (tempElement) {
-                tempElement.textContent = `${data.cpu_temp}°C`;
-                tempElement.style.color = getColorForValue(data.cpu_temp, 85);
-            }
-
-            // Memory Usage
-            const memoryElement = document.getElementById('memoryUsage');
-            if (memoryElement) {
-                memoryElement.textContent = `${data.memory_percent}%`;
-                memoryElement.style.color = getColorForValue(data.memory_percent, 100);
-            }
-
-            // Disk Usage
-            const diskElement = document.getElementById('diskUsage');
-            if (diskElement) {
-                diskElement.textContent = `${data.disk_percent}%`;
-                diskElement.style.color = getColorForValue(data.disk_percent, 100);
-            }
-
-            // Fan Status
-            updateFanDisplay(data.fan_status);
-
-            // Update detection status boxes with colors
-            updateDetectionStatusBoxes(data);
-
-            // Update OWL status indicator in header
-            updatePowerButton(data.owl_running ? 'on' : 'off');
-
+            // Optional: header online/offline & stream overlay if still present
             const statusDot = document.getElementById('statusDot');
             const statusText = document.getElementById('statusText');
             if (statusDot && statusText) {
-                if (data.owl_running) {
-                    statusDot.classList.add('connected');
-                    statusText.textContent = 'Online';
-                } else {
-                    statusDot.classList.remove('connected');
-                    statusText.textContent = 'Offline';
-                }
+                statusDot.classList.toggle('connected', !!data.owl_running);
+                statusText.textContent = data.owl_running ? 'Online' : 'Offline';
             }
             const streamOverlay = document.getElementById('stream-status-overlay');
             const streamImg = document.getElementById('stream-img');
             if (streamOverlay && streamImg) {
-                if (data.stream_active) {
-                    streamOverlay.classList.add('hidden');
-                    streamImg.style.display = 'block'; // Make sure image is visible
-                } else {
-                    streamOverlay.classList.remove('hidden');
-                    streamImg.style.display = 'none'; // Hide the broken image icon
-                }
+                const on = !!data.stream_active;
+                streamOverlay.classList.toggle('hidden', on);
+                streamImg.style.display = on ? 'block' : 'none';
             }
-            // Update control status displays
-            const controlDetectionStatus = document.getElementById('controlDetectionStatus');
-            if (controlDetectionStatus) {
-                controlDetectionStatus.textContent = data.detection_enable ? 'Enabled' : 'Disabled';
-            }
+        })
+        .catch(err => console.error('Error fetching system stats:', err))
+        .finally(() => {
+            checkForErrors(); // keep your error polling
+        });
 
-            const controlRecordingStatus = document.getElementById('controlRecordingStatus');
-            if (controlRecordingStatus) {
-                controlRecordingStatus.textContent = data.image_sample_enable ? 'Recording' : 'Stopped';
-            }
+    // helpers
+    function setText(id, text) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = text;
+    }
 
-            const controlSensitivityStatus = document.getElementById('controlSensitivityStatus');
-            if (controlSensitivityStatus) {
-                controlSensitivityStatus.textContent = data.sensitivity_state ? 'Low' : 'High';
-            }
+    function syncSwitch(id, on) {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        const state = btn.querySelector('.switch-state');
+        if (state) state.textContent = on ? 'ON' : 'OFF';
+    }
 
-            const timestampElement = document.getElementById('statusTimestamp');
-            if (timestampElement) {
-                timestampElement.textContent = data.timestamp || new Date().toLocaleString();
-            }
+    function setStatusChip(chip, on) {
+        if (!chip) return;
+        chip.classList.toggle('on', on);
+        const txt = chip.querySelector('#detectStatusText');
+        if (txt) txt.textContent = on ? 'Running' : 'Stopped';
+    }
 
-            const statusCard = document.getElementById('systemStatusCard');
-            if (statusCard && statusCard.classList.contains('expanded')) {
-                const content = statusCard.querySelector('.collapsible-content');
-            if (content) content.style.maxHeight = content.scrollHeight + 'px';
+    function setPowerButtonState(on) {
+        const btn = document.getElementById('owlPowerBtn');
+        if (!btn) return;
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        btn.classList.toggle('on', on);
+    }
+
+    function normalizeSensitivity(data) {
+    // The API sends the key 'sensitivity_level' with a string value 'low' or 'high'
+    if (data && typeof data.sensitivity_level === 'string') {
+        return data.sensitivity_level.toLowerCase() === 'high' ? 'High' : 'Low';
+    }
+
+    return 'High';
 }
 
-        })
-        .catch(error => console.error('Error fetching system stats:', error));
-    checkForErrors();
+    function normalizeFanMode(status) {
+        if (!status || !status.mode) return 'auto';
+        const m = String(status.mode).toLowerCase();
+        if (m.includes('100')) return '100';
+        if (m.includes('auto')) return 'auto';
+        return (m === '1' || m === '100' || m === '1.0') ? '100' : 'auto';
+    }
 }
 
 /**
@@ -1236,36 +1216,6 @@ function checkForErrors() {
         .catch(error => {
             console.error('Error fetching owl.py errors:', error);
         });
-}
-
-
-/**
- * Update the colored detection status boxes
- */
-function updateDetectionStatusBoxes(data) {
-    // Detection status
-    const detectionBox = document.getElementById('detectionStatusBox');
-    const detectionText = document.getElementById('detectionText');
-    if (detectionBox && detectionText) {
-        detectionText.textContent = data.detection_enable ? 'Enabled' : 'Disabled';
-        detectionBox.className = 'detection-item ' + (data.detection_enable ? 'status-enabled' : 'status-disabled');
-    }
-
-    // Recording status
-    const recordingBox = document.getElementById('recordingStatusBox');
-    const recordingText = document.getElementById('recordingText');
-    if (recordingBox && recordingText) {
-        recordingText.textContent = data.image_sample_enable ? 'Recording' : 'Stopped';
-        recordingBox.className = 'detection-item ' + (data.image_sample_enable ? 'status-active' : 'status-disabled');
-    }
-
-    // Sensitivity status
-    const sensitivityBox = document.getElementById('sensitivityStatusBox');
-    const sensitivityText = document.getElementById('sensitivityText');
-    if (sensitivityBox && sensitivityText) {
-        sensitivityText.textContent = data.sensitivity_state ? 'Low' : 'High';
-        sensitivityBox.className = 'detection-item ' + (data.sensitivity_state ? 'status-low' : 'status-high');
-    }
 }
 
 /**

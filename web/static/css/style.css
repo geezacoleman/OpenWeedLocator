@@ -2129,3 +2129,57 @@ footer {
 .power-control.status-pending .power-icon {
     animation: spin 1.5s linear infinite;
 }
+
+/* --- Dashboard Controls: layout + chips + switches --- */
+.card-title-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:1rem}
+.status-chip{display:inline-flex;align-items:center;gap:.5rem;border:1px solid var(--border);border-radius:999px;padding:.35rem .7rem;background:linear-gradient(135deg,#f8f9fa 0%,#e9ecef 100%)}
+.status-chip .dot{width:10px;height:10px;border-radius:999px;background:#95a5a6}
+.status-chip.on .dot{background:var(--success)}
+.status-chip .dot.off{background:#95a5a6}
+
+.controls-stack{display:grid;gap:.75rem;margin-bottom:1rem}
+.owl-switch{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.9rem 1.1rem;border:1px solid var(--border);border-radius:14px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+.owl-switch .switch-icon{width:20px;height:20px}
+.owl-switch .switch-label{display:inline-flex;align-items:center;gap:.5rem}
+.owl-switch .switch-track{position:relative;display:inline-flex;align-items:center;justify-content:flex-start;width:78px;height:34px;border-radius:999px;background:#cfd6de;transition:background .2s}
+.owl-switch .switch-thumb{position:absolute;left:4px;top:4px;width:26px;height:26px;border-radius:999px;background:#fff;transition:transform .2s}
+.owl-switch[aria-pressed="true"] .switch-track{background:var(--success)}
+.owl-switch.owl-switch--record[aria-pressed="true"] .switch-track{background:var(--danger)}
+.owl-switch[aria-pressed="true"] .switch-thumb{transform:translateX(44px)}
+.owl-switch .switch-state{font-weight:700;color:var(--secondary)}
+.owl-switch.owl-switch--record .switch-state{color:var(--danger)}
+
+.two-up{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1rem}
+.control-tile{}
+.tile-label{margin-bottom:.4rem;font-weight:600;color:var(--secondary)}
+.tile-subtle{margin-top:.4rem;color:var(--text);font-size:.9rem}
+
+.segmented{display:grid;grid-auto-flow:column;gap:.5rem;background:#f0f2f5;border:1px solid var(--border);border-radius:14px;padding:.35rem}
+.segmented--two{grid-template-columns:repeat(2,1fr)}
+.seg-btn{height:56px;border:none;border-radius:10px;background:transparent;font-weight:700;cursor:pointer}
+.seg-btn.active{background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+
+.metrics-row{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1rem}
+.metric-chip{display:inline-flex;align-items:center;gap:.5rem;border-radius:999px;padding:.4rem .8rem;color:#fff;font-weight:600}
+.metric-chip strong{color:#fff}
+.metric-chip.cpu{background:linear-gradient(135deg,var(--accent) 0%,#2980b9 100%)}
+.metric-chip.mem{background:linear-gradient(135deg,var(--success) 0%,#27ae60 100%)}
+.metric-chip.temp{background:linear-gradient(135deg,var(--danger) 0%,#c0392b 100%)}
+
+/* Compact adjustments on small screens */
+@media (max-width: 480px){
+  .owl-switch .switch-track{width:72px}
+  .owl-switch[aria-pressed="true"] .switch-thumb{transform:translateX(38px)}
+}
+
+/* Title row with right-aligned power button */
+.card-title-row {
+  display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:1rem;
+}
+.card-title-row .title-left { display:flex; align-items:center; gap:.75rem; }
+
+/* Power button */
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:12px;padding:.5rem;background:#fff}
+.icon-btn:hover{background:#fafafa}
+.power-btn.on{border-color:var(--success); background:linear-gradient(135deg,var(--success) 0%, #27ae60 100%); color:#fff}
+.power-btn.on svg path{fill:#fff}

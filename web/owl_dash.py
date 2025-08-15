@@ -321,19 +321,36 @@ class OWLDashboard:
             self.logger.info("Recording disabled via dashboard")
             return jsonify(result)
 
-        @self.app.route('/api/sensitivity/toggle', methods=['POST'])
-        def toggle_sensitivity():
+        @self.app.route('/api/sensitivity/set', methods=['POST'])
+        def set_sensitivity():
+            """Set sensitivity to specific level"""
             if self.controller_type != 'none':
                 return jsonify({
                     'success': False,
                     'message': f'{self.controller_type.upper()} controller active - use physical switches'
-                }), 423  # HTTP 423 Locked
+                }), 423
 
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
-            result = self.mqtt_client.toggle_sensitivity()
-            self.logger.info("Sensitivity toggled via dashboard")
-            return jsonify(result)
+
+            try:
+                data = request.get_json() or {}
+                level = data.get('level', '').lower()
+
+                if not level:
+                    return jsonify({'success': False, 'error': 'Level parameter required'}), 400
+
+                result = self.mqtt_client.set_sensitivity_level(level)
+
+                if result.get('success'):
+                    self.logger.info(f"Sensitivity set to {level} via dashboard")
+                    return jsonify({'success': True, 'message': f'Sensitivity set to {level}'})
+                else:
+                    return jsonify({'success': False, 'error': result.get('error', 'Unknown error')}), 500
+
+            except Exception as e:
+                self.logger.error(f"Error setting sensitivity: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
 
         @self.app.route('/api/update_gps', methods=['POST'])
         def update_gps():
@@ -361,7 +378,7 @@ class OWLDashboard:
             stats.update({
                 'detection_enable': mqtt_state.get('detection_enable', False),
                 'image_sample_enable': mqtt_state.get('image_sample_enable', False),
-                'sensitivity_state': mqtt_state.get('sensitivity_state', False),
+                'sensitivity_level': mqtt_state.get('sensitivity_level', 'high'),
                 'owl_running': mqtt_state.get('owl_running', False),
                 'stream_active': mqtt_state.get('stream_active', False),
                 'weed_detect_indicator': self.mqtt_client.get_weed_detect_indicator() if self.mqtt_client else False,
@@ -758,22 +775,28 @@ class OWLDashboard:
                     'error': str(e)
                 })
 
-        @self.app.route('/api/fan/toggle', methods=['POST'])
-        def toggle_fan_mode():
+        @self.app.route('/api/fan/set', methods=['POST'])
+        def set_fan_mode():
+            """Toggle fan between auto and 100% modes"""
             if get_rpi_version() != 'rpi-5':
                 return jsonify({'success': False, 'error': 'Not a Raspberry Pi 5'}), 403
-            try:
-                if self.fan_state == 'auto':
-                    new_mode = '100%'
-                    self._run_pinctrl('FAN_PWM', 'op', 'dl')
-                    self.fan_state = new_mode
-                else:
-                    new_mode = 'auto'
-                    self._run_pinctrl('FAN_PWM', 'a0')
-                    self.fan_state = new_mode
 
-                self.logger.info(f"Toggled fan to: {new_mode}")
-                return jsonify({'success': True, 'mode': new_mode})
+            try:
+                data = request.get_json() or {}
+                new_mode = data.get('mode', 'auto').lower()
+
+                if new_mode not in ['auto', '100']:
+                    return jsonify({'success': False, 'error': 'Invalid fan mode specified'}), 400
+
+                if new_mode == '100':
+                    self._run_pinctrl('FAN_PWM', 'op', 'dl')
+                    self.fan_state = '100'
+                else:
+                    self._run_pinctrl('FAN_PWM', 'a0')
+                    self.fan_state = 'auto'
+
+                self.logger.info(f"Fan mode toggled to: {new_mode}")
+                return jsonify({'success': True, 'mode': new_mode, 'message': f'Fan set to {new_mode}'})
 
             except Exception as e:
                 self.logger.error(f"Failed to toggle fan mode: {e}")
@@ -880,7 +903,7 @@ class OWLDashboard:
         stats.update({
             'detection_enable': mqtt_state.get('detection_enable', False),
             'image_sample_enable': mqtt_state.get('image_sample_enable', False),
-            'sensitivity_state': mqtt_state.get('sensitivity_state', False),
+            'sensitivity_level': mqtt_state.get('sensitivity_level', 'high'),
             'stream_active': mqtt_state.get('stream_active', False),
             'weed_detect_indicator': self.mqtt_client.get_weed_detect_indicator() if self.mqtt_client else False,
             'image_write_indicator': self.mqtt_client.get_image_write_indicator() if self.mqtt_client else False

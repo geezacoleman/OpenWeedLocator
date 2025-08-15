@@ -46,7 +46,7 @@ class MQTTServer:
         self.state = {
             'detection_enable': False,
             'image_sample_enable': False,
-            'sensitivity_state': False,  # False = High, True = Low
+            'sensitivity_level': 'high',
             'owl_running': False,  # Will be set to True when server starts
             'stream_active': False,
             'gps_latitude': 0.0,
@@ -65,7 +65,7 @@ class MQTTServer:
         self.low_sensitivity_config = None
         self.high_sensitivity_config = None
 
-        self.last_sensitivity_state = False
+        self.last_sensitivity_level = 'high'
         self.monitoring_thread = None
         self.heartbeat_thread = None
 
@@ -183,13 +183,19 @@ class MQTTServer:
                 self.state['image_sample_enable'] = bool(command.get('value', False))
                 self.logger.info(f"Image sample enable set to: {self.state['image_sample_enable']}")
 
-            elif action == 'toggle_sensitivity':
-                self.state['sensitivity_state'] = not self.state['sensitivity_state']
-                sensitivity_name = "Low" if self.state['sensitivity_state'] else "High"
-                self.logger.info(f"Sensitivity toggled to: {sensitivity_name}")
 
-                # Apply sensitivity change immediately
-                self._apply_sensitivity_config_change(self.state['sensitivity_state'])
+            elif action == 'set_sensitivity_level':
+                level = command.get('level', '').lower()
+                valid_levels = ['low', 'high'] # <--- add more here later if needed
+
+                if level not in valid_levels:
+                    self.logger.error(f"[ERROR] Invalid sensitivity level: {level}")
+
+                    return
+
+                self.state['sensitivity_level'] = level
+                self.logger.info(f"[INFO] Sensitivity set to: {level}")
+                self._apply_sensitivity_config_change(level)
 
             # Update timestamp and publish new state
             self.state['last_update'] = time.time()
@@ -212,12 +218,12 @@ class MQTTServer:
         while self.running:
             try:
                 with self.state_lock:
-                    current_sensitivity = self.state['sensitivity_state']
+                    current_sensitivity = self.state['sensitivity_level']
 
                 # Check for sensitivity changes
-                if current_sensitivity != self.last_sensitivity_state:
+                if current_sensitivity != self.last_sensitivity_level:
                     self._apply_sensitivity_config_change(current_sensitivity)
-                    self.last_sensitivity_state = current_sensitivity
+                    self.last_sensitivity_level = current_sensitivity
 
                 time.sleep(0.01)
 
@@ -235,17 +241,27 @@ class MQTTServer:
                 self.logger.error(f"Heartbeat error: {e}")
                 time.sleep(5.0)
 
-    def _apply_sensitivity_config_change(self, is_low_sensitivity):
-        if not self.owl_instance or not self.low_sensitivity_config or not self.high_sensitivity_config:
+    def _apply_sensitivity_config_change(self, level):
+        """Apply sensitivity config change by level string (future-proof)"""
+        if not self.owl_instance:
             return
 
         try:
-            config_file = self.low_sensitivity_config if is_low_sensitivity else self.high_sensitivity_config
+            config_map = {
+                'low': self.low_sensitivity_config,
+                'high': self.high_sensitivity_config,
+                # Future: e.g. 'medium': self.medium_sensitivity_config
+            }
+
+            config_file = config_map.get(level)
+            if not config_file:
+                self.logger.error(f"No config file mapped for sensitivity level: {level}")
+                return
 
             config = configparser.ConfigParser()
             config.read(config_file)
 
-            # Update owl instance settings
+            # Apply the config (same as before)
             self.owl_instance.exg_min = config.getint('GreenOnBrown', 'exg_min')
             self.owl_instance.exg_max = config.getint('GreenOnBrown', 'exg_max')
             self.owl_instance.hue_min = config.getint('GreenOnBrown', 'hue_min')
@@ -267,7 +283,7 @@ class MQTTServer:
                 cv2.setTrackbarPos("Bright-Max", self.owl_instance.window_name, self.owl_instance.brightness_max)
 
         except Exception as e:
-            self.logger.error(f"Error applying sensitivity config: {e}")
+            self.logger.error(f"Error applying sensitivity config for level {level}: {e}")
 
     def _publish_state(self):
         """Publish current state to MQTT"""
@@ -313,9 +329,9 @@ class MQTTServer:
         with self.state_lock:
             return self.state['image_sample_enable']
 
-    def get_sensitivity_state(self):
+    def get_sensitivity_level(self):
         with self.state_lock:
-            return self.state['sensitivity_state']
+            return self.state['sensitivity_level']
 
     def get_gps_data(self):
         with self.state_lock:
@@ -350,10 +366,10 @@ class MQTTServer:
             self.state['last_update'] = time.time()
         self._publish_state()
 
-    def set_sensitivity_state(self, value):
-        """Set sensitivity state (for owl.py internal use)"""
+    def set_sensitivity_level(self, value):
+        """Set sensitivity level (for owl.py internal use)"""
         with self.state_lock:
-            self.state['sensitivity_state'] = bool(value)
+            self.state['sensitivity_level'] = value
             self.state['last_update'] = time.time()
         self._publish_state()
 
@@ -515,6 +531,11 @@ class MQTTClient:
         """Check if image was recently written (for UI indicators)"""
         return (time.time() - self.last_image_write) < 1.0  # 1 second indicator
 
+    def get_sensitivity_level(self):
+        """Get current sensitivity level as string"""
+        with self.state_lock:
+            return self.current_state.get('sensitivity_level', 'high')
+
     def _send_command(self, action, **kwargs):
         """Send command to OWL"""
         if not self.connected:
@@ -535,9 +556,15 @@ class MQTTClient:
         """Enable/disable image sampling"""
         return self._send_command('set_image_sample_enable', value=value)
 
-    def toggle_sensitivity(self):
-        """Toggle sensitivity state"""
-        return self._send_command('toggle_sensitivity')
+    def set_sensitivity_level(self, level):
+        """Set sensitivity by level string"""
+        valid_levels = ['low', 'high'] # <--- expand if necessary
+        level = level.lower()
+
+        if level not in valid_levels:
+            return {'success': False, 'error': f'Invalid sensitivity level. Valid options: {valid_levels}'}
+
+        return self._send_command('set_sensitivity_level', level=level)
 
     def update_gps(self, lat, lon, accuracy, timestamp=None):
         """Update GPS data"""

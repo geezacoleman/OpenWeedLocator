@@ -6,6 +6,8 @@ import logging
 
 import utils.error_manager as errors
 
+from utils.shared_types import Sensitivity
+
 logger = logging.getLogger(__name__)
 
 def is_raspberry_pi() -> bool:
@@ -97,7 +99,7 @@ class UteController:
 
 class AdvancedController:
     def __init__(self, recording_state,
-                 sensitivity_state,
+                 sensitivity_level,
                  detection_mode_state,
                  stop_flag,
                  owl_instance,
@@ -118,7 +120,7 @@ class AdvancedController:
         self.detection_mode_switch_down = Button(detection_mode_bpin_down, bounce_time=bounce_time) if not testing else None
 
         self.recording_state = recording_state
-        self.sensitivity_state = sensitivity_state
+        self.sensitivity_level = sensitivity_level
         self.detection_mode_state = detection_mode_state
 
         self.stop_flag = stop_flag
@@ -135,8 +137,8 @@ class AdvancedController:
             self.recording_switch.when_pressed = self.update_recording_state
             self.recording_switch.when_released = self.update_recording_state
         if self.sensitivity_switch:
-            self.sensitivity_switch.when_pressed = self.update_sensitivity_state
-            self.sensitivity_switch.when_released = self.update_sensitivity_state
+            self.sensitivity_switch.when_pressed = self.update_sensitivity_level
+            self.sensitivity_switch.when_released = self.update_sensitivity_level
         if self.detection_mode_switch_up:
             self.detection_mode_switch_up.when_pressed = lambda: self.set_detection_mode(2)
             self.detection_mode_switch_up.when_released = lambda: self.set_detection_mode(1)
@@ -150,7 +152,7 @@ class AdvancedController:
     def update_state(self):
         try:
             self.update_recording_state()
-            self.update_sensitivity_state()
+            self.update_sensitivity_level()
             self.update_detection_mode_state()
         except KeyboardInterrupt:
             self.logger.info("[INFO] KeyboardInterrupt received in update_state. Exiting.")
@@ -168,14 +170,22 @@ class AdvancedController:
         else:
             self.status_indicator.disable_image_recording()
 
-    def update_sensitivity_state(self):
-        with self.sensitivity_state.get_lock():
-            self.sensitivity_state.value = self.sensitivity_switch.is_pressed
+    def update_sensitivity_level(self):
+        is_pressed = self.sensitivity_switch.is_pressed if self.sensitivity_switch else False
+        new_level = Sensitivity.LOW if is_pressed else Sensitivity.HIGH
+
+        with self.sensitivity_level.get_lock():
+            self.sensitivity_level.value = new_level.value
+
         self.update_sensitivity_settings()
 
     def update_sensitivity_settings(self):
         self.status_indicator.generic_notification()
-        settings = self.low_sensitivity_settings if self.sensitivity_state.value else self.high_sensitivity_settings
+        with self.sensitivity_level.get_lock():
+            current_level = Sensitivity(self.sensitivity_level.value)
+
+        # Choose settings based on level
+        settings = self.low_sensitivity_settings if current_level == Sensitivity.LOW else self.high_sensitivity_settings
 
         # Update Owl instance settings
         self.owl.exg_min = settings['exg_min']

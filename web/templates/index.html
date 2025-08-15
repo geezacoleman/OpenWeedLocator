@@ -8,500 +8,446 @@
     <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
 </head>
 <body>
-    <div class="header">
-        <div class="header-content">
-            <div class="logo-section">
-                <img src="{{ url_for('static', filename='images/owl-logo-wht.png') }}" alt="OWL Logo" class="logo">
-                <h1>OWL Dashboard</h1>
+<div class="header">
+    <div class="header-content">
+        <div class="logo-section">
+            <img src="{{ url_for('static', filename='images/owl-logo-wht.png') }}" alt="OWL Logo" class="logo">
+            <h1>OWL Dashboard</h1>
+        </div>
+        <div class="status-indicator">
+            <!-- Notification bell -->
+            <div class="notification-bell" id="notificationBell">
+                <svg class="bell-icon" viewBox="0 0 24 24">
+                    <path fill="currentColor" d="M12,2A2,2 0 0,1 14,4V4.5A4,4 0 0,1 18,8.5V14L20,16V17H4V16L6,14V8.5A4,4 0 0,1 10,4.5V4A2,2 0 0,1 12,2M7.5,18A1.5,1.5 0 0,0 9,19.5A1.5,1.5 0 0,0 10.5,18M16.5,18A1.5,1.5 0 0,0 18,19.5A1.5,1.5 0 0,0 19.5,18"/>
+                </svg>
+                <span class="notification-count hidden" id="notificationCount">0</span>
             </div>
-            <div class="status-indicator">
-                <!-- Notification bell -->
-                <div class="notification-bell" id="notificationBell">
-                    <svg class="bell-icon" viewBox="0 0 24 24">
-                        <path fill="currentColor" d="M12,2A2,2 0 0,1 14,4V4.5A4,4 0 0,1 18,8.5V14L20,16V17H4V16L6,14V8.5A4,4 0 0,1 10,4.5V4A2,2 0 0,1 12,2M7.5,18A1.5,1.5 0 0,0 9,19.5A1.5,1.5 0 0,0 10.5,18M16.5,18A1.5,1.5 0 0,0 18,19.5A1.5,1.5 0 0,0 19.5,18"/>
-                    </svg>
-                    <span class="notification-count hidden" id="notificationCount">0</span>
-                </div>
-
-                <div class="power-control" id="owlPowerBtn" title="Toggle OWL Process">
-                    <div class="power-icon-container">
-                        <svg class="power-icon" viewBox="0 0 24 24">
-                            <path fill="currentColor" d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M11,10V14H13V10H11Z" />
-                        </svg>
-                    </div>
-                    <span class="power-text">Loading...</span>
-                </div>
-
-                <div class="owl-status" id="owlStatus">
-                    <span class="status-dot" id="statusDot"></span>
-                    <span id="statusText">Connecting...</span>
-                </div>
+            <div class="owl-status" id="owlStatus">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Connecting...</span>
             </div>
         </div>
     </div>
+</div>
 
-    <div class="container">
-        <!-- Navigation Tabs -->
-        <div class="nav-tabs">
-            <div class="nav-tab active" data-tab="dashboard">
-                <span class="tab-text">Dashboard</span>
-            </div>
-            <div class="nav-tab" data-tab="stream">
-                <span class="tab-text">Stream</span>
-            </div>
-            <div class="nav-tab" data-tab="storage">
-                <span class="tab-text">Storage</span>
-            </div>
-            <div class="nav-tab" data-tab="upload">
-                <span class="tab-text">Upload</span>
-            </div>
+<div class="container">
+    <!-- Navigation Tabs -->
+    <div class="nav-tabs">
+        <div class="nav-tab active" data-tab="dashboard">
+            <span class="tab-text">Dashboard</span>
         </div>
+        <div class="nav-tab" data-tab="stream">
+            <span class="tab-text">Stream</span>
+        </div>
+        <div class="nav-tab" data-tab="storage">
+            <span class="tab-text">Storage</span>
+        </div>
+        <div class="nav-tab" data-tab="upload">
+            <span class="tab-text">Upload</span>
+        </div>
+    </div>
 
-        <!-- Dashboard Tab -->
-        <div id="dashboard" class="tab-content active">
-            <div class="dashboard-grid">
-                <div class="card status-card expanded" id="systemStatusCard">
-                    <!-- 1. Visible header -->
-                    <div class="card-header">
-                        <div class="card-header-title">
-                            <h2>System Status</h2>
-                            <!-- CPU Temp in header -->
-                            <div class="status-item-inline">
-                                <span class="status-inline-label">CPU Temp:</span>
-                                <span class="status-inline-value" id="cpuTemp">0°C</span>
-                            </div>
-                        </div>
-                        <span class="toggle-icon">▼</span>
+    <!-- Dashboard Tab -->
+    <div id="dashboard" class="tab-content active">
+        <div class="dashboard-grid">
+
+            <div class="card detection-card" id="cameraControlsCard">
+                <div class="card-title-row">
+                    <div class="title-left">
+                        <h2>Camera Controls</h2>
+                        <span class="status-chip" id="detectStatusChip">
+                <span class="dot"></span><span id="detectStatusText">Stopped</span>
+              </span>
                     </div>
 
-                    <!-- 2. Collapsible content -->
-                    <div class="collapsible-content">
-                        <div class="status-grid">
-                            <!-- Fan Control Button -->
-                            <div class="status-item fan-control-button hidden" id="fanControlBtn">
-                                <div class="status-info">
-                                    <h3>
-                                        <svg class="fan-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M12,10.5C11.17,10.5 10.5,11.17 10.5,12C10.5,12.83 11.17,13.5 12,13.5C12.83,13.5 13.5,12.83 13.5,12C13.5,11.17 12.83,10.5 12,10.5M12,2C6.4,2 2,6.4 2,12C2,17.6 6.4,22 12,22C17.6,22 22,17.6 22,12C22,6.4 17.6,2 12,2M16.9,15.5L15.5,16.9L12,13.41L8.5,16.9L7.09,15.5L10.59,12L7.09,8.5L8.5,7.09L12,10.59L15.5,7.09L16.9,8.5L13.41,12L16.9,15.5Z" /></svg>
-                                        Fan Speed
-                                    </h3>
-                                    <div class="status-value-two-line" id="fanModeText">Auto</div>
-                                    <div class="status-value-two-line" id="fanRPMText">0 RPM</div>
-                                </div>
-                            </div>
-                            <!-- CPU Usage -->
-                            <div class="status-item">
-                                <div class="status-info">
-                                    <h3>CPU Usage</h3>
-                                    <div class="status-value" id="cpuUsage">0%</div>
-                                </div>
-                            </div>
-                            <!-- CPU Temp -->
-                                <div class="status-item" id="cpuTempBox">
-                                  <div class="status-info">
-                                    <h3>CPU Temp</h3>
-                                    <div class="status-value" id="cpuTempBody">0°C</div>
-                                  </div>
-                                </div>
-                            <!-- Memory -->
-                            <div class="status-item">
-                                <div class="status-info">
-                                    <h3>Memory</h3>
-                                    <div class="status-value" id="memoryUsage">0%</div>
-                                </div>
-                            </div>
-                            <!-- Disk -->
-                            <div class="status-item">
-                                <div class="status-info">
-                                    <h3>Disk</h3>
-                                    <div class="status-value" id="diskUsage">0%</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    <!-- Power button lives here (top-right) -->
+                    <button
+                            id="owlPowerBtn"
+                            class="icon-btn power-btn"
+                            aria-pressed="false"
+                            title="Start/Stop OWL">
+                        <!-- simple power icon -->
+                        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                            <path fill="currentColor"
+                                  d="M13 3h-2v10h2V3zm4.83 2.17l-1.41 1.41A7 7 0 1 1 7.59 6.6L6.17 5.17A9 9 0 1 0 21 12a8.96 8.96 0 0 0-3.17-6.83z"/>
+                        </svg>
+                        <span class="visually-hidden">Power</span>
+                    </button>
                 </div>
 
-                <div class="card detection-card" id="cameraControlsCard">
-                  <div class="card-title-row">
-                    <h2>Camera Controls</h2>
-                    <span class="status-chip" id="detectStatusChip">
-                      <span class="dot"></span><span id="detectStatusText">Stopped</span>
-                    </span>
-                  </div>
-
-                  <!-- Big switches -->
-                  <div class="controls-stack">
+                <!-- Big switches -->
+                <div class="controls-stack">
                     <!-- Detection switch -->
                     <button class="owl-switch" id="detectSwitch" aria-pressed="false">
-                      <span class="switch-label">
-                        <svg aria-hidden viewBox="0 0 24 24" class="switch-icon">
-                          <path fill="currentColor" d="M16,7V4A2,2 0 0,0 14,2H10A2,2 0 0,0 8,4V7H16M7,9H17A2,2 0 0,1 19,11V20A2,2 0 0,1 17,22H7A2,2 0 0,1 5,20V11A2,2 0 0,1 7,9Z" />
-                        </svg>
-                        <strong>Detection</strong>
-                      </span>
-                      <span class="switch-track"><span class="switch-thumb"></span></span>
-                      <span class="switch-state" id="detectSwitchState">OFF</span>
+              <span class="switch-label">
+                <svg aria-hidden viewBox="0 0 24 24" class="switch-icon">
+                  <path fill="currentColor"
+                        d="M16,7V4A2,2 0 0,0 14,2H10A2,2 0 0,0 8,4V7H16M7,9H17A2,2 0 0,1 19,11V20A2,2 0 0,1 17,22H7A2,2 0 0,1 5,20V11A2,2 0 0,1 7,9Z"/>
+                </svg>
+                <strong>Detection</strong>
+              </span>
+                        <span class="switch-track"><span class="switch-thumb"></span></span>
+                        <span class="switch-state" id="detectSwitchState">OFF</span>
                     </button>
 
                     <!-- Recording switch -->
                     <button class="owl-switch owl-switch--record" id="recordSwitch" aria-pressed="false">
-                      <span class="switch-label">
-                        <svg aria-hidden viewBox="0 0 24 24" class="switch-icon">
-                          <path fill="currentColor" d="M12,2A10,10 0 1,0 22,12A10,10 0 0,0 12,2Z" />
-                        </svg>
-                        <strong>Recording</strong>
-                      </span>
-                      <span class="switch-track"><span class="switch-thumb"></span></span>
-                      <span class="switch-state" id="recordSwitchState">OFF</span>
+              <span class="switch-label">
+                <svg aria-hidden viewBox="0 0 24 24" class="switch-icon">
+                  <path fill="currentColor" d="M12,2A10,10 0 1,0 22,12A10,10 0 0,0 12,2Z"/>
+                </svg>
+                <strong>Recording</strong>
+              </span>
+                        <span class="switch-track"><span class="switch-thumb"></span></span>
+                        <span class="switch-state" id="recordSwitchState">OFF</span>
                     </button>
-                  </div>
+                </div>
 
-                  <!-- Same-row -->
-                  <div class="two-up">
-                    <!-- Sensitivity (segmented) -->
+                <!-- Same-row -->
+                <div class="two-up">
+                    <!-- Sensitivity (Low / High) -->
                     <div class="control-tile">
-                      <div class="tile-label">Sensitivity</div>
-                      <div class="segmented">
-                        <button class="seg-btn" data-sens="Low">Low</button>
-                        <button class="seg-btn active" data-sens="Med">Med</button>
-                        <button class="seg-btn" data-sens="High">High</button>
-                      </div>
+                        <div class="tile-label">Sensitivity</div>
+                        <div class="segmented segmented--two">
+                            <button class="seg-btn active" data-sens="Low">Low</button>
+                            <button class="seg-btn" data-sens="High">High</button>
+                        </div>
                     </div>
 
                     <!-- Fan (Auto / 100%) -->
                     <div class="control-tile">
-                      <div class="tile-label">Fan</div>
-                      <div class="segmented">
-                        <button class="seg-btn active" data-fan="auto">Auto</button>
-                        <button class="seg-btn" data-fan="100">100%</button>
-                      </div>
-                      <div class="tile-subtle" id="fanRpmReadout">—</div>
+                        <div class="tile-label">Fan</div>
+                        <div class="segmented">
+                            <button class="seg-btn active" data-fan="auto">Auto</button>
+                            <button class="seg-btn" data-fan="100">100%</button>
+                        </div>
+                        <div class="tile-subtle" id="fanRpmReadout">—</div>
                     </div>
-                  </div>
+                </div>
 
-                  <!-- Metrics footer with gradients -->
-                  <div class="metrics-row">
-                    <span class="metric-chip cpu" id="chipCpu">CPU <strong id="cpuChipVal">0%</strong></span>
-                    <span class="metric-chip mem" id="chipMem">Mem <strong id="memChipVal">0%</strong></span>
+                <!-- Metrics footer with gradients -->
+                <div class="metrics-row">
+                    <span class="metric-chip cpu" id="chipCpu">CPU  <strong id="cpuChipVal">0%</strong></span>
+                    <span class="metric-chip mem" id="chipMem">Mem  <strong id="memChipVal">0%</strong></span>
                     <span class="metric-chip temp" id="chipTemp">Temp <strong id="tempChipVal">0°C</strong></span>
-                  </div>
-                </div>
-
-            </div>
-        </div>
-
-        <!-- Stream Tab -->
-        <div id="stream" class="tab-content">
-            <div class="stream-card">
-                <div class="stream-header">
-                    <h2>Live Camera Feed</h2>
-                    <div class="stream-controls">
-                        <button id="fullscreenBtn" class="icon-btn" title="Fullscreen">Fullscreen</button>
-                        <button id="downloadFrame" class="icon-btn" title="Download Frame">Download</button>
-                        <button id="refreshStreamBtn" class="icon-btn" title="Refresh Stream">Refresh</button>
-                    </div>
-                </div>
-                <div class="stream-container">
-                    <div class="zoom-container">
-                        <img id="stream-img" class="stream zoom-image" src="/video_feed" alt="Camera Feed">
-                        <div id="stream-status-overlay" class="stream-overlay-message hidden">
-                            <p>Video Stream Unavailable</p>
-                            <small>Check owl.py logs for details. Core functions may still be active.</small>
-                        </div>
-                        <div class="stream-overlay">
-                            <div class="overlay-item gps-status">
-                                <svg class="gps-icon" viewBox="0 0 24 24">
-                                    <path fill="currentColor" d="M12,2A7,7 0 0,1 19,9C19,14.25 12,22 12,22C12,22 5,14.25 5,9A7,7 0 0,1 12,2M12,4A5,5 0 0,0 7,9C7,10 7,12 12,18.71C17,12 17,10 17,9A5,5 0 0,0 12,4M12,6.5A2.5,2.5 0 0,1 14.5,9A2.5,2.5 0 0,1 12,11.5A2.5,2.5 0 0,1 9.5,9A2.5,2.5 0 0,1 12,6.5"/>
-                                </svg>
-                                <label for="gps-toggle" class="gps-label">
-                                    <input type="checkbox" id="gps-toggle" checked>
-                                    <span id="gps-accuracy">GPS Off</span>
-                                </label>
-                            </div>
-
-                            <div class="overlay-item zoom-controls">
-                                <button class="zoom-btn" id="zoomIn">+</button>
-                                <button class="zoom-btn" id="zoomOut">-</button>
-                                <button class="zoom-btn" id="zoomReset">Reset</button>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </div>
+
         </div>
-        <!-- Storage Tab -->
-        <div id="storage" class="tab-content">
-            <div class="storage-container">
-                <div class="storage-section">
-                    <div class="card">
-                        <h2>USB Storage</h2>
-                        <div class="storage-info" id="usbDevices">
-                            <p>Scanning for USB devices...</p>
-                        </div>
-                    </div>
-                </div>
+    </div>
 
-                <div class="storage-section">
-                    <div class="card">
-                        <h2>Recording Status</h2>
-                        <div class="recording-info">
-                            <div class="info-grid">
-                                <div class="info-item">
-                                    <span class="info-label">Save Directory:</span>
-                                    <span class="info-value" id="saveDirectory">Not set</span>
-                                </div>
-                                <div class="info-item">
-                                    <span class="info-label">Available Space:</span>
-                                    <span class="info-value" id="availableSpace">Unknown</span>
-                                </div>
-                                <div class="info-item">
-                                    <span class="info-label">Total Recordings:</span>
-                                    <span class="info-value" id="totalRecordings">0</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+    <!-- Stream Tab -->
+    <div id="stream" class="tab-content">
+        <div class="stream-card">
+            <div class="stream-header">
+                <h2>Live Camera Feed</h2>
+                <div class="stream-controls">
+                    <button id="fullscreenBtn" class="icon-btn" title="Fullscreen">Fullscreen</button>
+                    <button id="downloadFrame" class="icon-btn" title="Download Frame">Download</button>
+                    <button id="refreshStreamBtn" class="icon-btn" title="Refresh Stream">Refresh</button>
                 </div>
+            </div>
+            <div class="stream-container">
+                <div class="zoom-container">
+                    <img id="stream-img" class="stream zoom-image" src="/video_feed" alt="Camera Feed">
+                    <div id="stream-status-overlay" class="stream-overlay-message hidden">
+                        <p>Video Stream Unavailable</p>
+                        <small>Check owl.py logs for details. Core functions may still be active.</small>
+                    </div>
+                    <div class="stream-overlay">
+                        <div class="overlay-item gps-status">
+                            <svg class="gps-icon" viewBox="0 0 24 24">
+                                <path fill="currentColor" d="M12,2A7,7 0 0,1 19,9C19,14.25 12,22 12,22C12,22 5,14.25 5,9A7,7 0 0,1 12,2M12,4A5,5 0 0,0 7,9C7,10 7,12 12,18.71C17,12 17,10 17,9A5,5 0 0,0 12,4M12,6.5A2.5,2.5 0 0,1 14.5,9A2.5,2.5 0 0,1 12,11.5A2.5,2.5 0 0,1 9.5,9A2.5,2.5 0 0,1 12,6.5"/>
+                            </svg>
+                            <label for="gps-toggle" class="gps-label">
+                                <input type="checkbox" id="gps-toggle" checked>
+                                <span id="gps-accuracy">GPS Off</span>
+                            </label>
+                        </div>
 
-                <div class="storage-section storage-section-full">
-                    <div class="card">
-                        <h2>File Browser</h2>
-                        <div class="file-browser">
-                            <div class="browser-controls">
-                                <button id="refreshFiles" class="btn-secondary">Refresh</button>
-                                <button id="downloadLogs" class="btn-primary">Download Logs</button>
-                            </div>
-                            <div class="file-list" id="fileList">
-                                <p>Click Refresh to browse recordings</p>
-                            </div>
+                        <div class="overlay-item zoom-controls">
+                            <button class="zoom-btn" id="zoomIn">+</button>
+                            <button class="zoom-btn" id="zoomOut">-</button>
+                            <button class="zoom-btn" id="zoomReset">Reset</button>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
-
-        <!-- Upload Tab -->
-        <div id="upload" class="tab-content">
-            <div class="upload-container">
-
-                <!-- Connection Check Section -->
+    </div>
+    <!-- Storage Tab -->
+    <div id="storage" class="tab-content">
+        <div class="storage-container">
+            <div class="storage-section">
                 <div class="card">
-                    <h2>Network Connection</h2>
-                    <div class="connection-section">
-                        <div class="connection-status" id="connectionStatus">
-                            <div class="status-indicator" id="connectionIndicator">❓</div>
-                            <span id="connectionText">Click to check connection</span>
-                        </div>
-                        <button id="checkConnection" class="btn-primary">Check Ethernet Connection</button>
+                    <h2>USB Storage</h2>
+                    <div class="storage-info" id="usbDevices">
+                        <p>Scanning for USB devices...</p>
                     </div>
                 </div>
+            </div>
 
-                <!-- S3 Credentials Section -->
+            <div class="storage-section">
                 <div class="card">
-                    <h2>S3 Configuration</h2>
-                    <div class="credentials-form">
-
-                        <!-- USB Key File Section -->
-                        <div class="key-file-section">
-                            <h4>Load Credentials from USB</h4>
-                            <div class="key-file-controls">
-                                <button id="findKeyFiles" class="btn-secondary">Find Key Files on USB</button>
-                                <div id="keyFilesList" class="key-files-list hidden"></div>
+                    <h2>Recording Status</h2>
+                    <div class="recording-info">
+                        <div class="info-grid">
+                            <div class="info-item">
+                                <span class="info-label">Save Directory:</span>
+                                <span class="info-value" id="saveDirectory">Not set</span>
                             </div>
-                        </div>
-
-                        <div class="form-divider">
-                            <span>OR</span>
-                        </div>
-
-                        <!-- Manual Entry Section -->
-                        <div class="manual-entry-section">
-                            <h4>Manual Entry</h4>
-                            <div class="form-grid">
-                                <div class="form-group">
-                                    <label for="accessKey">Access Key:</label>
-                                    <input type="text" id="accessKey" placeholder="Your S3 access key" class="form-input">
-                                </div>
-                                <div class="form-group">
-                                    <label for="secretKey">Secret Key:</label>
-                                    <input type="password" id="secretKey" placeholder="Your S3 secret key" class="form-input">
-                                </div>
-                                <div class="form-group">
-                                    <label for="bucketName">Bucket Name:</label>
-                                    <input type="text" id="bucketName" placeholder="your-bucket-name" class="form-input">
-                                </div>
-                                <div class="form-group">
-                                    <label for="region">Region:</label>
-                                    <select id="region" class="form-input">
-                                        <option value="us-east-1">US East (N. Virginia)</option>
-                                        <option value="us-west-2">US West (Oregon)</option>
-                                        <option value="eu-west-1">Europe (Ireland)</option>
-                                        <option value="ap-southeast-2">Asia Pacific (Sydney)</option>
-                                        <option value="fsn1">Hetzner (Falkenstein)</option>
-                                        <option value="hel1">Hetzner (Helsinki)</option>
-                                        <option value="nbg1">Hetzner (Nuremburg)</option>
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <label for="s3Prefix">S3 Path Prefix (optional):</label>
-                                    <input type="text" id="s3Prefix" placeholder="owl-data/site-name/" class="form-input">
-                                </div>
-                                <div class="form-group">
-                                    <label for="endpointUrl">Custom Endpoint:</label>
-                                    <input type="text" id="endpointUrl" placeholder="Auto-filled for Hetzner" class="form-input" readonly>
-                                    <small class="form-help">Automatically configured for Hetzner regions</small>
-                                </div>
+                            <div class="info-item">
+                                <span class="info-label">Available Space:</span>
+                                <span class="info-value" id="availableSpace">Unknown</span>
                             </div>
-                        </div>
-
-                        <div class="credentials-actions">
-                            <button id="testCredentials" class="btn-secondary">Test Credentials</button>
-                            <div class="credentials-status" id="credentialsStatus"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Directory Selection Section -->
-                <div class="card">
-                    <h2>Select Upload Directory</h2>
-                    <div class="directory-selection">
-                        <div class="current-selection">
-                            <strong>Selected Directory:</strong>
-                            <span id="selectedDirectory">None selected</span>
-                        </div>
-
-                        <div class="directory-browser">
-                            <div class="browser-header">
-                                <button id="browseDirectories" class="btn-secondary">Browse Directories</button>
-                                <button id="scanDirectory" class="btn-primary" disabled>Scan Selected Directory</button>
-                            </div>
-
-                            <div id="directoryBrowser" class="directory-list hidden">
-                                <div id="directoryBreadcrumbs" class="breadcrumbs"></div>
-                                <div id="directoryContents" class="directory-contents">
-                                    <p>Click "Browse Directories" to start</p>
-                                </div>
-                            </div>
-
-                            <div id="scanResults" class="scan-results hidden">
-                                <h4>Directory Contents:</h4>
-                                <div class="scan-info">
-                                    <div class="scan-stat">
-                                        <span class="scan-label">Files:</span>
-                                        <span id="scanFileCount">0</span>
-                                    </div>
-                                    <div class="scan-stat">
-                                        <span class="scan-label">Total Size:</span>
-                                        <span id="scanTotalSize">0 B</span>
-                                    </div>
-                                </div>
+                            <div class="info-item">
+                                <span class="info-label">Total Recordings:</span>
+                                <span class="info-value" id="totalRecordings">0</span>
                             </div>
                         </div>
                     </div>
                 </div>
+            </div>
 
+            <div class="storage-section storage-section-full">
                 <div class="card">
-                    <h2>Upload Metadata</h2>
-                    <div class="metadata-form">
-                        <p class="metadata-description">Provide information about this upload that will be saved with your data.</p>
+                    <h2>File Browser</h2>
+                    <div class="file-browser">
+                        <div class="browser-controls">
+                            <button id="refreshFiles" class="btn-secondary">Refresh</button>
+                            <button id="downloadLogs" class="btn-primary">Download Logs</button>
+                        </div>
+                        <div class="file-list" id="fileList">
+                            <p>Click Refresh to browse recordings</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
+    <!-- Upload Tab -->
+    <div id="upload" class="tab-content">
+        <div class="upload-container">
+
+            <!-- Connection Check Section -->
+            <div class="card">
+                <h2>Network Connection</h2>
+                <div class="connection-section">
+                    <div class="connection-status" id="connectionStatus">
+                        <div class="status-indicator" id="connectionIndicator">❓</div>
+                        <span id="connectionText">Click to check connection</span>
+                    </div>
+                    <button id="checkConnection" class="btn-primary">Check Ethernet Connection</button>
+                </div>
+            </div>
+
+            <!-- S3 Credentials Section -->
+            <div class="card">
+                <h2>S3 Configuration</h2>
+                <div class="credentials-form">
+
+                    <!-- USB Key File Section -->
+                    <div class="key-file-section">
+                        <h4>Load Credentials from USB</h4>
+                        <div class="key-file-controls">
+                            <button id="findKeyFiles" class="btn-secondary">Find Key Files on USB</button>
+                            <div id="keyFilesList" class="key-files-list hidden"></div>
+                        </div>
+                    </div>
+
+                    <div class="form-divider">
+                        <span>OR</span>
+                    </div>
+
+                    <!-- Manual Entry Section -->
+                    <div class="manual-entry-section">
+                        <h4>Manual Entry</h4>
                         <div class="form-grid">
                             <div class="form-group">
-                                <label for="metadataName">Name/Title:</label>
-                                <input type="text" id="metadataName" placeholder="e.g., North Field Survey" class="form-input">
+                                <label for="accessKey">Access Key:</label>
+                                <input type="text" id="accessKey" placeholder="Your S3 access key" class="form-input">
                             </div>
                             <div class="form-group">
-                                <label for="metadataDate">Date:</label>
-                                <input type="date" id="metadataDate" class="form-input">
+                                <label for="secretKey">Secret Key:</label>
+                                <input type="password" id="secretKey" placeholder="Your S3 secret key" class="form-input">
                             </div>
                             <div class="form-group">
-                                <label for="metadataLocation">Location/Farm:</label>
-                                <input type="text" id="metadataLocation" placeholder="e.g., Smith Farm, Paddock 7" class="form-input">
+                                <label for="bucketName">Bucket Name:</label>
+                                <input type="text" id="bucketName" placeholder="your-bucket-name" class="form-input">
                             </div>
                             <div class="form-group">
-                                <label for="metadataField">Field ID:</label>
-                                <input type="text" id="metadataField" placeholder="e.g., Field A, Block 3" class="form-input">
+                                <label for="region">Region:</label>
+                                <select id="region" class="form-input">
+                                    <option value="us-east-1">US East (N. Virginia)</option>
+                                    <option value="us-west-2">US West (Oregon)</option>
+                                    <option value="eu-west-1">Europe (Ireland)</option>
+                                    <option value="ap-southeast-2">Asia Pacific (Sydney)</option>
+                                    <option value="fsn1">Hetzner (Falkenstein)</option>
+                                    <option value="hel1">Hetzner (Helsinki)</option>
+                                    <option value="nbg1">Hetzner (Nuremburg)</option>
+                                </select>
                             </div>
                             <div class="form-group">
-                                <label for="metadataWeather">Weather Conditions:</label>
-                                <input type="text" id="metadataWeather" placeholder="e.g., Sunny, 25°C, Light wind" class="form-input">
+                                <label for="s3Prefix">S3 Path Prefix (optional):</label>
+                                <input type="text" id="s3Prefix" placeholder="owl-data/site-name/" class="form-input">
                             </div>
                             <div class="form-group">
-                                <label for="metadataCrop">Crop Type:</label>
-                                <input type="text" id="metadataCrop" placeholder="e.g., Wheat, Canola, Barley" class="form-input">
+                                <label for="endpointUrl">Custom Endpoint:</label>
+                                <input type="text" id="endpointUrl" placeholder="Auto-filled for Hetzner" class="form-input" readonly>
+                                <small class="form-help">Automatically configured for Hetzner regions</small>
                             </div>
-                            <div class="form-group full-width">
-                                <label for="metadataWeeds">Expected Weeds:</label>
-                                <input type="text" id="metadataWeeds" placeholder="e.g., Wild radish, Ryegrass, Volunteer canola" class="form-input">
+                        </div>
+                    </div>
+
+                    <div class="credentials-actions">
+                        <button id="testCredentials" class="btn-secondary">Test Credentials</button>
+                        <div class="credentials-status" id="credentialsStatus"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Directory Selection Section -->
+            <div class="card">
+                <h2>Select Upload Directory</h2>
+                <div class="directory-selection">
+                    <div class="current-selection">
+                        <strong>Selected Directory:</strong>
+                        <span id="selectedDirectory">None selected</span>
+                    </div>
+
+                    <div class="directory-browser">
+                        <div class="browser-header">
+                            <button id="browseDirectories" class="btn-secondary">Browse Directories</button>
+                            <button id="scanDirectory" class="btn-primary" disabled>Scan Selected Directory</button>
+                        </div>
+
+                        <div id="directoryBrowser" class="directory-list hidden">
+                            <div id="directoryBreadcrumbs" class="breadcrumbs"></div>
+                            <div id="directoryContents" class="directory-contents">
+                                <p>Click "Browse Directories" to start</p>
                             </div>
-                            <div class="form-group full-width">
-                                <label for="metadataNotes">Additional Notes:</label>
-                                <textarea id="metadataNotes" placeholder="Any additional information about this data collection..." class="form-textarea" rows="3"></textarea>
+                        </div>
+
+                        <div id="scanResults" class="scan-results hidden">
+                            <h4>Directory Contents:</h4>
+                            <div class="scan-info">
+                                <div class="scan-stat">
+                                    <span class="scan-label">Files:</span>
+                                    <span id="scanFileCount">0</span>
+                                </div>
+                                <div class="scan-stat">
+                                    <span class="scan-label">Total Size:</span>
+                                    <span id="scanTotalSize">0 B</span>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
+            </div>
 
-                <!-- Upload Section -->
-                <div class="card">
-                    <h2>Upload Control</h2>
-                    <div class="upload-section">
-                        <div class="upload-actions">
-                            <button id="startUpload" class="btn-success upload-btn" disabled>Start Upload</button>
-                            <button id="stopUpload" class="btn-danger upload-btn" disabled>Stop Upload</button>
+            <div class="card">
+                <h2>Upload Metadata</h2>
+                <div class="metadata-form">
+                    <p class="metadata-description">Provide information about this upload that will be saved with your data.</p>
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="metadataName">Name/Title:</label>
+                            <input type="text" id="metadataName" placeholder="e.g., North Field Survey" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="metadataDate">Date:</label>
+                            <input type="date" id="metadataDate" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="metadataLocation">Location/Farm:</label>
+                            <input type="text" id="metadataLocation" placeholder="e.g., Smith Farm, Paddock 7" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="metadataField">Field ID:</label>
+                            <input type="text" id="metadataField" placeholder="e.g., Field A, Block 3" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="metadataWeather">Weather Conditions:</label>
+                            <input type="text" id="metadataWeather" placeholder="e.g., Sunny, 25°C, Light wind" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="metadataCrop">Crop Type:</label>
+                            <input type="text" id="metadataCrop" placeholder="e.g., Wheat, Canola, Barley" class="form-input">
+                        </div>
+                        <div class="form-group full-width">
+                            <label for="metadataWeeds">Expected Weeds:</label>
+                            <input type="text" id="metadataWeeds" placeholder="e.g., Wild radish, Ryegrass, Volunteer canola" class="form-input">
+                        </div>
+                        <div class="form-group full-width">
+                            <label for="metadataNotes">Additional Notes:</label>
+                            <textarea id="metadataNotes" placeholder="Any additional information about this data collection..." class="form-textarea" rows="3"></textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Upload Section -->
+            <div class="card">
+                <h2>Upload Control</h2>
+                <div class="upload-section">
+                    <div class="upload-actions">
+                        <button id="startUpload" class="btn-success upload-btn" disabled>Start Upload</button>
+                        <button id="stopUpload" class="btn-danger upload-btn" disabled>Stop Upload</button>
+                    </div>
+
+                    <div id="uploadProgress" class="upload-progress hidden">
+                        <div class="progress-header">
+                            <h4>Upload Progress</h4>
+                            <span id="uploadStatus">Preparing...</span>
                         </div>
 
-                        <div id="uploadProgress" class="upload-progress hidden">
-                            <div class="progress-header">
-                                <h4>Upload Progress</h4>
-                                <span id="uploadStatus">Preparing...</span>
+                        <div class="progress-bars">
+                            <div class="progress-item">
+                                <label>Overall Progress:</label>
+                                <div class="progress-bar">
+                                    <div id="overallProgressBar" class="progress-fill"></div>
+                                </div>
+                                <span id="overallProgressText">0%</span>
                             </div>
 
-                            <div class="progress-bars">
-                                <div class="progress-item">
-                                    <label>Overall Progress:</label>
-                                    <div class="progress-bar">
-                                        <div id="overallProgressBar" class="progress-fill"></div>
-                                    </div>
-                                    <span id="overallProgressText">0%</span>
-                                </div>
-
-                                <div class="progress-item">
-                                    <label>Files:</label>
-                                    <span id="fileProgressText">0 / 0</span>
-                                </div>
-                            </div>
-
-                            <div class="progress-stats">
-                                <div class="stat-item">
-                                    <span class="stat-label">Speed:</span>
-                                    <span id="uploadSpeed">0 MB/s</span>
-                                </div>
-                                <div class="stat-item">
-                                    <span class="stat-label">ETA:</span>
-                                    <span id="uploadETA">--</span>
-                                </div>
-                                <div class="stat-item">
-                                    <span class="stat-label">Current File:</span>
-                                    <span id="currentFile">--</span>
-                                </div>
+                            <div class="progress-item">
+                                <label>Files:</label>
+                                <span id="fileProgressText">0 / 0</span>
                             </div>
                         </div>
 
-                        <div id="uploadResults" class="upload-results hidden">
-                            <h4>Upload Complete</h4>
-                            <div class="results-summary">
-                                <div class="result-item success">
-                                    <span class="result-label">Successful:</span>
-                                    <span id="successCount">0</span>
-                                </div>
-                                <div class="result-item error">
-                                    <span class="result-label">Failed:</span>
-                                    <span id="failedCount">0</span>
-                                </div>
-                                <div class="result-item">
-                                    <span class="result-label">Total Time:</span>
-                                    <span id="totalTime">--</span>
-                                </div>
+                        <div class="progress-stats">
+                            <div class="stat-item">
+                                <span class="stat-label">Speed:</span>
+                                <span id="uploadSpeed">0 MB/s</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">ETA:</span>
+                                <span id="uploadETA">--</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Current File:</span>
+                                <span id="currentFile">--</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="uploadResults" class="upload-results hidden">
+                        <h4>Upload Complete</h4>
+                        <div class="results-summary">
+                            <div class="result-item success">
+                                <span class="result-label">Successful:</span>
+                                <span id="successCount">0</span>
+                            </div>
+                            <div class="result-item error">
+                                <span class="result-label">Failed:</span>
+                                <span id="failedCount">0</span>
+                            </div>
+                            <div class="result-item">
+                                <span class="result-label">Total Time:</span>
+                                <span id="totalTime">--</span>
                             </div>
                         </div>
                     </div>
@@ -509,26 +455,27 @@
             </div>
         </div>
     </div>
-    <footer>
-        <div class="footer-content">
-            <p>OpenWeedLocator © 2025 | <a href="https://github.com/geezacoleman/OpenWeedLocator" target="_blank">GitHub</a></p>
-            <p class="status-timestamp">Last Updated: <span id="statusTimestamp">--</span></p>
-        </div>
-    </footer>
+</div>
+<footer>
+    <div class="footer-content">
+        <p>OpenWeedLocator © 2025 | <a href="https://github.com/geezacoleman/OpenWeedLocator" target="_blank">GitHub</a></p>
+        <p class="status-timestamp">Last Updated: <span id="statusTimestamp">--</span></p>
+    </div>
+</footer>
 
-    <div id="notificationPanel" class="notification-panel hidden">
-        <div class="notification-panel-header">
-            <h3>Notifications</h3>
-            <div class="notification-panel-controls">
-                <button id="clearAllNotifications" class="clear-btn">Clear All</button>
-                <button id="closeNotificationPanel" class="close-btn">×</button>
-            </div>
-        </div>
-        <div class="notification-panel-content" id="notificationList">
-            <p class="no-notifications">No notifications</p>
+<div id="notificationPanel" class="notification-panel hidden">
+    <div class="notification-panel-header">
+        <h3>Notifications</h3>
+        <div class="notification-panel-controls">
+            <button id="clearAllNotifications" class="clear-btn">Clear All</button>
+            <button id="closeNotificationPanel" class="close-btn">×</button>
         </div>
     </div>
-    <div id="notificationOverlay" class="notification-overlay hidden"></div>
-    <div id="quickToast" class="quick-toast hidden"></div>
+    <div class="notification-panel-content" id="notificationList">
+        <p class="no-notifications">No notifications</p>
+    </div>
+</div>
+<div id="notificationOverlay" class="notification-overlay hidden"></div>
+<div id="quickToast" class="quick-toast hidden"></div>
 </body>
 </html>

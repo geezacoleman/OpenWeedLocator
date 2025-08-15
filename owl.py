@@ -73,6 +73,7 @@ try:
     from utils.frame_reader import FrameReader
     from utils.config_manager import ConfigValidator
     from utils.log_manager import LogManager, MQTTLogHandler
+    from utils.shared_types import Sensitivity
     import utils.error_manager as errors
     from version import SystemInfo, VERSION
 
@@ -243,7 +244,7 @@ class Owl:
         if self.controller_type != 'none' and not self.dash:
             self.detection_enable = Value('b', False)
             self.image_sample_enable = Value('b', False)
-            self.sensitivity_state = Value('b', False)
+            self.sensitivity_level = Value('i', Sensitivity.HIGH.value)
 
         if self.controller_type != 'none' or self.dash:
             if self.dash:
@@ -291,13 +292,13 @@ class Owl:
             self.controller_process.start()
 
         elif self.controller_type == 'advanced':
-            if not hasattr(self, 'sensitivity_state'):
-                self.sensitivity_state = Value('b', False)
+            if not hasattr(self, 'sensitivity_level'):
+                self.sensitivity_level = Value('i', Sensitivity.HIGH.value)
 
             self.status_indicator = AdvancedStatusIndicator(save_directory=self.save_directory, status_led_pin='BOARD37')
             self.controller = AdvancedController(
                 recording_state=self.image_sample_enable,
-                sensitivity_state=self.sensitivity_state,
+                sensitivity_level=self.sensitivity_level,
                 detection_mode_state=Value('i', 1),
                 stop_flag=Value('b', False),
                 owl_instance=self,
@@ -844,11 +845,13 @@ class Owl:
                         self.dash.set_image_sample_enable(hardware_recording)
                         self._image_sample_enable = hardware_recording
 
-                    if hasattr(self, 'sensitivity_state'):
-                        with self.sensitivity_state.get_lock():
-                            hardware_sensitivity = self.sensitivity_state.value
-                        self.dash.set_sensitivity_state(hardware_sensitivity)
-                        self._sensitivity_state = hardware_sensitivity
+                    if hasattr(self, 'sensitivity_level'):
+                        with self.sensitivity_level.get_lock():
+                            hardware_sensitivity_int = self.sensitivity_level.value
+
+                        hardware_sensitivity_string = Sensitivity(hardware_sensitivity_int).name.lower()
+                        self.dash.set_sensitivity_level(hardware_sensitivity_string)
+                        self._sensitivity_level = hardware_sensitivity_string
 
                     # GPS from dashboard takes priority
                     self.gps_data = self.dash.get_gps_data()
@@ -857,7 +860,7 @@ class Owl:
                     # No hardware controller - normal dashboard control
                     self._detection_enable = self.dash.get_detection_enable()
                     self._image_sample_enable = self.dash.get_image_sample_enable()
-                    self._sensitivity_state = self.dash.get_sensitivity_state()
+                    self._sensitivity_level = self.dash.get_sensitivity_level()
                     self.gps_data = self.dash.get_gps_data()
 
             else:
@@ -868,9 +871,9 @@ class Owl:
                 if hasattr(self, 'image_sample_enable'):
                     with self.image_sample_enable.get_lock():
                         self._image_sample_enable = self.image_sample_enable.value
-                if hasattr(self, 'sensitivity_state'):
-                    with self.sensitivity_state.get_lock():
-                        self._sensitivity_state = self.sensitivity_state.value
+                if hasattr(self, 'sensitivity_level'):
+                    with self.sensitivity_level.get_lock():
+                        self._sensitivity_level = self.sensitivity_level.value.decode('utf-8')
 
             time.sleep(self._STATE_CHECK_INTERVAL)
 
