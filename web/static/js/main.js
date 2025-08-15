@@ -204,7 +204,7 @@ function setSensitivity(level) {
     return apiRequest('/api/sensitivity/set', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({})
+        body: JSON.stringify({ level: level })
     })
         .then(r => r.json())
         .then(d => {

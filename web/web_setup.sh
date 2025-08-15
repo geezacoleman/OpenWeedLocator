@@ -295,13 +295,15 @@ setup_service_control_permissions() {
     echo -e "${GREEN}[INFO] Configuring sudo permissions for OWL service control...${NC}"
 
     local SUDOERS_FILE="/etc/sudoers.d/97-owl-service-control"
+    local SYSTEMCTL_BIN
+    SYSTEMCTL_BIN="$(command -v systemctl 2>/dev/null || echo /usr/bin/systemctl)"
 
     sudo tee "$SUDOERS_FILE" > /dev/null <<EOF
 # This file is managed by the OWL setup script.
-# It allows the 'owl' user to start and stop the main owl.service
+# It allows the 'owl' user to manage the main owl.service
 # without a password, which is required for the web dashboard power button.
 
-Cmnd_Alias OWL_SERVICE_CMDS = /bin/systemctl start owl.service, /bin/systemctl stop owl.service, /bin/systemctl restart owl.service
+Cmnd_Alias OWL_SERVICE_CMDS = ${SYSTEMCTL_BIN} start owl.service, ${SYSTEMCTL_BIN} stop owl.service, ${SYSTEMCTL_BIN} is-active owl.service
 
 # Grant the 'owl' user permission to run ONLY the commands in the alias.
 owl ALL=(ALL) NOPASSWD: OWL_SERVICE_CMDS
