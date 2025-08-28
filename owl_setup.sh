@@ -336,6 +336,21 @@ case "$dashboard_choice" in
   y|Y )
     echo -e "${GREEN}[INFO] Setting up OWL Dashboard...${NC}"
     if [ -f "${SCRIPT_DIR}/web/web_setup.sh" ]; then
+      # set dashboard_enable = True in config
+      INI_FILE="${SCRIPT_DIR}/config/DAY_SENSITIVITY_2.ini"
+      awk -v key="dashboard_enable" -v val="True" '
+        BEGIN { in_section=0; seen=0 }
+        /^\[ *Dashboard *\]/ { print; in_section=1; next }
+        /^\[/ { if(in_section && !seen){ print key " = " val; seen=1 } in_section=0; print; next }
+        {
+          if(in_section && $1 ~ "^"key"") {
+            print key " = " val; seen=1
+          } else {
+            print
+          }
+        }
+        END { if(in_section && !seen) print key " = " val }
+      ' "$INI_FILE" > "${INI_FILE}.tmp" && mv "${INI_FILE}.tmp" "$INI_FILE"
       install_dashboard_dependencies
       chmod +x "${SCRIPT_DIR}/web/web_setup.sh"
       cd "$SCRIPT_DIR"  # Ensure we're in the right directory

@@ -16,12 +16,12 @@ except ImportError as e:
 
 logger = LogManager.get_logger(__name__)
 
-def add_gps_exif(pil_image, gps_data):
+def add_gps_exif(pil_image, gps_data, quality=95):
     """
     Convert a PIL Image to JPEG bytes embedding GPS EXIF data if available."""
     buf = BytesIO()
     if not gps_data or 'latitude' not in gps_data or 'longitude' not in gps_data:
-        pil_image.save(buf, format='JPEG')
+        pil_image.save(buf, format='JPEG', quality=quality, subsampling=0, optimize=True, progressive=True)
         return buf.getvalue()
     try:
         lat = float(gps_data.get('latitude'))
@@ -44,10 +44,11 @@ def add_gps_exif(pil_image, gps_data):
             }
         }
         exif_bytes = piexif.dump(exif_dict)
-        pil_image.save(buf, format='JPEG', exif=exif_bytes)
+        pil_image.save(buf, format='JPEG', exif=exif_bytes,
+                       quality=quality, subsampling=0, optimize=True, progressive=True)
     except Exception as e:
         logger.error(f"Failed to embed GPS EXIF data: {e}")
-        pil_image.save(buf, format='JPEG')
+        pil_image.save(buf, format='JPEG', quality=quality, subsampling=0, optimize=True, progressive=True)
     return buf.getvalue()
 
 

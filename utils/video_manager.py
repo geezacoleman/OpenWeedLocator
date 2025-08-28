@@ -1,11 +1,14 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse
+
 import cv2
 import time
+import subprocess
 
 from threading import Thread, Event, Condition, Lock
 from utils.log_manager import LogManager
+from utils.error_manager import CameraNotFoundError
 
 # determine availability of picamera versions
 try:
@@ -245,19 +248,56 @@ class PiCamera2Stream:
     def update(self):
         try:
             while not self.stopped.is_set():
-                frame = self.camera.capture_array("main")
-                if frame is not None:
-                    with self.lock:
-                        self.frame = frame
-                        self.frame_available = True
+                try:
+                    frame = self.camera.capture_array("main")
 
-                    with self.condition:
-                        self.condition.notify_all()
+                except Exception as e:
+                    try:
+                        dmesg_raw = subprocess.check_output(['dmesg', '-T'], text=True, stderr=subprocess.DEVNULL)
+                        dmesg_tail = "\n".join(dmesg_raw.splitlines()[-50:])
+                    except Exception:
+                        dmesg_tail = "Could not read dmesg output."
+
+                    original = f"Exception during Picamera2.capture_array(): {e}\n\nRecent kernel/libcamera messages (tail 50 lines):\n{dmesg_tail}"
+                    err = CameraNotFoundError(error_type="capture_exception", original_error=original)
+
+                    self.logger.critical(str(err), exc_info=True, extra={'error_code': 'camera_capture_exception'})
+                    raise err
+
+                if frame is None:
+                    try:
+                        dmesg_raw = subprocess.check_output(['dmesg', '-T'], text=True, stderr=subprocess.DEVNULL)
+                        dmesg_tail = "\n".join(dmesg_raw.splitlines()[-50:])
+                    except Exception:
+                        dmesg_tail = "Could not read dmesg output."
+
+                    original = (
+                            "capture_array returned None (no frame). This commonly indicates a camera I/O error.\n\n"
+                            "Recent kernel/libcamera messages (tail 50 lines):\n" + dmesg_tail
+                    )
+                    err = CameraNotFoundError(error_type="no_frame", original_error=original)
+                    self.logger.critical(str(err), extra={'error_code': 'camera_no_frame'})
+
+                    raise err
+
+                with self.lock:
+                    self.frame = frame
+                    self.frame_available = True
+
+                with self.condition:
+                    self.condition.notify_all()
+
+        except CameraNotFoundError:
+            raise
 
         except Exception as e:
             self.logger.error(f"Exception in PiCamera2Stream update loop: {e}", exc_info=True)
+
         finally:
-            self.camera.stop()  # Ensure camera resources are released properly
+            try:
+                self.camera.stop()
+            except Exception:
+                self.logger.debug("Camera stop raised an exception during cleanup.", exc_info=True)
 
     def read(self):
         # return the frame most recently read
