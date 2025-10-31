@@ -216,8 +216,8 @@ collect_user_input() {
     done
 
     # Network Configuration
-    read -p "Enter controller static IP (default: 192.168.1.100): " STATIC_IP
-    STATIC_IP=${STATIC_IP:-192.168.1.100}
+    read -p "Enter controller static IP (default: 192.168.1.2): " STATIC_IP
+    STATIC_IP=${STATIC_IP:-192.168.1.2}
 
     read -p "Enter router/gateway IP (default: 192.168.1.1): " GATEWAY_IP
     GATEWAY_IP=${GATEWAY_IP:-192.168.1.1}
@@ -288,7 +288,7 @@ setup_python_venv() {
     check_status "Creating virtual environment" "PYTHON_VENV"
 
     echo -e "${GREEN}[INFO] Installing Python dependencies...${NC}"
-    sudo -u $CURRENT_USER bash -c "source ${VENV_PATH}/bin/activate && pip install --upgrade pip && pip install flask==2.2.2 gunicorn==23.0.0 paho-mqtt==2.1.0 psutil==5.9.4 boto3==1.39.13"
+    sudo -u $CURRENT_USER bash -c "source ${VENV_PATH}/bin/activate && pip install --upgrade pip && pip install flask==2.2.2 werkzeug==2.2.3 gunicorn==23.0.0 paho-mqtt==2.1.0 psutil==5.9.4 boto3==1.39.13"
     check_status "Installing Python dependencies" "PYTHON_VENV"
 }
 
