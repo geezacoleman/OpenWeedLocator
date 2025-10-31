@@ -1,75 +1,52 @@
 <!DOCTYPE html>
-    <html>
-    <head>
-        <title>OWL Central Controller</title>
-        <meta http-equiv="refresh" content="5">
-        <style>
-            body { font-family: Arial, sans-serif; margin: 20px; background: #1a1a1a; color: #fff; }
-            h1 { color: #4CAF50; }
-            .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
-            .owl-card { background: #2a2a2a; border-radius: 8px; padding: 15px; border: 2px solid #444; }
-            .owl-card.active { border-color: #4CAF50; }
-            .owl-card h3 { margin-top: 0; color: #4CAF50; }
-            .status { padding: 5px 10px; border-radius: 4px; display: inline-block; }
-            .status.online { background: #4CAF50; }
-            .status.offline { background: #f44336; }
-            .controls { margin-top: 10px; }
-            button { background: #4CAF50; color: white; border: none; padding: 8px 16px;
-                    border-radius: 4px; cursor: pointer; margin: 2px; }
-            button:hover { background: #45a049; }
-        </style>
-    </head>
-    <body>
-        <h1>OWL Central Controller</h1>
-        <p>Connected OWLs: <span id="owl-count">0</span></p>
-        <div class="grid" id="owls-grid"></div>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OWL Central Controller</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
+</head>
+<body>
 
-        <script>
-            function updateStatus() {
-                fetch('/api/owls')
-                    .then(response => response.json())
-                    .then(data => {
-                        const grid = document.getElementById('owls-grid');
-                        const count = document.getElementById('owl-count');
-                        grid.innerHTML = '';
-                        count.textContent = Object.keys(data).length;
+<div class="header">
+    <div class="header-content">
+        <div class="logo-section">
+            <img src="{{ url_for('static', filename='images/owl-logo-wht.png') }}" alt="OWL Logo" class="logo">
+            <h1>OWL Controller</h1>
+        </div>
+        <div class="status-indicator">
+            <div class="owl-status">
+                <span class="status-dot connected" id="statusDot"></span>
+                <span id="statusText">Controller Active</span>
+            </div>
+        </div>
+    </div>
+</div>
 
-                        for (const [id, owl] of Object.entries(data)) {
-                            const card = document.createElement('div');
-                            card.className = 'owl-card ' + (owl.owl_running ? 'active' : '');
+<div class="container">
 
-                            const isOnline = (Date.now()/1000 - owl.last_seen) < 10;
+    <div class="card">
+        <h2>Connected OWLs (<span id="owl-count">0</span>)</h2>
+        <div class="dashboard-grid" id="owls-grid">
+            <p>Scanning for OWLs...</p>
+        </div>
+    </div>
 
-                            card.innerHTML = `
-                                <h3>OWL: ${id}</h3>
-                                <p>Status: <span class="status ${isOnline ? 'online' : 'offline'}">
-                                    ${isOnline ? 'Online' : 'Offline'}</span></p>
-                                <p>Detection: ${owl.detection_enable ? 'Enabled' : 'Disabled'}</p>
-                                <p>Sensitivity: ${owl.sensitivity_level || 'Unknown'}</p>
-                                <div class="controls">
-                                    <button onclick="sendCommand('${id}', 'toggle_detection')">
-                                        Toggle Detection</button>
-                                    <button onclick="sendCommand('${id}', 'set_sensitivity', 'high')">
-                                        High Sensitivity</button>
-                                    <button onclick="sendCommand('${id}', 'set_sensitivity', 'low')">
-                                        Low Sensitivity</button>
-                                </div>
-                            `;
-                            grid.appendChild(card);
-                        }
-                    });
-            }
+    <div class="card">
+        <h2>Global Green-on-Brown Controls</h2>
+        <p class="metadata-description">These sliders send commands to ALL connected OWLs.</p>
 
-            function sendCommand(deviceId, action, value) {
-                fetch('/api/command', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({device_id: deviceId, action: action, value: value})
-                });
-            }
+        <div class="form-grid" id="greenonbrown-controls">
 
-            updateStatus();
-            setInterval(updateStatus, 2000);
-        </script>
-    </body>
-    </html>
+            </div>
+    </div>
+
+</div> <footer>
+    <div class="footer-content">
+        <p>OpenWeedLocator © 2025 | Central Controller</p>
+    </div>
+</footer>
+
+</body>
+</html>
