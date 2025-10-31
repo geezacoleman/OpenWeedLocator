@@ -319,11 +319,6 @@ allow_anonymous true
 
 # Listen on all interfaces so network clients can connect
 listener 1883 0.0.0.0
-
-# Logging
-log_type all
-log_dest file /var/log/mosquitto/mosquitto.log
-log_dest stdout
 EOF
 
     # Ensure log directory exists
