@@ -17,7 +17,6 @@ app = Flask(__name__)
 owls_state = {}
 mqtt_client = None
 
-
 # --- MQTT Functions ---
 
 def on_connect(client, userdata, flags, rc):

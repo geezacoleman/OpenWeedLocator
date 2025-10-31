@@ -8,7 +8,7 @@
 RED='\033[0;31m'    # Red for ERROR messages
 ORANGE='\033[0;33m' # Orange for warnings
 GREEN='\033[0;32m'  # Green for INFO and success messages
-NC='\033[0;30m'        # No color (reset)
+NC='\033[0m'        # No color (reset)
 TICK="${GREEN}[OK]${NC}"
 CROSS="${RED}[FAIL]${NC}"
 
