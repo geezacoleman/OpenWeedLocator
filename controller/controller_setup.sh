@@ -256,6 +256,7 @@ collect_user_input() {
 install_system_packages() {
     echo -e "${GREEN}[INFO] Updating system package list...${NC}"
     apt-get update
+    apt full-upgrade -y
     check_status "System update" "PACKAGES"
 
     echo -e "${GREEN}[INFO] Installing required system packages...${NC}"
@@ -268,10 +269,7 @@ install_system_packages() {
         net-tools \
         python3-pip \
         python3-venv python3-full \
-        chromium-browser \
-        xserver-xorg xinit \
-        unclutter \
-        lightdm openbox \
+        chromium \
         network-manager
 
     check_status "Installing system packages" "PACKAGES"
@@ -507,66 +505,31 @@ configure_kiosk_mode() {
         return 0
     fi
 
-    echo -e "${GREEN}[INFO] Setting up kiosk mode...${NC}"
+    echo -e "${GREEN}[INFO] Setting up kiosk mode (labwc, Raspberry Pi way)...${NC}"
 
-    # Create kiosk startup script
-    sudo -u $CURRENT_USER mkdir -p /home/$CURRENT_USER/.config/autostart
+    # create labwc autostart directory for the actual user
+    sudo -u "$CURRENT_USER" mkdir -p /home/"$CURRENT_USER"/.config/labwc
 
-    tee /home/$CURRENT_USER/start-kiosk.sh > /dev/null <<EOF
-#!/bin/bash
-# Wait for network and services to be ready
-sleep 20
-
-# Disable screen blanking
-xset s noblank
-xset s off
-xset -dpms
-
-# Hide cursor after 3 seconds of inactivity
-unclutter -idle 3 -root &
-
-# Start Chromium in kiosk mode
-chromium-browser \\
-    --kiosk \\
-    --ignore-certificate-errors \\
-    --noerrdialogs \\
-    --disable-infobars \\
-    --disable-translate \\
-    --disable-features=TranslateUI \\
-    --disk-cache-dir=/tmp/chromium-cache \\
-    --aggressive-cache-discard \\
-    https://localhost/
+    tee /home/"$CURRENT_USER"/.config/labwc/autostart > /dev/null <<'EOF'
+chromium https://localhost/ \
+  --kiosk \
+  --noerrdialogs \
+  --disable-infobars \
+  --no-first-run \
+  --enable-features=OverlayScrollbar \
+  --start-maximized \
+  --ignore-certificate-errors &
 EOF
 
-    chmod +x /home/$CURRENT_USER/start-kiosk.sh
-    chown $CURRENT_USER:$(id -g -n $CURRENT_USER) /home/$CURRENT_USER/start-kiosk.sh
+    # make sure the user owns it
+    chown -R "$CURRENT_USER":"$(id -g -n "$CURRENT_USER")" /home/"$CURRENT_USER"/.config/labwc
 
-    # Create autostart desktop entry
-    tee /home/$CURRENT_USER/.config/autostart/owl-kiosk.desktop > /dev/null <<EOF
-[Desktop Entry]
-Type=Application
-Name=OWL Controller Kiosk
-Exec=/home/$CURRENT_USER/start-kiosk.sh
-Hidden=false
-X-GNOME-Autostart-enabled=true
-EOF
-
-    chown -R $CURRENT_USER:$(id -g -n $CURRENT_USER) /home/$CURRENT_USER/.config
-
-    # Configure LightDM for auto-login
-    if [ -f /etc/lightdm/lightdm.conf ]; then
-        sed -i "s/^#*autologin-user=.*/autologin-user=$CURRENT_USER/" /etc/lightdm/lightdm.conf
-        sed -i "s/^#*autologin-session=.*/autologin-session=openbox/" /etc/lightdm/lightdm.conf
-    else
-        tee /etc/lightdm/lightdm.conf > /dev/null <<EOF
-[Seat:*]
-autologin-user=$CURRENT_USER
-autologin-session=openbox
-EOF
-    fi
+    # we NO LONGER touch /etc/lightdm/lightdm.conf
+    # because we're using the default Pi desktop session (labwc), not openbox
 
     check_status "Kiosk mode configuration" "KIOSK_MODE"
 }
+
 
 # Step 11: Configure WiFi with NetworkManager
 configure_network() {
