@@ -179,27 +179,44 @@ class Owl:
         self._STATE_CHECK_INTERVAL = 0.1
         self.stop_state_update = threading.Event()
 
-        # Dashboard setup
+        ####################### DASHBOARD ############################
         self.dash = None
         self.stream_active = None
         self.latest_stream_frame = None
-        if self.config.getboolean('Dashboard', 'dashboard_enable', fallback=False):
+        mqtt_enable = self.config.getboolean('MQTT', 'enable', fallback=False)
+
+        broker_ip = self.config.get('MQTT', 'broker_ip', fallback='localhost')
+        broker_port = self.config.getint('MQTT', 'broker_port', fallback=1883)
+        device_id = self.config.get('MQTT', 'device_id', fallback='auto')
+        client_id = f"client_{device_id}"
+
+        if mqtt_enable:
             try:
-                from utils.mqtt_manager import MQTTServer
-                self.dash = MQTTServer(
-                    broker_host='localhost',
-                    broker_port=1883,
-                    client_id='owl_main')
+                from utils.mqtt_manager import OWLMQTTPublisher
+
+                self.dash = OWLMQTTPublisher(
+                    broker_host=broker_ip,
+                    broker_port=broker_port,
+                    client_id=client_id,
+                    device_id=device_id)
 
                 low_config = self.config.get('Controller', 'low_sensitivity_config',
-                                             fallback='config/DAY_SENSITIVITY_2.ini')
+                                             fallback='config/SENSITIVITY_LOW.ini')
+                medium_config = self.config.get('Controller', 'medium_sensitivity_config',
+                                                fallback='config/SENSITIVITY_MEDIUM.ini')
                 high_config = self.config.get('Controller', 'high_sensitivity_config',
-                                              fallback='config/DAY_SENSITIVITY_3.ini')
+                                              fallback='config/SENSITIVITY_HIGH.ini')
 
-                self.dash.set_owl_instance(self, low_config, high_config)
+                self.dash.set_owl_instance(self, low_config, medium_config, high_config)
+
                 self.dash.start()
 
-                self.logger.info("MQTT Dashboard integration enabled")
+                # Enhanced logging
+                mode = 'NETWORKED' if broker_ip not in ['localhost', '127.0.0.1'] else 'STANDALONE'
+                self.logger.info(f"MQTT enabled - Mode: {mode}")
+                self.logger.info(f"MQTT Broker: {broker_ip}:{broker_port}")
+                self.logger.info(f"Device ID: {device_id}")
+                self.logger.info(f"Client ID: {client_id}")
 
                 LogManager.add_mqtt_handler(
                     mqtt_client=self.dash.client,
@@ -209,7 +226,7 @@ class Owl:
             except Exception as e:
                 self.dash = None
                 self.logger.critical("Failed to initialize MQTT server. Dashboard disabled.")
-                raise errors.MQTTConnectionError(host='localhost', port=1883, original_error=e)
+                raise errors.MQTTConnectionError(host=broker_ip, port=broker_port, original_error=e)
 
             try:
                 self.stream_lock = threading.Lock()
@@ -225,14 +242,14 @@ class Owl:
                 self.dash.set_stream_status(self.stream_active)
 
         # GPS setup (only if enabled in config)
-        self.gps_source = self.config.get('System', 'gps_source', fallback='none').lower()
+        self.gps_source = self.config.get('GPS', 'source', fallback='none').lower()
         self.gps_data = None
 
         if self.gps_source != "none":
             if self.dash:  # Override with dashboard if enabled
                 self.gps_source = 'dashboard'
-            self.gps_port = self.config.get('System', 'gps_port', fallback='/dev/ttyUSB0')
-            self.gps_baudrate = self.config.getint('System', 'gps_baudrate', fallback=9600)
+            self.gps_port = self.config.get('GPS', 'port', fallback='/dev/ttyUSB0')
+            self.gps_baudrate = self.config.getint('GPS', 'baudrate', fallback=9600)
 
         # if a controller is connected, sample images must be true to set up directories correctly
         self.controller_type = self.config.get('Controller', 'controller_type').strip("'\" ").lower()
@@ -538,6 +555,7 @@ class Owl:
                         if self.status_indicator.DRIVE_FULL:
                             if self.dash:
                                 self.dash.set_image_sample_enable(False)
+                                self.dash.drive_full_indicator()
                                 self.logger.info("Drive full: Image sampling disabled via MQTT")
                             else:
                                 with self.image_sample_enable.get_lock():

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Complete MQTT IPC System for OWL Dashboard Communication
-Replaces DashboardController functionality with proper inter-process communication
+Supports both local (standalone) and networked (central controller) modes
 """
 
 import json
@@ -10,6 +10,7 @@ import threading
 import logging
 import cv2
 import configparser
+import socket
 
 from collections import deque
 
@@ -20,52 +21,97 @@ except ImportError:
     exit(1)
 
 
-class MQTTServer:
+class OWLMQTTPublisher:
     """
-    MQTT IPC Server for owl.py
-    Replaces DashboardController - manages state and handles dashboard commands
+    MQTT Publisher for owl.py - publishes status and receives commans
+    Supports both standalone (localhost) and networked (central controller) modes
     """
 
-    def __init__(self, broker_host='localhost', broker_port=1883, client_id='owl_main'):
+    def __init__(self, broker_host='localhost', broker_port=1883, client_id='owl_main', device_id=None):
         self.broker_host = broker_host
         self.broker_port = broker_port
         self.client_id = client_id
         self.logger = logging.getLogger(__name__)
 
-        # MQTT topics
-        self.topics = {
-            'commands': 'owl/commands',  # Dashboard sends commands here
-            'state': 'owl/state',  # Owl publishes state here
-            'gps': 'owl/gps',  # Dashboard sends GPS here
-            'status': 'owl/status',  # System status
-            'indicators': 'owl/indicators',  # Weed detection, image write indicators
-            'errors': 'owl/errors' # Logs errors on MQTT
-        }
+        # Determine device ID
+        if device_id is None or device_id == 'auto':
+            # Use hostname as default device ID
+            device_id = socket.gethostname()
+            self.logger.info(f"Auto-detected device_id: {device_id}")
+
+        self.device_id = device_id
+
+        # Determine if we're in networked mode
+        self.networked_mode = (broker_host.lower() not in ['localhost', '127.0.0.1'])
+
+        if self.networked_mode:
+            self.logger.info(f"Running in NETWORKED mode - connecting to broker at {broker_host}:{broker_port}")
+        else:
+            self.logger.info(f"Running in STANDALONE mode - using local broker")
+
+        # MQTT topics - now include device_id for networked mode
+        if self.networked_mode:
+            # Networked mode: device-specific topics
+            self.topics = {
+                'commands': f'owl/{device_id}/commands',
+                'state': f'owl/{device_id}/state',
+                'status': f'owl/{device_id}/status',
+                'detection': f'owl/{device_id}/detection',
+                'config': f'owl/{device_id}/config',
+                'indicators': f'owl/{device_id}/indicators',
+                'errors': f'owl/{device_id}/errors',
+                'gps': f'owl/{device_id}/gps'
+            }
+        else:
+            # Standalone mode: simple topics for backward compatibility
+            self.topics = {
+                'commands': 'owl/commands',
+                'state': 'owl/state',
+                'status': 'owl/status',
+                'detection': 'owl/detection',
+                'config': 'owl/config',
+                'indicators': 'owl/indicators',
+                'errors': 'owl/errors',
+                'gps': 'owl/gps'
+            }
 
         # Current state
         self.state = {
+            'device_id': device_id,
             'detection_enable': False,
             'image_sample_enable': False,
-            'sensitivity_level': 'high',
-            'owl_running': False,  # Will be set to True when server starts
+            'sensitivity_level': 'medium',  # Changed default to 'medium'
+            'owl_running': False,
             'stream_active': False,
             'gps_latitude': 0.0,
             'gps_longitude': 0.0,
             'gps_accuracy': 0.0,
             'gps_timestamp': 0.0,
             'gps_available': False,
-            'last_update': time.time()
+            'last_update': time.time(),
+            'networked_mode': self.networked_mode,
+            'broker_host': broker_host,
+            # GreenOnBrown parameters (will be populated on first update)
+            'exg_min': None,
+            'exg_max': None,
+            'hue_min': None,
+            'hue_max': None,
+            'saturation_min': None,
+            'saturation_max': None,
+            'brightness_min': None,
+            'brightness_max': None
         }
 
         # Thread safety
         self.state_lock = threading.RLock()
 
-        # OWL instance reference for sensitivity switching
+        # OWL instance reference
         self.owl_instance = None
         self.low_sensitivity_config = None
+        self.medium_sensitivity_config = None
         self.high_sensitivity_config = None
 
-        self.last_sensitivity_level = 'high'
+        self.last_sensitivity_level = 'medium'
         self.monitoring_thread = None
         self.heartbeat_thread = None
 
@@ -78,18 +124,46 @@ class MQTTServer:
         # Connection state
         self.connected = False
         self.running = False
+        self.connection_attempts = 0
+        self.max_connection_attempts = 5
 
-    def set_owl_instance(self, owl_instance, low_config, high_config):
-        """Set reference to owl instance for sensitivity switching"""
+    def set_owl_instance(self, owl_instance, low_config, medium_config, high_config):
+        """Set reference to owl instance and sensitivity config files"""
         self.owl_instance = owl_instance
         self.low_sensitivity_config = low_config
+        self.medium_sensitivity_config = medium_config
         self.high_sensitivity_config = high_config
-        self.logger.info(f"OWL instance configured with sensitivity configs: {low_config}, {high_config}")
+
+        self.logger.info(f"OWL instance configured with sensitivity configs:")
+        self.logger.info(f"  Low: {low_config}")
+        self.logger.info(f"  Medium: {medium_config}")
+        self.logger.info(f"  High: {high_config}")
+
+        # Initialize state with current OWL parameters
+        self._sync_parameters_to_state()
+
+    def _sync_parameters_to_state(self):
+        """Sync current OWL GreenOnBrown parameters to MQTT state"""
+        if self.owl_instance is None:
+            return
+
+        with self.state_lock:
+            self.state['exg_min'] = self.owl_instance.exg_min
+            self.state['exg_max'] = self.owl_instance.exg_max
+            self.state['hue_min'] = self.owl_instance.hue_min
+            self.state['hue_max'] = self.owl_instance.hue_max
+            self.state['saturation_min'] = self.owl_instance.saturation_min
+            self.state['saturation_max'] = self.owl_instance.saturation_max
+            self.state['brightness_min'] = self.owl_instance.brightness_min
+            self.state['brightness_max'] = self.owl_instance.brightness_max
 
     def start(self):
         """Start the MQTT IPC server"""
         try:
             self.running = True
+
+            # Try to connect to broker
+            self.logger.info(f"Attempting to connect to MQTT broker at {self.broker_host}:{self.broker_port}")
             self.client.connect(self.broker_host, self.broker_port, 60)
             self.client.loop_start()
 
@@ -105,11 +179,21 @@ class MQTTServer:
             # Publish initial state
             self._publish_state()
 
-            self.logger.info(f"MQTT IPC Server started (broker: {self.broker_host}:{self.broker_port})")
+            self.logger.info(f"MQTT IPC Server started successfully")
+            self.logger.info(f"Device ID: {self.device_id}")
+            self.logger.info(f"Publishing to topics: {list(self.topics.values())}")
 
         except Exception as e:
             self.logger.error(f"Failed to start MQTT server: {e}")
-            raise
+
+            if self.networked_mode:
+                self.logger.warning(f"Could not connect to network broker at {self.broker_host}:{self.broker_port}")
+                self.logger.warning("OWL will continue to operate locally without remote control")
+            else:
+                self.logger.error("Could not connect to local MQTT broker - dashboard features disabled")
+
+            # Don't raise - allow OWL to continue operating
+            self.running = False
 
     def stop(self):
         """Stop the MQTT server"""
@@ -121,6 +205,7 @@ class MQTTServer:
 
         if self.connected:
             self.client.publish(self.topics['status'], json.dumps({
+                'device_id': self.device_id,
                 'owl_running': False,
                 'timestamp': time.time()
             }), retain=True)
@@ -136,25 +221,38 @@ class MQTTServer:
         """Handle MQTT connection"""
         if rc == 0:
             self.connected = True
-            self.logger.info("Connected to MQTT broker")
+            self.connection_attempts = 0
+            self.logger.info(f"Connected to MQTT broker at {self.broker_host}:{self.broker_port}")
 
             # Subscribe to command topics
             client.subscribe(self.topics['commands'])
             client.subscribe(self.topics['gps'])
 
+            self.logger.info(f"Subscribed to: {self.topics['commands']}, {self.topics['gps']}")
+
+            # Publish connection status
             client.publish(self.topics['status'], json.dumps({
+                'device_id': self.device_id,
                 'owl_running': True,
+                'connected': True,
                 'timestamp': time.time()
             }), retain=True)
 
         else:
-            self.logger.error(f"Failed to connect to MQTT broker: {rc}")
+            self.connected = False
+            self.connection_attempts += 1
+            self.logger.error(f"Failed to connect to MQTT broker: rc={rc}")
+
+            if self.connection_attempts >= self.max_connection_attempts:
+                self.logger.error(f"Max connection attempts ({self.max_connection_attempts}) reached")
 
     def _on_disconnect(self, client, userdata, rc):
         """Handle MQTT disconnection"""
         self.connected = False
         if rc != 0:
-            self.logger.warning("Unexpected MQTT disconnection")
+            self.logger.warning(f"Unexpected MQTT disconnection (rc={rc})")
+            if self.networked_mode:
+                self.logger.warning("Lost connection to central controller - OWL continues operating locally")
 
     def _on_message(self, client, userdata, msg):
         """Handle incoming MQTT messages"""
@@ -168,11 +266,13 @@ class MQTTServer:
                 self._handle_gps_update(payload)
 
         except Exception as e:
-            self.logger.error(f"Error processing MQTT message: {e}")
+            self.logger.error(f"Error processing MQTT message on topic {msg.topic}: {e}")
 
     def _handle_command(self, command):
-        """Handle control commands from dashboard"""
+        """Handle control commands from dashboard or central controller"""
         action = command.get('action')
+
+        self.logger.info(f"Received command: {action}")
 
         with self.state_lock:
             if action == 'set_detection_enable':
@@ -183,85 +283,67 @@ class MQTTServer:
                 self.state['image_sample_enable'] = bool(command.get('value', False))
                 self.logger.info(f"Image sample enable set to: {self.state['image_sample_enable']}")
 
-
             elif action == 'set_sensitivity_level':
+                # Legacy command - maps to preset system
                 level = command.get('level', '').lower()
-                valid_levels = ['low', 'high'] # <--- add more here later if needed
+                valid_levels = ['low', 'medium', 'high']
 
                 if level not in valid_levels:
-                    self.logger.error(f"[ERROR] Invalid sensitivity level: {level}")
-
+                    self.logger.error(f"Invalid sensitivity level: {level}")
                     return
 
                 self.state['sensitivity_level'] = level
-                self.logger.info(f"[INFO] Sensitivity set to: {level}")
-                self._apply_sensitivity_config_change(level)
+                self.logger.info(f"Sensitivity level set to: {level}")
+                self._apply_sensitivity_preset(level)
+
+            elif action == 'set_greenonbrown_param':
+                # Individual parameter update
+                param_name = command.get('param')
+                param_value = command.get('value')
+
+                if param_name and param_value is not None:
+                    self.logger.info(f"Updating GreenOnBrown parameter: {param_name} = {param_value}")
+                    self._update_greenonbrown_param(param_name, param_value)
+
+            elif action == 'reboot':
+                self.logger.warning("Reboot command received - this requires system privileges")
+                # Future implementation
+
+            elif action == 'restart_service':
+                self.logger.warning("Service restart command received")
+                # Future implementation
 
             # Update timestamp and publish new state
             self.state['last_update'] = time.time()
             self._publish_state()
 
-    def _handle_gps_update(self, gps_data):
-        """Handle GPS updates from dashboard"""
-        with self.state_lock:
-            self.state.update({
-                'gps_latitude': float(gps_data.get('latitude', 0.0)),
-                'gps_longitude': float(gps_data.get('longitude', 0.0)),
-                'gps_accuracy': float(gps_data.get('accuracy', 0.0)),
-                'gps_timestamp': float(gps_data.get('timestamp', time.time())),
-                'gps_available': True,
-                'last_update': time.time()
-            })
-        # self.logger.info(f"GPS updated: lat={self.state['gps_latitude']}, lon={self.state['gps_longitude']}")
+    def _apply_sensitivity_preset(self, preset):
+        """
+        Apply a sensitivity preset by loading config and updating Owl attributes.
+        This follows the same pattern as AdvancedController.update_sensitivity_settings()
+        """
+        if self.owl_instance is None:
+            self.logger.warning("Cannot apply preset - OWL instance not set")
+            return
 
-    def _monitor_states(self):
-        while self.running:
-            try:
-                with self.state_lock:
-                    current_sensitivity = self.state['sensitivity_level']
+        # Map preset names to config files
+        config_map = {
+            'low': self.low_sensitivity_config,
+            'medium': self.medium_sensitivity_config,
+            'high': self.high_sensitivity_config
+        }
 
-                # Check for sensitivity changes
-                if current_sensitivity != self.last_sensitivity_level:
-                    self._apply_sensitivity_config_change(current_sensitivity)
-                    self.last_sensitivity_level = current_sensitivity
-
-                time.sleep(0.01)
-
-            except Exception as e:
-                self.logger.error(f"Error in MQTT monitoring: {e}")
-                time.sleep(1)
-
-    def _heartbeat_loop(self):
-        while self.running:
-            try:
-                # Publish state every 2 seconds as heartbeat
-                self._publish_state()
-                time.sleep(2.0)
-            except Exception as e:
-                self.logger.error(f"Heartbeat error: {e}")
-                time.sleep(5.0)
-
-    def _apply_sensitivity_config_change(self, level):
-        """Apply sensitivity config change by level string (future-proof)"""
-        if not self.owl_instance:
+        config_file = config_map.get(preset)
+        if not config_file:
+            self.logger.error(f"Unknown preset: {preset}")
             return
 
         try:
-            config_map = {
-                'low': self.low_sensitivity_config,
-                'high': self.high_sensitivity_config,
-                # Future: e.g. 'medium': self.medium_sensitivity_config
-            }
-
-            config_file = config_map.get(level)
-            if not config_file:
-                self.logger.error(f"No config file mapped for sensitivity level: {level}")
-                return
-
+            # Load the config file
             config = configparser.ConfigParser()
             config.read(config_file)
 
-            # Apply the config (same as before)
+            # Update Owl instance attributes DIRECTLY (same as AdvancedController does)
             self.owl_instance.exg_min = config.getint('GreenOnBrown', 'exg_min')
             self.owl_instance.exg_max = config.getint('GreenOnBrown', 'exg_max')
             self.owl_instance.hue_min = config.getint('GreenOnBrown', 'hue_min')
@@ -271,7 +353,7 @@ class MQTTServer:
             self.owl_instance.brightness_min = config.getint('GreenOnBrown', 'brightness_min')
             self.owl_instance.brightness_max = config.getint('GreenOnBrown', 'brightness_max')
 
-            # Update trackbars if show_display is True
+            # Update trackbars if display is active (same as AdvancedController)
             if self.owl_instance.show_display:
                 cv2.setTrackbarPos("ExG-Min", self.owl_instance.window_name, self.owl_instance.exg_min)
                 cv2.setTrackbarPos("ExG-Max", self.owl_instance.window_name, self.owl_instance.exg_max)
@@ -282,15 +364,140 @@ class MQTTServer:
                 cv2.setTrackbarPos("Bright-Min", self.owl_instance.window_name, self.owl_instance.brightness_min)
                 cv2.setTrackbarPos("Bright-Max", self.owl_instance.window_name, self.owl_instance.brightness_max)
 
+            self.logger.info(f"Applied {preset} sensitivity preset from {config_file}")
+
+            # Sync updated parameters to state
+            self._sync_parameters_to_state()
+
         except Exception as e:
-            self.logger.error(f"Error applying sensitivity config for level {level}: {e}")
+            self.logger.error(f"Error applying preset {preset}: {e}")
+
+    def _update_greenonbrown_param(self, param_name, param_value):
+        """
+        Update a single GreenOnBrown parameter in real-time.
+        This allows fine-grained control from the GUI.
+        """
+        if self.owl_instance is None:
+            self.logger.warning("Cannot update parameter - OWL instance not set")
+            return
+
+        # Validate parameter name
+        valid_params = [
+            'exg_min', 'exg_max', 'hue_min', 'hue_max',
+            'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max'
+        ]
+
+        if param_name not in valid_params:
+            self.logger.error(f"Invalid parameter name: {param_name}")
+            return
+
+        try:
+            # Convert to int
+            param_value = int(param_value)
+
+            # Update the Owl instance attribute directly
+            setattr(self.owl_instance, param_name, param_value)
+
+            # Update trackbar if display is active
+            if self.owl_instance.show_display:
+                trackbar_map = {
+                    'exg_min': 'ExG-Min',
+                    'exg_max': 'ExG-Max',
+                    'hue_min': 'Hue-Min',
+                    'hue_max': 'Hue-Max',
+                    'saturation_min': 'Sat-Min',
+                    'saturation_max': 'Sat-Max',
+                    'brightness_min': 'Bright-Min',
+                    'brightness_max': 'Bright-Max'
+                }
+                trackbar_name = trackbar_map.get(param_name)
+                if trackbar_name:
+                    cv2.setTrackbarPos(trackbar_name, self.owl_instance.window_name, param_value)
+
+            self.logger.info(f"Updated {param_name} = {param_value}")
+
+            # Also update the config object so changes can be persisted if needed
+            if hasattr(self.owl_instance, 'config'):
+                self.owl_instance.config.set('GreenOnBrown', param_name, str(param_value))
+
+            # Update state to reflect the change
+            with self.state_lock:
+                self.state[param_name] = param_value
+
+        except Exception as e:
+            self.logger.error(f"Error updating {param_name}: {e}")
+
+    def _handle_gps_update(self, gps_data):
+        """Handle GPS updates from dashboard or central controller"""
+        with self.state_lock:
+            self.state.update({
+                'gps_latitude': float(gps_data.get('latitude', 0.0)),
+                'gps_longitude': float(gps_data.get('longitude', 0.0)),
+                'gps_accuracy': float(gps_data.get('accuracy', 0.0)),
+                'gps_timestamp': float(gps_data.get('timestamp', time.time())),
+                'gps_available': True,
+                'last_update': time.time()
+            })
+
+    def _monitor_states(self):
+        """Monitor for state changes that need to trigger actions"""
+        while self.running:
+            try:
+                with self.state_lock:
+                    current_sensitivity = self.state['sensitivity_level']
+
+                # Check if sensitivity changed
+                if current_sensitivity != self.last_sensitivity_level:
+                    self._apply_sensitivity_preset(current_sensitivity)
+                    self.logger.info(
+                        f"Sensitivity level changed from {self.last_sensitivity_level} to {current_sensitivity}")
+                    self.last_sensitivity_level = current_sensitivity
+
+                time.sleep(0.5)
+
+            except Exception as e:
+                self.logger.error(f"Error in monitor_states: {e}")
+                time.sleep(1)
+
+    def _heartbeat_loop(self):
+        """Publish periodic heartbeat to show OWL is alive"""
+        heartbeat_interval = 2.0  # seconds
+
+        while self.running:
+            try:
+                if self.connected:
+                    with self.state_lock:
+                        self._publish_state()
+                time.sleep(heartbeat_interval)
+            except Exception as e:
+                self.logger.error(f"Error in heartbeat loop: {e}")
+                time.sleep(heartbeat_interval)
 
     def _publish_state(self):
         """Publish current state to MQTT"""
         if self.connected:
-            with self.state_lock:
-                state_msg = json.dumps(self.state)
-                self.client.publish(self.topics['state'], state_msg, retain=True)
+            try:
+                with self.state_lock:
+                    state_copy = self.state.copy()
+
+                self.client.publish(self.topics['state'], json.dumps(state_copy), retain=False)
+            except Exception as e:
+                self.logger.error(f"Error publishing state: {e}")
+
+    # State update methods for owl.py to call
+    def set_detection_enable(self, value):
+        """Set detection enable state (for owl.py internal use)"""
+        with self.state_lock:
+            self.state['detection_enable'] = bool(value)
+            self.state['last_update'] = time.time()
+        self._publish_state()
+
+    def set_image_sample_enable(self, value):
+        """Set image sampling state (for owl.py internal use)"""
+        with self.state_lock:
+            self.state['image_sample_enable'] = bool(value)
+            self.state['last_update'] = time.time()
+        self._publish_state()
 
     def weed_detect_indicator(self):
         """Send weed detection indicator to dashboard (replaces DashboardController method)"""
@@ -320,7 +527,6 @@ class MQTTServer:
             })
             self.client.publish(self.topics['indicators'], indicator_msg, qos=0)
 
-    # Public methods for owl.py to use (replaces multiprocessing.Value access)
     def get_detection_enable(self):
         with self.state_lock:
             return self.state['detection_enable']
@@ -352,20 +558,6 @@ class MQTTServer:
                 self.state['last_update'] = time.time()
                 self._publish_state()
 
-    def set_image_sample_enable(self, value):
-        """Set image sampling state (for owl.py internal use)"""
-        with self.state_lock:
-            self.state['image_sample_enable'] = bool(value)
-            self.state['last_update'] = time.time()
-        self._publish_state()
-
-    def set_detection_enable(self, value):
-        """Set detection state (for owl.py internal use)"""
-        with self.state_lock:
-            self.state['detection_enable'] = bool(value)
-            self.state['last_update'] = time.time()
-        self._publish_state()
-
     def set_sensitivity_level(self, value):
         """Set sensitivity level (for owl.py internal use)"""
         with self.state_lock:
@@ -373,31 +565,60 @@ class MQTTServer:
             self.state['last_update'] = time.time()
         self._publish_state()
 
-        self._apply_sensitivity_config_change(value)
+        self._apply_sensitivity_preset(value)
 
-class MQTTClient:
+class DashMQTTSubscriber:
     """
-    MQTT IPC Client for owl_dash.py
-    Sends commands to owl.py and receives state
+    MQTT Subscriber for the control interfaces - subscribes to topics and sends commands
+    For networked mode, use the central controller instead
     """
 
-    def __init__(self, broker_host='localhost', broker_port=1883, client_id='owl_dashboard'):
+    def __init__(self, broker_host='localhost', broker_port=1883, client_id='owl_dashboard', device_id=None):
         self.broker_host = broker_host
         self.broker_port = broker_port
         self.client_id = client_id
         self.logger = logging.getLogger(__name__)
 
-        # MQTT topics (same as server)
-        self.topics = {
-            'commands': 'owl/commands',
-            'state': 'owl/state',
-            'gps': 'owl/gps',
-            'status': 'owl/status',
-            'indicators': 'owl/indicators',
-            'errors': 'owl/errors',
-        }
+        # Determine if this is for networked or standalone mode
+        self.networked_mode = (broker_host.lower() not in ['localhost', '127.0.0.1'])
 
-        # set up the error log
+        if self.networked_mode:
+            self.logger.warning(
+                "MQTTClient is designed for standalone mode. For networked mode, use the central controller.")
+            # In networked mode, we need to know which device to control
+            if device_id is None:
+                self.logger.error("device_id required for networked mode")
+                device_id = 'unknown'
+
+        # Device ID (for networked mode)
+        self.device_id = device_id or socket.gethostname()
+
+        # MQTT topics
+        if self.networked_mode and device_id:
+            self.topics = {
+                'commands': f'owl/{device_id}/commands',
+                'state': f'owl/{device_id}/state',
+                'status': f'owl/{device_id}/status',
+                'detection': f'owl/{device_id}/detection',
+                'config': f'owl/{device_id}/config',
+                'indicators': f'owl/{device_id}/indicators',
+                'errors': f'owl/{device_id}/errors',
+                'gps': f'owl/{device_id}/gps'
+            }
+        else:
+            # Standalone mode: simple topics
+            self.topics = {
+                'commands': 'owl/commands',
+                'state': 'owl/state',
+                'status': 'owl/status',
+                'detection': 'owl/detection',
+                'config': 'owl/config',
+                'indicators': 'owl/indicators',
+                'errors': 'owl/errors',
+                'gps': 'owl/gps'
+            }
+
+        # Error log
         self.error_log = deque(maxlen=20)
 
         # Current state cache
@@ -410,7 +631,6 @@ class MQTTClient:
 
         self.last_heartbeat = 0
         self.heartbeat_timeout = 5.0
-
 
         # MQTT client
         self.client = mqtt.Client(client_id=self.client_id)
@@ -444,6 +664,8 @@ class MQTTClient:
             # Subscribe to all relevant topics
             client.subscribe(self.topics['state'])
             client.subscribe(self.topics['status'])
+            client.subscribe(self.topics['detection'])
+            client.subscribe(self.topics['config'])
             client.subscribe(self.topics['indicators'])
             client.subscribe(self.topics['errors'])
 
@@ -469,7 +691,7 @@ class MQTTClient:
             )
             return
 
-        # Now dispatch cleanly
+        # Dispatch based on topic
         if topic == self.topics['state']:
             with self.state_lock:
                 self.current_state = data
@@ -534,7 +756,7 @@ class MQTTClient:
     def get_sensitivity_level(self):
         """Get current sensitivity level as string"""
         with self.state_lock:
-            return self.current_state.get('sensitivity_level', 'high')
+            return self.current_state.get('sensitivity_level', 'medium')
 
     def _send_command(self, action, **kwargs):
         """Send command to OWL"""
@@ -557,14 +779,26 @@ class MQTTClient:
         return self._send_command('set_image_sample_enable', value=value)
 
     def set_sensitivity_level(self, level):
-        """Set sensitivity by level string"""
-        valid_levels = ['low', 'high'] # <--- expand if necessary
+        """Set sensitivity level"""
+        valid_levels = ['low', 'medium', 'high']
         level = level.lower()
 
         if level not in valid_levels:
             return {'success': False, 'error': f'Invalid sensitivity level. Valid options: {valid_levels}'}
 
         return self._send_command('set_sensitivity_level', level=level)
+
+    def set_greenonbrown_param(self, param_name, param_value):
+        """Update a single GreenOnBrown parameter"""
+        valid_params = [
+            'exg_min', 'exg_max', 'hue_min', 'hue_max',
+            'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max'
+        ]
+
+        if param_name not in valid_params:
+            return {'success': False, 'error': f'Invalid parameter name. Valid options: {valid_params}'}
+
+        return self._send_command('set_greenonbrown_param', param=param_name, value=param_value)
 
     def update_gps(self, lat, lon, accuracy, timestamp=None):
         """Update GPS data"""

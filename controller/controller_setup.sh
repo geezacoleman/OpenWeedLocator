@@ -427,11 +427,16 @@ EOF
 configure_avahi() {
     echo -e "${GREEN}[INFO] Configuring Avahi for .local domain...${NC}"
 
-    tee /etc/avahi/services/owl-controller.service > /dev/null <<EOF
+    sudo mkdir -p /etc/avahi/services
+    sudo tee /etc/avahi/services/owl-controller.service > /dev/null <<EOF
 <?xml version="1.0" standalone='no'?>
 <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 <service-group>
-    <name replace-wildcards="yes">OWL Controller</name>
+    <name replace-wildcards="yes">OWL Controller (${HOSTNAME})</name>
+    <service>
+        <type>_http._tcp</type>
+        <port>80</port>
+    </service>
     <service>
         <type>_https._tcp</type>
         <port>443</port>
@@ -443,8 +448,10 @@ configure_avahi() {
 </service-group>
 EOF
 
+    systemctl restart avahi-daemon
     check_status "Avahi service configuration" "AVAHI_CONFIG"
 }
+
 
 # Step 8: Configure UFW firewall
 configure_firewall() {
@@ -458,6 +465,8 @@ configure_firewall() {
     ufw allow 443/tcp comment 'HTTPS' > /dev/null 2>&1
     ufw allow 1883/tcp comment 'MQTT' > /dev/null 2>&1
     ufw allow 5353/udp comment 'mDNS' > /dev/null 2>&1
+
+    ufw allow 'Nginx Full'
 
     check_status "Firewall configuration" "UFW_CONFIG"
 }
@@ -476,7 +485,7 @@ Wants=network-online.target
 Requires=mosquitto.service
 
 [Service]
-Type=exec
+Type=simple
 User=${CURRENT_USER}
 Group=$(id -g -n ${CURRENT_USER})
 WorkingDirectory=${SCRIPT_DIR}
@@ -555,6 +564,7 @@ configure_network() {
     nmcli con modify "${WIFI_SSID}" connection.autoconnect yes
     nmcli con modify "${WIFI_SSID}" connection.autoconnect-priority 100
 
+    nmcli con up "${WIFI_SSID}" || true
     check_status "WiFi configuration" "WIFI_CONNECT"
 }
 
