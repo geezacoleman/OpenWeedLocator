@@ -253,13 +253,20 @@ async function loadConfigDefaults() {
         const data = await response.json();
         configDefaults = data;
 
-        // Build sliders
-        buildConfigSliders();
+        // convert {key: {label, value, ...}} --> {key: value}
+        const flat = {};
+        for (const [key, cfg] of Object.entries(configDefaults)) {
+            flat[key] = cfg.value;
+        }
+
+        // use the better renderer
+        renderGreenOnBrownControls(flat);
 
     } catch (error) {
         console.error('Error loading config defaults:', error);
     }
 }
+
 
 // Build configuration sliders
 function buildConfigSliders() {
@@ -293,6 +300,76 @@ function buildConfigSliders() {
 
     container.innerHTML = html;
 }
+
+function renderGreenOnBrownControls(configObj) {
+    const container = document.getElementById('greenonbrown-controls');
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    // field -> [label, min, max]
+    const fields = {
+        brightness_max: ["Brightness Max", 0, 255],
+        brightness_min: ["Brightness Min", 0, 255],
+        exg_max: ["ExG Max", 0, 255],
+        exg_min: ["ExG Min", 0, 255],
+        hue_max: ["Hue Max", 0, 179],
+        hue_min: ["Hue Min", 0, 179],
+        min_detection_area: ["Min Detection Area", 0, 5000],
+        saturation_max: ["Saturation Max", 0, 255],
+        saturation_min: ["Saturation Min", 0, 255],
+    };
+
+    Object.entries(fields).forEach(([key, [label, min, max]]) => {
+        const val = configObj && key in configObj ? configObj[key] : Math.floor((min + max) / 2);
+
+        const group = document.createElement('div');
+        group.className = 'control-group';
+        group.innerHTML = `
+            <div class="control-label-row">
+                <label for="${key}">${label}</label>
+                <span class="control-value" id="${key}-value">${val}</span>
+            </div>
+            <div class="control-slider-row">
+                <span class="minmax">${min}</span>
+                <input type="range"
+                    id="${key}"
+                    name="${key}"
+                    min="${min}"
+                    max="${max}"
+                    value="${val}"
+                    data-key="${key}">
+                <span class="minmax">${max}</span>
+            </div>
+        `;
+        container.appendChild(group);
+    });
+
+    // hook up change events
+    container.querySelectorAll('input[type="range"]').forEach((input) => {
+        input.addEventListener('input', onConfigSliderInput);
+        input.addEventListener('change', onConfigSliderChange);
+    });
+}
+
+function onConfigSliderInput(e) {
+    const key = e.target.dataset.key;
+    const val = e.target.value;
+    const span = document.getElementById(`${key}-value`);
+    if (span) span.textContent = val;
+}
+
+function onConfigSliderChange(e) {
+    const key = e.target.dataset.key;
+    const val = Number(e.target.value);
+
+    const targetSelect = document.getElementById('target-owl-select');
+    const target = targetSelect ? targetSelect.value : 'all';
+
+    // send to backend
+    sendConfigUpdate(target, { [key]: val });
+}
+
 
 // Update slider value display (while dragging)
 function updateSliderValue(key, value) {
