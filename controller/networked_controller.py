@@ -9,7 +9,8 @@ import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, Response, stream_with_context
+import urllib3
 import paho.mqtt.client as mqtt
 import json
 import threading
@@ -19,6 +20,8 @@ import configparser
 from datetime import datetime
 from pathlib import Path
 import requests
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Logging
 logging.basicConfig(
@@ -352,36 +355,31 @@ def get_greenonbrown_defaults():
 def video_feed_proxy(device_id):
     """Proxies the MJPEG stream from an OWL, ignoring SSL errors."""
 
-    # Construct the target URL
-    # We use the .local address from the device_id
     video_url = f"https://{device_id}.local/video_feed"
     logger.info(f"Proxying video feed for {device_id} from {video_url}")
 
     try:
-        # Use requests.get with stream=True
-        # **verify=False** is the magic line that ignores the self-signed SSL cert
-        s = requests.Session()
-        r = s.get(video_url, stream=True, verify=False, timeout=5)
+        r = requests.get(video_url, stream=True, verify=False, timeout=5)
 
-        # Check if the request was successful
         if r.status_code != 200:
             logger.error(f"Failed to get stream from {video_url} (Status: {r.status_code})")
-            return f"Error: Could not connect to {device_id}."
+            return f"Error: Could not connect to {device_id}.", 502
 
-        # Return a streaming response
-        # We stream the content from the requests.Response
+        ct = r.headers.get("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+
         return Response(
-            r.iter_content(chunk_size=1024),
-            content_type=r.headers['Content-Type'],
-            status=r.status_code
+            stream_with_context(r.iter_content(chunk_size=1024)),
+            content_type=ct,
+            status=r.status_code,
+            direct_passthrough=True,
         )
 
     except requests.exceptions.ConnectionError as e:
         logger.error(f"Connection error proxying {video_url}: {e}")
-        return f"Error: {device_id} is offline or unreachable."
+        return f"Error: {device_id} is offline or unreachable.", 502
     except Exception as e:
         logger.error(f"Generic error proxying {video_url}: {e}")
-        return "Error: An unknown error occurred."
+        return "Error: An unknown error occurred.", 500
 
 # Initialize on startup
 def init_app():
