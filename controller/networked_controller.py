@@ -236,9 +236,8 @@ class CentralController:
 
         elif action == 'set_config':
             payload = {
-                'action': 'set_config_value',
-                'section': value.get('section', 'GreenOnBrown'),
-                'key': value.get('key'),
+                'action': 'set_greenonbrown_param',
+                'param': value.get('key'),
                 'value': value.get('value')
             }
 
