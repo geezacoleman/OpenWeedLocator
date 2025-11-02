@@ -860,92 +860,12 @@ html, body {
     border-color: var(--border);
 }
 
-/* SIDE PANEL (revised) */
-.config-panel {
-    position: fixed;
-    top: 64px; /* header height */
-    right: 10px; /* <- was 0, now pulled in so scrollbar visible */
-    width: 340px; /* a bit narrower */
-    height: calc(100% - 64px);
-    background: #fff;
-    box-shadow: -4px 0 16px rgba(0,0,0,0.15);
-    border: 1px solid var(--border);
-    border-right: none;
-    transition: transform 0.25s ease-out;
-    z-index: 900;
-    display: flex;
-    flex-direction: column;
-    /* start hidden off-screen */
-    transform: translateX(360px);
-}
-.config-panel.open {
-    transform: translateX(0);
-}
-.config-panel-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem 0.75rem 0.5rem;
-    border-bottom: 1px solid var(--border);
-}
-.config-panel-body {
-    padding: 0.75rem 1.25rem 0.75rem 0.75rem; /* extra right padding for scrollbar */
-    overflow-y: auto;
-    flex: 1;
-    scrollbar-gutter: stable both-edges; /* keep space for scrollbar */
-}
-
-/* 2-column controls in panel */
-.form-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.75rem 0.75rem;
-}
-.form-grid .control-group {
-    min-width: 0;
-}
-.control-group label {
-    display: block;
-    font-size: 0.7rem;
-    margin-bottom: 0.35rem;
-    white-space: nowrap;
-}
-.control-group input[type="range"] {
-    width: 100%;
-}
-
-.owl-actions {
-    display: flex;
-    gap: 0.35rem;
-}
-.owl-btn {
-    flex: 1;
-    padding: 0.85rem 0.5rem; /* bigger tap area */
-    font-size: 0.9rem;
-    border-radius: 10px;
-}
-
-/* make modal cover but still fit */
-.modal-content {
-    width: 90%;
-    max-width: 1100px;
-}
-
-@media (max-height: 720px) {
-    .header {
-        padding: 0.75rem 1rem;
-    }
-    .dashboard-grid {
-        gap: 0.5rem;
-    }
-}
-
-//* panel stays wide and pulled in */
+/* panel stays wide and pulled in */
 .config-panel {
     position: fixed;
     top: 64px;
     right: 8px;
-    width: 620px; /* good for 3 cols */
+    width: 620px; /* 3 columns */
     height: calc(100% - 64px);
     background: #fff;
     border: 1px solid #d8d8d8;
@@ -954,36 +874,41 @@ html, body {
     z-index: 900;
     display: flex;
     flex-direction: column;
-    transform: translateX(460px);
+    transform: translateX(640px); /* fully hidden */
     transition: transform 0.2s ease-out;
 }
 .config-panel.open {
     transform: translateX(0);
 }
+.config-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.6rem 0.8rem 0.45rem 1rem;
+    border-bottom: 1px solid #d8d8d8;
+}
 .config-panel-body {
     flex: 1;
     overflow-y: auto;
-    padding: 0.75rem 1.45rem 0.75rem 1rem;
+    padding: 0.7rem 1.5rem 0.7rem 1rem; /* extra right for scrollbar */
     scrollbar-gutter: stable both-edges;
 }
 
-/* 3 columns */
+/* 3 columns, 9 sliders */
 .control-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.55rem 0.55rem;
 }
 
-/* each slider block = bigger */
 .control-group {
     background: #f6f7f9;
     border: 1px solid rgba(0,0,0,0.03);
     border-radius: 12px;
-    padding: 0.5rem 0.45rem 0.6rem;
+    padding: 0.55rem 0.45rem 0.7rem;
     min-width: 0;
 }
 
-/* top row: label + value */
 .control-label-row {
     display: flex;
     justify-content: space-between;
@@ -1002,12 +927,11 @@ html, body {
     color: #0066cc;
 }
 
-/* slider row: min | slider | max */
 .control-slider-row {
     display: grid;
     grid-template-columns: auto 1fr auto;
-    align-items: center;
     gap: 0.35rem;
+    align-items: center;
 }
 .control-slider-row .minmax {
     font-size: 0.6rem;
@@ -1016,10 +940,9 @@ html, body {
     width: 1.9rem;
 }
 
-/* BIG thumb + taller track */
 .control-slider-row input[type="range"] {
     width: 100%;
-    height: 30px;              /* makes it easier to touch */
+    height: 34px;
     -webkit-appearance: none;
     background: transparent;
 }
@@ -1030,34 +953,10 @@ html, body {
 }
 .control-slider-row input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 20px;
-    height: 20px;
+    width: 22px;
+    height: 22px;
     border-radius: 50%;
     background: #0074d9;
-    margin-top: -7px;  /* center on track */
-}
-.control-slider-row input[type="range"]::-moz-range-track {
-    height: 6px;
-    background: #d0d7e0;
-    border-radius: 999px;
-}
-.control-slider-row input[type="range"]::-moz-range-thumb {
-    width: 20px;
-    height: 20px;
-    border: none;
-    border-radius: 50%;
-    background: #0074d9;
-}
-
-
-/* keep it working on 720px high screens */
-@media (max-height: 720px) {
-    .config-panel {
-        top: 58px;
-        height: calc(100% - 58px);
-    }
-    .control-grid {
-        gap: 0.45rem 0.6rem;
-    }
+    margin-top: -8px;
 }
 
