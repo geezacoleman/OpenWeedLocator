@@ -286,7 +286,7 @@ setup_python_venv() {
     check_status "Creating virtual environment" "PYTHON_VENV"
 
     echo -e "${GREEN}[INFO] Installing Python dependencies...${NC}"
-    sudo -u $CURRENT_USER bash -c "source ${VENV_PATH}/bin/activate && pip install --upgrade pip && pip install flask==2.2.2 werkzeug==2.2.3 gunicorn==23.0.0 paho-mqtt==2.1.0 psutil==5.9.4 boto3==1.39.13"
+    sudo -u $CURRENT_USER bash -c "source ${VENV_PATH}/bin/activate && pip install --upgrade pip && pip install flask==2.2.2 werkzeug==2.2.3 gunicorn==23.0.0 paho-mqtt==2.1.0 psutil==5.9.4 boto3==1.39.13 requests"
     check_status "Installing Python dependencies" "PYTHON_VENV"
 }
 

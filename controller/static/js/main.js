@@ -413,7 +413,6 @@ async function sendCommand(deviceId, action, value = null) {
         showNotification('Network error', 'error');
     }
 }
-
 // Open video feed modal
 function openVideoFeed(deviceId) {
     const modal = document.getElementById('video-modal');
@@ -423,9 +422,9 @@ function openVideoFeed(deviceId) {
     // Set title
     title.textContent = `${deviceId} - Video Feed`;
 
-    // Set video feed URL - use HTTPS with .local domain
-    const videoUrl = `https://${deviceId}.local/video_feed`;
-    console.log(`Loading video feed: ${videoUrl}`);
+    // Set video feed URL - to our new PROXY endpoint
+    const videoUrl = `/api/video_feed/${deviceId}`; //
+    console.log(`Loading video feed from proxy: ${videoUrl}`);
 
     // Show modal first
     modal.style.display = 'block';
@@ -433,23 +432,16 @@ function openVideoFeed(deviceId) {
     // Then set image source
     img.src = videoUrl;
 
-    // Handle image load success
+    // We can simplify the error handler now
     img.onload = function() {
-        console.log('Video feed loaded successfully');
+        console.log('Video proxy feed loaded successfully');
     };
 
-    // Handle image load error - try alternative URLs
     img.onerror = function() {
-        console.error(`Failed to load video feed from ${videoUrl}`);
-        // Try without .local if it fails
-        const owlIp = owlsData[deviceId]?.static_ip || owlsData[deviceId]?.broker_host;
-        if (owlIp && owlIp !== videoUrl) {
-            console.log(`Trying fallback IP: ${owlIp}`);
-            const fallbackUrl = `https://${owlIp}/video_feed`;
-            img.src = fallbackUrl;
-        } else {
-            img.alt = 'Video feed unavailable. Check network connection and SSL certificate.';
-        }
+        console.error(`Failed to load video proxy feed from ${videoUrl}`);
+        img.alt = 'Video feed unavailable. Check controller logs and if OWL is online.';
+        // We set src to blank to stop retry loops
+        img.src = '';
     };
 }
 

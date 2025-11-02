@@ -18,6 +18,7 @@ import logging
 import configparser
 from datetime import datetime
 from pathlib import Path
+import requests
 
 # Logging
 logging.basicConfig(
@@ -346,6 +347,41 @@ def get_greenonbrown_defaults():
     }
     return jsonify(defaults)
 
+
+@app.route('/api/video_feed/<device_id>')
+def video_feed_proxy(device_id):
+    """Proxies the MJPEG stream from an OWL, ignoring SSL errors."""
+
+    # Construct the target URL
+    # We use the .local address from the device_id
+    video_url = f"https://{device_id}.local/video_feed"
+    logger.info(f"Proxying video feed for {device_id} from {video_url}")
+
+    try:
+        # Use requests.get with stream=True
+        # **verify=False** is the magic line that ignores the self-signed SSL cert
+        s = requests.Session()
+        r = s.get(video_url, stream=True, verify=False, timeout=5)
+
+        # Check if the request was successful
+        if r.status_code != 200:
+            logger.error(f"Failed to get stream from {video_url} (Status: {r.status_code})")
+            return f"Error: Could not connect to {device_id}."
+
+        # Return a streaming response
+        # We stream the content from the requests.Response
+        return Response(
+            r.iter_content(chunk_size=1024),
+            content_type=r.headers['Content-Type'],
+            status=r.status_code
+        )
+
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"Connection error proxying {video_url}: {e}")
+        return f"Error: {device_id} is offline or unreachable."
+    except Exception as e:
+        logger.error(f"Generic error proxying {video_url}: {e}")
+        return "Error: An unknown error occurred."
 
 # Initialize on startup
 def init_app():
