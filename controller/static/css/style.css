@@ -860,50 +860,60 @@ html, body {
     border-color: var(--border);
 }
 
-/* SIDE PANEL */
+/* SIDE PANEL (revised) */
 .config-panel {
     position: fixed;
     top: 64px; /* header height */
-    right: -360px; /* hidden by default */
-    width: 360px;
+    right: 10px; /* <- was 0, now pulled in so scrollbar visible */
+    width: 340px; /* a bit narrower */
     height: calc(100% - 64px);
     background: #fff;
     box-shadow: -4px 0 16px rgba(0,0,0,0.15);
-    border-left: 1px solid var(--border);
-    transition: right 0.25s ease-out;
+    border: 1px solid var(--border);
+    border-right: none;
+    transition: transform 0.25s ease-out;
     z-index: 900;
     display: flex;
     flex-direction: column;
+    /* start hidden off-screen */
+    transform: translateX(360px);
 }
 .config-panel.open {
-    right: 0;
+    transform: translateX(0);
 }
 .config-panel-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1rem 1rem 0.5rem;
+    padding: 0.75rem 0.75rem 0.5rem;
     border-bottom: 1px solid var(--border);
 }
 .config-panel-body {
-    padding: 1rem;
+    padding: 0.75rem 1.25rem 0.75rem 0.75rem; /* extra right padding for scrollbar */
     overflow-y: auto;
     flex: 1;
-}
-.target-row {
-    display: flex;
-    gap: 0.75rem;
-    align-items: center;
-    margin-bottom: 0.75rem;
-}
-.target-row select {
-    flex: 1;
-    padding: 0.4rem 0.5rem;
-    border-radius: 6px;
-    border: 1px solid var(--border);
+    scrollbar-gutter: stable both-edges; /* keep space for scrollbar */
 }
 
-/* BIGGER OWL BUTTONS, NO EMOJIS */
+/* 2-column controls in panel */
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem 0.75rem;
+}
+.form-grid .control-group {
+    min-width: 0;
+}
+.control-group label {
+    display: block;
+    font-size: 0.7rem;
+    margin-bottom: 0.35rem;
+    white-space: nowrap;
+}
+.control-group input[type="range"] {
+    width: 100%;
+}
+
 .owl-actions {
     display: flex;
     gap: 0.35rem;

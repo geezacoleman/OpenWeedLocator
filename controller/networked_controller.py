@@ -213,6 +213,22 @@ class CentralController:
             'owl_count': len(owls_copy)
         }
 
+    def get_recent_owls(self, ttl=15):
+        now = time.time()
+        recent = {}
+
+        with self.mqtt_lock:
+            for oid, state in list(self.owls_state.items()):
+                last_seen = state.get("last_seen", 0)
+                if now - last_seen <= ttl:
+                    # shallow copy for safety
+                    recent[oid] = dict(state)
+                else:
+                    # drop stale
+                    del self.owls_state[oid]
+
+        return recent
+
     def send_command(self, device_id, action, value=None):
         """Send command to OWL(s)"""
         if not self.mqtt_connected or not self.mqtt_client:
@@ -285,9 +301,12 @@ def index():
     return render_template('index.html')
 
 
-@app.route('/api/owls')
-def get_owls():
-    return jsonify(controller.get_owls())
+@app.route("/api/owls")
+def api_owls():
+    return jsonify({
+        "mqtt_connected": controller.mqtt_connected,
+        "owls": controller.get_recent_owls(ttl=15),
+    })
 
 
 @app.route('/api/health')
@@ -355,6 +374,7 @@ def get_greenonbrown_defaults():
 def video_feed_proxy(device_id):
     """Proxies the MJPEG stream from an OWL, ignoring SSL errors."""
 
+    device_id = device_id.replace('_', '-')
     video_url = f"https://{device_id}.local/video_feed"
     logger.info(f"Proxying video feed for {device_id} from {video_url}")
 
