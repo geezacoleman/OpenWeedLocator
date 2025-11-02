@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>OWL Central Controller</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
@@ -20,53 +21,44 @@
                 <span class="status-dot" id="mqtt-status-dot"></span>
                 <span id="mqtt-status-text">Connecting...</span>
             </div>
+            <!-- NEW: toggle button for side panel -->
+            <button id="open-config-btn" class="toolbar-btn" type="button">
+                Config
+            </button>
         </div>
     </div>
 </div>
 
-<!-- Main Container -->
-<div class="container">
+<!-- Main Container (no tabs now) -->
+<div class="container" id="main-container">
+    <div class="dashboard-grid" id="owls-grid">
+        <p style="text-align: center; color: var(--text); padding: 2rem;">
+            Scanning for OWLs...
+        </p>
+    </div>
+</div>
 
-    <!-- Navigation Tabs -->
-    <div class="nav-tabs">
-        <div class="nav-tab active" data-tab="owls">
-            <span class="tab-text">OWLs (<span id="owl-count">0</span>)</span>
-        </div>
-        <div class="nav-tab" data-tab="config">
-            <span class="tab-text">Configuration</span>
-        </div>
+<!-- Slide-in Config Panel -->
+<div id="config-panel" class="config-panel">
+    <div class="config-panel-header">
+        <h2>Green-on-Brown</h2>
+        <button id="close-config-btn" class="toolbar-btn secondary" type="button">Close</button>
     </div>
 
-    <!-- Tab Content: OWLs -->
-    <div class="tab-content active" id="tab-owls">
-        <div class="dashboard-grid" id="owls-grid">
-            <p style="text-align: center; color: var(--text); padding: 2rem;">
-                <span style="font-size: 2rem;">🔍</span><br>
-                Scanning for OWLs...
-            </p>
+    <div class="config-panel-body">
+        <div class="target-row">
+            <label for="target-owl-select">Target:</label>
+            <select id="target-owl-select">
+                <option value="all">All OWLs</option>
+            </select>
+        </div>
+        <p class="metadata-description">
+            Adjust detection parameters. Changes are sent immediately.
+        </p>
+        <div class="form-grid" id="greenonbrown-controls">
+            <!-- sliders injected by JS -->
         </div>
     </div>
-
-    <!-- Tab Content: Configuration -->
-    <div class="tab-content" id="tab-config">
-        <div class="card">
-            <div class="card-title-row">
-                <h2>Green-on-Brown Configuration</h2>
-                <div style="display: flex; gap: 0.5rem; align-items: center;">
-                    <label for="target-owl-select" style="font-weight: 600; color: var(--secondary);">Target:</label>
-                    <select id="target-owl-select" style="padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border); background: white; font-size: 0.9rem;">
-                        <option value="all">All OWLs</option>
-                    </select>
-                </div>
-            </div>
-            <p class="metadata-description">Adjust detection parameters. Changes are sent immediately to selected target.</p>
-
-            <div class="form-grid" id="greenonbrown-controls">
-                <!-- Sliders will be dynamically generated here -->
-            </div>
-        </div>
-    </div>
-
 </div>
 
 <!-- Video Feed Modal -->
@@ -82,10 +74,10 @@
     </div>
 </div>
 
-<!-- Footer -->
+<!-- Footer (thin) -->
 <footer>
     <div class="footer-content">
-        <p>OpenWeedLocator © 2025 | Central Controller | <span id="last-update">--</span></p>
+        <p>OpenWeedLocator © 2025 | <span id="last-update">--</span></p>
     </div>
 </footer>
 

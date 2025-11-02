@@ -1,168 +1,173 @@
 // OWL Central Controller JavaScript
-// Handles UI updates, MQTT status, and command sending
 
-// Global state
 let owlsData = {};
 let mqttConnected = false;
 let updateInterval = null;
 let configDefaults = {};
 
-// Constants
-const UPDATE_INTERVAL = 2000; // Update every 2 seconds
-const OFFLINE_THRESHOLD = 10; // Seconds before marking offline
+// NEW: track offline counts per device
+const offlineCounts = {};
+const MAX_OFFLINE_POLLS = 5;   // after 5 polls (~10s) hide
+const UPDATE_INTERVAL = 2000;
 
-// Initialize on page load
+// init
 document.addEventListener('DOMContentLoaded', function() {
     console.log('OWL Central Controller initializing...');
 
-    // Setup tab switching
-    setupTabs();
+    // NEW: side panel toggles
+    const openBtn = document.getElementById('open-config-btn');
+    const closeBtn = document.getElementById('close-config-btn');
+    const panel = document.getElementById('config-panel');
 
-    // Load config defaults
+    if (openBtn && panel) {
+        openBtn.addEventListener('click', () => panel.classList.add('open'));
+    }
+    if (closeBtn && panel) {
+        closeBtn.addEventListener('click', () => panel.classList.remove('open'));
+    }
+
     loadConfigDefaults();
-
-    // Start polling for OWL data
     startPolling();
 
-    // Setup target OWL selector change handler
     const targetSelect = document.getElementById('target-owl-select');
     if (targetSelect) {
         targetSelect.addEventListener('change', updateConfigSliders);
     }
 });
 
-// Tab Switching
-function setupTabs() {
-    const tabs = document.querySelectorAll('.nav-tab');
-
-    tabs.forEach(tab => {
-        tab.addEventListener('click', function() {
-            const targetTab = this.getAttribute('data-tab');
-
-            // Update tab active states
-            tabs.forEach(t => t.classList.remove('active'));
-            this.classList.add('active');
-
-            // Update content active states
-            document.querySelectorAll('.tab-content').forEach(content => {
-                content.classList.remove('active');
-            });
-            document.getElementById(`tab-${targetTab}`).classList.add('active');
-        });
-    });
-}
-
-// Start polling for updates
+// no tabs anymore
 function startPolling() {
-    // Initial update
     updateDashboard();
-
-    // Set up interval
     updateInterval = setInterval(updateDashboard, UPDATE_INTERVAL);
 }
 
-// Main dashboard update function
 async function updateDashboard() {
     try {
         const response = await fetch('/api/owls');
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
+        if (!response.ok) throw new Error('HTTP ' + response.status);
         const data = await response.json();
 
-        // Update global state
-        owlsData = data.owls || {};
+        const freshOwls = data.owls || {};
         mqttConnected = data.mqtt_connected || false;
 
-        // Update UI
+        // prune / merge
+        owlsData = pruneAndMergeOwls(owlsData, freshOwls);
+
         updateMQTTStatus();
         updateOWLCount();
         updateOWLGrid();
         updateTargetSelector();
         updateLastUpdate();
 
-    } catch (error) {
-        console.error('Error updating dashboard:', error);
+    } catch (err) {
+        console.error('Error updating dashboard:', err);
         mqttConnected = false;
         updateMQTTStatus();
     }
 }
 
-// Update MQTT connection status indicator
+/**
+ * Merge newly received OWLs and drop ones that have been offline
+ * or missing for MAX_OFFLINE_POLLS.
+ */
+function pruneAndMergeOwls(current, fresh) {
+    const now = Date.now() / 1000;
+    const result = {};
+
+    // first, loop over fresh owls
+    for (const [id, owl] of Object.entries(fresh)) {
+        // reset offline count if online
+        if (owl.connected) {
+            offlineCounts[id] = 0;
+        } else {
+            // offline but still publishing
+            offlineCounts[id] = (offlineCounts[id] || 0) + 1;
+        }
+
+        result[id] = owl;
+    }
+
+    // then, look at owls we had before but didn't get now
+    for (const id of Object.keys(current)) {
+        if (!(id in fresh)) {
+            // missing in this poll
+            offlineCounts[id] = (offlineCounts[id] || 0) + 1;
+
+            if (offlineCounts[id] < MAX_OFFLINE_POLLS) {
+                // keep showing briefly
+                result[id] = current[id];
+                // also force connected=false for styling
+                result[id].connected = false;
+            } else {
+                // drop completely
+                delete offlineCounts[id];
+            }
+        }
+    }
+
+    return result;
+}
+
 function updateMQTTStatus() {
-    const statusDot = document.getElementById('mqtt-status-dot');
-    const statusText = document.getElementById('mqtt-status-text');
+    const dot = document.getElementById('mqtt-status-dot');
+    const txt = document.getElementById('mqtt-status-text');
+    if (!dot || !txt) return;
 
     if (mqttConnected) {
-        statusDot.classList.add('connected');
-        statusText.textContent = 'MQTT Connected';
+        dot.classList.add('connected');
+        txt.textContent = 'MQTT Connected';
     } else {
-        statusDot.classList.remove('connected');
-        statusText.textContent = 'MQTT Disconnected';
+        dot.classList.remove('connected');
+        txt.textContent = 'MQTT Disconnected';
     }
 }
 
-// Update OWL count
 function updateOWLCount() {
-    const countElement = document.getElementById('owl-count');
-    const count = Object.keys(owlsData).length;
-    countElement.textContent = count;
+    const el = document.getElementById('owl-count');
+    if (!el) return;
+    el.textContent = Object.keys(owlsData).length;
 }
 
-// Update OWL grid with cards
 function updateOWLGrid() {
     const grid = document.getElementById('owls-grid');
+    if (!grid) return;
 
-    // Check if we have any OWLs
-    if (Object.keys(owlsData).length === 0) {
+    const ids = Object.keys(owlsData);
+    if (ids.length === 0) {
         grid.innerHTML = `
             <div class="empty-state" style="grid-column: 1 / -1;">
-                <div class="empty-state-icon">🔍</div>
                 <div class="empty-state-text">No OWLs Connected</div>
-                <div class="empty-state-subtext">Waiting for OWLs to publish their state via MQTT...</div>
+                <div class="empty-state-subtext">Waiting for MQTT updates…</div>
             </div>
         `;
         return;
     }
 
-    // Build grid HTML
-    let gridHTML = '';
-
-    for (const [deviceId, owl] of Object.entries(owlsData)) {
-        gridHTML += buildOWLCard(deviceId, owl);
+    let html = '';
+    for (const [id, owl] of Object.entries(owlsData)) {
+        html += buildOWLCard(id, owl);
     }
-
-    grid.innerHTML = gridHTML;
+    grid.innerHTML = html;
 }
 
-// Build individual OWL card HTML
 function buildOWLCard(deviceId, owl) {
-    const isOnline = owl.connected || false;
+    const isOnline = !!owl.connected;
     const onlineClass = isOnline ? 'online' : 'offline';
 
-    // Extract stats - using correct field names from mqtt_manager
-    const temp = owl.cpu_temp || 0;
-    const fanRpm = owl.fan_status?.rpm || 0;
-    const cpuPercent = owl.cpu_percent || 0;
-    const memPercent = owl.memory_percent || 0;
+    const temp = owl.cpu_temp ?? 0;
+    const fanRpm = owl.fan_status?.rpm ?? 0;
+    const cpuPercent = owl.cpu_percent ?? 0;
+    const memPercent = owl.memory_percent ?? 0;
+
     const detectionEnabled = owl.detection_enable || false;
     const recordingEnabled = owl.image_sample_enable || false;
-    const lastSeen = owl.last_seen_formatted || 'Never';
 
-    // Format temperature with color
     let tempClass = 'good';
     if (temp > 70) tempClass = 'danger';
     else if (temp > 60) tempClass = 'warning';
 
-    // Button states
     const detectionBtnClass = detectionEnabled ? 'btn-detection active' : 'btn-detection inactive';
-    const detectionBtnText = detectionEnabled ? '✓ Detection ON' : '✗ Detection OFF';
-
     const recordingBtnClass = recordingEnabled ? 'btn-recording active' : 'btn-recording inactive';
-    const recordingBtnText = recordingEnabled ? '⏺ Recording ON' : '○ Recording OFF';
-
     const disabledAttr = isOnline ? '' : 'disabled';
 
     return `
@@ -172,22 +177,21 @@ function buildOWLCard(deviceId, owl) {
                     <h3>${deviceId}</h3>
                     <span class="owl-status-badge ${onlineClass}">
                         <span class="badge-dot"></span>
-                        ${isOnline ? 'Online' : 'Offline'}
+                        ${isOnline ? 'ONLINE' : 'OFFLINE'}
                     </span>
                 </div>
             </div>
-            
             <div class="owl-stats">
                 <div class="owl-stat-item">
                     <div class="owl-stat-label">CPU Temp</div>
                     <div class="owl-stat-value ${tempClass}">${temp}°C</div>
                 </div>
                 <div class="owl-stat-item">
-                    <div class="owl-stat-label">Fan Speed</div>
+                    <div class="owl-stat-label">Fan</div>
                     <div class="owl-stat-value">${fanRpm} RPM</div>
                 </div>
                 <div class="owl-stat-item">
-                    <div class="owl-stat-label">CPU Usage</div>
+                    <div class="owl-stat-label">CPU</div>
                     <div class="owl-stat-value">${cpuPercent}%</div>
                 </div>
                 <div class="owl-stat-item">
@@ -195,22 +199,21 @@ function buildOWLCard(deviceId, owl) {
                     <div class="owl-stat-value">${memPercent}%</div>
                 </div>
             </div>
-            
             <div class="owl-actions">
                 <button class="owl-btn btn-video" onclick="openVideoFeed('${deviceId}')" ${disabledAttr}>
-                    <span class="btn-icon">🎥</span>
                     Video
                 </button>
                 <button class="owl-btn ${detectionBtnClass}" onclick="toggleDetection('${deviceId}')" ${disabledAttr}>
-                    ${detectionBtnText}
+                    ${detectionEnabled ? 'Detection ON' : 'Detection OFF'}
                 </button>
                 <button class="owl-btn ${recordingBtnClass}" onclick="toggleRecording('${deviceId}')" ${disabledAttr}>
-                    ${recordingBtnText}
+                    ${recordingEnabled ? 'Recording ON' : 'Recording OFF'}
                 </button>
             </div>
         </div>
     `;
 }
+
 
 // Update target OWL selector dropdown
 function updateTargetSelector() {

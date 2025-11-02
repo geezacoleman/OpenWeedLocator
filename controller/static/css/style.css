@@ -814,3 +814,118 @@ body.modal-open {
         gap: 1rem;
     }
 }
+
+/* lock layout to screen height, no scroll */
+html, body {
+    height: 100%;
+    overflow: hidden; /* <- important for tractor display */
+}
+
+/* container should fit under header and above footer */
+.container {
+    max-width: 100%;
+    margin: 0;
+    padding: 0.75rem 0.75rem 0;
+    flex-grow: 1;
+    height: calc(100% - 120px); /* header + footer space */
+    overflow: hidden;
+}
+
+/* dashboard grid: 2 columns, scroll inside if needed */
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+    height: 100%;
+    overflow-y: auto; /* scroll only grid, not whole page */
+    padding-right: 0.25rem;
+}
+
+/* header buttons */
+.toolbar-btn {
+    background: #ffffff22;
+    border: 1px solid rgba(255,255,255,0.6);
+    color: #fff;
+    border-radius: 10px;
+    padding: 0.55rem 1.1rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-left: 0.75rem;
+}
+
+.toolbar-btn.secondary {
+    background: #fff;
+    color: var(--primary);
+    border-color: var(--border);
+}
+
+/* SIDE PANEL */
+.config-panel {
+    position: fixed;
+    top: 64px; /* header height */
+    right: -360px; /* hidden by default */
+    width: 360px;
+    height: calc(100% - 64px);
+    background: #fff;
+    box-shadow: -4px 0 16px rgba(0,0,0,0.15);
+    border-left: 1px solid var(--border);
+    transition: right 0.25s ease-out;
+    z-index: 900;
+    display: flex;
+    flex-direction: column;
+}
+.config-panel.open {
+    right: 0;
+}
+.config-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+}
+.config-panel-body {
+    padding: 1rem;
+    overflow-y: auto;
+    flex: 1;
+}
+.target-row {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+.target-row select {
+    flex: 1;
+    padding: 0.4rem 0.5rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+}
+
+/* BIGGER OWL BUTTONS, NO EMOJIS */
+.owl-actions {
+    display: flex;
+    gap: 0.35rem;
+}
+.owl-btn {
+    flex: 1;
+    padding: 0.85rem 0.5rem; /* bigger tap area */
+    font-size: 0.9rem;
+    border-radius: 10px;
+}
+
+/* make modal cover but still fit */
+.modal-content {
+    width: 90%;
+    max-width: 1100px;
+}
+
+@media (max-height: 720px) {
+    .header {
+        padding: 0.75rem 1rem;
+    }
+    .dashboard-grid {
+        gap: 0.5rem;
+    }
+}
