@@ -1,232 +1,364 @@
 #!/usr/bin/env python3
 """
-OWL Central Controller Dashboard
+OWL Central Controller
 Manages multiple OWL units via MQTT
 """
 
-from flask import Flask, render_template, jsonify, request, render_template_string
+import sys
+import os
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+from flask import Flask, render_template, jsonify, request
 import paho.mqtt.client as mqtt
 import json
 import threading
 import time
-import os
 import logging
+import configparser
+from datetime import datetime
+from pathlib import Path
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
+# Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
 
-# Global state for all OWLs
-owls_state = {}
-mqtt_client = None
-mqtt_connected = False
+class CentralController:
+    """Central controller for managing multiple OWLs via MQTT"""
 
+    def __init__(self, config_file='../config/CONTROLLER.ini'):
+        self.config = self._load_config(config_file)
 
-# --- MQTT Functions ---
+        # MQTT Configuration from config file
+        self.broker_host = self.config.get('MQTT', 'broker_ip', fallback='localhost')
+        self.broker_port = self.config.getint('MQTT', 'broker_port', fallback=1883)
+        self.client_id = self.config.get('MQTT', 'client_id', fallback='owl_central_controller')
 
-def on_connect(client, userdata, flags, rc):
-    """Subscribes to all OWL topics when connected."""
-    global mqtt_connected
-    if rc == 0:
-        logger.info(f"Connected to MQTT broker successfully")
-        mqtt_connected = True
-        # Subscribe to all OWL state and status topics
-        client.subscribe("owl/+/state")
-        client.subscribe("owl/+/status")
-        client.subscribe("owl/+/detection")
-        client.subscribe("owl/+/config")
-        logger.info("Subscribed to OWL topics")
-    else:
-        logger.error(f"Failed to connect to MQTT broker with result code: {rc}")
-        mqtt_connected = False
+        # State management
+        self.owls_state = {}
+        self.mqtt_connected = False
+        self.mqtt_lock = threading.Lock()
+        self.offline_timeout = 10.0  # seconds
 
+        # MQTT client
+        self.mqtt_client = None
 
-def on_disconnect(client, userdata, rc):
-    """Handle disconnection from MQTT broker."""
-    global mqtt_connected
-    mqtt_connected = False
-    if rc != 0:
-        logger.warning(f"Unexpected MQTT disconnection. Attempting to reconnect...")
+        logger.info(f"Central Controller initialized (broker: {self.broker_host}:{self.broker_port})")
 
+    def _load_config(self, config_file):
+        """Load configuration from file"""
+        config_path = Path(config_file)
+        if not config_path.exists():
+            config_path = Path(__file__).parent / config_file
 
-def on_message(client, userdata, msg):
-    """Processes incoming MQTT messages and updates the global state."""
-    global owls_state
-    try:
-        topic_parts = msg.topic.split('/')
-        if len(topic_parts) >= 3:
+        config = configparser.ConfigParser()
+
+        if config_path.exists():
+            config.read(config_path)
+            logger.info(f"Config loaded from {config_path}")
+        else:
+            logger.warning(f"Config file not found at {config_path}, using defaults")
+            # Create default config sections
+            config.add_section('MQTT')
+            config.set('MQTT', 'broker_ip', 'localhost')
+            config.set('MQTT', 'broker_port', '1883')
+            config.set('MQTT', 'client_id', 'owl_central_controller')
+
+        return config
+
+    def setup_mqtt(self):
+        """Initialize and start MQTT client"""
+        logger.info(f"Setting up MQTT (ID: {self.client_id})")
+
+        self.mqtt_client = mqtt.Client(client_id=self.client_id)
+        self.mqtt_client.on_connect = self._on_connect
+        self.mqtt_client.on_disconnect = self._on_disconnect
+        self.mqtt_client.on_message = self._on_message
+
+        # Set reconnect behavior
+        self.mqtt_client.reconnect_delay_set(min_delay=1, max_delay=60)
+
+        try:
+            logger.info(f"Connecting to MQTT broker at {self.broker_host}:{self.broker_port}")
+            self.mqtt_client.connect(self.broker_host, self.broker_port, 60)
+            self.mqtt_client.loop_start()
+            logger.info("MQTT client loop started")
+        except Exception as e:
+            logger.error(f"Failed to connect to MQTT broker: {e}")
+            self.mqtt_client = None
+
+    def _on_connect(self, client, userdata, flags, rc):
+        """MQTT connection callback"""
+        if rc == 0:
+            logger.info("Connected to MQTT broker")
+            self.mqtt_connected = True
+
+            # Subscribe to all OWL topics
+            topics = [
+                ("owl/+/state", 0),
+                ("owl/+/status", 0),
+                ("owl/+/detection", 0),
+                ("owl/+/config", 0),
+                ("owl/+/system", 0),
+            ]
+            client.subscribe(topics)
+            logger.info(f"Subscribed to {len(topics)} topic patterns")
+        else:
+            logger.error(f"Failed to connect to MQTT broker (code: {rc})")
+            self.mqtt_connected = False
+
+    def _on_disconnect(self, client, userdata, rc):
+        """MQTT disconnection callback"""
+        self.mqtt_connected = False
+        if rc != 0:
+            logger.warning(f"Unexpected MQTT disconnection (code: {rc})")
+        else:
+            logger.info("Disconnected from MQTT broker")
+
+    def _on_message(self, client, userdata, msg):
+        """Process incoming MQTT messages"""
+        try:
+            topic_parts = msg.topic.split('/')
+            if len(topic_parts) < 3:
+                return
+
             device_id = topic_parts[1]
             topic_type = topic_parts[2]
 
-            # Try to decode the payload
+            # Decode payload
             try:
-                data = json.loads(msg.payload.decode())
+                payload = json.loads(msg.payload.decode())
             except json.JSONDecodeError:
-                # If not JSON, store as string
-                data = {topic_type: msg.payload.decode()}
+                return
 
-            # Ensure the device has an entry in the state
-            if device_id not in owls_state:
-                owls_state[device_id] = {
-                    'device_id': device_id,
-                    'first_seen': time.time()
-                }
+            # Update state
+            with self.mqtt_lock:
+                if device_id not in self.owls_state:
+                    self.owls_state[device_id] = {
+                        'device_id': device_id,
+                        'first_seen': time.time(),
+                        'last_seen': time.time(),
+                        'connected': True
+                    }
+                    logger.info(f"New OWL discovered: {device_id}")
 
-            # Update the state based on topic type
-            if topic_type == 'state':
-                owls_state[device_id].update(data)
-            elif topic_type == 'status':
-                owls_state[device_id]['status'] = data
-            elif topic_type == 'detection':
-                owls_state[device_id]['detection'] = data
-            elif topic_type == 'config':
-                owls_state[device_id]['config'] = data
+                # Merge payload into state
+                if topic_type == 'state':
+                    self.owls_state[device_id].update(payload)
+                elif topic_type == 'status':
+                    self.owls_state[device_id]['status'] = payload
+                elif topic_type == 'detection':
+                    self.owls_state[device_id]['detection'] = payload
+                elif topic_type == 'config':
+                    self.owls_state[device_id]['config'] = payload
+                elif topic_type == 'system':
+                    self.owls_state[device_id]['system'] = payload
+                else:
+                    self.owls_state[device_id][topic_type] = payload
+
+                self.owls_state[device_id]['last_seen'] = time.time()
+                self.owls_state[device_id]['connected'] = True
+
+            logger.debug(f"Updated {device_id} ({topic_type})")
+
+        except Exception as e:
+            logger.error(f"Error processing message on {msg.topic}: {e}")
+
+    def check_connections(self):
+        """Background thread to check for offline OWLs"""
+        while True:
+            try:
+                current_time = time.time()
+
+                with self.mqtt_lock:
+                    for device_id, state in self.owls_state.items():
+                        last_seen = state.get('last_seen', 0)
+                        time_since = current_time - last_seen
+
+                        if time_since > self.offline_timeout:
+                            if state.get('connected', False):
+                                state['connected'] = False
+                                logger.warning(f"{device_id} offline ({time_since:.1f}s)")
+
+                time.sleep(2)
+
+            except Exception as e:
+                logger.error(f"Error in connection checker: {e}")
+                time.sleep(5)
+
+    def get_owls(self):
+        """Get current state of all OWLs"""
+        with self.mqtt_lock:
+            owls_copy = json.loads(json.dumps(self.owls_state, default=str))
+
+        # Add computed fields
+        for device_id, state in owls_copy.items():
+            last_seen = state.get('last_seen', 0)
+            state['seconds_since_update'] = time.time() - last_seen
+            state['last_seen_formatted'] = datetime.fromtimestamp(last_seen).strftime(
+                '%H:%M:%S') if last_seen else 'Never'
+
+        return {
+            'owls': owls_copy,
+            'mqtt_connected': self.mqtt_connected,
+            'controller_time': time.time(),
+            'owl_count': len(owls_copy)
+        }
+
+    def send_command(self, device_id, action, value=None):
+        """Send command to OWL(s)"""
+        if not self.mqtt_connected or not self.mqtt_client:
+            return {'success': False, 'error': 'MQTT not connected'}
+
+        # Build payload
+        payload = {'action': action}
+
+        if action == 'toggle_detection':
+            if device_id != 'all':
+                current = self.owls_state.get(device_id, {}).get('detection_enable', False)
+                payload = {'action': 'set_detection_enable', 'value': not current}
             else:
-                owls_state[device_id][topic_type] = data
+                payload = {'action': 'set_detection_enable', 'value': value}
 
-            owls_state[device_id]['last_seen'] = time.time()
+        elif action == 'toggle_recording':
+            if device_id != 'all':
+                current = self.owls_state.get(device_id, {}).get('image_sample_enable', False)
+                payload = {'action': 'set_image_sample_enable', 'value': not current}
+            else:
+                payload = {'action': 'set_image_sample_enable', 'value': value}
 
-            logger.debug(f"Updated state for {device_id}: {topic_type}")
+        elif action == 'set_sensitivity':
+            payload = {'action': 'set_sensitivity_level', 'level': value}
 
-    except Exception as e:
-        logger.error(f"Error processing message on topic {msg.topic}: {e}")
+        elif action == 'set_config':
+            payload = {
+                'action': 'set_config_value',
+                'section': value.get('section', 'GreenOnBrown'),
+                'key': value.get('key'),
+                'value': value.get('value')
+            }
+
+        else:
+            payload = {'action': action, 'value': value}
+
+        # Publish
+        if device_id == 'all':
+            sent_to = []
+            with self.mqtt_lock:
+                for owl_id in self.owls_state.keys():
+                    topic = f"owl/{owl_id}/commands"
+                    result = self.mqtt_client.publish(topic, json.dumps(payload))
+                    if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                        sent_to.append(owl_id)
+
+            logger.info(f"Broadcast '{action}' to {len(sent_to)} OWLs")
+            return {'success': True, 'message': f"Sent to {len(sent_to)} OWLs", 'targets': sent_to}
+        else:
+            topic = f"owl/{device_id}/commands"
+            result = self.mqtt_client.publish(topic, json.dumps(payload))
+
+            if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                logger.info(f"Sent '{action}' to {device_id}")
+                return {'success': True, 'message': f"Sent to {device_id}"}
+            else:
+                logger.error(f"Failed to publish to {device_id} (code: {result.rc})")
+                return {'success': False, 'error': f"Publish failed (code: {result.rc})"}
 
 
-def setup_mqtt():
-    """Configures and starts the MQTT client."""
-    global mqtt_client
+# Create Flask app
+app = Flask(__name__)
 
-    mqtt_client = mqtt.Client(client_id='owl_central_controller')
-    mqtt_client.on_connect = on_connect
-    mqtt_client.on_disconnect = on_disconnect
-    mqtt_client.on_message = on_message
-
-    try:
-        # Try connecting to localhost first
-        mqtt_client.connect('localhost', 1883, 60)
-        mqtt_client.loop_start()
-        logger.info("MQTT client started and connecting to localhost:1883")
-    except Exception as e:
-        logger.error(f"Could not connect to MQTT broker: {e}")
-        # Try again with 127.0.0.1
-        try:
-            mqtt_client.connect('127.0.0.1', 1883, 60)
-            mqtt_client.loop_start()
-            logger.info("MQTT client started and connecting to 127.0.0.1:1883")
-        except Exception as e2:
-            logger.error(f"Could not connect to MQTT broker on 127.0.0.1: {e2}")
+# Initialize controller
+controller = CentralController()
 
 
-# --- Flask Routes ---
-
+# Flask routes
 @app.route('/')
 def index():
-    """Renders the main controller dashboard."""
-    # Check if templates directory exists
-    template_dir = os.path.join(os.path.dirname(__file__), 'templates')
-    template_file = os.path.join(template_dir, 'index.html')
-
-    if not os.path.exists(template_file):
-        logger.error(f"File {template_file} not found")
-
     return render_template('index.html')
 
 
 @app.route('/api/owls')
 def get_owls():
-    """Returns the current state of all connected OWLs."""
-    # Add connection status
-    response = {
-        'owls': owls_state,
-        'mqtt_connected': mqtt_connected,
-        'controller_time': time.time()
-    }
-    return jsonify(response)
+    return jsonify(controller.get_owls())
 
 
 @app.route('/api/health')
 def health_check():
-    """Health check endpoint."""
     return jsonify({
         'status': 'healthy',
-        'mqtt_connected': mqtt_connected,
-        'owl_count': len(owls_state),
+        'mqtt_connected': controller.mqtt_connected,
+        'owl_count': len(controller.owls_state),
         'uptime': time.time()
     })
 
 
 @app.route('/api/command', methods=['POST'])
 def send_command():
-    """Receives a command from the web UI and publishes it via MQTT."""
-    if not mqtt_connected:
-        return jsonify({'status': 'error', 'message': 'MQTT not connected'}), 503
-
     try:
         data = request.json
+        if not data:
+            return jsonify({'success': False, 'error': 'No data'}), 400
+
         device_id = data.get('device_id')
         action = data.get('action')
         value = data.get('value')
 
         if not device_id or not action:
-            return jsonify({'status': 'error', 'message': 'Missing device_id or action'}), 400
+            return jsonify({'success': False, 'error': 'Missing device_id or action'}), 400
 
-        payload = {}
+        result = controller.send_command(device_id, action, value)
 
-        # Build the MQTT payload based on the action
-        if action == 'toggle_detection':
-            current = owls_state.get(device_id, {}).get('detection_enable', False)
-            payload = {'action': 'set_detection_enable', 'value': not current}
-        elif action == 'set_sensitivity':
-            payload = {'action': 'set_sensitivity_level', 'level': value}
-        elif action == 'set_greenonbrown_config':
-            # Value is expected to be a dict: {'key': 'hue_min', 'value': 50}
-            payload = {
-                'action': 'set_config_value',
-                'section': 'GreenOnBrown',
-                'key': value.get('key'),
-                'value': value.get('value')
-            }
-        elif action == 'reboot':
-            payload = {'action': 'reboot'}
-        elif action == 'restart_service':
-            payload = {'action': 'restart_service'}
+        if result['success']:
+            return jsonify(result)
         else:
-            payload = {'action': action, 'value': value}
-
-        # Determine which topic(s) to publish to
-        if device_id == 'all':
-            # Send command to all known devices
-            for owl_id in owls_state.keys():
-                topic = f"owl/{owl_id}/commands"
-                mqtt_client.publish(topic, json.dumps(payload))
-            logger.info(f"Sent command '{action}' to ALL devices")
-        else:
-            # Send to a specific device
-            topic = f"owl/{device_id}/commands"
-            mqtt_client.publish(topic, json.dumps(payload))
-            logger.info(f"Sent command '{action}' to {device_id}")
-
-        return jsonify({'status': 'sent', 'command': action, 'device': device_id})
+            return jsonify(result), 500
 
     except Exception as e:
         logger.error(f"Error sending command: {e}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/mqtt/status')
 def mqtt_status():
-    """Returns MQTT connection status."""
     return jsonify({
-        'connected': mqtt_connected,
-        'client_id': 'owl_central_controller' if mqtt_client else None,
-        'broker': 'localhost:1883'
+        'connected': controller.mqtt_connected,
+        'client_id': controller.client_id,
+        'broker': f"{controller.broker_host}:{controller.broker_port}"
     })
 
 
+@app.route('/api/greenonbrown/defaults')
+def get_greenonbrown_defaults():
+    defaults = {
+        'exg_min': {'value': 25, 'min': 0, 'max': 255, 'step': 1, 'label': 'ExG Min'},
+        'exg_max': {'value': 200, 'min': 0, 'max': 255, 'step': 1, 'label': 'ExG Max'},
+        'hue_min': {'value': 39, 'min': 0, 'max': 179, 'step': 1, 'label': 'Hue Min'},
+        'hue_max': {'value': 83, 'min': 0, 'max': 179, 'step': 1, 'label': 'Hue Max'},
+        'saturation_min': {'value': 50, 'min': 0, 'max': 255, 'step': 1, 'label': 'Saturation Min'},
+        'saturation_max': {'value': 220, 'min': 0, 'max': 255, 'step': 1, 'label': 'Saturation Max'},
+        'brightness_min': {'value': 60, 'min': 0, 'max': 255, 'step': 1, 'label': 'Brightness Min'},
+        'brightness_max': {'value': 190, 'min': 0, 'max': 255, 'step': 1, 'label': 'Brightness Max'},
+        'min_detection_area': {'value': 10, 'min': 1, 'max': 1000, 'step': 1, 'label': 'Min Detection Area'}
+    }
+    return jsonify(defaults)
+
+
+# Initialize on startup
+def init_app():
+    logger.info("OWL Central Controller Starting")
+    controller.setup_mqtt()
+
+    # Start connection checker
+    checker_thread = threading.Thread(target=controller.check_connections, daemon=True)
+    checker_thread.start()
+
+
+init_app()
+
 if __name__ == '__main__':
-    setup_mqtt()
-    # Note: When run by gunicorn, this block won't execute
-    # For testing/development only
-    app.run(host='127.0.0.1', port=8000, debug=False)
+    app.run(host='127.0.0.1', port=8000, debug=False, threaded=True)

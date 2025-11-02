@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OWL Central Controller</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
 </head>
 <body>
 
+<!-- Header -->
 <div class="header">
     <div class="header-content">
         <div class="logo-section">
@@ -17,36 +17,79 @@
         </div>
         <div class="status-indicator">
             <div class="owl-status">
-                <span class="status-dot connected" id="statusDot"></span>
-                <span id="statusText">Controller Active</span>
+                <span class="status-dot" id="mqtt-status-dot"></span>
+                <span id="mqtt-status-text">Connecting...</span>
             </div>
         </div>
     </div>
 </div>
 
+<!-- Main Container -->
 <div class="container">
 
-    <div class="card">
-        <h2>Connected OWLs (<span id="owl-count">0</span>)</h2>
-        <div class="dashboard-grid" id="owls-grid">
-            <p>Scanning for OWLs...</p>
+    <!-- Navigation Tabs -->
+    <div class="nav-tabs">
+        <div class="nav-tab active" data-tab="owls">
+            <span class="tab-text">OWLs (<span id="owl-count">0</span>)</span>
+        </div>
+        <div class="nav-tab" data-tab="config">
+            <span class="tab-text">Configuration</span>
         </div>
     </div>
 
-    <div class="card">
-        <h2>Global Green-on-Brown Controls</h2>
-        <p class="metadata-description">These sliders send commands to ALL connected OWLs.</p>
-
-        <div class="form-grid" id="greenonbrown-controls">
-
-            </div>
+    <!-- Tab Content: OWLs -->
+    <div class="tab-content active" id="tab-owls">
+        <div class="dashboard-grid" id="owls-grid">
+            <p style="text-align: center; color: var(--text); padding: 2rem;">
+                <span style="font-size: 2rem;">🔍</span><br>
+                Scanning for OWLs...
+            </p>
+        </div>
     </div>
 
-</div> <footer>
+    <!-- Tab Content: Configuration -->
+    <div class="tab-content" id="tab-config">
+        <div class="card">
+            <div class="card-title-row">
+                <h2>Green-on-Brown Configuration</h2>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <label for="target-owl-select" style="font-weight: 600; color: var(--secondary);">Target:</label>
+                    <select id="target-owl-select" style="padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border); background: white; font-size: 0.9rem;">
+                        <option value="all">All OWLs</option>
+                    </select>
+                </div>
+            </div>
+            <p class="metadata-description">Adjust detection parameters. Changes are sent immediately to selected target.</p>
+
+            <div class="form-grid" id="greenonbrown-controls">
+                <!-- Sliders will be dynamically generated here -->
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- Video Feed Modal -->
+<div id="video-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="video-modal-title">OWL Video Feed</h3>
+            <button class="modal-close" onclick="closeVideoModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <img id="video-feed-img" src="" alt="Video Feed" style="width: 100%; height: auto; border-radius: 8px;">
+        </div>
+    </div>
+</div>
+
+<!-- Footer -->
+<footer>
     <div class="footer-content">
-        <p>OpenWeedLocator © 2025 | Central Controller</p>
+        <p>OpenWeedLocator © 2025 | Central Controller | <span id="last-update">--</span></p>
     </div>
 </footer>
+
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
 
 </body>
 </html>
