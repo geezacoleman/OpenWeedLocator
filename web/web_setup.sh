@@ -613,7 +613,7 @@ server {
     server_name ${HOSTNAME}.local 10.42.0.1 _;
 
     ssl_certificate /etc/ssl/certs/owl.crt;
-    ssl_private_key /etc/ssl/private/owl.key;
+    ssl_certificate_key /etc/ssl/private/owl.key;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
 
@@ -662,7 +662,7 @@ server {
     server_name ${HOSTNAME}.local ${STATIC_IP};
 
     ssl_certificate /etc/ssl/certs/owl.crt;
-    ssl_private_key /etc/ssl/private/owl.key;
+    ssl_certificate_key /etc/ssl/private/owl.key;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
 

@@ -142,19 +142,19 @@ function buildOWLCard(deviceId, owl) {
     const isOnline = owl.connected || false;
     const onlineClass = isOnline ? 'online' : 'offline';
 
-    // Extract stats
-    const temp = owl.temp || owl.system?.temp || '--';
-    const fanSpeed = owl.fan_speed || owl.system?.fan_speed || '--';
+    // Extract stats - using correct field names from mqtt_manager
+    const temp = owl.cpu_temp || 0;
+    const fanRpm = owl.fan_status?.rpm || 0;
+    const cpuPercent = owl.cpu_percent || 0;
+    const memPercent = owl.memory_percent || 0;
     const detectionEnabled = owl.detection_enable || false;
     const recordingEnabled = owl.image_sample_enable || false;
     const lastSeen = owl.last_seen_formatted || 'Never';
 
     // Format temperature with color
     let tempClass = 'good';
-    if (typeof temp === 'number') {
-        if (temp > 70) tempClass = 'danger';
-        else if (temp > 60) tempClass = 'warning';
-    }
+    if (temp > 70) tempClass = 'danger';
+    else if (temp > 60) tempClass = 'warning';
 
     // Button states
     const detectionBtnClass = detectionEnabled ? 'btn-detection active' : 'btn-detection inactive';
@@ -179,16 +179,20 @@ function buildOWLCard(deviceId, owl) {
             
             <div class="owl-stats">
                 <div class="owl-stat-item">
-                    <div class="owl-stat-label">Temperature</div>
+                    <div class="owl-stat-label">CPU Temp</div>
                     <div class="owl-stat-value ${tempClass}">${temp}°C</div>
                 </div>
                 <div class="owl-stat-item">
                     <div class="owl-stat-label">Fan Speed</div>
-                    <div class="owl-stat-value">${fanSpeed}%</div>
+                    <div class="owl-stat-value">${fanRpm} RPM</div>
                 </div>
-                <div class="owl-stat-item" style="grid-column: 1 / -1;">
-                    <div class="owl-stat-label">Last Seen</div>
-                    <div class="owl-stat-value" style="font-size: 0.9rem;">${lastSeen}</div>
+                <div class="owl-stat-item">
+                    <div class="owl-stat-label">CPU Usage</div>
+                    <div class="owl-stat-value">${cpuPercent}%</div>
+                </div>
+                <div class="owl-stat-item">
+                    <div class="owl-stat-label">Memory</div>
+                    <div class="owl-stat-value">${memPercent}%</div>
                 </div>
             </div>
             
@@ -419,19 +423,33 @@ function openVideoFeed(deviceId) {
     // Set title
     title.textContent = `${deviceId} - Video Feed`;
 
-    // Set video feed URL
-    // Try .local address first, fallback to IP if available
+    // Set video feed URL - use HTTPS with .local domain
     const videoUrl = `https://${deviceId}.local/video_feed`;
+    console.log(`Loading video feed: ${videoUrl}`);
+
+    // Show modal first
+    modal.style.display = 'block';
+
+    // Then set image source
     img.src = videoUrl;
 
-    // Show modal
-    modal.style.display = 'flex';
+    // Handle image load success
+    img.onload = function() {
+        console.log('Video feed loaded successfully');
+    };
 
     // Handle image load error - try alternative URLs
     img.onerror = function() {
-        // Could try IP address as fallback if we stored it
         console.error(`Failed to load video feed from ${videoUrl}`);
-        img.alt = 'Video feed unavailable. Ensure OWL is running and accessible.';
+        // Try without .local if it fails
+        const owlIp = owlsData[deviceId]?.static_ip || owlsData[deviceId]?.broker_host;
+        if (owlIp && owlIp !== videoUrl) {
+            console.log(`Trying fallback IP: ${owlIp}`);
+            const fallbackUrl = `https://${owlIp}/video_feed`;
+            img.src = fallbackUrl;
+        } else {
+            img.alt = 'Video feed unavailable. Check network connection and SSL certificate.';
+        }
     };
 }
 

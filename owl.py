@@ -518,6 +518,14 @@ class Owl:
                                         duration=actuation_duration)
 
                 ##### Update Dashboard Stream #####
+                if frame_count % 90 == 0:  # Every 90 frames (~3 seconds at 30fps)
+                    if self.dash and hasattr(self.dash, 'update_system_stats'):
+                        try:
+                            stats = self.get_system_stats()
+                            self.dash.update_system_stats(stats)
+                        except Exception as e:
+                            self.logger.debug(f"Error updating system stats: {e}")
+
                 if self.dash and frame_count % 5 == 0: # send every 5th frame to the streamer to reduce overhead
                     try:
                         if self._detection_enable and image_out is not None:
@@ -844,6 +852,90 @@ class Owl:
         """Thread-safe method to get the latest frame for the stream."""
         with self.stream_lock:
             return self.latest_stream_frame
+
+    def get_system_stats(self):
+        """
+        Get system statistics with robust error handling.
+        Based on owl_dash.py implementation.
+        """
+        import subprocess
+        import glob
+        try:
+            import psutil
+        except ImportError:
+            self.logger.warning("psutil not installed - system stats unavailable")
+            return {
+                'cpu_percent': 0,
+                'cpu_temp': 0,
+                'memory_percent': 0,
+                'memory_used': 0,
+                'memory_total': 0,
+                'disk_percent': 0,
+                'disk_used': 0,
+                'disk_total': 0,
+                'fan_status': {'is_rpi5': False, 'mode': 'unavailable', 'rpm': 0},
+                'owl_running': True
+            }
+
+        stats = {
+            'cpu_percent': 0,
+            'cpu_temp': 0,
+            'memory_percent': 0,
+            'memory_used': 0,
+            'memory_total': 0,
+            'disk_percent': 0,
+            'disk_used': 0,
+            'disk_total': 0,
+            'fan_status': {'is_rpi5': False, 'mode': 'unavailable', 'rpm': 0},
+            'owl_running': True
+        }
+
+        try:
+            # Get RPI version
+            from utils.input_manager import get_rpi_version
+            rpi_version = get_rpi_version()
+
+            if rpi_version == 'rpi-5':
+                stats['fan_status']['is_rpi5'] = True
+                stats['fan_status']['mode'] = 'auto'  # or self.fan_state if you track it
+
+                try:
+                    rpm_files = glob.glob('/sys/devices/platform/cooling_fan/hwmon/*/fan1_input')
+                    if rpm_files:
+                        with open(rpm_files[0], 'r') as f:
+                            stats['fan_status']['rpm'] = int(f.read().strip())
+                except Exception as e:
+                    self.logger.debug(f"Could not read fan RPM: {e}")
+
+            # CPU, Memory, Disk
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            memory = psutil.virtual_memory()
+            disk = psutil.disk_usage('/')
+
+            stats.update({
+                'cpu_percent': round(cpu_percent, 1),
+                'memory_percent': round(memory.percent, 1),
+                'memory_used': round(memory.used / (1024 ** 3), 1),
+                'memory_total': round(memory.total / (1024 ** 3), 1),
+                'disk_percent': round(disk.percent, 1),
+                'disk_used': round(disk.used / (1024 ** 3), 1),
+                'disk_total': round(disk.total / (1024 ** 3), 1),
+            })
+
+            # CPU Temperature
+            try:
+                result = subprocess.run(['/usr/bin/vcgencmd', 'measure_temp'],
+                                        capture_output=True, text=True, timeout=1)
+                if result.returncode == 0:
+                    temp_str = result.stdout.replace('temp=', '').replace("'C\n", '').strip()
+                    stats['cpu_temp'] = round(float(temp_str), 1)
+            except Exception as e:
+                self.logger.debug(f"Could not get CPU temp: {e}")
+
+        except Exception as e:
+            self.logger.warning(f"Error getting system stats: {e}")
+
+        return stats
 
     def update_state(self):
         """Update local state from MQTT server or local hardware controllers"""

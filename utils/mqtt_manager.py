@@ -80,9 +80,20 @@ class OWLMQTTPublisher:
             'device_id': device_id,
             'detection_enable': False,
             'image_sample_enable': False,
-            'sensitivity_level': 'medium',  # Changed default to 'medium'
+            'sensitivity_level': 'medium',
             'owl_running': False,
             'stream_active': False,
+            # System statistics
+            'cpu_percent': 0,
+            'cpu_temp': 0,
+            'memory_percent': 0,
+            'memory_used': 0,
+            'memory_total': 0,
+            'disk_percent': 0,
+            'disk_used': 0,
+            'disk_total': 0,
+            'fan_status': {'is_rpi5': False, 'mode': 'unavailable', 'rpm': 0},
+            # GPS
             'gps_latitude': 0.0,
             'gps_longitude': 0.0,
             'gps_accuracy': 0.0,
@@ -566,6 +577,27 @@ class OWLMQTTPublisher:
         self._publish_state()
 
         self._apply_sensitivity_preset(value)
+
+    def update_system_stats(self, stats_dict):
+        """
+        Update system statistics from owl.py
+
+        Args:
+            stats_dict: Dictionary containing system stats from get_system_stats()
+        """
+        with self.state_lock:
+            # Update all system stats
+            self.state['cpu_percent'] = stats_dict.get('cpu_percent', 0)
+            self.state['cpu_temp'] = stats_dict.get('cpu_temp', 0)
+            self.state['memory_percent'] = stats_dict.get('memory_percent', 0)
+            self.state['memory_used'] = stats_dict.get('memory_used', 0)
+            self.state['memory_total'] = stats_dict.get('memory_total', 0)
+            self.state['disk_percent'] = stats_dict.get('disk_percent', 0)
+            self.state['disk_used'] = stats_dict.get('disk_used', 0)
+            self.state['disk_total'] = stats_dict.get('disk_total', 0)
+            self.state['fan_status'] = stats_dict.get('fan_status', {'is_rpi5': False, 'mode': 'unavailable', 'rpm': 0})
+            self.state['owl_running'] = stats_dict.get('owl_running', True)  # owl.py is running if calling this
+            self.state['last_update'] = time.time()
 
 class DashMQTTSubscriber:
     """
