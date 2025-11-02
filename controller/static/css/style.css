@@ -860,13 +860,13 @@ html, body {
     border-color: var(--border);
 }
 
-/* panel stays wide and pulled in */
+/* wide, fixed side panel */
 .config-panel {
     position: fixed;
     top: 64px;
-    right: 8px;
-    width: 620px; /* 3 columns */
-    height: calc(100% - 64px);
+    right: 12px;                      /* pulled in from bezel */
+    width: 620px;                     /* wide enough for 3 cols */
+    height: calc(100% - 64px);        /* fill screen below header */
     background: #fff;
     border: 1px solid #d8d8d8;
     border-right: none;
@@ -874,38 +874,50 @@ html, body {
     z-index: 900;
     display: flex;
     flex-direction: column;
-    transform: translateX(640px); /* fully hidden */
+    /* hide off-screen to the right */
+    transform: translateX(640px);
     transition: transform 0.2s ease-out;
 }
 .config-panel.open {
     transform: translateX(0);
 }
+
 .config-panel-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.6rem 0.8rem 0.45rem 1rem;
+    padding: 0.5rem 0.75rem 0.4rem 1rem;
     border-bottom: 1px solid #d8d8d8;
-}
-.config-panel-body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 0.7rem 1.5rem 0.7rem 1rem; /* extra right for scrollbar */
-    scrollbar-gutter: stable both-edges;
+    flex: 0 0 54px;                   /* fixed header height */
 }
 
-/* 3 columns, 9 sliders */
+/* NO SCROLL in body */
+.config-panel-body {
+    flex: 1 1 auto;
+    padding: 0.6rem 1.2rem 0.6rem 1rem;
+    overflow: hidden;                 /* <- key */
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+/* 3 columns × 3 rows, fill available space */
 .control-grid {
+    flex: 1 1 auto;
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0.55rem 0.55rem;
+    grid-template-rows: repeat(3, minmax(0, 1fr));
+    gap: 0.5rem;
 }
 
+/* every control takes its cell */
 .control-group {
     background: #f6f7f9;
     border: 1px solid rgba(0,0,0,0.03);
     border-radius: 12px;
-    padding: 0.55rem 0.45rem 0.7rem;
+    padding: 0.4rem 0.35rem 0.45rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
     min-width: 0;
 }
 
@@ -913,36 +925,39 @@ html, body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 0.35rem;
-    margin-bottom: 0.35rem;
+    gap: 0.25rem;
+    margin-bottom: 0.25rem;
 }
 .control-label-row label {
-    font-size: 0.72rem;
+    font-size: 0.68rem;   /* slightly smaller so it fits */
     font-weight: 600;
     color: #222;
+    white-space: nowrap;
 }
 .control-value {
-    font-size: 0.75rem;
+    font-size: 0.68rem;
     font-weight: 700;
     color: #0066cc;
 }
 
+/* slider line */
 .control-slider-row {
     display: grid;
     grid-template-columns: auto 1fr auto;
-    gap: 0.35rem;
+    gap: 0.25rem;
     align-items: center;
 }
 .control-slider-row .minmax {
     font-size: 0.6rem;
     color: #666;
     text-align: center;
-    width: 1.9rem;
+    width: 1.8rem;
 }
 
+/* big enough for finger, but not crazy */
 .control-slider-row input[type="range"] {
     width: 100%;
-    height: 34px;
+    height: 30px;
     -webkit-appearance: none;
     background: transparent;
 }
@@ -953,10 +968,21 @@ html, body {
 }
 .control-slider-row input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 22px;
-    height: 22px;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
     background: #0074d9;
-    margin-top: -8px;
+    margin-top: -7px;
+}
+.control-slider-row input[type="range"]::-moz-range-track {
+    height: 6px;
+    background: #d0d7e0;
+    border-radius: 999px;
+}
+.control-slider-row input[type="range"]::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #0074d9;
 }
 
