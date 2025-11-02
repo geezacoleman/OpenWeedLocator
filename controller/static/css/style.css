@@ -940,95 +940,115 @@ html, body {
     }
 }
 
-/* WIDER PANEL, pulled in from bezel */
+//* panel stays wide and pulled in */
 .config-panel {
     position: fixed;
     top: 64px;
-    right: 8px;                 /* so scrollbar is visible */
-    width: 430px;               /* wider */
+    right: 8px;
+    width: 620px; /* good for 3 cols */
     height: calc(100% - 64px);
     background: #fff;
-    border: 1px solid var(--border);
+    border: 1px solid #d8d8d8;
     border-right: none;
     box-shadow: -4px 0 18px rgba(0,0,0,0.15);
     z-index: 900;
     display: flex;
     flex-direction: column;
-    transform: translateX(460px);   /* hidden */
+    transform: translateX(460px);
     transition: transform 0.2s ease-out;
 }
 .config-panel.open {
     transform: translateX(0);
 }
-.config-panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.5rem 0.75rem 0.5rem 1rem;
-    border-bottom: 1px solid var(--border);
-}
 .config-panel-body {
     flex: 1;
     overflow-y: auto;
-    padding: 0.75rem 1.25rem 0.75rem 1rem;  /* extra right space for scrollbar */
+    padding: 0.75rem 1.45rem 0.75rem 1rem;
     scrollbar-gutter: stable both-edges;
 }
 
-/* 2 columns, but each control is tall and readable */
+/* 3 columns */
 .control-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.6rem 0.75rem;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.55rem 0.55rem;
 }
 
-/* each slider block */
+/* each slider block = bigger */
 .control-group {
     background: #f6f7f9;
     border: 1px solid rgba(0,0,0,0.03);
-    border-radius: 10px;
-    padding: 0.45rem 0.55rem 0.6rem;
+    border-radius: 12px;
+    padding: 0.5rem 0.45rem 0.6rem;
     min-width: 0;
 }
 
-/* top row: label + current value */
+/* top row: label + value */
 .control-label-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 0.35rem;
     margin-bottom: 0.35rem;
-    gap: 0.5rem;
 }
 .control-label-row label {
-    font-size: 0.7rem;
+    font-size: 0.72rem;
     font-weight: 600;
     color: #222;
-    white-space: nowrap;
 }
 .control-value {
-    font-size: 0.7rem;
-    font-weight: 600;
+    font-size: 0.75rem;
+    font-weight: 700;
     color: #0066cc;
 }
 
-/* slider line: min | [=====] | max */
+/* slider row: min | slider | max */
 .control-slider-row {
     display: grid;
     grid-template-columns: auto 1fr auto;
-    gap: 0.35rem;
     align-items: center;
+    gap: 0.35rem;
 }
 .control-slider-row .minmax {
     font-size: 0.6rem;
-    color: #555;
-    width: 1.7rem;
+    color: #666;
     text-align: center;
+    width: 1.9rem;
 }
 
-/* bigger thumb for touch */
+/* BIG thumb + taller track */
 .control-slider-row input[type="range"] {
     width: 100%;
-    accent-color: #0074d9; /* ok for modern browsers */
+    height: 30px;              /* makes it easier to touch */
+    -webkit-appearance: none;
+    background: transparent;
 }
+.control-slider-row input[type="range"]::-webkit-slider-runnable-track {
+    height: 6px;
+    background: #d0d7e0;
+    border-radius: 999px;
+}
+.control-slider-row input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #0074d9;
+    margin-top: -7px;  /* center on track */
+}
+.control-slider-row input[type="range"]::-moz-range-track {
+    height: 6px;
+    background: #d0d7e0;
+    border-radius: 999px;
+}
+.control-slider-row input[type="range"]::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border: none;
+    border-radius: 50%;
+    background: #0074d9;
+}
+
 
 /* keep it working on 720px high screens */
 @media (max-height: 720px) {

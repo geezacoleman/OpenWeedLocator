@@ -267,61 +267,28 @@ async function loadConfigDefaults() {
     }
 }
 
-
-// Build configuration sliders
-function buildConfigSliders() {
-    const container = document.getElementById('greenonbrown-controls');
-    if (!container) return;
-
-    let html = '';
-
-    for (const [key, config] of Object.entries(configDefaults)) {
-        html += `
-            <div class="slider-group">
-                <div class="slider-label">
-                    <span class="slider-label-text">${config.label}</span>
-                    <span class="slider-value" id="slider-value-${key}">${config.value}</span>
-                </div>
-                <input 
-                    type="range" 
-                    class="slider-input" 
-                    id="slider-${key}"
-                    min="${config.min}" 
-                    max="${config.max}" 
-                    step="${config.step}" 
-                    value="${config.value}"
-                    data-key="${key}"
-                    onchange="sendConfigValue('${key}', this.value)"
-                    oninput="updateSliderValue('${key}', this.value)"
-                >
-            </div>
-        `;
-    }
-
-    container.innerHTML = html;
-}
-
 function renderGreenOnBrownControls(configObj) {
     const container = document.getElementById('greenonbrown-controls');
     if (!container) return;
 
     container.innerHTML = '';
 
-    // field -> [label, min, max]
-    const fields = {
-        brightness_max: ["Brightness Max", 0, 255],
-        brightness_min: ["Brightness Min", 0, 255],
-        exg_max: ["ExG Max", 0, 255],
-        exg_min: ["ExG Min", 0, 255],
-        hue_max: ["Hue Max", 0, 179],
-        hue_min: ["Hue Min", 0, 179],
-        min_detection_area: ["Min Detection Area", 0, 5000],
-        saturation_max: ["Saturation Max", 0, 255],
-        saturation_min: ["Saturation Min", 0, 255],
-    };
+    // 9 controls, fixed order for 3x3
+    const fields = [
+        ["brightness_max", "Brightness Max", 0, 255],
+        ["brightness_min", "Brightness Min", 0, 255],
+        ["exg_max",        "ExG Max",        0, 255],
+        ["exg_min",        "ExG Min",        0, 255],
+        ["hue_max",        "Hue Max",        0, 179],
+        ["hue_min",        "Hue Min",        0, 179],
+        ["min_detection_area", "Min Det. Area", 0, 5000],
+        ["saturation_max", "Saturation Max", 0, 255],
+        ["saturation_min", "Saturation Min", 0, 255],
+    ];
 
-    Object.entries(fields).forEach(([key, [label, min, max]]) => {
-        const val = configObj && key in configObj ? configObj[key] : Math.floor((min + max) / 2);
+    for (const [key, label, min, max] of fields) {
+        // value from device/defaults
+        const val = (configObj && key in configObj) ? configObj[key] : Math.floor((min + max) / 2);
 
         const group = document.createElement('div');
         group.className = 'control-group';
@@ -332,20 +299,22 @@ function renderGreenOnBrownControls(configObj) {
             </div>
             <div class="control-slider-row">
                 <span class="minmax">${min}</span>
-                <input type="range"
+                <input
+                    type="range"
                     id="${key}"
                     name="${key}"
                     min="${min}"
                     max="${max}"
                     value="${val}"
-                    data-key="${key}">
+                    data-key="${key}"
+                >
                 <span class="minmax">${max}</span>
             </div>
         `;
         container.appendChild(group);
-    });
+    }
 
-    // hook up change events
+    // hook events
     container.querySelectorAll('input[type="range"]').forEach((input) => {
         input.addEventListener('input', onConfigSliderInput);
         input.addEventListener('change', onConfigSliderChange);
