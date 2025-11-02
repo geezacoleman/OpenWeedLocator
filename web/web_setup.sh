@@ -318,7 +318,7 @@ collect_user_input() {
 
         # Get network configuration
         read -p "Enter static IP for this OWL (e.g., 192.168.1.11): " STATIC_IP
-        while [ -z "$STATIC_IP" ]; then
+        while [ -z "$STATIC_IP" ]; do
             echo -e "${RED}[ERROR] Static IP cannot be empty.${NC}"
             read -p "Enter static IP for this OWL (e.g., 192.168.1.11): " STATIC_IP
         done
@@ -327,7 +327,7 @@ collect_user_input() {
         GATEWAY_IP=${GATEWAY_IP:-192.168.1.1}
 
         read -p "Enter central controller IP (for MQTT broker): " CONTROLLER_IP
-        while [ -z "$CONTROLLER_IP" ]; then
+        while [ -z "$CONTROLLER_IP" ]; do
             echo -e "${RED}[ERROR] Controller IP cannot be empty.${NC}"
             read -p "Enter central controller IP (for MQTT broker): " CONTROLLER_IP
         done
