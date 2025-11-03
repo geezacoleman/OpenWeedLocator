@@ -333,8 +333,8 @@ html, body {
     background: linear-gradient(135deg, var(--success), var(--success-dark));
 }
 
-.btn-recording {
-    background: linear-gradient(135deg, var(--danger), var(--danger-dark));
+.owl-actions .btn-recording {
+  background: linear-gradient(135deg, var(--danger), var(--danger-dark));
 }
 
 .empty-state {
@@ -484,7 +484,7 @@ html, body {
     left: 0;
     right: 0;
     bottom: 0;
-    padding: 1.5rem 1rem;
+    padding: 1rem;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.2s;
@@ -507,12 +507,10 @@ html, body {
     border-bottom: 2px solid var(--light);
 }
 
-.param-pair {
-    display: flex;
-    flex-direction: column;
-    gap: 2rem;
-    flex: 1;
-    padding: 0 2rem;
+.param-pair{
+    gap: 1rem;                                    /* if it was 2rem, shrink it */
+    padding: 0 1rem;                              /* narrower side padding */
+    justify-content: space-evenly;
 }
 
 .param-single {
@@ -523,49 +521,55 @@ html, body {
 }
 
 .param-control {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
+    flex: 1;
 }
 
-.param-label {
-    font-size: 1rem;
-    font-weight: 700;
-    color: var(--text-light);
-    text-align: center;
-}
+/*.param-label {*/
+/*    font-size: 0.75rem;*/
+/*    font-weight: 500;*/
+/*    color: var(--text-light);*/
+/*    text-align: center;*/
+/*}*/
 
+/*.param-value {*/
+/*    font-size: 2.2rem;*/
+/*    font-weight: 700;*/
+/*    color: var(--primary);*/
+/*    text-align: center;*/
+/*    background: var(--light);*/
+/*    padding: 0.5rem 1.5rem;*/
+/*    border-radius: 8px;*/
+/*    min-width: 100px;*/
+/*}*/
+
+.param-label { font-size: 0.9rem; }
 .param-value {
-    font-size: 2.2rem;
-    font-weight: 700;
-    color: var(--primary);
-    text-align: center;
-    background: var(--light);
-    padding: 0.5rem 1.5rem;
-    border-radius: 8px;
-    min-width: 100px;
+  font-size: 1rem;
+  padding: 0.2rem 0.6rem;
+  min-width: auto;
+  background: transparent;
 }
 
 .slider-container {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.4rem;
     align-items: center;
 }
 
 .slider-buttons {
     display: flex;
-    gap: 0.5rem;
+    gap: 0.25rem;
 }
 
 .slider-btn {
-    width: 50px;
-    height: 50px;
+    width: 30px;
+    height: 30px;
     border: 2px solid var(--accent);
     background: white;
     color: var(--accent);
     border-radius: 8px;
-    font-size: 1.2rem;
+    font-size: 1rem;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.1s ease;
@@ -578,17 +582,17 @@ html, body {
 }
 
 .slider-btn.big {
-    width: 60px;
-    font-size: 1.5rem;
+    width: 38px;
+    font-size: 1rem;
 }
 
 /* HORIZONTAL SLIDER */
 .slider-horizontal {
     width: 100%;
     max-width: 600px;
-    height: 60px;
+    height: 30px;
     background: var(--light);
-    border-radius: 30px;
+    border-radius: 15px;
     position: relative;
     cursor: pointer;
     box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
@@ -600,22 +604,17 @@ html, body {
     top: 0;
     height: 100%;
     background: linear-gradient(to right, var(--accent), #5dade2);
-    border-radius: 30px;
+    border-radius: 15px;
     transition: width 0.2s ease;
 }
 
-.slider-thumb-horizontal {
-    position: absolute;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    width: 70px;
-    height: 70px;
-    background: white;
-    border: 4px solid var(--accent);
-    border-radius: 50%;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-    transition: left 0.2s ease;
-    pointer-events: none;
+.slider-thumb-horizontal{
+  display:flex;                 /* center the value text */
+  align-items:center;
+  justify-content:center;
+  font-size:0.85rem;
+  font-weight:700;
+  color: var(--accent);
 }
 
 /* ============================================

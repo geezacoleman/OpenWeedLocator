@@ -462,7 +462,10 @@ function updateSlider(param) {
     if (trackH && trackH.classList && trackH.classList.contains('slider-track-horizontal')) {
         // Horizontal slider
         trackH.style.width = pct + '%';
-        if (thumbH) thumbH.style.left = pct + '%';
+        if (thumbH) {
+    thumbH.style.left = pct + '%';
+    thumbH.textContent = p.value;
+  }
     } else if (trackH) {
         // Vertical slider (old design - fallback)
         trackH.style.height = pct + '%';
