@@ -478,11 +478,3 @@ case "$choice" in
   n|N ) echo -e "${GREEN}[INFO] Focusing skipped. Double click the desktop icon to focus the OWL later.${NC}";;
   * ) echo -e "${RED}[ERROR] Invalid input. Please enter y or n.${NC}";;
 esac
-
-# Step 14: Launch OWL
-read -p "Launch OWL? (y/n): " choice
-case "$choice" in
-  y|Y ) echo -e "${GREEN}[INFO] Launching OWL...${NC}"; ./owl.py --show-display;;
-  n|N ) echo -e "${GREEN}[INFO] Skipped. Run './owl.py --show-display' to launch OWL later.${NC}";;
-  * ) echo -e "${RED}[ERROR] Invalid input. Please enter y or n.${NC}";;
-esac

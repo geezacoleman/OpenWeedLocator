@@ -59,6 +59,33 @@ check_status() {
     eval "STATUS_$2='${TICK}'"
   fi
 }
+
+_validate_ip() {
+  local ip="$1"
+  # Basic format check
+  if ! [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    return 1
+  fi
+  # Octet range check 0..255
+  IFS='.' read -r a b c d <<<"$ip"
+  for o in "$a" "$b" "$c" "$d"; do
+    if (( o < 0 || o > 255 )); then
+      return 1
+    fi
+  done
+  return 0
+}
+
+_ip_base() {  # first three octets
+  IFS='.' read -r a b c _ <<<"$1"
+  echo "${a}.${b}.${c}"
+}
+
+_last_octet() {
+  IFS='.' read -r _ _ _ d <<<"$1"
+  echo "$d"
+}
+
 test_mqtt_broker() {
     echo -e "${GREEN}[INFO] Testing MQTT broker...${NC}"
     local mqtt_test_passed=false
@@ -317,20 +344,58 @@ collect_user_input() {
         done
 
         # Get network configuration
-        read -p "Enter static IP for this OWL (e.g., 192.168.1.11): " STATIC_IP
-        while [ -z "$STATIC_IP" ]; do
-            echo -e "${RED}[ERROR] Static IP cannot be empty.${NC}"
-            read -p "Enter static IP for this OWL (e.g., 192.168.1.11): " STATIC_IP
-        done
+        while :; do
+            # Static IP (no default)
+            read -r -p "Enter static IP for this OWL (e.g., 192.168.1.11): " STATIC_IP
+            while ! _validate_ip "$STATIC_IP"; do
+              echo -e "${RED}[ERROR] Invalid IP format. Please enter a valid IPv4 address.${NC}"
+              read -r -p "Enter static IP for this OWL (e.g., 192.168.1.11): " STATIC_IP
+            done
+            # Avoid .0/.255 for the host
+            lo="$(_last_octet "$STATIC_IP")"
+            if [[ "$lo" == "0" || "$lo" == "255" ]]; then
+              echo -e "${ORANGE}[WARN] Host octet .0 or .255 is usually reserved. Choose another IP.${NC}"
+              continue
+            fi
 
-        read -p "Enter gateway IP (default: 192.168.1.1): " GATEWAY_IP
-        GATEWAY_IP=${GATEWAY_IP:-192.168.1.1}
+            # Gateway (default 192.168.1.1)
+            read -r -p "Enter gateway IP (default: 192.168.1.1): " GATEWAY_IP
+            GATEWAY_IP=${GATEWAY_IP:-192.168.1.1}
+            while ! _validate_ip "$GATEWAY_IP"; do
+              echo -e "${RED}[ERROR] Invalid gateway IP.${NC}"
+              read -r -p "Enter gateway IP (default: 192.168.1.1): " GATEWAY_IP
+              GATEWAY_IP=${GATEWAY_IP:-192.168.1.1}
+            done
 
-        read -p "Enter central controller IP (for MQTT broker): " CONTROLLER_IP
-        while [ -z "$CONTROLLER_IP" ]; do
-            echo -e "${RED}[ERROR] Controller IP cannot be empty.${NC}"
-            read -p "Enter central controller IP (for MQTT broker): " CONTROLLER_IP
-        done
+            # Controller/Broker (default 192.168.1.2)
+            read -r -p "Enter central controller IP (MQTT broker; default: 192.168.1.2): " CONTROLLER_IP
+            CONTROLLER_IP=${CONTROLLER_IP:-192.168.1.2}
+            while ! _validate_ip "$CONTROLLER_IP"; do
+              echo -e "${RED}[ERROR] Invalid controller IP.${NC}"
+              read -r -p "Enter central controller IP (MQTT broker; default: 192.168.1.2): " CONTROLLER_IP
+              CONTROLLER_IP=${CONTROLLER_IP:-192.168.1.2}
+            done
+
+            # Base (/24) checks
+            STATIC_BASE="$(_ip_base "$STATIC_IP")"
+            GATE_BASE="$(_ip_base "$GATEWAY_IP")"
+            CTRL_BASE="$(_ip_base "$CONTROLLER_IP")"
+
+            if [[ "$STATIC_BASE" != "$CTRL_BASE" ]]; then
+              echo -e "${ORANGE}[WARN] OWL static IP base (${STATIC_BASE}.x) differs from Controller base (${CTRL_BASE}.x).${NC}"
+              echo -e "${ORANGE}[WARN] Please re-enter BOTH the OWL static IP and the Controller IP so they share the same subnet.${NC}"
+              continue
+            fi
+
+            if [[ "$STATIC_BASE" != "$GATE_BASE" ]]; then
+              echo -e "${ORANGE}[WARN] OWL static IP base (${STATIC_BASE}.x) differs from Gateway base (${GATE_BASE}.x).${NC}"
+              echo -e "${ORANGE}[WARN] Please re-enter the Gateway IP to match the OWL subnet.${NC}"
+              continue
+            fi
+
+            echo -e "${GREEN}[OK] Network OK: OWL ${STATIC_IP}, Gateway ${GATEWAY_IP}, Controller ${CONTROLLER_IP} (base ${STATIC_BASE}.x).${NC}"
+            break
+          done
 
         # Confirm networked settings
         echo -e "${GREEN}[INFO] Networked Configuration Summary:${NC}"
@@ -405,6 +470,8 @@ EOF
 collect_user_input
 
 echo -e "${GREEN}[INFO] If you are using a wifi connection to access the Pi over SSH or for internet, your network connection will be replaced with the new connection settings.${NC}"
+echo -e "${ORANGE}[WARNING] If so it is likely this will drop out when the network is reconnected under a different IP address${NC}"
+echo -e "${ORANGE}[WARNING] Reconnect under the details entered above. OWL Static IP: ${STATIC_IP} ${NC}"
 echo -e "${ORANGE}[WARNING] Make sure you have physical access to the Pi in case of issues${NC}"
 read -p "Do you want to continue? (y/n): " network_warning
 if [[ ! "$network_warning" =~ ^[Yy]$ ]]; then
