@@ -1,6 +1,5 @@
 ## OWL requirements file ##
 # OpenCV should be installed separately
-numpy<2.0.0
 imutils
 gpiozero
 pandas

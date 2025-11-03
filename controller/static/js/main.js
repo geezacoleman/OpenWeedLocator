@@ -25,8 +25,8 @@ const totalConfigPages = 5;
 
 document.addEventListener('DOMContentLoaded', async () => {
     setupConfigUI();
-    await loadConfigDefaults();    // <-- pull initial values/ranges from backend
-    updateAllSliders();            // reflect loaded defaults visually
+    await loadConfigDefaults();
+    updateAllSliders();
     updateDashboard();
     updateInterval = setInterval(updateDashboard, UPDATE_INTERVAL);
 });

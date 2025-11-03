@@ -237,17 +237,115 @@ check_status "Creating virtual environment 'owl'" "VENV"
 sleep 1s
 
 echo -e "${GREEN}[INFO] Detecting global NumPy version for compatibility...${NC}"
-GLOBAL_NUMPY_VERSION=""
-GLOBAL_NUMPY_VERSION=$(apt show python3-numpy 2>/dev/null | grep Version: | awk '{print $2}' | cut -d':' -f2 | cut -d'-' -f1)
+echo -e "${GREEN}[INFO] Checking NumPy consistency (system vs venv) ...${NC}"
 
-if [ -n "$GLOBAL_NUMPY_VERSION" ]; then
-    echo -e "${TICK} Detected global NumPy version: ${GLOBAL_NUMPY_VERSION}${NC}"
-    STATUS_GLOBAL_NUMPY="${TICK}"
+# is system NumPy importable?
+if ! /usr/bin/python3 - <<'PY' >/dev/null 2>&1
+try:
+    import numpy  # noqa
+except Exception:
+    raise SystemExit(1)
+PY
+then
+  echo -e "${ORANGE}[WARN] System NumPy missing. We recommend: sudo apt-get install -y python3-numpy. This may also be resolved indirectly when installing OpenCV.${NC}"
+  STATUS_GLOBAL_NUMPY="${CROSS}"
+  ERROR_GLOBAL_NUMPY="System NumPy missing (python3-numpy not importable)."
 else
-    echo -e "${ORANGE}[WARNING] Could not detect global python3-numpy version. Assuming 1.24.2 for compatibility.${NC}"
-    GLOBAL_NUMPY_VERSION="1.24.2" # Fallback to a known compatible version if detection fails
-    STATUS_GLOBAL_NUMPY="${ORANGE}[WARN]${NC}"
-    ERROR_GLOBAL_NUMPY="Could not detect global python3-numpy version."
+  read -r GLOBAL_NUMPY_VERSION GLOBAL_NUMPY_PATH <<'EOF'
+$(/usr/bin/python3 - <<'PY'
+try:
+    import numpy as np
+    print(np.__version__, np.__file__)
+except Exception:
+    print("", "")
+PY
+)
+EOF
+
+  if [ -z "${GLOBAL_NUMPY_VERSION}" ]; then
+    echo -e "${RED}[ERROR] Could not import system NumPy after check.${NC}"
+    STATUS_GLOBAL_NUMPY="${CROSS}"
+    ERROR_GLOBAL_NUMPY="System NumPy import failed (version empty)."
+  else
+    echo -e "${GREEN}[OK] System NumPy: ${GLOBAL_NUMPY_VERSION} at ${GLOBAL_NUMPY_PATH}.${NC}"
+    STATUS_GLOBAL_NUMPY="${TICK}"
+  fi
+fi
+
+# 1) Capture venv NumPy (may resolve to system via --system-site-packages)
+read -r VENV_NUMPY_VERSION VENV_NUMPY_PATH <<'EOF'
+$("$VIRTUAL_ENV/bin/python" - <<'PY'
+try:
+    import numpy as np
+    print(np.__version__, np.__file__)
+except Exception:
+    print("", "")
+PY
+)
+EOF
+
+if [ -z "${VENV_NUMPY_VERSION}" ]; then
+  if [ -n "${GLOBAL_NUMPY_VERSION:-}" ]; then
+    echo -e "${ORANGE}[WARN] NumPy not importable inside venv. Installing venv-local NumPy to match system: ${GLOBAL_NUMPY_VERSION}${NC}"
+    if ! pip install --no-input "numpy==${GLOBAL_NUMPY_VERSION}" >/dev/null 2>&1; then
+      echo -e "${RED}[ERROR] Failed to install numpy==${GLOBAL_NUMPY_VERSION} into venv.${NC}"
+      ERROR_NUMPY_COMPAT="Failed to install venv numpy==${GLOBAL_NUMPY_VERSION}"
+    fi
+    read -r VENV_NUMPY_VERSION VENV_NUMPY_PATH <<'EOF'
+$("$VIRTUAL_ENV/bin/python" - <<'PY'
+try:
+    import numpy as np
+    print(np.__version__, np.__file__)
+except Exception:
+    print("", "")
+PY
+)
+EOF
+  else
+    echo -e "${ORANGE}[WARN] NumPy not importable in venv and system version unknown. Skipping venv install attempt.${NC}"
+    ERROR_NUMPY_COMPAT="Venv numpy missing and system version unknown."
+  fi
+fi
+
+if [ -z "${VENV_NUMPY_VERSION}" ]; then
+  echo -e "${RED}[ERROR] NumPy still not importable inside venv after attempt.${NC}"
+  [ -z "${ERROR_NUMPY_COMPAT}" ] && ERROR_NUMPY_COMPAT="Venv numpy import failed."
+else
+  echo -e "${GREEN}[INFO] Venv NumPy: ${VENV_NUMPY_VERSION} at ${VENV_NUMPY_PATH}${NC}"
+
+  # Align versions if mismatch and we know the system version
+  if [ -n "${GLOBAL_NUMPY_VERSION:-}" ] && [ "${VENV_NUMPY_VERSION}" != "${GLOBAL_NUMPY_VERSION}" ]; then
+    echo -e "${ORANGE}[WARN] NumPy mismatch detected (venv=${VENV_NUMPY_VERSION}, system=${GLOBAL_NUMPY_VERSION}). Aligning venv to system...${NC}"
+    if ! pip install --no-input "numpy==${GLOBAL_NUMPY_VERSION}" >/dev/null 2>&1; then
+      echo -e "${RED}[ERROR] Failed to align venv numpy to ${GLOBAL_NUMPY_VERSION}.${NC}"
+      ERROR_NUMPY_COMPAT="Failed to align venv numpy to system version ${GLOBAL_NUMPY_VERSION}."
+    else
+      read -r VENV_NUMPY_VERSION VENV_NUMPY_PATH <<'EOF'
+$("$VIRTUAL_ENV/bin/python" - <<'PY'
+try:
+    import numpy as np
+    print(np.__version__, np.__file__)
+except Exception:
+    print("", "")
+PY
+)
+EOF
+      if [ "${VENV_NUMPY_VERSION}" != "${GLOBAL_NUMPY_VERSION}" ]; then
+        echo -e "${RED}[ERROR] After install, venv NumPy still != system (${VENV_NUMPY_VERSION} vs ${GLOBAL_NUMPY_VERSION}).${NC}"
+        ERROR_NUMPY_COMPAT="Post-align mismatch persists (${VENV_NUMPY_VERSION} vs ${GLOBAL_NUMPY_VERSION})."
+      else
+        echo -e "${GREEN}[OK] Venv NumPy aligned to system: ${VENV_NUMPY_VERSION}${NC}"
+        STATUS_NUMPY_COMPAT="${TICK}"
+      fi
+    fi
+  else
+    if [ -n "${GLOBAL_NUMPY_VERSION:-}" ]; then
+      echo -e "${GREEN}[OK] NumPy versions match: ${VENV_NUMPY_VERSION}${NC}"
+      STATUS_NUMPY_COMPAT="${TICK}"
+    else
+      echo -e "${ORANGE}[WARN] Skipped compatibility check (system NumPy unknown).${NC}"
+    fi
+  fi
 fi
 
 echo -e "${GREEN}[INFO] Installing optimized BLAS/LAPACK libraries for NumPy/OpenCV...${NC}"
@@ -255,30 +353,17 @@ sudo apt-get install -y libatlas-base-dev libopenblas-dev liblapack-dev
 check_status "Installing optimized linear algebra libraries" "OPT_LIBS"
 
 # Step 7: Install OpenCV in the virtual environment
-echo -e "${GREEN}[INFO] Installing opencv-contrib-python==4.10.0.84 in the 'owl' virtual environment...${NC}"
+echo -e "${GREEN}[INFO] Installing opencv-contrib-python in the 'owl' virtual environment...${NC}"
 source $HOME/.virtualenvs/owl/bin/activate
 sleep 1s
-pip install opencv-contrib-python==4.10.0.84
-check_status "Installing opencv-contrib-python==4.10.0.84" "OPENCV"
+pip install opencv-contrib-python
+check_status "Installing opencv-contrib-python" "OPENCV"
 
-# Dynamically downgrade NumPy in the virtual environment to match the global version
-echo -e "${GREEN}[INFO] Downgrading NumPy in 'owl' venv to match global version (${GLOBAL_NUMPY_VERSION})...${NC}"
-pip install numpy=="${GLOBAL_NUMPY_VERSION}"
-if [ $? -ne 0 ]; then
-    echo -e "${RED}[FAIL] Failed to downgrade NumPy to ${GLOBAL_NUMPY_VERSION}. Trying common fallback version 1.24.2.${NC}"
-    pip install numpy==1.24.2
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}[CRITICAL ERROR] Failed to install any compatible NumPy version. This may cause issues.${NC}"
-        STATUS_NUMPY_COMPAT="${CROSS}"
-        ERROR_NUMPY_COMPAT="Could not install compatible NumPy version."
-    else
-        echo -e "${TICK} Successfully installed fallback NumPy version 1.24.2.${NC}"
-        STATUS_NUMPY_COMPAT="${TICK}"
-    fi
-else
-    echo -e "${TICK} Successfully downgraded NumPy to ${GLOBAL_NUMPY_VERSION}.${NC}"
-    STATUS_NUMPY_COMPAT="${TICK}"
-fi
+# 4) Final runtime check with OpenCV present
+"$VIRTUAL_ENV/bin/python" - <<'PY' || { echo "[ERROR] Post-check import failed."; exit 1; }
+import numpy as np, cv2
+print(f"[OK] Final check: NumPy {np.__version__}, OpenCV {cv2.__version__}")
+PY
 
 # Step 8: Install OWL dependencies
 echo -e "${GREEN}[INFO] Installing the OWL Python dependencies...${NC}"
