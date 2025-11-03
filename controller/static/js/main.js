@@ -7,17 +7,18 @@ let mqttConnected = false;
 let updateInterval = null;
 const UPDATE_INTERVAL = 2000;
 
-// Configuration parameters
+// Configuration parameters - initialized empty, loaded from API
+// Single source of truth: /api/greenonbrown/defaults
 const configParams = {
-    exg_min: { value: 25, min: 0, max: 255 },
-    exg_max: { value: 200, min: 0, max: 255 },
-    hue_min: { value: 39, min: 0, max: 179 },
-    hue_max: { value: 83, min: 0, max: 179 },
-    saturation_min: { value: 50, min: 0, max: 255 },
-    saturation_max: { value: 220, min: 0, max: 255 },
-    brightness_min: { value: 60, min: 0, max: 255 },
-    brightness_max: { value: 190, min: 0, max: 255 },
-    min_detection_area: { value: 10, min: 1, max: 1000 }
+    exg_min: { value: 0, min: 0, max: 255 },
+    exg_max: { value: 0, min: 0, max: 255 },
+    hue_min: { value: 0, min: 0, max: 179 },
+    hue_max: { value: 0, min: 0, max: 179 },
+    saturation_min: { value: 0, min: 0, max: 255 },
+    saturation_max: { value: 0, min: 0, max: 255 },
+    brightness_min: { value: 0, min: 0, max: 255 },
+    brightness_max: { value: 0, min: 0, max: 255 },
+    min_detection_area: { value: 0, min: 1, max: 1000 }
 };
 
 let currentConfigPage = 1;
@@ -26,6 +27,7 @@ const totalConfigPages = 5;
 // Global detection state
 let globalDetectionEnabled = false;
 let globalRecordingEnabled = false;
+let currentVideoDeviceId = null; // Track which device's video is showing
 
 // ============================================
 // INITIALIZATION
@@ -65,7 +67,7 @@ function setupEventListeners() {
     });
 
     // Slider click
-    document.querySelectorAll('.slider-vertical').forEach(slider => {
+    document.querySelectorAll('.slider-vertical, .slider-horizontal').forEach(slider => {
         slider.addEventListener('click', handleSliderClick);
     });
 
@@ -90,27 +92,48 @@ function setupEventListeners() {
 
 async function loadConfigDefaults() {
     try {
+        console.log('Loading config defaults from API...');
         const res = await fetch('/api/greenonbrown/defaults');
         if (!res.ok) throw new Error('HTTP ' + res.status);
 
         const data = await res.json();
+        console.log('API defaults received:', data);
 
+        let loadedCount = 0;
         for (const [key, cfg] of Object.entries(data)) {
-            if (!(key in configParams)) continue;
+            if (!(key in configParams)) {
+                console.warn(`Unknown parameter from API: ${key}`);
+                continue;
+            }
 
             if (cfg && typeof cfg === 'object') {
                 if (typeof cfg.value !== 'undefined') configParams[key].value = cfg.value;
                 if (typeof cfg.min !== 'undefined') configParams[key].min = cfg.min;
                 if (typeof cfg.max !== 'undefined') configParams[key].max = cfg.max;
+                loadedCount++;
             } else {
+                // Handle flat number format
                 configParams[key].value = cfg;
+                loadedCount++;
             }
         }
 
-        console.log('Config defaults loaded:', configParams);
+        console.log(`✓ Loaded ${loadedCount} config parameters from API`);
+        showToast(`Loaded ${loadedCount} config defaults`, 'success');
     } catch (err) {
-        console.error('Error loading config defaults:', err);
-        showToast('Failed to load config defaults', 'error');
+        console.error('❌ Failed to load config defaults:', err);
+        showToast('Warning: Using fallback config values', 'warning');
+
+        // Set reasonable fallback values if API completely fails
+        configParams.exg_min.value = 25;
+        configParams.exg_max.value = 200;
+        configParams.hue_min.value = 39;
+        configParams.hue_max.value = 83;
+        configParams.saturation_min.value = 50;
+        configParams.saturation_max.value = 220;
+        configParams.brightness_min.value = 60;
+        configParams.brightness_max.value = 190;
+        configParams.min_detection_area.value = 10;
     }
 }
 
@@ -125,6 +148,9 @@ async function updateDashboard() {
 
         const data = await res.json();
         mqttConnected = !!data.mqtt_connected;
+
+        // Only show OWLs that are actually in the response (backend already filters by TTL)
+        // This prevents ghost OWLs from reappearing
         owlsData = data.owls || {};
 
         updateMQTTStatus();
@@ -133,6 +159,7 @@ async function updateDashboard() {
     } catch (err) {
         console.error('Dashboard update error:', err);
         mqttConnected = false;
+        owlsData = {}; // Clear all OWLs on error
         updateMQTTStatus();
     }
 }
@@ -381,13 +408,27 @@ function handleSliderClick(e) {
     if (!p) return;
 
     const rect = slider.getBoundingClientRect();
-    const clickY = e.clientY - rect.top;
-    const pct = 100 - (clickY / rect.height) * 100;
-    const val = Math.round((pct / 100) * (p.max - p.min) + p.min);
 
-    configParams[param].value = Math.max(p.min, Math.min(p.max, val));
-    updateSlider(param);
-    sendConfigUpdate(param, configParams[param].value);
+    // Check if horizontal or vertical slider
+    if (slider.classList.contains('slider-horizontal')) {
+        // Horizontal slider
+        const clickX = e.clientX - rect.left;
+        const pct = (clickX / rect.width) * 100;
+        const val = Math.round((pct / 100) * (p.max - p.min) + p.min);
+
+        configParams[param].value = Math.max(p.min, Math.min(p.max, val));
+        updateSlider(param);
+        sendConfigUpdate(param, configParams[param].value);
+    } else {
+        // Vertical slider (fallback for old code)
+        const clickY = e.clientY - rect.top;
+        const pct = 100 - (clickY / rect.height) * 100;
+        const val = Math.round((pct / 100) * (p.max - p.min) + p.min);
+
+        configParams[param].value = Math.max(p.min, Math.min(p.max, val));
+        updateSlider(param);
+        sendConfigUpdate(param, configParams[param].value);
+    }
 }
 
 function adjustParameter(param, delta) {
@@ -409,11 +450,19 @@ function updateSlider(param) {
     const valueEl = document.getElementById(`${param}-value`);
     if (valueEl) valueEl.textContent = p.value;
 
-    const track = document.getElementById(`${param}-track`);
-    if (track) track.style.height = pct + '%';
+    // Try horizontal slider first (new design)
+    const trackH = document.getElementById(`${param}-track`);
+    const thumbH = document.getElementById(`${param}-thumb`);
 
-    const thumb = document.getElementById(`${param}-thumb`);
-    if (thumb) thumb.style.bottom = `calc(${pct}% - 30px)`;
+    if (trackH && trackH.classList && trackH.classList.contains('slider-track-horizontal')) {
+        // Horizontal slider
+        trackH.style.width = pct + '%';
+        if (thumbH) thumbH.style.left = pct + '%';
+    } else if (trackH) {
+        // Vertical slider (old design - fallback)
+        trackH.style.height = pct + '%';
+        if (thumbH) thumbH.style.bottom = `calc(${pct}% - 30px)`;
+    }
 }
 
 function updateAllSliders() {
@@ -456,6 +505,7 @@ function openVideoFeed(deviceId) {
 
     if (!modal || !img || !title) return;
 
+    currentVideoDeviceId = deviceId; // Store for download
     title.textContent = `${deviceId} Video Feed`;
     img.src = `/api/video_feed/${deviceId}`;
     modal.style.display = 'flex';
@@ -469,6 +519,56 @@ function closeVideoModal() {
 
     modal.style.display = 'none';
     img.src = ''; // Stop video stream
+    currentVideoDeviceId = null;
+}
+
+function downloadVideoFrame() {
+    if (!currentVideoDeviceId) {
+        showToast('No video feed active', 'error');
+        return;
+    }
+
+    const img = document.getElementById('video-feed-img');
+    if (!img || !img.src) {
+        showToast('No image to download', 'error');
+        return;
+    }
+
+    try {
+        // Create a canvas to capture the current frame
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || img.width;
+        canvas.height = img.naturalHeight || img.height;
+
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+
+        // Convert to blob and download
+        canvas.toBlob((blob) => {
+            if (!blob) {
+                showToast('Failed to capture image', 'error');
+                return;
+            }
+
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+            const filename = `${currentVideoDeviceId}_${timestamp}.jpg`;
+
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            showToast(`Image saved: ${filename}`, 'success');
+        }, 'image/jpeg', 0.95);
+
+    } catch (err) {
+        console.error('Error downloading frame:', err);
+        showToast('Failed to download image', 'error');
+    }
 }
 
 // ============================================
