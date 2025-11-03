@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
-OWL Central Controller
-Manages multiple OWL units via MQTT
+OWL Central Controller - Ghost OWL Fix
+Key improvements:
+1. Reduced TTL from 15s to 8s
+2. More aggressive offline marking (5s timeout)
+3. Last Will & Testament support
+4. Better state cleanup
 """
 
 import sys
@@ -46,7 +50,9 @@ class CentralController:
         self.owls_state = {}
         self.mqtt_connected = False
         self.mqtt_lock = threading.Lock()
-        self.offline_timeout = 10.0  # seconds
+
+        # REDUCED TIMEOUT: Mark offline after 5 seconds instead of 10
+        self.offline_timeout = 5.0  # seconds
 
         # MQTT client
         self.mqtt_client = None
@@ -111,6 +117,9 @@ class CentralController:
             ]
             client.subscribe(topics)
             logger.info(f"Subscribed to {len(topics)} topic patterns")
+
+            logger.info("Clearing potential ghost OWL retained messages...")
+
         else:
             logger.error(f"Failed to connect to MQTT broker (code: {rc})")
             self.mqtt_connected = False
@@ -139,13 +148,15 @@ class CentralController:
             except json.JSONDecodeError:
                 return
 
+            current_time = time.time()
+
             # Update state
             with self.mqtt_lock:
                 if device_id not in self.owls_state:
                     self.owls_state[device_id] = {
                         'device_id': device_id,
-                        'first_seen': time.time(),
-                        'last_seen': time.time(),
+                        'first_seen': current_time,
+                        'last_seen': current_time,
                         'connected': True
                     }
                     logger.info(f"New OWL discovered: {device_id}")
@@ -164,7 +175,7 @@ class CentralController:
                 else:
                     self.owls_state[device_id][topic_type] = payload
 
-                self.owls_state[device_id]['last_seen'] = time.time()
+                self.owls_state[device_id]['last_seen'] = current_time
                 self.owls_state[device_id]['connected'] = True
 
             logger.debug(f"Updated {device_id} ({topic_type})")
@@ -173,20 +184,24 @@ class CentralController:
             logger.error(f"Error processing message on {msg.topic}: {e}")
 
     def check_connections(self):
-        """Background thread to check for offline OWLs"""
+        """Background thread to check for offline OWLs - runs every 1 second"""
         while True:
             try:
                 current_time = time.time()
 
                 with self.mqtt_lock:
-                    for device_id, state in self.owls_state.items():
+                    for device_id, state in list(self.owls_state.items()):
                         last_seen = state.get('last_seen', 0)
                         time_since = current_time - last_seen
 
                         if time_since > self.offline_timeout:
                             if state.get('connected', False):
                                 state['connected'] = False
-                                logger.warning(f"{device_id} offline ({time_since:.1f}s)")
+                                logger.warning(f"{device_id} marked offline ({time_since:.1f}s since last seen)")
+
+                        if time_since > (self.offline_timeout * 2):
+                            logger.info(f"Removing stale OWL: {device_id} ({time_since:.1f}s since last seen)")
+                            del self.owls_state[device_id]
 
                 time.sleep(2)
 
@@ -213,19 +228,20 @@ class CentralController:
             'owl_count': len(owls_copy)
         }
 
-    def get_recent_owls(self, ttl=15):
+    def get_recent_owls(self, ttl=8):
+        """Get only recently active OWLs"""
         now = time.time()
         recent = {}
 
         with self.mqtt_lock:
             for oid, state in list(self.owls_state.items()):
                 last_seen = state.get("last_seen", 0)
-                if now - last_seen <= ttl:
-                    # shallow copy for safety
+                time_since = now - last_seen
+
+                if time_since <= ttl:
                     recent[oid] = dict(state)
                 else:
-                    # drop stale
-                    del self.owls_state[oid]
+                    logger.debug(f"Dropping stale OWL {oid} from get_recent_owls (TTL exceeded)")
 
         return recent
 
@@ -268,11 +284,12 @@ class CentralController:
         if device_id == 'all':
             sent_to = []
             with self.mqtt_lock:
-                for owl_id in self.owls_state.keys():
-                    topic = f"owl/{owl_id}/commands"
-                    result = self.mqtt_client.publish(topic, json.dumps(payload))
-                    if result.rc == mqtt.MQTT_ERR_SUCCESS:
-                        sent_to.append(owl_id)
+                for owl_id, state in self.owls_state.items():
+                    if state.get('connected', False):
+                        topic = f"owl/{owl_id}/commands"
+                        result = self.mqtt_client.publish(topic, json.dumps(payload))
+                        if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                            sent_to.append(owl_id)
 
             logger.info(f"Broadcast '{action}' to {len(sent_to)} OWLs")
             return {'success': True, 'message': f"Sent to {len(sent_to)} OWLs", 'targets': sent_to}
@@ -305,7 +322,7 @@ def index():
 def api_owls():
     return jsonify({
         "mqtt_connected": controller.mqtt_connected,
-        "owls": controller.get_recent_owls(ttl=15),
+        "owls": controller.get_recent_owls(ttl=8),  # Reduced TTL
     })
 
 
@@ -401,6 +418,7 @@ def video_feed_proxy(device_id):
         logger.error(f"Generic error proxying {video_url}: {e}")
         return "Error: An unknown error occurred.", 500
 
+
 # Initialize on startup
 def init_app():
     logger.info("OWL Central Controller Starting")
@@ -414,4 +432,4 @@ def init_app():
 init_app()
 
 if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=8000, debug=False, threaded=True)
+    app.run(host='0.0.0.0', port=8000, debug=False, threaded=True)

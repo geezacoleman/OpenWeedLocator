@@ -149,8 +149,6 @@ async function updateDashboard() {
         const data = await res.json();
         mqttConnected = !!data.mqtt_connected;
 
-        // Only show OWLs that are actually in the response (backend already filters by TTL)
-        // This prevents ghost OWLs from reappearing
         owlsData = data.owls || {};
 
         updateMQTTStatus();
@@ -183,7 +181,11 @@ function updateOWLGrid() {
     const grid = document.getElementById('owls-grid');
     if (!grid) return;
 
-    const ids = Object.keys(owlsData);
+    // Filter to only show OWLs that have been seen recently (connected=true)
+    const ids = Object.keys(owlsData).filter(id => {
+        const owl = owlsData[id];
+        return owl && owl.connected === true;
+    });
 
     if (ids.length === 0) {
         grid.innerHTML = `
@@ -262,8 +264,11 @@ function updateTargetSelector() {
     const currentValue = sel.value;
     let html = '<option value="all">All OWLs</option>';
 
+    // Only show connected OWLs in the selector
     for (const id of Object.keys(owlsData)) {
-        html += `<option value="${id}">${id}</option>`;
+        if (owlsData[id] && owlsData[id].connected === true) {
+            html += `<option value="${id}">${id}</option>`;
+        }
     }
 
     sel.innerHTML = html;

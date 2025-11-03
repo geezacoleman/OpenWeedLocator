@@ -171,7 +171,7 @@ html, body {
 }
 
 .btn-recording.active {
-    background: linear-gradient(135deg, var(--danger) 0%, var(--danger-dark) 100%);
+    background: linear-gradient(135deg, var(--danger) 0%, var(--danger-dark) 100%) !important;
 }
 
 /* ============================================
