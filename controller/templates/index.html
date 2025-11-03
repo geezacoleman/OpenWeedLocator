@@ -1,67 +1,64 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>OWL Central Controller</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
 </head>
 <body>
-
 <!-- Header -->
-<div class="header">
+<header class="header">
     <div class="header-content">
         <div class="logo-section">
-            <img src="{{ url_for('static', filename='images/owl-logo-wht.png') }}" alt="OWL Logo" class="logo">
+            <img class="logo" src="{{ url_for('static', filename='images/owl-logo-wht.png') }}" alt="OWL" />
             <h1>OWL Controller</h1>
         </div>
         <div class="status-indicator">
             <div class="owl-status">
                 <span class="status-dot" id="mqtt-status-dot"></span>
-                <span id="mqtt-status-text">Connecting...</span>
+                <span id="mqtt-status-text">Connecting…</span>
             </div>
-            <!-- Large config button on right -->
-            <button id="open-config-btn" class="config-trigger-btn" type="button">
-                CONFIG
-            </button>
+            <button id="open-config-btn" class="config-trigger-btn" type="button">CONFIG</button>
         </div>
     </div>
-</div>
+</header>
 
-<!-- Main Container -->
-<div class="container" id="main-container">
+<!-- Main content -->
+<main class="container">
     <div class="dashboard-grid" id="owls-grid">
-        <p style="text-align: center; color: var(--text); padding: 2rem;">
-            Scanning for OWLs...
-        </p>
+        <div class="empty-state" style="grid-column:1/-1;">
+            <div class="empty-state-text">Scanning for OWLs…</div>
+            <div class="empty-state-subtext">Waiting for MQTT updates</div>
+        </div>
     </div>
-</div>
+</main>
 
-<!-- Slide-in Config Panel with Pagination -->
-<div id="config-panel" class="config-panel">
+<!-- Paged, NO‑SCROLL Config Drawer -->
+<aside id="config-panel" class="config-panel" aria-hidden="true">
     <div class="config-panel-header">
-        <h2 id="config-page-title">Green-on-Brown</h2>
-        <button id="close-config-btn" class="close-config-btn" type="button">&times;</button>
+        <h2 id="config-page-title">Config: ExG</h2>
+        <button id="close-config-btn" class="close-config-btn" type="button" aria-label="Close">×</button>
     </div>
 
     <div class="config-panel-body">
-        <!-- Target Selector (always visible) -->
+        <!-- Target selector -->
         <div class="target-row">
-            <label for="target-owl-select">Target:</label>
+            <label for="target-owl-select">Target</label>
             <select id="target-owl-select">
                 <option value="all">All OWLs</option>
             </select>
         </div>
 
-        <!-- Pagination Container -->
+        <!-- Pages -->
         <div class="config-pages">
-            <!-- Page 1: ExG -->
-            <div class="config-page active" id="page-1">
-                <div class="page-title">ExG (Excess Green)</div>
+            <!-- Page 1: ExG min/max -->
+            <section class="config-page active" id="page-1" data-title="ExG">
+                <div class="page-title">ExG</div>
                 <div class="param-pair">
                     <div class="param-control">
                         <div class="param-label">Minimum</div>
-                        <div class="param-value" id="exg-min-value">25</div>
+                        <div class="param-value" id="exg_min-value">—</div>
                         <div class="slider-container">
                             <div class="slider-buttons">
                                 <button class="slider-btn big" data-param="exg_min" data-delta="10">▲</button>
@@ -69,15 +66,15 @@
                                 <button class="slider-btn" data-param="exg_min" data-delta="-1">−</button>
                                 <button class="slider-btn big" data-param="exg_min" data-delta="-10">▼</button>
                             </div>
-                            <div class="slider-vertical" data-param="exg_min" data-min="0" data-max="255">
-                                <div class="slider-track" id="exg-min-track"></div>
-                                <div class="slider-thumb" id="exg-min-thumb"></div>
+                            <div class="slider-vertical" data-param="exg_min">
+                                <div class="slider-track" id="exg_min-track"></div>
+                                <div class="slider-thumb" id="exg_min-thumb"></div>
                             </div>
                         </div>
                     </div>
                     <div class="param-control">
                         <div class="param-label">Maximum</div>
-                        <div class="param-value" id="exg-max-value">200</div>
+                        <div class="param-value" id="exg_max-value">—</div>
                         <div class="slider-container">
                             <div class="slider-buttons">
                                 <button class="slider-btn big" data-param="exg_max" data-delta="10">▲</button>
@@ -85,22 +82,22 @@
                                 <button class="slider-btn" data-param="exg_max" data-delta="-1">−</button>
                                 <button class="slider-btn big" data-param="exg_max" data-delta="-10">▼</button>
                             </div>
-                            <div class="slider-vertical" data-param="exg_max" data-min="0" data-max="255">
-                                <div class="slider-track" id="exg-max-track"></div>
-                                <div class="slider-thumb" id="exg-max-thumb"></div>
+                            <div class="slider-vertical" data-param="exg_max">
+                                <div class="slider-track" id="exg_max-track"></div>
+                                <div class="slider-thumb" id="exg_max-thumb"></div>
                             </div>
                         </div>
                     </div>
                 </div>
-            </div>
+            </section>
 
-            <!-- Page 2: Hue -->
-            <div class="config-page" id="page-2">
+            <!-- Page 2: Hue min/max -->
+            <section class="config-page" id="page-2" data-title="Hue">
                 <div class="page-title">Hue</div>
                 <div class="param-pair">
                     <div class="param-control">
                         <div class="param-label">Minimum</div>
-                        <div class="param-value" id="hue-min-value">39</div>
+                        <div class="param-value" id="hue_min-value">—</div>
                         <div class="slider-container">
                             <div class="slider-buttons">
                                 <button class="slider-btn big" data-param="hue_min" data-delta="10">▲</button>
@@ -108,15 +105,15 @@
                                 <button class="slider-btn" data-param="hue_min" data-delta="-1">−</button>
                                 <button class="slider-btn big" data-param="hue_min" data-delta="-10">▼</button>
                             </div>
-                            <div class="slider-vertical" data-param="hue_min" data-min="0" data-max="179">
-                                <div class="slider-track" id="hue-min-track"></div>
-                                <div class="slider-thumb" id="hue-min-thumb"></div>
+                            <div class="slider-vertical" data-param="hue_min">
+                                <div class="slider-track" id="hue_min-track"></div>
+                                <div class="slider-thumb" id="hue_min-thumb"></div>
                             </div>
                         </div>
                     </div>
                     <div class="param-control">
                         <div class="param-label">Maximum</div>
-                        <div class="param-value" id="hue-max-value">83</div>
+                        <div class="param-value" id="hue_max-value">—</div>
                         <div class="slider-container">
                             <div class="slider-buttons">
                                 <button class="slider-btn big" data-param="hue_max" data-delta="10">▲</button>
@@ -124,22 +121,22 @@
                                 <button class="slider-btn" data-param="hue_max" data-delta="-1">−</button>
                                 <button class="slider-btn big" data-param="hue_max" data-delta="-10">▼</button>
                             </div>
-                            <div class="slider-vertical" data-param="hue_max" data-min="0" data-max="179">
-                                <div class="slider-track" id="hue-max-track"></div>
-                                <div class="slider-thumb" id="hue-max-thumb"></div>
+                            <div class="slider-vertical" data-param="hue_max">
+                                <div class="slider-track" id="hue_max-track"></div>
+                                <div class="slider-thumb" id="hue_max-thumb"></div>
                             </div>
                         </div>
                     </div>
                 </div>
-            </div>
+            </section>
 
-            <!-- Page 3: Saturation -->
-            <div class="config-page" id="page-3">
+            <!-- Page 3: Saturation min/max -->
+            <section class="config-page" id="page-3" data-title="Saturation">
                 <div class="page-title">Saturation</div>
                 <div class="param-pair">
                     <div class="param-control">
                         <div class="param-label">Minimum</div>
-                        <div class="param-value" id="saturation-min-value">50</div>
+                        <div class="param-value" id="saturation_min-value">—</div>
                         <div class="slider-container">
                             <div class="slider-buttons">
                                 <button class="slider-btn big" data-param="saturation_min" data-delta="10">▲</button>
@@ -147,15 +144,15 @@
                                 <button class="slider-btn" data-param="saturation_min" data-delta="-1">−</button>
                                 <button class="slider-btn big" data-param="saturation_min" data-delta="-10">▼</button>
                             </div>
-                            <div class="slider-vertical" data-param="saturation_min" data-min="0" data-max="255">
-                                <div class="slider-track" id="saturation-min-track"></div>
-                                <div class="slider-thumb" id="saturation-min-thumb"></div>
+                            <div class="slider-vertical" data-param="saturation_min">
+                                <div class="slider-track" id="saturation_min-track"></div>
+                                <div class="slider-thumb" id="saturation_min-thumb"></div>
                             </div>
                         </div>
                     </div>
                     <div class="param-control">
                         <div class="param-label">Maximum</div>
-                        <div class="param-value" id="saturation-max-value">220</div>
+                        <div class="param-value" id="saturation_max-value">—</div>
                         <div class="slider-container">
                             <div class="slider-buttons">
                                 <button class="slider-btn big" data-param="saturation_max" data-delta="10">▲</button>
@@ -163,22 +160,22 @@
                                 <button class="slider-btn" data-param="saturation_max" data-delta="-1">−</button>
                                 <button class="slider-btn big" data-param="saturation_max" data-delta="-10">▼</button>
                             </div>
-                            <div class="slider-vertical" data-param="saturation_max" data-min="0" data-max="255">
-                                <div class="slider-track" id="saturation-max-track"></div>
-                                <div class="slider-thumb" id="saturation-max-thumb"></div>
+                            <div class="slider-vertical" data-param="saturation_max">
+                                <div class="slider-track" id="saturation_max-track"></div>
+                                <div class="slider-thumb" id="saturation_max-thumb"></div>
                             </div>
                         </div>
                     </div>
                 </div>
-            </div>
+            </section>
 
-            <!-- Page 4: Brightness + Min Area -->
-            <div class="config-page" id="page-4">
+            <!-- Page 4: Brightness min/max -->
+            <section class="config-page" id="page-4" data-title="Brightness">
                 <div class="page-title">Brightness</div>
                 <div class="param-pair">
                     <div class="param-control">
                         <div class="param-label">Minimum</div>
-                        <div class="param-value" id="brightness-min-value">60</div>
+                        <div class="param-value" id="brightness_min-value">—</div>
                         <div class="slider-container">
                             <div class="slider-buttons">
                                 <button class="slider-btn big" data-param="brightness_min" data-delta="10">▲</button>
@@ -186,15 +183,15 @@
                                 <button class="slider-btn" data-param="brightness_min" data-delta="-1">−</button>
                                 <button class="slider-btn big" data-param="brightness_min" data-delta="-10">▼</button>
                             </div>
-                            <div class="slider-vertical" data-param="brightness_min" data-min="0" data-max="255">
-                                <div class="slider-track" id="brightness-min-track"></div>
-                                <div class="slider-thumb" id="brightness-min-thumb"></div>
+                            <div class="slider-vertical" data-param="brightness_min">
+                                <div class="slider-track" id="brightness_min-track"></div>
+                                <div class="slider-thumb" id="brightness_min-thumb"></div>
                             </div>
                         </div>
                     </div>
                     <div class="param-control">
                         <div class="param-label">Maximum</div>
-                        <div class="param-value" id="brightness-max-value">190</div>
+                        <div class="param-value" id="brightness_max-value">—</div>
                         <div class="slider-container">
                             <div class="slider-buttons">
                                 <button class="slider-btn big" data-param="brightness_max" data-delta="10">▲</button>
@@ -202,19 +199,21 @@
                                 <button class="slider-btn" data-param="brightness_max" data-delta="-1">−</button>
                                 <button class="slider-btn big" data-param="brightness_max" data-delta="-10">▼</button>
                             </div>
-                            <div class="slider-vertical" data-param="brightness_max" data-min="0" data-max="255">
-                                <div class="slider-track" id="brightness-max-track"></div>
-                                <div class="slider-thumb" id="brightness-max-thumb"></div>
+                            <div class="slider-vertical" data-param="brightness_max">
+                                <div class="slider-track" id="brightness_max-track"></div>
+                                <div class="slider-thumb" id="brightness_max-thumb"></div>
                             </div>
                         </div>
                     </div>
                 </div>
+            </section>
 
-                <!-- Min Detection Area (single control) -->
-                <div class="page-title" style="margin-top: 2rem;">Min Detection Area</div>
+            <!-- Page 5: Min detection area -->
+            <section class="config-page" id="page-5" data-title="Min Area">
+                <div class="page-title">Min Detection Area</div>
                 <div class="param-single">
                     <div class="param-control">
-                        <div class="param-value" id="min-detection-area-value">10</div>
+                        <div class="param-value" id="min_detection_area-value">—</div>
                         <div class="slider-container">
                             <div class="slider-buttons">
                                 <button class="slider-btn big" data-param="min_detection_area" data-delta="10">▲</button>
@@ -222,57 +221,56 @@
                                 <button class="slider-btn" data-param="min_detection_area" data-delta="-1">−</button>
                                 <button class="slider-btn big" data-param="min_detection_area" data-delta="-10">▼</button>
                             </div>
-                            <div class="slider-vertical" data-param="min_detection_area" data-min="1" data-max="1000">
-                                <div class="slider-track" id="min-detection-area-track"></div>
-                                <div class="slider-thumb" id="min-detection-area-thumb"></div>
+                            <div class="slider-vertical" data-param="min_detection_area">
+                                <div class="slider-track" id="min_detection_area-track"></div>
+                                <div class="slider-thumb" id="min_detection_area-thumb"></div>
                             </div>
                         </div>
                     </div>
                 </div>
-            </div>
+            </section>
         </div>
 
-        <!-- Pagination Controls -->
+        <!-- Pagination controls -->
         <div class="pagination-controls">
-            <button class="page-nav-btn" id="prev-page-btn" disabled>&larr; PREV</button>
+            <button class="page-nav-btn" id="prev-page-btn" disabled>◀ PREV</button>
             <div class="page-indicator">
                 <span class="page-dot active" data-page="1"></span>
                 <span class="page-dot" data-page="2"></span>
                 <span class="page-dot" data-page="3"></span>
                 <span class="page-dot" data-page="4"></span>
+                <span class="page-dot" data-page="5"></span>
             </div>
-            <button class="page-nav-btn" id="next-page-btn">NEXT &rarr;</button>
+            <button class="page-nav-btn" id="next-page-btn">NEXT ▶</button>
         </div>
 
-        <!-- Action Buttons -->
+        <!-- Action buttons -->
         <div class="config-actions">
             <button class="config-action-btn primary" id="apply-config-btn">APPLY TO ALL</button>
             <button class="config-action-btn secondary" id="reset-config-btn">RESET DEFAULTS</button>
         </div>
     </div>
-</div>
+</aside>
 
-<!-- Video Feed Modal -->
-<div id="video-modal" class="modal" style="display: none;">
+<!-- Video Modal -->
+<div id="video-modal" class="modal" style="display:none">
     <div class="modal-content">
         <div class="modal-header">
             <h3 id="video-modal-title">OWL Video Feed</h3>
-            <button class="modal-close" onclick="closeVideoModal()">&times;</button>
+            <button class="modal-close" onclick="closeVideoModal()">×</button>
         </div>
         <div class="modal-body">
-            <img id="video-feed-img" src="" alt="Video Feed">
+            <img id="video-feed-img" src="" alt="Video Feed" />
         </div>
     </div>
 </div>
 
-<!-- Footer -->
 <footer>
     <div class="footer-content">
-        <p>OpenWeedLocator © 2025 | <span id="last-update">--</span></p>
+        <span id="last-update">Last update: —</span>
     </div>
 </footer>
 
 <script src="{{ url_for('static', filename='js/main.js') }}"></script>
-
 </body>
 </html>

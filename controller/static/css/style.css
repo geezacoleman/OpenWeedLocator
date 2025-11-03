@@ -1,9 +1,3 @@
-/* OWL Central Controller CSS
-   A slimmed-down version of the standalone app's CSS,
-   containing only the styles needed for the new controller.
-*/
-
-/* 1. Root Variables (Copied from original) */
 :root {
     --primary: #022775;
     --secondary: #34495e;
@@ -16,33 +10,32 @@
     --text: #808080;
     --background: #f5f7fa;
     --card-bg: #fff;
-    --border: #dce1e8;
+    --border: #dce1e8
 }
 
-/* 2. Global Styles */
 * {
-    margin: 0;
-    padding: 0;
     box-sizing: border-box;
+    margin: 0;
+    padding: 0
+}
+
+html, body {
+    height: 100%
 }
 
 body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background-color: var(--background);
+    font-family: 'Segoe UI', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    background: var(--background);
     color: var(--text);
-    line-height: 1.6;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
+    overflow: hidden
 }
 
-/* 3. Header Styles (Copied from original) */
 .header {
     background: var(--primary);
-    color: white;
+    color: #fff;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, .1);
     padding: 1rem;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    width: 100%;
+    width: 100%
 }
 
 .header-content {
@@ -50,1205 +43,378 @@ body {
     justify-content: space-between;
     align-items: center;
     max-width: 1200px;
-    margin: 0 auto;
-    width: 100%;
+    margin: 0 auto
+}
+
+.logo {
+    height: 40px;
+    margin-right: 10px
 }
 
 .logo-section {
     display: flex;
     align-items: center;
-    flex-shrink: 0;
-}
-
-.logo {
-    height: 40px;
-    margin-right: 10px;
-}
-
-.header h1 {
-    font-size: 1.5rem;
-    margin: 0;
-}
-
-.status-indicator {
-    display: flex;
-    align-items: center;
-    flex-shrink: 0;
+    gap: .6rem
 }
 
 .owl-status {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: .5rem
 }
 
 .status-dot {
     width: 12px;
     height: 12px;
     border-radius: 50%;
+    background: #95a5a6
 }
 
 .status-dot.connected {
-    background-color: var(--success);
+    background: var(--success)
 }
 
-/* 4. Layout & Card Styles */
+.config-trigger-btn {
+    background: linear-gradient(135deg, #f39c12, #e67e22);
+    color: #fff;
+    border: none;
+    padding: .75rem 2rem;
+    border-radius: 8px;
+    font-size: 1.1rem;
+    font-weight: 800;
+    cursor: pointer;
+    letter-spacing: 2px;
+    min-width: 150px;
+    min-height: 56px;
+    box-shadow: 0 4px 12px rgba(243, 156, 18, .3)
+}
+
 .container {
     max-width: 1200px;
     margin: 0 auto;
-    padding: 1.5rem;
-    flex-grow: 1;
-    width: 100%;
-}
-
-.card {
-    background-color: var(--card-bg);
-    border-radius: 0.5rem;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-    border: 1px solid var(--border);
-}
-
-.card h2 {
-    margin-top: 0;
-    margin-bottom: 1rem;
-    color: var(--primary);
-    font-size: 1.3rem;
+    padding: .75rem .75rem 0;
+    height: calc(100% - 120px)
 }
 
 .dashboard-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-    gap: 1.5rem;
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+    gap: .75rem;
+    height: 100%;
+    overflow-y: auto;
+    padding-right: .25rem
 }
 
-/* 5. OWL Card Styles (Injected by JS) */
-.card-title-row {
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:1rem;
-  margin-bottom:1rem;
-}
-
-.card-title-row .title-left {
-  display:flex;
-  align-items:center;
-  gap:.75rem;
-}
-
-.status-chip {
-  display:inline-flex;
-  align-items:center;
-  gap:.5rem;
-  border:1px solid var(--border);
-  border-radius:999px;
-  padding:.35rem .7rem;
-  background:linear-gradient(135deg,#f8f9fa 0%,#e9ecef 100%);
-  font-size: 0.9rem;
-}
-
-.status-chip .dot {
-  width:10px;
-  height:10px;
-  border-radius:999px;
-  background:#95a5a6; /* Default Offline */
-}
-
-.status-chip.on .dot {
-  background:var(--success); /* Online */
-}
-
-.info-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem 0;
-    border-bottom: 1px solid var(--border);
-}
-.info-item:last-child {
-    border-bottom: none;
-}
-
-.info-label {
-    font-weight: 600;
-    color: var(--secondary);
-    font-size: 1rem;
-}
-
-.info-value {
-    color: var(--primary);
-    font-weight: bold;
-    font-size: 1rem;
-}
-
-.browser-controls {
-    display: flex;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-    flex-wrap: wrap;
-}
-
-.btn-secondary {
-    background: linear-gradient(135deg, var(--secondary) 0%, #2c3e50 100%);
-    color: white;
-    border: none;
-    padding: 0.75rem 1.5rem;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: 500;
-    transition: all 0.2s;
-}
-
-.btn-primary {
-    background: linear-gradient(135deg, var(--accent) 0%, #2980b9 100%);
-    color: white;
-    border: none;
-    padding: 0.75rem 1.5rem;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: 500;
-    transition: all 0.2s;
-}
-
-.btn-secondary:hover, .btn-primary:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-}
-
-/* 6. Global Controls (Slider) Styles */
-.metadata-description {
-    color: #666;
-    margin-bottom: 1.5rem;
-    font-style: italic;
-}
-
-.form-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 1.5rem;
-    margin-bottom: 1.5rem;
-}
-
-.form-group {
-    display: flex;
-    flex-direction: column;
-}
-
-.form-group label {
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-    color: var(--secondary);
-}
-
-/* Minimal styling for text inputs (from original) */
-.form-input {
-    padding: 0.75rem;
-    border: 2px solid var(--border);
-    border-radius: 6px;
-    font-size: 1rem;
-    transition: border-color 0.2s;
-    background: white;
-}
-
-.form-input:focus {
-    outline: none;
-    border-color: var(--accent);
-}
-
-/* NEW minimal styles for range sliders.
-   This overrides `.form-input` defaults.
-*/
-.form-input[type="range"] {
-    padding: 0;
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    width: 100%;
-    -webkit-appearance: none;
-    appearance: none;
-}
-
-.form-input[type="range"]::-webkit-slider-runnable-track {
-    width: 100%;
-    height: 6px;
-    background: var(--border);
-    border-radius: 3px;
-}
-
-.form-input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 18px;
-    height: 18px;
-    background: var(--accent);
-    border-radius: 50%;
-    margin-top: -6px; /* Center thumb on track */
-}
-
-.form-input[type="range"]::-moz-range-track {
-    width: 100%;
-    height: 6px;
-    background: var(--border);
-    border-radius: 3px;
-}
-
-.form-input[type="range"]::-moz-range-thumb {
-    width: 18px;
-    height: 18px;
-    background: var(--accent);
-    border-radius: 50%;
-    border: none;
-}
-
-/* 7. Footer */
-footer {
-    background: linear-gradient(135deg, var(--light) 0%, #dee2e6 100%);
-    color: var(--secondary);
-    padding: 1.5rem;
-    text-align: center;
-    font-size: 0.9rem;
-    margin-top: auto;
-    border-top: 1px solid var(--border);
-}
-
-.footer-content {
-    max-width: 1200px;
-    margin: 0 auto;
-}
-
-/* 8. Responsive Design */
-@media (max-width: 768px) {
-    .container {
-        padding: 1rem;
-    }
-
-    .header-content {
-        flex-direction: column;
-        gap: 1rem;
-        text-align: center;
-    }
-
-    .dashboard-grid {
-        grid-template-columns: 1fr; /* Stack cards on mobile */
-    }
-
-    .form-grid {
-        grid-template-columns: 1fr; /* Stack sliders on mobile */
-    }
-
-    .info-item {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0.5rem;
-    }
-}
-
-/* ===== OWL Central Controller Specific Styles ===== */
-
-/* OWL Grid Layout - 2 columns for 1280x720 landscape */
-.dashboard-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1.5rem;
-    margin-bottom: 1rem;
-}
-
-/* Individual OWL Card */
 .owl-card {
-    background: white;
+    background: #fff;
     border-radius: 12px;
-    padding: 1.25rem;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    padding: 1rem;
     border: 2px solid var(--border);
-    transition: all 0.3s ease;
-    position: relative;
-}
-
-.owl-card:hover {
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    transform: translateY(-2px);
-}
-
-.owl-card.offline {
-    opacity: 0.6;
-    border-color: var(--danger);
-    background: linear-gradient(135deg, #f8f9fa 0%, #ffe5e5 100%);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .1)
 }
 
 .owl-card.online {
-    border-color: var(--success);
+    border-color: var(--success)
 }
 
-/* OWL Card Header */
+.owl-card.offline {
+    opacity: .6;
+    border-color: var(--danger);
+    background: linear-gradient(135deg, #f8f9fa, #ffe5e5)
+}
+
 .owl-card-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 1rem;
-    padding-bottom: 0.75rem;
-    border-bottom: 2px solid var(--border);
-}
-
-.owl-card-title {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.owl-card-title h3 {
-    margin: 0;
-    font-size: 1.3rem;
-    color: var(--primary);
-    font-weight: 700;
+    padding-bottom: .75rem;
+    border-bottom: 2px solid var(--border)
 }
 
 .owl-status-badge {
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.25rem 0.75rem;
+    gap: .4rem;
+    padding: .25rem .75rem;
     border-radius: 999px;
-    font-size: 0.75rem;
+    font-size: .75rem;
     font-weight: 600;
-    text-transform: uppercase;
+    text-transform: uppercase
 }
 
 .owl-status-badge.online {
     background: var(--success);
-    color: white;
+    color: #fff
 }
 
 .owl-status-badge.offline {
     background: var(--danger);
-    color: white;
+    color: #fff
 }
 
-.owl-status-badge .badge-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: white;
-}
-
-/* OWL Stats Grid */
 .owl-stats {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 0.75rem;
-    margin-bottom: 1rem;
+    grid-template-columns:repeat(2, 1fr);
+    gap: .5rem;
+    margin-bottom: 1rem
 }
 
 .owl-stat-item {
     display: flex;
     flex-direction: column;
-    padding: 0.75rem;
-    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    padding: .65rem;
+    background: linear-gradient(135deg, #f8f9fa, #e9ecef);
     border-radius: 8px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--border)
 }
 
 .owl-stat-label {
-    font-size: 0.75rem;
+    font-size: .75rem;
     color: var(--secondary);
     font-weight: 600;
     text-transform: uppercase;
-    margin-bottom: 0.25rem;
+    margin-bottom: .2rem
 }
 
 .owl-stat-value {
-    font-size: 1.1rem;
+    font-size: 1.05rem;
     font-weight: 700;
-    color: var(--primary);
+    color: var(--primary)
 }
 
 .owl-stat-value.good {
-    color: var(--success);
+    color: var(--success)
 }
 
 .owl-stat-value.warning {
-    color: var(--warning);
+    color: var(--warning)
 }
 
 .owl-stat-value.danger {
-    color: var(--danger);
+    color: var(--danger)
 }
 
-/* OWL Actions */
 .owl-actions {
     display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
+    gap: .5rem;
+    flex-wrap: wrap
 }
 
 .owl-btn {
     flex: 1;
     min-width: 0;
-    padding: 0.75rem 0.5rem;
+    padding: .7rem .5rem;
     border: none;
     border-radius: 8px;
-    font-size: 0.85rem;
-    font-weight: 600;
+    font-size: .85rem;
+    font-weight: 700;
     cursor: pointer;
-    transition: all 0.2s ease;
-    text-align: center;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.4rem;
-}
-
-.owl-btn:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-}
-
-.owl-btn:active:not(:disabled) {
-    transform: translateY(0);
+    transition: all .2s
 }
 
 .owl-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+    opacity: .5;
+    cursor: not-allowed
 }
 
-.owl-btn.btn-video {
-    background: linear-gradient(135deg, var(--accent) 0%, #2980b9 100%);
-    color: white;
+.btn-video {
+    background: linear-gradient(135deg, var(--accent), #2980b9);
+    color: #fff
 }
 
-.owl-btn.btn-detection {
-    background: linear-gradient(135deg, var(--success) 0%, #27ae60 100%);
-    color: white;
+.btn-detection {
+    background: linear-gradient(135deg, var(--success), #27ae60);
+    color: #fff
 }
 
-.owl-btn.btn-detection.active {
-    background: linear-gradient(135deg, #27ae60 0%, var(--success) 100%);
+.btn-recording {
+    background: linear-gradient(135deg, var(--danger), #c0392b);
+    color: #fff
 }
 
-.owl-btn.btn-detection.inactive {
-    background: linear-gradient(135deg, #95a5a6 0%, #7f8c8d 100%);
-}
-
-.owl-btn.btn-recording {
-    background: linear-gradient(135deg, var(--danger) 0%, #c0392b 100%);
-    color: white;
-}
-
-.owl-btn.btn-recording.active {
-    background: linear-gradient(135deg, #c0392b 0%, var(--danger) 100%);
-}
-
-.owl-btn.btn-recording.inactive {
-    background: linear-gradient(135deg, #95a5a6 0%, #7f8c8d 100%);
-}
-
-/* Toggle Button Icons */
-.btn-icon {
-    font-size: 1rem;
-}
-
-/* Video Modal Styles */
-.modal {
-    display: none;
-    position: fixed;
-    z-index: 1000;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0, 0, 0, 0.85);
-    backdrop-filter: blur(4px);
-}
-
-/* When modal is visible, use flexbox for centering */
-.modal[style*="display: block"],
-.modal[style*="display: flex"] {
-    display: flex !important;
-    align-items: center;
-    justify-content: center;
-}
-
-.modal-content {
-    background-color: var(--card-bg);
-    border-radius: 12px;
-    max-width: 90%;
-    max-height: 90%;
-    width: auto;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-    animation: modalSlideIn 0.3s ease-out;
-}
-
-@keyframes modalSlideIn {
-    from {
-        transform: translateY(-50px);
-        opacity: 0;
-    }
-    to {
-        transform: translateY(0);
-        opacity: 1;
-    }
-}
-
-.modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1.5rem;
-    border-bottom: 1px solid var(--border);
-}
-
-.modal-header h3 {
-    margin: 0;
-    color: var(--text);
-    font-size: 1.25rem;
-}
-
-.modal-close {
-    background: none;
-    border: none;
-    font-size: 2rem;
-    color: var(--text);
-    cursor: pointer;
-    padding: 0;
-    width: 40px;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 8px;
-    transition: all 0.2s ease;
-}
-
-.modal-close:hover {
-    background-color: var(--danger);
-    color: white;
-}
-
-.modal-body {
-    padding: 1.5rem;
-    max-height: calc(90vh - 120px);
-    overflow: auto;
-}
-
-.modal-body img {
-    display: block;
-    width: 100%;
-    height: auto;
-    border-radius: 8px;
-    background-color: #000;
-}
-
-/* When modal is shown */
-body.modal-open {
-    overflow: hidden;
-}
-
-/* Config Sliders */
-.form-grid {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 1.5rem;
-}
-
-.slider-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.slider-label {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-weight: 600;
+footer {
+    background: linear-gradient(135deg, var(--light), #dee2e6);
     color: var(--secondary);
-}
-
-.slider-label-text {
-    font-size: 0.95rem;
-}
-
-.slider-value {
-    font-size: 1rem;
-    font-weight: 700;
-    color: var(--primary);
-    background: var(--light);
-    padding: 0.25rem 0.75rem;
-    border-radius: 6px;
-    min-width: 50px;
+    padding: 1rem;
     text-align: center;
+    border-top: 1px solid var(--border)
 }
 
-.slider-input {
-    width: 100%;
-    height: 40px;
-    -webkit-appearance: none;
-    appearance: none;
-    background: transparent;
-    cursor: pointer;
-}
-
-.slider-input::-webkit-slider-track {
-    width: 100%;
-    height: 12px;
-    background: linear-gradient(to right, #e0e0e0 0%, #e0e0e0 100%);
-    border-radius: 6px;
-}
-
-.slider-input::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 28px;
-    height: 28px;
-    background: var(--accent);
-    border-radius: 50%;
-    cursor: pointer;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-    transition: all 0.2s;
-}
-
-.slider-input::-webkit-slider-thumb:hover {
-    background: #2980b9;
-    transform: scale(1.1);
-}
-
-.slider-input::-moz-range-track {
-    width: 100%;
-    height: 12px;
-    background: linear-gradient(to right, #e0e0e0 0%, #e0e0e0 100%);
-    border-radius: 6px;
-}
-
-.slider-input::-moz-range-thumb {
-    width: 28px;
-    height: 28px;
-    background: var(--accent);
-    border: none;
-    border-radius: 50%;
-    cursor: pointer;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-}
-
-.slider-input::-moz-range-thumb:hover {
-    background: #2980b9;
-    transform: scale(1.1);
-}
-
-/* Last Update Footer Text */
-#last-update {
-    font-weight: 600;
-    color: var(--success);
-}
-
-/* Metadata Description */
-.metadata-description {
-    color: var(--text);
-    font-size: 0.9rem;
-    margin-bottom: 1rem;
-    padding: 0.75rem;
-    background: #f8f9fa;
-    border-left: 4px solid var(--accent);
-    border-radius: 4px;
-}
-
-/* Empty State */
-.empty-state {
-    text-align: center;
-    padding: 3rem 1rem;
-    color: var(--text);
-}
-
-.empty-state-icon {
-    font-size: 4rem;
-    margin-bottom: 1rem;
-}
-
-.empty-state-text {
-    font-size: 1.1rem;
-    margin-bottom: 0.5rem;
-}
-
-.empty-state-subtext {
-    font-size: 0.9rem;
-    color: var(--secondary);
-}
-
-/* Touch-Friendly Adjustments for 1280x720 Kiosk */
-@media (max-width: 1280px) {
-    .owl-card {
-        padding: 1rem;
-    }
-
-    .owl-btn {
-        padding: 0.65rem 0.4rem;
-        font-size: 0.8rem;
-    }
-
-    .owl-stats {
-        gap: 0.5rem;
-    }
-
-    .owl-stat-item {
-        padding: 0.6rem;
-    }
-}
-
-/* Ensure no vertical scrolling on 720px height */
-@media (max-height: 720px) {
-    .container {
-        padding: 0.75rem;
-    }
-
-    .card {
-        padding: 1rem;
-        margin-bottom: 1rem;
-    }
-
-    .owl-card {
-        padding: 0.85rem;
-    }
-
-    .dashboard-grid {
-        gap: 1rem;
-    }
-}
-
-/* lock layout to screen height, no scroll */
-html, body {
-    height: 100%;
-    overflow: hidden; /* <- important for tractor display */
-}
-
-/* container should fit under header and above footer */
-.container {
-    max-width: 100%;
-    margin: 0;
-    padding: 0.75rem 0.75rem 0;
-    flex-grow: 1;
-    height: calc(100% - 120px); /* header + footer space */
-    overflow: hidden;
-}
-
-/* dashboard grid: 2 columns, scroll inside if needed */
-.dashboard-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.75rem;
-    height: 100%;
-    overflow-y: auto; /* scroll only grid, not whole page */
-    padding-right: 0.25rem;
-}
-
-/* header buttons */
-.toolbar-btn {
-    background: #ffffff22;
-    border: 1px solid rgba(255,255,255,0.6);
-    color: #fff;
-    border-radius: 10px;
-    padding: 0.55rem 1.1rem;
-    font-size: 0.95rem;
-    font-weight: 600;
-    cursor: pointer;
-    margin-left: 0.75rem;
-}
-
-.toolbar-btn.secondary {
-    background: #fff;
-    color: var(--primary);
-    border-color: var(--border);
-}
-
-/* wide, fixed side panel */
 .config-panel {
     position: fixed;
-    top: 64px;
-    right: 12px;                      /* pulled in from bezel */
-    width: 620px;                     /* wide enough for 3 cols */
-    height: calc(100% - 64px);        /* fill screen below header */
-    background: #fff;
-    border: 1px solid #d8d8d8;
-    border-right: none;
-    box-shadow: -4px 0 18px rgba(0,0,0,0.15);
-    z-index: 900;
-    display: flex;
-    flex-direction: column;
-    /* hide off-screen to the right */
-    transform: translateX(640px);
-    transition: transform 0.2s ease-out;
-}
-.config-panel.open {
-    transform: translateX(0);
-}
-
-.config-panel-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.5rem 0.75rem 0.4rem 1rem;
-    border-bottom: 1px solid #d8d8d8;
-    flex: 0 0 54px;                   /* fixed header height */
-}
-
-/* NO SCROLL in body */
-.config-panel-body {
-    flex: 1 1 auto;
-    padding: 0.6rem 1.2rem 0.6rem 1rem;
-    overflow: hidden;                 /* <- key */
-    display: flex;
-    flex-direction: column;
-    gap: 0.45rem;
-}
-/* 3 columns × 3 rows, fill available space */
-.control-grid {
-    flex: 1 1 auto;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-template-rows: repeat(3, minmax(0, 1fr));
-    gap: 0.5rem;
-}
-
-/* every control takes its cell */
-.control-group {
-    background: #f6f7f9;
-    border: 1px solid rgba(0,0,0,0.03);
-    border-radius: 12px;
-    padding: 0.4rem 0.35rem 0.45rem;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    min-width: 0;
-}
-
-.control-label-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.25rem;
-    margin-bottom: 0.25rem;
-}
-.control-label-row label {
-    font-size: 0.68rem;   /* slightly smaller so it fits */
-    font-weight: 600;
-    color: #222;
-    white-space: nowrap;
-}
-.control-value {
-    font-size: 0.68rem;
-    font-weight: 700;
-    color: #0066cc;
-}
-
-/* slider line */
-.control-slider-row {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: 0.25rem;
-    align-items: center;
-}
-.control-slider-row .minmax {
-    font-size: 0.6rem;
-    color: #666;
-    text-align: center;
-    width: 1.8rem;
-}
-
-/* big enough for finger, but not crazy */
-.control-slider-row input[type="range"] {
-    width: 100%;
-    height: 30px;
-    -webkit-appearance: none;
-    background: transparent;
-}
-.control-slider-row input[type="range"]::-webkit-slider-runnable-track {
-    height: 6px;
-    background: #d0d7e0;
-    border-radius: 999px;
-}
-.control-slider-row input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: #0074d9;
-    margin-top: -7px;
-}
-.control-slider-row input[type="range"]::-moz-range-track {
-    height: 6px;
-    background: #d0d7e0;
-    border-radius: 999px;
-}
-.control-slider-row input[type="range"]::-moz-range-thumb {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: #0074d9;
-}
-
-/* ============================================
-   PAGINATED CONFIG DRAWER STYLES
-   ============================================ */
-
-/* Large Config Trigger Button (in header) */
-.config-trigger-btn {
-    background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
-    color: white;
-    border: none;
-    padding: 0.75rem 2rem;
-    border-radius: 8px;
-    font-size: 1.25rem;
-    font-weight: 700;
-    cursor: pointer;
-    box-shadow: 0 4px 12px rgba(243,156,18,0.3);
-    transition: all 0.2s ease;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    min-width: 150px;
-    min-height: 60px;
-}
-
-.config-trigger-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(243,156,18,0.4);
-}
-
-.config-trigger-btn:active {
-    transform: translateY(0);
-}
-
-/* Config Panel (Slide from Right) */
-.config-panel {
-    position: fixed;
-    right: -550px;
+    right: -560px;
     top: 0;
-    width: 550px;
+    width: 560px;
     height: 100vh;
-    background: white;
-    box-shadow: -4px 0 16px rgba(0,0,0,0.2);
-    transition: right 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+    background: #fff;
+    box-shadow: -4px 0 16px rgba(0, 0, 0, .2);
     z-index: 1000;
     display: flex;
     flex-direction: column;
+    transition: right .35s cubic-bezier(.68, -.55, .265, 1.55)
 }
 
 .config-panel.open {
-    right: 0;
+    right: 0
 }
 
-/* Config Header */
 .config-panel-header {
-    background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
-    color: white;
-    padding: 1.5rem;
+    background: linear-gradient(135deg, #2c3e50, #34495e);
+    color: #fff;
+    padding: 1rem 1.25rem;
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    flex-shrink: 0;
-}
-
-.config-panel-header h2 {
-    font-size: 1.5rem;
-    margin: 0;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    justify-content: space-between
 }
 
 .close-config-btn {
-    background: rgba(255,255,255,0.2);
+    background: rgba(255, 255, 255, .2);
     border: none;
-    color: white;
-    font-size: 2.5rem;
-    width: 50px;
-    height: 50px;
+    color: #fff;
+    font-size: 2rem;
+    width: 44px;
+    height: 44px;
     border-radius: 50%;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    line-height: 1;
-    padding: 0;
+    cursor: pointer
 }
 
-.close-config-btn:hover {
-    background: #e74c3c;
-    transform: rotate(90deg);
-}
-
-/* Config Body */
 .config-panel-body {
     flex: 1;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow: hidden
 }
 
-/* Target Selector */
 .target-row {
-    padding: 1.5rem;
+    padding: 1rem;
     background: #ecf0f1;
-    border-bottom: 2px solid #bdc3c7;
-    flex-shrink: 0;
+    border-bottom: 2px solid #bdc3c7
 }
 
 .target-row label {
     display: block;
     font-weight: 700;
-    margin-bottom: 0.5rem;
-    color: #2c3e50;
-    font-size: 1rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    margin-bottom: .4rem;
+    color: #2c3e50
 }
 
 .target-row select {
     width: 100%;
-    padding: 0.75rem;
+    padding: .7rem;
     border: 2px solid #bdc3c7;
     border-radius: 8px;
-    font-size: 1.1rem;
-    cursor: pointer;
-    background: white;
-    font-weight: 600;
+    font-size: 1.05rem;
+    font-weight: 700;
+    background: #fff
 }
 
-/* Config Pages Container */
 .config-pages {
     flex: 1;
-    position: relative;
-    overflow: hidden;
+    position: relative
 }
 
 .config-page {
     position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    padding: 2rem 1.5rem;
+    inset: 0;
+    padding: 1.25rem;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.3s ease;
+    transition: opacity .2s
 }
 
 .config-page.active {
     opacity: 1;
-    pointer-events: all;
+    pointer-events: auto
 }
 
 .page-title {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: #2c3e50;
-    margin-bottom: 1.5rem;
     text-align: center;
-    text-transform: uppercase;
+    font-weight: 800;
     letter-spacing: 2px;
-    padding-bottom: 0.75rem;
-    border-bottom: 3px solid #3498db;
+    font-size: 1.3rem;
+    color: #2c3e50;
+    margin-bottom: 1rem;
+    border-bottom: 3px solid var(--accent);
+    padding-bottom: .5rem
 }
 
-/* Parameter Pair (Min/Max side by side) */
 .param-pair {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2rem;
-    height: calc(100% - 3rem);
+    grid-template-columns:1fr 1fr;
+    gap: 1.5rem;
+    height: calc(100% - 2.2rem)
 }
 
-/* Parameter Single (for min_detection_area) */
 .param-single {
     display: flex;
     justify-content: center;
-    margin-top: 1rem;
+    align-items: center;
+    height: calc(100% - 2.2rem)
 }
 
-/* Parameter Control */
 .param-control {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: center
 }
 
 .param-label {
-    font-size: 1.1rem;
-    font-weight: 600;
+    font-size: 1rem;
+    font-weight: 700;
     color: #7f8c8d;
-    margin-bottom: 0.5rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    margin: .25rem 0 .4rem;
+    text-transform: uppercase
 }
 
 .param-value {
-    font-size: 2.5rem;
-    font-weight: 700;
+    font-size: 2.2rem;
+    font-weight: 800;
     color: #022775;
-    margin-bottom: 1rem;
-    min-height: 60px;
+    margin-bottom: .6rem;
+    min-height: 52px;
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: center
 }
 
-/* Slider Container */
 .slider-container {
     display: flex;
     gap: 1rem;
-    align-items: center;
+    align-items: center
 }
 
 .slider-buttons {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: .5rem
 }
 
 .slider-btn {
-    width: 60px;
-    height: 60px;
+    width: 58px;
+    height: 58px;
     border: none;
-    border-radius: 8px;
-    font-size: 1.75rem;
-    font-weight: 700;
+    border-radius: 10px;
+    font-size: 1.6rem;
+    font-weight: 800;
     cursor: pointer;
     background: #3498db;
-    color: white;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    transition: all 0.2s ease;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.slider-btn:hover {
-    background: #2980b9;
-    transform: scale(1.05);
-}
-
-.slider-btn:active {
-    transform: scale(0.95);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .15)
 }
 
 .slider-btn.big {
-    background: #e67e22;
-    height: 70px;
-    font-size: 2rem;
+    height: 66px;
+    background: #e67e22
 }
 
-.slider-btn.big:hover {
-    background: #d35400;
-}
-
-/* Vertical Slider */
 .slider-vertical {
     width: 60px;
     height: 280px;
     position: relative;
     background: #dce1e8;
     border-radius: 30px;
-    cursor: pointer;
+    cursor: pointer
 }
 
 .slider-track {
@@ -1258,140 +424,117 @@ html, body {
     width: 100%;
     background: linear-gradient(to top, #2ecc71, #3498db);
     border-radius: 30px;
-    transition: height 0.15s ease;
-    pointer-events: none;
+    transition: height .1s
 }
 
 .slider-thumb {
     position: absolute;
     width: 70px;
     height: 70px;
-    background: white;
+    background: #fff;
     border: 5px solid #022775;
     border-radius: 50%;
     left: 50%;
-    transform: translateX(-50%);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    cursor: grab;
-    transition: bottom 0.15s ease;
-    pointer-events: none;
+    transform: translateX(-50%)
 }
 
-/* Pagination Controls */
 .pagination-controls {
-    padding: 1.5rem;
-    background: #ecf0f1;
-    border-top: 2px solid #bdc3c7;
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    gap: 1rem;
-    flex-shrink: 0;
+    justify-content: space-between;
+    padding: .75rem 1rem;
+    border-top: 2px solid #ecf0f1
 }
 
 .page-nav-btn {
-    background: #3498db;
-    color: white;
+    min-width: 140px;
+    padding: .8rem 1rem;
     border: none;
-    padding: 0.75rem 1.5rem;
-    border-radius: 8px;
-    font-size: 1.1rem;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    min-width: 120px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-}
-
-.page-nav-btn:hover:not(:disabled) {
-    background: #2980b9;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(52,152,219,0.3);
-}
-
-.page-nav-btn:disabled {
-    background: #bdc3c7;
-    cursor: not-allowed;
-    opacity: 0.5;
+    border-radius: 12px;
+    background: #034694;
+    color: #fff;
+    font-weight: 800
 }
 
 .page-indicator {
     display: flex;
-    gap: 0.75rem;
-    align-items: center;
+    gap: 6px
 }
 
 .page-dot {
-    width: 16px;
-    height: 16px;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
-    background: #bdc3c7;
-    cursor: pointer;
-    transition: all 0.2s ease;
+    background: #c7d0da
 }
 
 .page-dot.active {
-    background: #3498db;
-    width: 20px;
-    height: 20px;
+    background: #034694
 }
 
-.page-dot:hover {
-    transform: scale(1.2);
-}
-
-/* Config Action Buttons */
 .config-actions {
-    padding: 1.5rem;
-    background: white;
-    border-top: 2px solid #ecf0f1;
     display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    flex-shrink: 0;
+    gap: .75rem;
+    justify-content: center;
+    padding: .75rem 1rem
 }
 
 .config-action-btn {
-    padding: 1rem;
+    padding: .8rem 1rem;
     border: none;
-    border-radius: 8px;
-    font-size: 1.2rem;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    min-height: 60px;
+    border-radius: 10px;
+    font-weight: 800
 }
 
 .config-action-btn.primary {
-    background: #2ecc71;
-    color: white;
-}
-
-.config-action-btn.primary:hover {
-    background: #27ae60;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(46,204,113,0.3);
+    background: var(--success);
+    color: #fff
 }
 
 .config-action-btn.secondary {
     background: #ecf0f1;
-    color: #2c3e50;
-    border: 2px solid #bdc3c7;
+    color: #2c3e50
 }
 
-.config-action-btn.secondary:hover {
-    background: #bdc3c7;
+.modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .85);
+    z-index: 1200;
+    align-items: center;
+    justify-content: center
 }
 
-/* Ensure no scrolling */
-body {
-    overflow: hidden;
+.modal-content {
+    background: #fff;
+    border-radius: 12px;
+    max-width: 90%;
+    max-height: 90%
 }
 
-.config-panel-body {
-    overflow: hidden;
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem;
+    border-bottom: 1px solid var(--border)
 }
 
+.modal-body {
+    padding: 1rem
+}
+
+@media (max-height: 720px) {
+    .container {
+        padding: .5rem
+    }
+
+    .dashboard-grid {
+        gap: .6rem
+    }
+
+    .owl-card {
+        padding: .85rem
+    }
+}
