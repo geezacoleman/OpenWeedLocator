@@ -46,7 +46,6 @@ STATUS_DASHBOARD_DEPS=""
 STATUS_DASHBOARD=""
 STATUS_GLOBAL_NUMPY=""
 STATUS_NUMPY_COMPAT=""
-STATUS_OPT_LIBS=""
 
 ERROR_UPGRADE=""
 ERROR_CAMERA=""
@@ -61,7 +60,6 @@ ERROR_DASHBOARD_DEPS=""
 ERROR_DASHBOARD=""
 ERROR_GLOBAL_NUMPY=""
 ERROR_NUMPY_COMPAT=""
-ERROR_OPT_LIBS=""
 
 # Function to check the exit status of the last executed command
 check_status() {
@@ -236,10 +234,21 @@ check_status "Creating virtual environment 'owl'" "VENV"
 
 sleep 1s
 
-echo -e "${GREEN}[INFO] Detecting global NumPy version for compatibility...${NC}"
 echo -e "${GREEN}[INFO] Checking NumPy consistency (system vs venv) ...${NC}"
 
-# is system NumPy importable?
+# Helper to read "version path" from a given python
+_py_numpy_info() {
+  local py="$1"
+  "$py" - <<'PY' 2>/dev/null || true
+try:
+    import numpy as np
+    print(np.__version__, np.__file__)
+except Exception:
+    print("")
+PY
+}
+
+# is system NumPy present?
 if ! /usr/bin/python3 - <<'PY' >/dev/null 2>&1
 try:
     import numpy  # noqa
@@ -247,92 +256,65 @@ except Exception:
     raise SystemExit(1)
 PY
 then
-  echo -e "${ORANGE}[WARN] System NumPy missing. We recommend: sudo apt-get install -y python3-numpy. This may also be resolved indirectly when installing OpenCV.${NC}"
+  echo -e "${ORANGE}[WARN] System NumPy missing. Recommend: sudo apt-get install -y python3-numpy.${NC}"
   STATUS_GLOBAL_NUMPY="${CROSS}"
-  ERROR_GLOBAL_NUMPY="System NumPy missing (python3-numpy not importable)."
+  ERROR_GLOBAL_NUMPY="System NumPy not importable."
+  GLOBAL_NUMPY_VERSION=""
+  GLOBAL_NUMPY_PATH=""
 else
-  read -r GLOBAL_NUMPY_VERSION GLOBAL_NUMPY_PATH <<'EOF'
-$(/usr/bin/python3 - <<'PY'
-try:
-    import numpy as np
-    print(np.__version__, np.__file__)
-except Exception:
-    print("", "")
-PY
-)
-EOF
-
-  if [ -z "${GLOBAL_NUMPY_VERSION}" ]; then
+  SYS_INFO="$(_py_numpy_info /usr/bin/python3)"
+  GLOBAL_NUMPY_VERSION="$(awk '{print $1}' <<<"$SYS_INFO")"
+  GLOBAL_NUMPY_PATH="$(awk '{print $2}' <<<"$SYS_INFO")"
+  if [ -z "$GLOBAL_NUMPY_VERSION" ]; then
     echo -e "${RED}[ERROR] Could not import system NumPy after check.${NC}"
     STATUS_GLOBAL_NUMPY="${CROSS}"
-    ERROR_GLOBAL_NUMPY="System NumPy import failed (version empty)."
+    ERROR_GLOBAL_NUMPY="System NumPy import failed."
   else
     echo -e "${GREEN}[OK] System NumPy: ${GLOBAL_NUMPY_VERSION} at ${GLOBAL_NUMPY_PATH}.${NC}"
     STATUS_GLOBAL_NUMPY="${TICK}"
   fi
 fi
 
-# 1) Capture venv NumPy (may resolve to system via --system-site-packages)
-read -r VENV_NUMPY_VERSION VENV_NUMPY_PATH <<'EOF'
-$("$VIRTUAL_ENV/bin/python" - <<'PY'
-try:
-    import numpy as np
-    print(np.__version__, np.__file__)
-except Exception:
-    print("", "")
-PY
-)
-EOF
+# venv NumPy (could resolve to system via --system-site-packages)
+VENV_INFO="$(_py_numpy_info "$VIRTUAL_ENV/bin/python")"
+VENV_NUMPY_VERSION="$(awk '{print $1}' <<<"$VENV_INFO")"
+VENV_NUMPY_PATH="$(awk '{print $2}' <<<"$VENV_INFO")"
 
-if [ -z "${VENV_NUMPY_VERSION}" ]; then
+if [ -z "$VENV_NUMPY_VERSION" ]; then
   if [ -n "${GLOBAL_NUMPY_VERSION:-}" ]; then
-    echo -e "${ORANGE}[WARN] NumPy not importable inside venv. Installing venv-local NumPy to match system: ${GLOBAL_NUMPY_VERSION}${NC}"
+    echo -e "${ORANGE}[WARN] NumPy not importable inside venv. Installing numpy==${GLOBAL_NUMPY_VERSION} into venv...${NC}"
     if ! pip install --no-input "numpy==${GLOBAL_NUMPY_VERSION}" >/dev/null 2>&1; then
       echo -e "${RED}[ERROR] Failed to install numpy==${GLOBAL_NUMPY_VERSION} into venv.${NC}"
-      ERROR_NUMPY_COMPAT="Failed to install venv numpy==${GLOBAL_NUMPY_VERSION}"
+      ERROR_NUMPY_COMPAT="Failed venv numpy install to match system."
     fi
-    read -r VENV_NUMPY_VERSION VENV_NUMPY_PATH <<'EOF'
-$("$VIRTUAL_ENV/bin/python" - <<'PY'
-try:
-    import numpy as np
-    print(np.__version__, np.__file__)
-except Exception:
-    print("", "")
-PY
-)
-EOF
+    VENV_INFO="$(_py_numpy_info "$VIRTUAL_ENV/bin/python")"
+    VENV_NUMPY_VERSION="$(awk '{print $1}' <<<"$VENV_INFO")"
+    VENV_NUMPY_PATH="$(awk '{print $2}' <<<"$VENV_INFO")"
   else
-    echo -e "${ORANGE}[WARN] NumPy not importable in venv and system version unknown. Skipping venv install attempt.${NC}"
-    ERROR_NUMPY_COMPAT="Venv numpy missing and system version unknown."
+    echo -e "${ORANGE}[WARN] Venv NumPy missing and system version unknown; skipping venv install attempt.${NC}"
+    ERROR_NUMPY_COMPAT="Venv numpy missing; system version unknown."
   fi
 fi
 
-if [ -z "${VENV_NUMPY_VERSION}" ]; then
+if [ -z "$VENV_NUMPY_VERSION" ]; then
   echo -e "${RED}[ERROR] NumPy still not importable inside venv after attempt.${NC}"
-  [ -z "${ERROR_NUMPY_COMPAT}" ] && ERROR_NUMPY_COMPAT="Venv numpy import failed."
+  [ -z "$ERROR_NUMPY_COMPAT" ] && ERROR_NUMPY_COMPAT="Venv numpy import failed."
 else
   echo -e "${GREEN}[INFO] Venv NumPy: ${VENV_NUMPY_VERSION} at ${VENV_NUMPY_PATH}${NC}"
 
-  # Align versions if mismatch and we know the system version
-  if [ -n "${GLOBAL_NUMPY_VERSION:-}" ] && [ "${VENV_NUMPY_VERSION}" != "${GLOBAL_NUMPY_VERSION}" ]; then
+  # Align versions when both known and differ
+  if [ -n "${GLOBAL_NUMPY_VERSION:-}" ] && [ "$VENV_NUMPY_VERSION" != "$GLOBAL_NUMPY_VERSION" ]; then
     echo -e "${ORANGE}[WARN] NumPy mismatch detected (venv=${VENV_NUMPY_VERSION}, system=${GLOBAL_NUMPY_VERSION}). Aligning venv to system...${NC}"
     if ! pip install --no-input "numpy==${GLOBAL_NUMPY_VERSION}" >/dev/null 2>&1; then
       echo -e "${RED}[ERROR] Failed to align venv numpy to ${GLOBAL_NUMPY_VERSION}.${NC}"
-      ERROR_NUMPY_COMPAT="Failed to align venv numpy to system version ${GLOBAL_NUMPY_VERSION}."
+      ERROR_NUMPY_COMPAT="Failed to align venv numpy to system version."
     else
-      read -r VENV_NUMPY_VERSION VENV_NUMPY_PATH <<'EOF'
-$("$VIRTUAL_ENV/bin/python" - <<'PY'
-try:
-    import numpy as np
-    print(np.__version__, np.__file__)
-except Exception:
-    print("", "")
-PY
-)
-EOF
-      if [ "${VENV_NUMPY_VERSION}" != "${GLOBAL_NUMPY_VERSION}" ]; then
-        echo -e "${RED}[ERROR] After install, venv NumPy still != system (${VENV_NUMPY_VERSION} vs ${GLOBAL_NUMPY_VERSION}).${NC}"
-        ERROR_NUMPY_COMPAT="Post-align mismatch persists (${VENV_NUMPY_VERSION} vs ${GLOBAL_NUMPY_VERSION})."
+      VENV_INFO="$(_py_numpy_info "$VIRTUAL_ENV/bin/python")"
+      VENV_NUMPY_VERSION="$(awk '{print $1}' <<<"$VENV_INFO")"
+      VENV_NUMPY_PATH="$(awk '{print $2}' <<<"$VENV_INFO")"
+      if [ "$VENV_NUMPY_VERSION" != "$GLOBAL_NUMPY_VERSION" ]; then
+        echo -e "${RED}[ERROR] Post-align mismatch persists (venv=${VENV_NUMPY_VERSION} vs system=${GLOBAL_NUMPY_VERSION}).${NC}"
+        ERROR_NUMPY_COMPAT="Post-align mismatch persists."
       else
         echo -e "${GREEN}[OK] Venv NumPy aligned to system: ${VENV_NUMPY_VERSION}${NC}"
         STATUS_NUMPY_COMPAT="${TICK}"
@@ -348,9 +330,6 @@ EOF
   fi
 fi
 
-echo -e "${GREEN}[INFO] Installing optimized BLAS/LAPACK libraries for NumPy/OpenCV...${NC}"
-sudo apt-get install -y libatlas-base-dev libopenblas-dev liblapack-dev
-check_status "Installing optimized linear algebra libraries" "OPT_LIBS"
 
 # Step 7: Install OpenCV in the virtual environment
 echo -e "${GREEN}[INFO] Installing opencv-contrib-python in the 'owl' virtual environment...${NC}"
@@ -469,7 +448,6 @@ fi
 
 echo -e "$STATUS_VENV Virtual Environment Created"
 echo -e "$STATUS_GLOBAL_NUMPY Global NumPy Version Detected"
-echo -e "$STATUS_OPT_LIBS Optimized Linear Algebra Libraries Installed"
 echo -e "$STATUS_OPENCV OpenCV Installed"
 echo -e "$STATUS_NUMPY_COMPAT NumPy Versions Aligned"
 echo -e "$STATUS_OWL_DEPS OWL Dependencies Installed"
