@@ -15,10 +15,6 @@ class ConfigValidator:
             'required_keys': {'algorithm', 'relay_num', 'actuation_duration', 'delay'},
             'optional_keys': {'input_file_or_directory'}
         },
-        'Dashboard': {
-            'required_keys': {'dashboard_enable', 'dashboard_port', 'gps_source', 'gps_port'},
-            'optional_keys': {'gps_baudrate'}
-        },
         'Controller': {
             # Base requirements for all controller types
             'required_keys': {'controller_type'},

@@ -21,7 +21,7 @@ from datetime import datetime
 import urllib.request
 import urllib.error
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from utils.mqtt_manager import MQTTClient
+from utils.mqtt_manager import DashMQTTSubscriber
 from utils.upload_manager import get_uploader
 from utils.input_manager import get_rpi_version
 
@@ -58,7 +58,7 @@ class OWLDashboard:
                          static_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static'),
                          template_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates'))
 
-        self.mqtt_client = MQTTClient(
+        self.mqtt_client = DashMQTTSubscriber(
             broker_host='localhost',
             broker_port=1883,
             client_id='owl_dashboard')

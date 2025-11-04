@@ -179,27 +179,44 @@ class Owl:
         self._STATE_CHECK_INTERVAL = 0.1
         self.stop_state_update = threading.Event()
 
-        # Dashboard setup
+        ####################### DASHBOARD ############################
         self.dash = None
         self.stream_active = None
         self.latest_stream_frame = None
-        if self.config.getboolean('Dashboard', 'dashboard_enable', fallback=False):
+        mqtt_enable = self.config.getboolean('MQTT', 'enable', fallback=False)
+
+        broker_ip = self.config.get('MQTT', 'broker_ip', fallback='localhost')
+        broker_port = self.config.getint('MQTT', 'broker_port', fallback=1883)
+        device_id = self.config.get('MQTT', 'device_id', fallback='auto')
+        client_id = f"client_{device_id}"
+
+        if mqtt_enable:
             try:
-                from utils.mqtt_manager import MQTTServer
-                self.dash = MQTTServer(
-                    broker_host='localhost',
-                    broker_port=1883,
-                    client_id='owl_main')
+                from utils.mqtt_manager import OWLMQTTPublisher
+
+                self.dash = OWLMQTTPublisher(
+                    broker_host=broker_ip,
+                    broker_port=broker_port,
+                    client_id=client_id,
+                    device_id=device_id)
 
                 low_config = self.config.get('Controller', 'low_sensitivity_config',
-                                             fallback='config/DAY_SENSITIVITY_2.ini')
+                                             fallback='config/SENSITIVITY_LOW.ini')
+                medium_config = self.config.get('Controller', 'medium_sensitivity_config',
+                                                fallback='config/SENSITIVITY_MEDIUM.ini')
                 high_config = self.config.get('Controller', 'high_sensitivity_config',
-                                              fallback='config/DAY_SENSITIVITY_3.ini')
+                                              fallback='config/SENSITIVITY_HIGH.ini')
 
-                self.dash.set_owl_instance(self, low_config, high_config)
+                self.dash.set_owl_instance(self, low_config, medium_config, high_config)
+
                 self.dash.start()
 
-                self.logger.info("MQTT Dashboard integration enabled")
+                # Enhanced logging
+                mode = 'NETWORKED' if broker_ip not in ['localhost', '127.0.0.1'] else 'STANDALONE'
+                self.logger.info(f"MQTT enabled - Mode: {mode}")
+                self.logger.info(f"MQTT Broker: {broker_ip}:{broker_port}")
+                self.logger.info(f"Device ID: {device_id}")
+                self.logger.info(f"Client ID: {client_id}")
 
                 LogManager.add_mqtt_handler(
                     mqtt_client=self.dash.client,
@@ -209,7 +226,7 @@ class Owl:
             except Exception as e:
                 self.dash = None
                 self.logger.critical("Failed to initialize MQTT server. Dashboard disabled.")
-                raise errors.MQTTConnectionError(host='localhost', port=1883, original_error=e)
+                raise errors.MQTTConnectionError(host=broker_ip, port=broker_port, original_error=e)
 
             try:
                 self.stream_lock = threading.Lock()
@@ -225,14 +242,14 @@ class Owl:
                 self.dash.set_stream_status(self.stream_active)
 
         # GPS setup (only if enabled in config)
-        self.gps_source = self.config.get('System', 'gps_source', fallback='none').lower()
+        self.gps_source = self.config.get('GPS', 'source', fallback='none').lower()
         self.gps_data = None
 
         if self.gps_source != "none":
             if self.dash:  # Override with dashboard if enabled
                 self.gps_source = 'dashboard'
-            self.gps_port = self.config.get('System', 'gps_port', fallback='/dev/ttyUSB0')
-            self.gps_baudrate = self.config.getint('System', 'gps_baudrate', fallback=9600)
+            self.gps_port = self.config.get('GPS', 'port', fallback='/dev/ttyUSB0')
+            self.gps_baudrate = self.config.getint('GPS', 'baudrate', fallback=9600)
 
         # if a controller is connected, sample images must be true to set up directories correctly
         self.controller_type = self.config.get('Controller', 'controller_type').strip("'\" ").lower()
@@ -501,6 +518,14 @@ class Owl:
                                         duration=actuation_duration)
 
                 ##### Update Dashboard Stream #####
+                if frame_count % 90 == 0:  # Every 90 frames (~3 seconds at 30fps)
+                    if self.dash and hasattr(self.dash, 'update_system_stats'):
+                        try:
+                            stats = self.get_system_stats()
+                            self.dash.update_system_stats(stats)
+                        except Exception as e:
+                            self.logger.debug(f"Error updating system stats: {e}")
+
                 if self.dash and frame_count % 5 == 0: # send every 5th frame to the streamer to reduce overhead
                     try:
                         if self._detection_enable and image_out is not None:
@@ -538,6 +563,7 @@ class Owl:
                         if self.status_indicator.DRIVE_FULL:
                             if self.dash:
                                 self.dash.set_image_sample_enable(False)
+                                self.dash.drive_full_indicator()
                                 self.logger.info("Drive full: Image sampling disabled via MQTT")
                             else:
                                 with self.image_sample_enable.get_lock():
@@ -826,6 +852,90 @@ class Owl:
         """Thread-safe method to get the latest frame for the stream."""
         with self.stream_lock:
             return self.latest_stream_frame
+
+    def get_system_stats(self):
+        """
+        Get system statistics with robust error handling.
+        Based on owl_dash.py implementation.
+        """
+        import subprocess
+        import glob
+        try:
+            import psutil
+        except ImportError:
+            self.logger.warning("psutil not installed - system stats unavailable")
+            return {
+                'cpu_percent': 0,
+                'cpu_temp': 0,
+                'memory_percent': 0,
+                'memory_used': 0,
+                'memory_total': 0,
+                'disk_percent': 0,
+                'disk_used': 0,
+                'disk_total': 0,
+                'fan_status': {'is_rpi5': False, 'mode': 'unavailable', 'rpm': 0},
+                'owl_running': True
+            }
+
+        stats = {
+            'cpu_percent': 0,
+            'cpu_temp': 0,
+            'memory_percent': 0,
+            'memory_used': 0,
+            'memory_total': 0,
+            'disk_percent': 0,
+            'disk_used': 0,
+            'disk_total': 0,
+            'fan_status': {'is_rpi5': False, 'mode': 'unavailable', 'rpm': 0},
+            'owl_running': True
+        }
+
+        try:
+            # Get RPI version
+            from utils.input_manager import get_rpi_version
+            rpi_version = get_rpi_version()
+
+            if rpi_version == 'rpi-5':
+                stats['fan_status']['is_rpi5'] = True
+                stats['fan_status']['mode'] = 'auto'  # or self.fan_state if you track it
+
+                try:
+                    rpm_files = glob.glob('/sys/devices/platform/cooling_fan/hwmon/*/fan1_input')
+                    if rpm_files:
+                        with open(rpm_files[0], 'r') as f:
+                            stats['fan_status']['rpm'] = int(f.read().strip())
+                except Exception as e:
+                    self.logger.debug(f"Could not read fan RPM: {e}")
+
+            # CPU, Memory, Disk
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            memory = psutil.virtual_memory()
+            disk = psutil.disk_usage('/')
+
+            stats.update({
+                'cpu_percent': round(cpu_percent, 1),
+                'memory_percent': round(memory.percent, 1),
+                'memory_used': round(memory.used / (1024 ** 3), 1),
+                'memory_total': round(memory.total / (1024 ** 3), 1),
+                'disk_percent': round(disk.percent, 1),
+                'disk_used': round(disk.used / (1024 ** 3), 1),
+                'disk_total': round(disk.total / (1024 ** 3), 1),
+            })
+
+            # CPU Temperature
+            try:
+                result = subprocess.run(['/usr/bin/vcgencmd', 'measure_temp'],
+                                        capture_output=True, text=True, timeout=1)
+                if result.returncode == 0:
+                    temp_str = result.stdout.replace('temp=', '').replace("'C\n", '').strip()
+                    stats['cpu_temp'] = round(float(temp_str), 1)
+            except Exception as e:
+                self.logger.debug(f"Could not get CPU temp: {e}")
+
+        except Exception as e:
+            self.logger.warning(f"Error getting system stats: {e}")
+
+        return stats
 
     def update_state(self):
         """Update local state from MQTT server or local hardware controllers"""
