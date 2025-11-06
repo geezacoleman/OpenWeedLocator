@@ -499,14 +499,14 @@ if [[ "$OWL_MODE" == "standalone" ]]; then
 
     # Create mosquitto configuration that works with existing setup
     sudo tee /etc/mosquitto/conf.d/owl.conf > /dev/null <<EOF
-    # OWL MQTT Configuration
-    # Extends the main mosquitto.conf settings
+# OWL MQTT Configuration
+# Extends the main mosquitto.conf settings
 
-    # Allow anonymous connections (required for OWL dashboard)
-    allow_anonymous true
+# Allow anonymous connections (required for OWL dashboard)
+allow_anonymous true
 
-    # Listen on all interfaces so hotspot clients can connect
-    listener 1883 0.0.0.0
+# Listen on all interfaces so hotspot clients can connect
+listener 1883 0.0.0.0
 EOF
 
     # Test configuration (may fail if service is running - that's OK)
