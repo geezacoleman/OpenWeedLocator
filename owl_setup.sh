@@ -85,7 +85,7 @@ reload_bashrc() {
 install_dashboard_dependencies() {
   echo -e "${GREEN}[INFO] Installing dashboard Python dependencies...${NC}"
   source $HOME/.virtualenvs/owl/bin/activate
-  pip install flask==2.2.2 gunicorn==23.0.0 paho-mqtt==2.1.0 psutil==5.9.4 boto3==1.39.13
+  pip install flask gunicorn paho-mqtt psutil boto3
   check_status "Installing dashboard Python dependencies" "DASHBOARD_DEPS"
 
   echo -e "${GREEN}[INFO] Verifying Python package installations...${NC}"
