@@ -378,17 +378,37 @@ class Owl:
         # to be updated too. Fairly straightforward, so an opportunity for more precise application
         self.relay_num = self.config.getint('System', 'relay_num')
 
-        # activation region limit - once weed crosses this line, relay is activated
-        self.yAct = int(0.01 * self.frame_height)
-        self.lane_width = self.frame_width / self.relay_num
+        # Crop factors to reduce edge artifacts (0.1 = 10% crop from each side)
+        self.crop_factor_horizontal = self.config.getfloat('Camera', 'crop_factor_horizontal', fallback=0.1)
+        self.crop_factor_vertical = self.config.getfloat('Camera', 'crop_factor_vertical', fallback=0.1)
+        self.logger.info(f'[INFO] Crop factor: X {self.crop_factor_horizontal} | Y {self.crop_factor_vertical}')
 
-        # calculate lane coords and draw on frame
-        for i in range(self.relay_num):
-            laneX = int(i * self.lane_width)
-            self.lane_coords[i] = laneX
+        if self.frame_width and self.frame_height:
+            # Calculate cropped dimensions
+            crop_left = int(self.frame_width * self.crop_factor_horizontal)
+            crop_right = int(self.frame_width - crop_left)
+            crop_top = int(self.frame_height * self.crop_factor_vertical)
+            crop_bottom = int(self.frame_height - crop_top)
+            self.cropped_width = crop_right - crop_left
+            self.cropped_height = crop_bottom - crop_top
+            self.logger.info(f'[INFO] Image cropped to {crop_left}x{crop_right}x{crop_top}x{crop_bottom}.')
+            # Store crop boundaries for slicing
+            self.crop_slice = (slice(crop_top, crop_bottom), slice(crop_left, crop_right))
 
-        # Precompute the integer lane coordinates for reuse
-        self.lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
+            # Calculate lane width based on cropped width
+            self.lane_width = self.cropped_width / self.relay_num
+
+            # Calculate lane coords relative to cropped frame
+            for i in range(self.relay_num):
+                laneX = int(i * self.lane_width)
+                self.lane_coords[i] = laneX
+
+            # Precompute the integer lane coordinates for reuse
+            self.lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
+
+        else:
+            self.logger.error('No frame width or frame height provided.')
+
 
     def hoot(self):
         self.record_video = False  # Flag to control video recording
@@ -465,9 +485,11 @@ class Owl:
 
                 # pass image, thresholds to green_on_brown function
                 if self._detection_enable:
+                    cropped_frame = frame[self.crop_slice]
+
                     if algorithm == 'gog':
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
-                            frame,
+                            cropped_frame,
                             confidence=confidence,
                             filter_id=63
                         )
@@ -479,7 +501,7 @@ class Owl:
                             return_image_out = False
 
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
-                            frame,
+                            cropped_frame,
                             exg_min=self.exg_min,
                             exg_max=self.exg_max,
                             hue_min=self.hue_min,
@@ -503,19 +525,18 @@ class Owl:
 
                     # loop over the weed centres
                     for centre in weed_centres:
-                        if centre[1] > self.yAct:
-                            actuation_time = time.time()
-                            centre_x = centre[0]
+                        actuation_time = time.time()
+                        centre_x = centre[0]
 
-                            for i in range(self.relay_num):
-                                lane_start = self.lane_coords_int[i]
-                                lane_end = lane_start + self.lane_width
-                                if lane_start <= centre_x < lane_end:
-                                    self.relay_controller.receive(
-                                        relay=i,
-                                        delay=delay,
-                                        time_stamp=actuation_time,
-                                        duration=actuation_duration)
+                        for i in range(self.relay_num):
+                            lane_start = self.lane_coords_int[i]
+                            lane_end = lane_start + self.lane_width
+                            if lane_start <= centre_x < lane_end:
+                                self.relay_controller.receive(
+                                    relay=i,
+                                    delay=delay,
+                                    time_stamp=actuation_time,
+                                    duration=actuation_duration)
 
                 ##### Update Dashboard Stream #####
                 if frame_count % 90 == 0:  # Every 90 frames (~3 seconds at 30fps)
