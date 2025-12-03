@@ -33,7 +33,7 @@ class WebcamStream:
         if self.IS_PI:
             src = "/dev/video0"
             self.logger.info(f"[INFO] Opening webcam via V4L2 on device {src}")
-            self.stream = cv2.VideoCapture("/dev/video0")
+            self.stream = cv2.VideoCapture("dev/video0")
         else:
             # Cross-platform default (Windows, macOS, generic Linux)
             self.logger.info(f"[INFO] Opening webcam via default backend on source {src}")
