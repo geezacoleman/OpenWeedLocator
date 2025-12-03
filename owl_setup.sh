@@ -77,18 +77,30 @@ reload_bashrc() {
 
 # Function to check if the camera is detected
 check_camera_connection() {
-  echo -e "${GREEN}[INFO] Checking for connected Raspberry Pi camera...${NC}"
-  while true; do
-    if rpicam-hello --list-cameras 2>&1 | grep -q "No cameras available"; then
-      echo -e "${RED}[ERROR] No camera detected!${NC}"
-      read -p "Please connect a Raspberry Pi camera and press Enter to retry..." temp
-    else
-      echo -e "${GREEN}[INFO] Camera detected successfully.${NC}"
-      STATUS_CAMERA="${TICK}"
-      return 0
-    fi
-  done
+  echo -e "${GREEN}[INFO] Checking for connected cameras...${NC}"
+
+  # 1 — Detect Raspberry Pi MIPI camera via libcamera
+  if rpicam-hello --list-cameras 2>&1 | grep -v "No cameras available" >/dev/null; then
+    echo -e "${GREEN}[INFO] Raspberry Pi CSI camera detected.${NC}"
+    STATUS_CAMERA="${TICK}"
+    return 0
+  fi
+
+  # 2 — Detect USB camera
+  if ls /dev/video0 >/dev/null 2>&1; then
+    echo -e "${ORANGE}[WARNING] No CSI camera detected; USB webcam found at /dev/video0.${NC}"
+    echo -e "${ORANGE}[WARNING] System will attempt webcam mode.${NC}"
+    STATUS_CAMERA="${TICK}"
+    return 0
+  fi
+
+  # 3 — Neither exists, warn but continue install
+  echo -e "${RED}[WARNING] No camera detected!${NC}"
+  echo -e "${RED}[WARNING] Installation will continue, but OWL will not run until a camera is connected.${NC}"
+  STATUS_CAMERA="${CROSS}"
+  return 0
 }
+
 
 # Step 1: Perform a normal system update and upgrade
 echo -e "${GREEN}[INFO] Updating and upgrading the system...${NC}"

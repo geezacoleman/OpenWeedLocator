@@ -24,27 +24,45 @@ except Exception as e:
 
 # class to support webcams
 class WebcamStream:
-    def __init__(self, src=0):
+    def __init__(self, src=0, resolution=(640, 480), framerate=30):
         self.logger = LogManager.get_logger(__name__)
         self.name = "WebcamStream"
         self.logger.info(f'Camera type: {self.name}')
         self.stream = cv2.VideoCapture(src)
 
-        self.frame_width = self.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
-        self.frame_height = self.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
-
         # Check if the stream opened successfully
         if not self.stream.isOpened():
             self.stream.release()
             self.logger.error(f'Unable to open video source: {src}')
-            raise ValueError("Unable to open video source:", src)
+            raise ValueError(f'Unable to open video source: {src}')
+
+        target_width, target_height = resolution
+
+        self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, target_width)
+        self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, target_height)
+        self.stream.set(cv2.CAP_PROP_FPS, framerate)
+
+        self.frame_width = int(self.stream.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.frame_height = int(self.stream.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        actual_fps = self.stream.get(cv2.CAP_PROP_FPS)
+
+        if (self.frame_width, self.frame_height) != (target_width, target_height):
+            self.logger.warning(
+                f"Requested resolution {target_width}x{target_height}, "
+                f"but got {self.frame_width}x{self.frame_height} from webcam."
+            )
+
+        if actual_fps != 0 and abs(actual_fps - framerate) > 1:
+            self.logger.warning(
+                f"Requested FPS {framerate}, but webcam reports {actual_fps:.1f}."
+            )
 
         # read the first frame from the stream
         self.grabbed, self.frame = self.stream.read()
         if not self.grabbed:
             self.stream.release()
             self.logger.error(f'Unable to read from video source: {src}')
-            raise ValueError("Unable to read from video source:", src)
+            raise ValueError(f'Unable to read from video source: {src}')
 
         # initialize the thread name, stop event, and the thread itself
         self.stop_event = Event()
@@ -288,21 +306,42 @@ class VideoStream:
     def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2, **kwargs):
         self.CAMERA_VERSION = PICAMERA_VERSION if PICAMERA_VERSION is not None else 'webcam'
         self.logger = LogManager.get_logger(__name__)
+        self.logger.info(f"[INFO] Initial camera backend selection: {self.CAMERA_VERSION} (src={src})")
         self.frame_height = None
         self.frame_width = None
 
-        if self.CAMERA_VERSION == 'legacy':
-            self.stream = PiCameraStream(resolution=resolution, exp_compensation=exp_compensation, **kwargs)
+        if self.CAMERA_VERSION == 'picamera2':
+            try:
+                self.stream = PiCamera2Stream(src=src,
+                                              resolution=resolution,
+                                              exp_compensation=exp_compensation,
+                                              **kwargs)
+            except Exception as e:
+                self.logger.warning(
+                    f"PiCamera2Stream failed ({e}); falling back to USB webcam.",
+                    exc_info=True
+                )
+                self.stream = WebcamStream(src=src, resolution=resolution)
 
-        elif self.CAMERA_VERSION == 'picamera2':
-            self.stream = PiCamera2Stream(src=src, resolution=resolution, exp_compensation=exp_compensation, **kwargs)
-
+        elif self.CAMERA_VERSION == 'legacy':
+            try:
+                self.stream = PiCameraStream(resolution=resolution,
+                                             exp_compensation=exp_compensation,
+                                             **kwargs)
+            except Exception as e:
+                self.logger.warning(
+                    f"PiCameraStream failed ({e}); falling back to USB webcam.",
+                    exc_info=True
+                )
+                self.stream = WebcamStream(src=src, resolution=resolution)
         elif self.CAMERA_VERSION == 'webcam':
-            self.stream = WebcamStream(src=src)
+            self.stream = WebcamStream(src=src, resolution=resolution)
 
         else:
-            self.logger.error(f"Unsupported camera version: {self.CAMERA_VERSION}")
-            raise ValueError(f"Unsupported camera version: {self.CAMERA_VERSION}")
+            self.logger.error(
+                f"[ERROR] Unsupported camera version: {self.CAMERA_VERSION}"
+            )
+            raise ValueError(f"[ERROR] Unsupported camera version: {self.CAMERA_VERSION}")
 
         # set the image dimensions directly from the frame streamed
         self.frame_width = self.stream.frame_width
