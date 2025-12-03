@@ -24,11 +24,24 @@ except Exception as e:
 
 # class to support webcams
 class WebcamStream:
-    def __init__(self, src=0, resolution=(640, 480), framerate=30):
+    def __init__(self, src=0, resolution=(640, 480), framerate=30, pi=False):
         self.logger = LogManager.get_logger(__name__)
         self.name = "WebcamStream"
         self.logger.info(f'Camera type: {self.name}')
-        self.stream = cv2.VideoCapture(src)
+        self.IS_PI = pi
+
+        if self.IS_PI:
+            # On Pi/Linux, map integer indices to /dev/videoN and force V4L2
+            if isinstance(src, int):
+                device = f"/dev/video{src}"
+            else:
+                device = src
+            self.logger.info(f"[INFO] Opening webcam via V4L2 on device {device}")
+            self.stream = cv2.VideoCapture(device, cv2.CAP_V4L2)
+        else:
+            # Cross-platform default (Windows, macOS, generic Linux)
+            self.logger.info(f"[INFO] Opening webcam via default backend on source {src}")
+            self.stream = cv2.VideoCapture(src)
 
         # Check if the stream opened successfully
         if not self.stream.isOpened():
@@ -321,7 +334,7 @@ class VideoStream:
                     f"PiCamera2Stream failed ({e}); falling back to USB webcam.",
                     exc_info=True
                 )
-                self.stream = WebcamStream(src=src, resolution=resolution)
+                self.stream = WebcamStream(src=src, resolution=resolution, pi=True)
 
         elif self.CAMERA_VERSION == 'legacy':
             try:
@@ -333,9 +346,10 @@ class VideoStream:
                     f"PiCameraStream failed ({e}); falling back to USB webcam.",
                     exc_info=True
                 )
-                self.stream = WebcamStream(src=src, resolution=resolution)
+                self.stream = WebcamStream(src=src, resolution=resolution, pi=True)
+
         elif self.CAMERA_VERSION == 'webcam':
-            self.stream = WebcamStream(src=src, resolution=resolution)
+            self.stream = WebcamStream(src=src, resolution=resolution, pi=False)
 
         else:
             self.logger.error(
