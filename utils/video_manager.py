@@ -330,6 +330,7 @@ class VideoStream:
                     f"PiCamera2Stream failed ({e}); falling back to USB webcam.",
                     exc_info=True
                 )
+                time.sleep(3)
                 self.stream = WebcamStream(src=src, resolution=resolution, pi=True)
 
         elif self.CAMERA_VERSION == 'legacy':
