@@ -77,18 +77,104 @@ reload_bashrc() {
 
 # Function to check if the camera is detected
 check_camera_connection() {
-  echo -e "${GREEN}[INFO] Checking for connected Raspberry Pi camera...${NC}"
-  while true; do
-    if rpicam-hello --list-cameras 2>&1 | grep -q "No cameras available"; then
-      echo -e "${RED}[ERROR] No camera detected!${NC}"
-      read -p "Please connect a Raspberry Pi camera and press Enter to retry..." temp
-    else
-      echo -e "${GREEN}[INFO] Camera detected successfully.${NC}"
+  echo -e "${GREEN}[INFO] Checking for connected cameras...${NC}"
+
+  # 1 — Detect Raspberry Pi CSI camera via libcamera
+  if command -v rpicam-hello >/dev/null 2>&1; then
+    if rpicam-hello --list-cameras 2>&1 | grep -qv "No cameras available"; then
+      echo -e "${GREEN}[INFO] Raspberry Pi CSI camera detected.${NC}"
+      CAMERA_MODE="rpi"
       STATUS_CAMERA="${TICK}"
       return 0
     fi
-  done
+  fi
+
+  # 2 — Detect USB camera
+  if command -v v4l2-ctl >/dev/null 2>&1 && [[ -e /dev/video0 ]]; then
+    # basic sanity check — camera responds
+    if v4l2-ctl -d /dev/video0 --all >/dev/null 2>&1; then
+      echo -e "${GREEN}[INFO] USB webcam detected at /dev/video0.${NC}"
+      CAMERA_MODE="usb"
+      STATUS_CAMERA="${TICK}"
+      return 0
+    fi
+  fi
+
+  # 3 — Neither exists, warn but continue install
+  echo -e "${RED}[WARNING] No camera detected (no CSI or USB).${NC}"
+  echo -e "${RED}[WARNING] OWL will not run until a camera is present.${NC}"
+  CAMERA_MODE="none"
+  STATUS_CAMERA="${CROSS}"
+  return 0
 }
+
+# check to see if the camera works
+test_camera_functionality() {
+  local mode="$1"  # "rpi", "usb" or "none"
+  local test_cmd=""
+
+  echo -e "${GREEN}[INFO] Testing camera functionality (mode: ${mode})...${NC}"
+
+  if [[ "$mode" == "none" ]]; then
+    echo -e "${RED}[WARN] Skipping camera test: no camera detected.${NC}"
+    STATUS_CAMERA_TEST="${CROSS}"
+    ERROR_CAMERA_TEST="No camera detected"
+    return
+  fi
+
+  if [[ "$mode" == "usb" ]]; then
+    if ! command -v v4l2-ctl >/dev/null 2>&1; then
+      echo -e "${ORANGE}[WARN] v4l2-ctl not found. Install with: sudo apt install v4l-utils${NC}"
+      STATUS_CAMERA_TEST="${CROSS}"
+      ERROR_CAMERA_TEST="v4l2-ctl missing for USB camera test"
+      return
+    fi
+
+    if [[ ! -e /dev/video0 ]]; then
+      echo -e "${RED}[WARNING] /dev/video0 not found. USB camera not available.${NC}"
+      STATUS_CAMERA_TEST="${CROSS}"
+      ERROR_CAMERA_TEST="No /dev/video0 device"
+      return
+    fi
+
+    # Headless-safe: just query controls / capabilities
+    test_cmd="v4l2-ctl -d /dev/video0 --all"
+  else
+    # Default to Raspberry Pi CSI camera mode
+    if ! command -v rpicam-hello >/dev/null 2>&1; then
+      echo -e "${ORANGE}[WARN] rpicam-hello not found. Skipping Pi camera test.${NC}"
+      STATUS_CAMERA_TEST="${CROSS}"
+      ERROR_CAMERA_TEST="rpicam-hello missing"
+      return
+    fi
+
+    # Headless-safe: no preview, short timeout
+    test_cmd="rpicam-hello --nopreview --timeout 200"
+  fi
+
+  # First test
+  ${test_cmd} > /dev/null 2>&1
+  if [ $? -ne 0 ]; then
+    echo -e "${RED}[WARNING] Camera test failed. Running full system upgrade to resolve potential issues...${NC}"
+    sudo apt full-upgrade -y
+    check_status "Full system upgrade" "FULL_UPGRADE"
+
+    echo -e "${GREEN}[INFO] Retesting camera after full upgrade...${NC}"
+    ${test_cmd} > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+      echo -e "${RED}[CRITICAL ERROR] Camera still not working after full upgrade. Please log an issue: https://github.com/geezacoleman/OpenWeedLocator/issues${NC}"
+      STATUS_CAMERA_TEST="${CROSS}"
+      ERROR_CAMERA_TEST="Camera test failed in mode '${mode}'"
+    else
+      echo -e "${GREEN}[INFO] Camera test passed after full upgrade.${NC}"
+      STATUS_CAMERA_TEST="${TICK}"
+    fi
+  else
+    echo -e "${GREEN}[INFO] Camera is working correctly.${NC}"
+    STATUS_CAMERA_TEST="${TICK}"
+  fi
+}
+
 
 # Step 1: Perform a normal system update and upgrade
 echo -e "${GREEN}[INFO] Updating and upgrading the system...${NC}"
@@ -101,26 +187,7 @@ check_camera_connection
 
 # Step 3: Test camera functionality
 echo -e "${GREEN}[INFO] Testing camera functionality...${NC}"
-rpicam-hello > /dev/null 2>&1
-if [ $? -ne 0 ]; then
-  echo -e "${RED}[WARNING] Camera test failed. Running full system upgrade to resolve potential issues...${NC}"
-  sudo apt full-upgrade -y
-  check_status "Full system upgrade" "FULL_UPGRADE"
 
-  echo -e "${GREEN}[INFO] Retesting camera after full upgrade...${NC}"
-  rpicam-hello > /dev/null 2>&1
-  if [ $? -ne 0 ]; then
-    echo -e "${RED}[CRITICAL ERROR] Camera still not working after full upgrade. Please log an issue: https://github.com/geezacoleman/OpenWeedLocator/issues${NC}"
-    STATUS_CAMERA_TEST="${CROSS}"
-    ERROR_CAMERA_TEST="No camera detected"
-  else
-    echo -e "${GREEN}[INFO] Camera test passed after full upgrade.${NC}"
-    STATUS_CAMERA_TEST="${TICK}"
-  fi
-else
-  echo -e "${GREEN}[INFO] Camera is working correctly.${NC}"
-  STATUS_CAMERA_TEST="${TICK}"
-fi
 
 # Step 4: Free up space
 echo -e "${GREEN}[INFO] Freeing up space by removing unnecessary packages...${NC}"
