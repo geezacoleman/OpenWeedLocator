@@ -31,13 +31,12 @@ class WebcamStream:
         self.IS_PI = pi
 
         if self.IS_PI:
-            # On Pi/Linux, map integer indices to /dev/videoN and force V4L2
             if isinstance(src, int):
                 device = f"/dev/video{src}"
             else:
                 device = src
             self.logger.info(f"[INFO] Opening webcam via V4L2 on device {device}")
-            self.stream = cv2.VideoCapture(device, cv2.CAP_V4L2)
+            self.stream = cv2.VideoCapture(device)
         else:
             # Cross-platform default (Windows, macOS, generic Linux)
             self.logger.info(f"[INFO] Opening webcam via default backend on source {src}")
