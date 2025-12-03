@@ -24,14 +24,13 @@ except Exception as e:
 
 # class to support webcams
 class WebcamStream:
-    def __init__(self, src=0, resolution=(640, 480), framerate=30, pi=False):
+    def __init__(self, src=0, resolution=(640, 480), framerate=30):
         self.logger = LogManager.get_logger(__name__)
         self.name = "WebcamStream"
         self.logger.info(f'Camera type: {self.name}')
-        src = "/dev/video0"
+
         self.stream = cv2.VideoCapture(src)
-        self.logger.info(f'SRC: {src}')
-        time.sleep(1)
+
         # Check if the stream opened successfully
         if not self.stream.isOpened():
             self.stream.release()
@@ -305,48 +304,59 @@ class PiCameraStream:
 
 # overarching class to determine which stream to use
 class VideoStream:
-    def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2, **kwargs):
+    def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2, camera_type='rpi', **kwargs):
         self.CAMERA_VERSION = PICAMERA_VERSION if PICAMERA_VERSION is not None else 'webcam'
+        self.CAMERA_TYPE = camera_type
         self.logger = LogManager.get_logger(__name__)
         self.logger.info(f"[INFO] Initial camera backend selection: {self.CAMERA_VERSION} (src={src})")
         self.frame_height = None
         self.frame_width = None
 
-        if self.CAMERA_VERSION == 'picamera2':
+        if self.CAMERA_TYPE == 'rpi':
+            if self.CAMERA_VERSION == 'picamera2':
+                try:
+                    self.stream = PiCamera2Stream(src=src,
+                                                  resolution=resolution,
+                                                  exp_compensation=exp_compensation,
+                                                  **kwargs)
+                except Exception as e:
+                    self.logger.warning(
+                        f"PiCamera2Stream failed with RPI camera_type ({e})",
+                        exc_info=True
+                    )
+
+            elif self.CAMERA_VERSION == 'legacy':
+                try:
+                    self.stream = PiCameraStream(resolution=resolution,
+                                                 exp_compensation=exp_compensation,
+                                                 **kwargs)
+                except Exception as e:
+                    self.logger.warning(
+                        f"PiCameraStream failed ({e})",
+                        exc_info=True
+                    )
+
+        elif self.CAMERA_TYPE == 'usb':
             try:
-                self.stream = WebcamStream(src=src, resolution=resolution, pi=True)
-               #self.stream = PiCamera2Stream(src=src,
-               #                              resolution=resolution,
-               #                              exp_compensation=exp_compensation,
-               #                              **kwargs)
+                self.stream = WebcamStream(src="/dev/video0", resolution=resolution)
             except Exception as e:
                 self.logger.warning(
-                    f"PiCamera2Stream failed ({e}); falling back to USB webcam.",
+                    f"RPI-USB Webcam Stream failed ({e})",
                     exc_info=True
                 )
-                time.sleep(3)
-                self.stream = WebcamStream(src=src, resolution=resolution, pi=True)
-
-        elif self.CAMERA_VERSION == 'legacy':
+        elif self.CAMERA_TYPE == 'windows-usb':
             try:
-                self.stream = PiCameraStream(resolution=resolution,
-                                             exp_compensation=exp_compensation,
-                                             **kwargs)
+                self.stream = WebcamStream(src=0, resolution=resolution)
             except Exception as e:
                 self.logger.warning(
-                    f"PiCameraStream failed ({e}); falling back to USB webcam.",
+                    f"WINDOWS-USB Webcam Stream failed ({e})",
                     exc_info=True
                 )
-                self.stream = WebcamStream(src=src, resolution=resolution, pi=True)
-
-        elif self.CAMERA_VERSION == 'webcam':
-            self.stream = WebcamStream(src=src, resolution=resolution, pi=False)
-
         else:
             self.logger.error(
-                f"[ERROR] Unsupported camera version: {self.CAMERA_VERSION}"
+                f"[ERROR] Unsupported camera version: {self.CAMERA_TYPE}"
             )
-            raise ValueError(f"[ERROR] Unsupported camera version: {self.CAMERA_VERSION}")
+            raise ValueError(f"[ERROR] Unsupported camera version: {self.CAMERA_TYPE}")
 
         # set the image dimensions directly from the frame streamed
         self.frame_width = self.stream.frame_width

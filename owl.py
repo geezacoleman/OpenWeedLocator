@@ -4,6 +4,7 @@ import sys
 
 import logging
 import argparse
+import platform
 import time
 from datetime import datetime
 from multiprocessing import Process, Value
@@ -282,9 +283,10 @@ class Owl:
 
         self.frame_width = None
         self.frame_height = None
+        self.camera_type = self.config.get('Camera', 'camera_type')
 
         try:
-            self.cam = self.setup_media_source(input_file_or_directory)
+            self.cam = self.setup_media_source(input_file_or_directory, camera_type=self.camera_type)
             self.logger.info('Media source successfully set up...')
             time.sleep(1.0)
 
@@ -606,7 +608,7 @@ class Owl:
 
         self.logger.info(f"[INFO] Configuration saved to {new_config_path}")
 
-    def setup_media_source(self, input_file_or_directory):
+    def setup_media_source(self, input_file_or_directory, camera_type='rpi'):
         """
         Configure and initialize the appropriate media source (camera or media file/directory).
 
@@ -657,8 +659,12 @@ class Owl:
 
         # Set up camera if no file input specified
         try:
+            if platform.system() != "Linux":
+                camera_type = "windows-usb"
+
             media_source = VideoStream(resolution=self.resolution,
-                                       exp_compensation=self.exp_compensation)
+                                       exp_compensation=self.exp_compensation,
+                                       camera_type=camera_type)
             media_source.start()
 
             self.frame_width = media_source.frame_width
