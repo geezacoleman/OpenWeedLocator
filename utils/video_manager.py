@@ -314,10 +314,11 @@ class VideoStream:
 
         if self.CAMERA_VERSION == 'picamera2':
             try:
-                self.stream = PiCamera2Stream(src=src,
-                                              resolution=resolution,
-                                              exp_compensation=exp_compensation,
-                                              **kwargs)
+                self.stream = WebcamStream(src=src, resolution=resolution, pi=True)
+               #self.stream = PiCamera2Stream(src=src,
+               #                              resolution=resolution,
+               #                              exp_compensation=exp_compensation,
+               #                              **kwargs)
             except Exception as e:
                 self.logger.warning(
                     f"PiCamera2Stream failed ({e}); falling back to USB webcam.",
