@@ -28,17 +28,9 @@ class WebcamStream:
         self.logger = LogManager.get_logger(__name__)
         self.name = "WebcamStream"
         self.logger.info(f'Camera type: {self.name}')
-        self.IS_PI = pi
-
-        if self.IS_PI:
-            src = "/dev/video0"
-            self.logger.info(f"[INFO] Opening webcam via V4L2 on device {src}")
-            self.stream = cv2.VideoCapture(0, cv2.CAP_V4L2)
-        else:
-            # Cross-platform default (Windows, macOS, generic Linux)
-            self.logger.info(f"[INFO] Opening webcam via default backend on source {src}")
-            self.stream = cv2.VideoCapture(src)
-
+        src = "/dev/video0"
+        self.stream = cv2.VideoCapture(src)
+        self.logger.info(f'SRC: {src}')
         time.sleep(1)
         # Check if the stream opened successfully
         if not self.stream.isOpened():
