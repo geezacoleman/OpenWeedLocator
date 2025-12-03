@@ -407,7 +407,7 @@ class Owl:
             self.lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
 
         else:
-            self.logger.error('No frame width or frame height provided.')
+            self.logger.error('[ERROR] No frame width or frame height provided.')
 
 
     def hoot(self):
