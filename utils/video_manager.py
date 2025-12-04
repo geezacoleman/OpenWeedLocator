@@ -578,8 +578,7 @@ class ArenaCameraStream:
             self.logger.info("Arena camera device destroyed")
         except Exception as e:
             self.logger.error(f"Error destroying device: {e}", exc_info=True)
-        except Exception as e:
-            self.logger.error(f"Exception in update loop: {e}")
+
         finally:
             try:
                 self.device.stop_stream()
