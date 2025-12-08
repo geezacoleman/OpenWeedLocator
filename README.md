@@ -11,8 +11,14 @@ control board or custom driver board, in a custom designed case so you can attac
 device for low-cost, simple and open-source site-specific weed control. Projects to date have seen OWL mounted on robots,
 vehicles and bicycles for spot spraying. For the latest ideas and news, check out the [Discussion](https://github.com/geezacoleman/OpenWeedLocator/discussions) tab.
 
-### News
-**14-02-2025** - Complete OWL software installation guide now on YouTube
+## News
+### **08-12-2025** - [OpenWeedLocator Discourse](https://community.openweedlocator.org) now live!
+
+Join the dedicated community for everything about the OWL, open source in agtech and precision weed control. Post all your questions, suggestions and tips through this community - if you find any issues/bugs, please continue using the Github Issues section located on this repository.
+
+---
+
+### **14-02-2025** - Complete OWL software installation guide now on YouTube
 
 <a href="https://www.youtube.com/watch?v=lH5b8tXYmDw&t=62s">
   <img src="https://github.com/user-attachments/assets/28d13c6d-c8d3-4e2e-858c-d4ba973716dd" alt="thumbnail" width="600">
@@ -20,13 +26,13 @@ vehicles and bicycles for spot spraying. For the latest ideas and news, check ou
 
 
 
-**OWL Newsletter**
+### **OWL Newsletter**
 
 Follow updates for the OWL through the new, [OpenSourceAg Newsletter](https://openagtech.beehiiv.com/) a new edition every two weeks.
 
+---
 
-
-**08-05-2024** - Check out the latest Compact OWL enclosures!
+### **08-05-2024** - Check out the latest Compact OWL enclosures!
 
 |                                           | Front                                                                                                                    | Back                                                                                                                    |
 |-------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------|
