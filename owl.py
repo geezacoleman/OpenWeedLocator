@@ -1012,7 +1012,8 @@ class Owl:
                         self._image_sample_enable = self.image_sample_enable.value
                 if hasattr(self, 'sensitivity_level'):
                     with self.sensitivity_level.get_lock():
-                        self._sensitivity_level = self.sensitivity_level.value.decode('utf-8')
+                        sensitivity_int = self.sensitivity_level.value
+                    self._sensitivity_level = Sensitivity(sensitivity_int).name.lower()
 
             time.sleep(self._STATE_CHECK_INTERVAL)
 

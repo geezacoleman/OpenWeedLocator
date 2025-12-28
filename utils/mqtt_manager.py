@@ -454,16 +454,6 @@ class OWLMQTTPublisher:
         """Monitor for state changes that need to trigger actions"""
         while self.running:
             try:
-                with self.state_lock:
-                    current_sensitivity = self.state['sensitivity_level']
-
-                # Check if sensitivity changed
-                if current_sensitivity != self.last_sensitivity_level:
-                    self._apply_sensitivity_preset(current_sensitivity)
-                    self.logger.info(
-                        f"Sensitivity level changed from {self.last_sensitivity_level} to {current_sensitivity}")
-                    self.last_sensitivity_level = current_sensitivity
-
                 time.sleep(0.5)
 
             except Exception as e:
@@ -572,11 +562,16 @@ class OWLMQTTPublisher:
     def set_sensitivity_level(self, value):
         """Set sensitivity level (for owl.py internal use)"""
         with self.state_lock:
+            old_value = self.state.get('sensitivity_level')
+            if old_value == value:
+                return
+
             self.state['sensitivity_level'] = value
             self.state['last_update'] = time.time()
-        self._publish_state()
 
+        self._publish_state()
         self._apply_sensitivity_preset(value)
+        self.logger.info(f"Sensitivity level changed from {old_value} to {value}")
 
     def update_system_stats(self, stats_dict):
         """
