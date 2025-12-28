@@ -457,6 +457,7 @@ class Owl:
             actuation_duration = self.config.getfloat('System', 'actuation_duration')
             delay = self.config.getfloat('System', 'delay')
 
+            inference_times = []
             while True:
                 frame = self.cam.read()
 
@@ -500,6 +501,7 @@ class Owl:
                         else:
                             return_image_out = False
 
+                        inference_start = time.perf_counter()
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
                             cropped_frame,
                             exg_min=self.exg_min,
@@ -516,6 +518,12 @@ class Owl:
                             invert_hue=invert_hue,
                             label='WEED'
                         )
+                        inference_ms = (time.perf_counter() - inference_start) * 1000
+                        inference_times.append(inference_ms)
+                        if len(inference_times) >= 100:
+                            avg_ms = sum(inference_times) / len(inference_times)
+                            print(f"Inference avg: {avg_ms:.2f}ms ({1000 / avg_ms:.1f} FPS) over 100 frames")
+                            inference_times.clear()
 
                     if len(weed_centres) > 0:
                         if self.dash:
