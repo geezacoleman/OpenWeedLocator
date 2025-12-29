@@ -154,26 +154,74 @@ function initDashboardControls() {
 }
 
 function startOwl() {
+    const btn = document.getElementById('owlPowerBtn');
+
+    // Set booting state
+    if (btn) {
+        btn.classList.add('booting');
+        btn.classList.remove('on', 'stopping');
+        btn.disabled = true;
+    }
+
     return apiRequest('/api/owl/start', { method: 'POST' })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
                 showNotification('Success', data.message || 'OWL service starting...', 'success');
+                // Keep polling - updateSystemStats will set final state
             } else {
                 throw new Error(data.error || 'Failed to start OWL service');
             }
+        })
+        .catch(err => {
+            // On error, remove booting state
+            if (btn) {
+                btn.classList.remove('booting');
+                btn.disabled = false;
+            }
+            throw err;
+        })
+        .finally(() => {
+            // Re-enable button after a short delay, let updateSystemStats handle final state
+            setTimeout(() => {
+                if (btn) btn.disabled = false;
+            }, 2000);
         });
 }
 
 function stopOwl() {
+    const btn = document.getElementById('owlPowerBtn');
+
+    // Set stopping state
+    if (btn) {
+        btn.classList.add('stopping');
+        btn.classList.remove('on', 'booting');
+        btn.disabled = true;
+    }
+
     return apiRequest('/api/owl/stop', { method: 'POST' })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
                 showNotification('Success', data.message || 'OWL service stopping...', 'success');
+                // Keep polling - updateSystemStats will set final state
             } else {
                 throw new Error(data.error || 'Failed to stop OWL service');
             }
+        })
+        .catch(err => {
+            // On error, remove stopping state
+            if (btn) {
+                btn.classList.remove('stopping');
+                btn.disabled = false;
+            }
+            throw err;
+        })
+        .finally(() => {
+            // Re-enable button after a short delay, let updateSystemStats handle final state
+            setTimeout(() => {
+                if (btn) btn.disabled = false;
+            }, 2000);
         });
 }
 
@@ -186,16 +234,16 @@ function setSwitchVisualState(btn, on, kind) {
     const stateSpan = btn.querySelector('.switch-state');
     if (stateSpan) stateSpan.textContent = on ? 'ON' : 'OFF';
 
-    if (kind === 'detect') {
-        setStatusChip(document.getElementById('detectStatusChip'), on);
-    }
+    // Note: Status chip is now updated by updateDetectionModeDisplay() in updateSystemStats()
+    // which handles all detection modes (Spot Spray, Off, Blanket)
 }
 
 function setStatusChip(chip, on) {
     if (!chip) return;
     chip.classList.toggle('on', on);
-    const txt = chip.querySelector('#detectStatusText');
-    if (txt) txt.textContent = on ? 'Running' : 'Stopped';
+    chip.classList.toggle('off', !on);
+    const txt = chip.querySelector('span:last-child') || chip.querySelector('#sprayerStatusText');
+    if (txt) txt.textContent = on ? 'Running' : 'Off';
 }
 
 function setSensitivity(level) {
@@ -1174,6 +1222,11 @@ function updateSystemStats() {
     function setPowerButtonState(on) {
         const btn = document.getElementById('owlPowerBtn');
         if (!btn) return;
+
+        // Clear any transition states
+        btn.classList.remove('booting', 'stopping');
+
+        // Set final state
         btn.setAttribute('aria-pressed', on ? 'true' : 'false');
         btn.classList.toggle('on', on);
     }
@@ -1183,24 +1236,32 @@ function updateSystemStats() {
  * Update detection mode display (Spot Spray / Off / Blanket)
  */
 function updateDetectionModeDisplay(mode, detectionOn) {
-    const chip = document.getElementById('detectStatusChip');
+    const chip = document.getElementById('sprayerStatusChip');
     if (!chip) return;
 
-    const txt = chip.querySelector('#detectStatusText');
+    const txt = document.getElementById('sprayerStatusText');
 
     // detection_mode: 0 = Spot Spray, 1 = Off, 2 = Blanket
     if (mode === 0) {
         chip.classList.add('on');
-        chip.classList.remove('blanket');
+        chip.classList.remove('blanket', 'off');
         if (txt) txt.textContent = 'Spot Spray';
     } else if (mode === 2) {
         chip.classList.add('on', 'blanket');
+        chip.classList.remove('off');
         if (txt) txt.textContent = 'Blanket';
     } else {
         // Mode 1 (Off) or undefined - use detection running state
         chip.classList.remove('blanket');
-        chip.classList.toggle('on', detectionOn);
-        if (txt) txt.textContent = detectionOn ? 'Running' : 'Stopped';
+        if (detectionOn) {
+            chip.classList.add('on');
+            chip.classList.remove('off');
+            if (txt) txt.textContent = 'Running';
+        } else {
+            chip.classList.remove('on');
+            chip.classList.add('off');
+            if (txt) txt.textContent = 'Off';
+        }
     }
 }
 
