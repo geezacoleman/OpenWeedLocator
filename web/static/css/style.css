@@ -2324,29 +2324,23 @@ footer {
 .segmented.hardware-locked {
     opacity: 0.5;
     pointer-events: none;
-    position: relative;
-}
-
-.segmented.hardware-locked::after {
-    content: '🔒';
-    position: absolute;
-    right: 0.5rem;
-    top: 50%;
-    transform: translateY(-50%);
-    font-size: 0.9rem;
 }
 
 .seg-btn:disabled,
 .seg-btn.hardware-disabled {
-    opacity: 0.5;
+    opacity: 0.6;
     cursor: not-allowed;
     pointer-events: none;
 }
 
+.control-tile.hardware-locked .tile-label {
+    color: var(--secondary);
+}
+
 .control-tile.hardware-locked .tile-label::after {
-    content: ' (Hardware)';
-    font-size: 0.75rem;
-    color: var(--warning);
+    content: ' · Hardware';
+    font-size: 0.7rem;
+    color: #999;
     font-weight: 400;
 }
 
@@ -2355,14 +2349,31 @@ footer {
     opacity: 0.5;
     cursor: not-allowed;
     pointer-events: none;
+    position: relative;
 }
 
-.owl-switch.hardware-locked::after {
-    content: '🔒 Hardware';
-    position: absolute;
-    right: 1rem;
-    font-size: 0.75rem;
-    color: var(--warning);
+/* Hardware locked banner - shown once at top of controls */
+.hardware-notice {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+    border: 1px solid var(--warning);
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+    font-size: 0.8rem;
+    color: #856404;
+}
+
+.hardware-notice-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.hardware-notice-text {
+    flex: 1;
 }
 
 /* === Additional Mobile Fixes === */

@@ -1363,33 +1363,53 @@ function updateSystemStats() {
  * Update hardware-locked states for sensitivity and fan controls
  */
 function updateHardwareLockedControls() {
-    const sensContainer = document.querySelector('.control-tile .segmented[class*="two"]')?.closest('.control-tile');
+    const controlsStack = document.querySelector('.controls-stack');
+    const sensTile = document.querySelectorAll('.control-tile')[0];
+    const sensSegmented = sensTile?.querySelector('.segmented');
     const sensBtns = document.querySelectorAll('.seg-btn[data-sens]');
     const detectSwitch = document.getElementById('detectSwitch');
     const recordSwitch = document.getElementById('recordSwitch');
 
+    // Handle hardware notice banner
+    let notice = document.getElementById('hardwareNotice');
+
     if (hardwareControllerActive) {
+        // Add notice banner if not exists
+        if (!notice && controlsStack) {
+            notice = document.createElement('div');
+            notice.id = 'hardwareNotice';
+            notice.className = 'hardware-notice';
+            notice.innerHTML = `
+                <svg class="hardware-notice-icon" viewBox="0 0 24 24">
+                    <path fill="currentColor" d="M12,17A2,2 0 0,0 14,15C14,13.89 13.1,13 12,13A2,2 0 0,0 10,15A2,2 0 0,0 12,17M18,8A2,2 0 0,1 20,10V20A2,2 0 0,1 18,22H6A2,2 0 0,1 4,20V10C4,8.89 4.9,8 6,8H7V6A5,5 0 0,1 12,1A5,5 0 0,1 17,6V8H18M12,3A3,3 0 0,0 9,6V8H15V6A3,3 0 0,0 12,3Z"/>
+                </svg>
+                <span class="hardware-notice-text">Hardware controller active</span>
+            `;
+            controlsStack.insertBefore(notice, controlsStack.firstChild);
+        }
+
         // Lock sensitivity buttons
         sensBtns.forEach(btn => {
             btn.classList.add('hardware-disabled');
             btn.disabled = true;
         });
-        if (sensContainer) {
-            sensContainer.classList.add('hardware-locked');
-        }
+        if (sensSegmented) sensSegmented.classList.add('hardware-locked');
+        if (sensTile) sensTile.classList.add('hardware-locked');
 
         // Lock detection/recording switches
         if (detectSwitch) detectSwitch.classList.add('hardware-locked');
         if (recordSwitch) recordSwitch.classList.add('hardware-locked');
     } else {
+        // Remove notice banner
+        if (notice) notice.remove();
+
         // Unlock sensitivity buttons
         sensBtns.forEach(btn => {
             btn.classList.remove('hardware-disabled');
             btn.disabled = false;
         });
-        if (sensContainer) {
-            sensContainer.classList.remove('hardware-locked');
-        }
+        if (sensSegmented) sensSegmented.classList.remove('hardware-locked');
+        if (sensTile) sensTile.classList.remove('hardware-locked');
 
         // Unlock detection/recording switches
         if (detectSwitch) detectSwitch.classList.remove('hardware-locked');
