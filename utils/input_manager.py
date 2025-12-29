@@ -10,10 +10,12 @@ from utils.shared_types import Sensitivity
 
 logger = logging.getLogger(__name__)
 
+
 def is_raspberry_pi() -> bool:
     """Check if system is running on Raspberry Pi"""
     platform_str = platform.platform().lower()
     return 'rpi' in platform_str or 'aarch' in platform_str
+
 
 # Determine if we're in testing mode and import GPIO if needed
 testing = not is_raspberry_pi()
@@ -23,6 +25,7 @@ else:
     platform_name = platform.system() if platform.system() == "Windows" else "unrecognized"
     logger.warning(
         f"The system is running on a {platform_name} platform. GPIO disabled. Test mode active.")
+
 
 class UteController:
     def __init__(self, detection_state,
@@ -93,8 +96,37 @@ class UteController:
             self.logger.error(f"Error in controller run loop: {e}", exc_info=True)
 
     def stop(self):
+        """Stop the controller and ensure all outputs are off."""
+        self.logger.info("[INFO] UteController stopping - turning off all outputs...")
+
+        # Set stop flag
         with self.stop_flag.get_lock():
             self.stop_flag.value = True
+
+        # Turn off all relays
+        try:
+            if hasattr(self.owl, 'relay_controller') and self.owl.relay_controller:
+                self.owl.relay_controller.relay.all_off()
+                self.logger.info("[INFO] All relays turned off")
+        except Exception as e:
+            self.logger.error(f"Error turning off relays: {e}")
+
+        # Disable detection
+        try:
+            with self.detection_state.get_lock():
+                self.detection_state.value = False
+        except Exception as e:
+            self.logger.error(f"Error disabling detection: {e}")
+
+        # Stop status indicator (turns off LEDs)
+        try:
+            if self.status_indicator:
+                self.status_indicator.stop()
+                self.logger.info("[INFO] Status indicator stopped")
+        except Exception as e:
+            self.logger.error(f"Error stopping status indicator: {e}")
+
+        self.logger.info("[INFO] UteController stopped")
 
 
 class AdvancedController:
@@ -117,7 +149,8 @@ class AdvancedController:
         self.recording_switch = Button(recording_bpin, bounce_time=bounce_time) if not testing else None
         self.sensitivity_switch = Button(sensitivity_bpin, bounce_time=bounce_time) if not testing else None
         self.detection_mode_switch_up = Button(detection_mode_bpin_up, bounce_time=bounce_time) if not testing else None
-        self.detection_mode_switch_down = Button(detection_mode_bpin_down, bounce_time=bounce_time) if not testing else None
+        self.detection_mode_switch_down = Button(detection_mode_bpin_down,
+                                                 bounce_time=bounce_time) if not testing else None
 
         self.recording_state = recording_state
         self.sensitivity_level = sensitivity_level
@@ -169,6 +202,13 @@ class AdvancedController:
             self.status_indicator.enable_image_recording()
         else:
             self.status_indicator.disable_image_recording()
+
+        # Publish recording state to MQTT for dashboard
+        try:
+            if hasattr(self.owl, 'mqtt_publisher') and self.owl.mqtt_publisher:
+                self.owl.mqtt_publisher.set_image_sample_enable(is_pressed)
+        except Exception as mqtt_err:
+            self.logger.debug(f"MQTT publish failed (non-critical): {mqtt_err}")
 
     def update_sensitivity_level(self):
         is_pressed = self.sensitivity_switch.is_pressed if self.sensitivity_switch else False
@@ -265,8 +305,45 @@ class AdvancedController:
             self.logger.error(f"Error in controller run loop: {e}", exc_info=True)
 
     def stop(self):
+        """Stop the controller and ensure all outputs are off."""
+        self.logger.info("[INFO] AdvancedController stopping - turning off all outputs...")
+
+        # Set stop flag
         with self.stop_flag.get_lock():
             self.stop_flag.value = True
+
+        # Turn off all relays
+        try:
+            if hasattr(self.owl, 'relay_controller') and self.owl.relay_controller:
+                self.owl.relay_controller.relay.all_off()
+                self.logger.info("[INFO] All relays turned off")
+        except Exception as e:
+            self.logger.error(f"Error turning off relays: {e}")
+
+        # Disable detection
+        try:
+            with self.owl.detection_enable.get_lock():
+                self.owl.detection_enable.value = False
+        except Exception as e:
+            self.logger.error(f"Error disabling detection: {e}")
+
+        # Stop status indicator (turns off LEDs)
+        try:
+            if self.status_indicator:
+                self.status_indicator.stop()
+                self.logger.info("[INFO] Status indicator stopped")
+        except Exception as e:
+            self.logger.error(f"Error stopping status indicator: {e}")
+
+        # Update MQTT state to show everything is off
+        try:
+            if hasattr(self.owl, 'mqtt_publisher') and self.owl.mqtt_publisher:
+                self.owl.mqtt_publisher.set_detection_mode(1)  # Off
+                self.owl.mqtt_publisher.set_image_sample_enable(False)
+        except Exception as e:
+            self.logger.debug(f"MQTT update failed during shutdown: {e}")
+
+        self.logger.info("[INFO] AdvancedController stopped")
 
     def _read_config(self, config_file):
         config = configparser.ConfigParser()
@@ -282,6 +359,7 @@ class AdvancedController:
             'brightness_max': config.getint('GreenOnBrown', 'brightness_max')
         }
 
+
 def get_rpi_version():
     """
     Determines the Raspberry Pi model by reading the device-tree model file.
@@ -291,7 +369,7 @@ def get_rpi_version():
     model_file = "/proc/device-tree/model"
     try:
         with open(model_file, 'r') as f:
-            model = f.read().strip().rstrip('\x00') # Read and clean the string
+            model = f.read().strip().rstrip('\x00')  # Read and clean the string
 
         if 'Pi 5' in model:
             return 'rpi-5'
