@@ -326,19 +326,49 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1rem;
+    padding: 0.75rem 1rem;
     background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
     border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    gap: 0.75rem;
 }
 
 .stream-header h2 {
     margin: 0;
     color: var(--primary);
+    font-size: 1.1rem;
 }
 
 .stream-controls {
     display: flex;
+    flex-direction: row;
     gap: 0.5rem;
+    flex-wrap: nowrap;
+}
+
+/* Stream control buttons - ensure visibility */
+.stream-controls .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--primary);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 600;
+    transition: all 0.2s;
+    white-space: nowrap;
+    min-width: auto;
+}
+
+.stream-controls .icon-btn:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+    transform: translateY(-1px);
 }
 
 .stream-overlay-message {
@@ -413,51 +443,123 @@ body {
     right: 0;
     bottom: 0;
     pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding: 0.75rem;
 }
 
 .overlay-item {
-    position: absolute;
-    background: rgba(0,0,0,0.7);
-    color: white;
-    padding: 0.5rem;
-    border-radius: 6px;
-    backdrop-filter: blur(10px);
     pointer-events: auto;
+    border-radius: 20px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
 }
 
+/* GPS Status - floating pill at bottom left */
 .gps-status {
-    top: 1rem;
-    left: 1rem;
-    display: flex;
+    position: absolute;
+    bottom: 0.75rem;
+    left: 0.75rem;
+    top: auto;
+    right: auto;
+    display: inline-flex;
     align-items: center;
     gap: 0.5rem;
+    padding: 0.4rem 0.75rem;
+    background: rgba(0, 0, 0, 0.6);
+    color: white;
+    font-size: 0.85rem;
+    font-weight: 500;
 }
 
 .gps-icon {
-    width: 20px;
-    height: 20px;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
 }
 
+/* Modern GPS toggle switch */
+.gps-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    margin: 0;
+}
+
+.gps-label input[type="checkbox"] {
+    display: none;
+}
+
+/* Custom toggle track */
+.gps-toggle-track {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 10px;
+    transition: background 0.2s ease;
+}
+
+.gps-toggle-track::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+.gps-label input[type="checkbox"]:checked + .gps-toggle-track {
+    background: var(--success);
+}
+
+.gps-label input[type="checkbox"]:checked + .gps-toggle-track::after {
+    transform: translateX(16px);
+}
+
+#gps-accuracy {
+    font-size: 0.8rem;
+    min-width: 50px;
+}
+
+/* Zoom controls - floating pill at bottom right */
 .zoom-controls {
-    bottom: 1rem;
-    right: 1rem;
-    display: flex;
+    position: absolute;
+    bottom: 0.75rem;
+    right: 0.75rem;
+    top: auto;
+    left: auto;
+    display: inline-flex;
     gap: 0.25rem;
+    padding: 0.25rem;
+    background: rgba(0, 0, 0, 0.6);
 }
 
 .zoom-btn {
-    padding: 0.5rem;
+    padding: 0.4rem 0.6rem;
     border: none;
-    background: rgba(255,255,255,0.9);
-    color: var(--primary);
-    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
+    border-radius: 14px;
     cursor: pointer;
-    font-weight: bold;
-    min-width: 40px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    min-width: 36px;
+    transition: all 0.15s ease;
 }
 
 .zoom-btn:hover {
-    background: white;
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.zoom-btn:active {
+    transform: scale(0.95);
 }
 
 /* Control Styles */
@@ -794,22 +896,43 @@ footer {
     }
 
     .stream-controls {
-        flex-direction: column;
-        gap: 0.5rem;
+        flex-direction: row;
+        gap: 0.35rem;
+        flex-wrap: nowrap;
+    }
+
+    .stream-controls .icon-btn {
+        padding: 0.4rem 0.5rem;
+        font-size: 0.75rem;
     }
 
     .overlay-item {
-        position: relative;
-        margin: 0.5rem;
+        /* Keep positioned, don't make relative */
     }
 
     .gps-status, .zoom-controls {
-        position: relative;
+        /* Override - keep at bottom */
+        position: absolute;
         top: auto;
-        left: auto;
+        bottom: 0.5rem;
+    }
+
+    .gps-status {
+        left: 0.5rem;
         right: auto;
-        bottom: auto;
-        margin: 0.5rem;
+        padding: 0.35rem 0.6rem;
+        font-size: 0.75rem;
+    }
+
+    .zoom-controls {
+        right: 0.5rem;
+        left: auto;
+    }
+
+    .zoom-btn {
+        padding: 0.35rem 0.5rem;
+        min-width: 32px;
+        font-size: 0.8rem;
     }
 }
 
@@ -863,9 +986,22 @@ footer {
     }
 
     .stream-header {
-        flex-direction: column;
-        gap: 1rem;
-        text-align: center;
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        text-align: left;
+        padding: 0.5rem 0.75rem;
+    }
+
+    .stream-header h2 {
+        font-size: 1rem;
+        flex: 1;
+        min-width: 120px;
+    }
+
+    .stream-controls {
+        flex-direction: row;
+        flex-wrap: nowrap;
     }
 
     #notifications {
@@ -2159,8 +2295,8 @@ footer {
 .seg-btn{height:56px;border:none;border-radius:10px;background:transparent;font-weight:700;cursor:pointer}
 .seg-btn.active{background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.08)}
 
-.metrics-row{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1rem}
-.metric-chip{display:inline-flex;align-items:center;gap:.5rem;border-radius:999px;padding:.4rem .8rem;color:#fff;font-weight:600}
+.metrics-row{display:flex;flex-wrap:nowrap;gap:.5rem;margin-top:1rem;justify-content:space-between}
+.metric-chip{display:inline-flex;align-items:center;justify-content:center;gap:.35rem;border-radius:999px;padding:.4rem .7rem;color:#fff;font-weight:600;font-size:0.85rem;flex:1;min-width:0;text-align:center}
 .metric-chip strong{color:#fff}
 .metric-chip.cpu{background:linear-gradient(135deg,var(--accent) 0%,#2980b9 100%)}
 .metric-chip.mem{background:linear-gradient(135deg,var(--success) 0%,#27ae60 100%)}
@@ -2183,3 +2319,78 @@ footer {
 .icon-btn:hover{background:#fafafa}
 .power-btn.on{border-color:var(--success); background:linear-gradient(135deg,var(--success) 0%, #27ae60 100%); color:#fff}
 .power-btn.on svg path{fill:#fff}
+
+/* === Hardware Controller Disabled States for Segmented Controls === */
+.segmented.hardware-locked {
+    opacity: 0.5;
+    pointer-events: none;
+    position: relative;
+}
+
+.segmented.hardware-locked::after {
+    content: '🔒';
+    position: absolute;
+    right: 0.5rem;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.9rem;
+}
+
+.seg-btn:disabled,
+.seg-btn.hardware-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.control-tile.hardware-locked .tile-label::after {
+    content: ' (Hardware)';
+    font-size: 0.75rem;
+    color: var(--warning);
+    font-weight: 400;
+}
+
+/* Owl switches hardware disabled */
+.owl-switch.hardware-locked {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.owl-switch.hardware-locked::after {
+    content: '🔒 Hardware';
+    position: absolute;
+    right: 1rem;
+    font-size: 0.75rem;
+    color: var(--warning);
+}
+
+/* === Additional Mobile Fixes === */
+@media (max-width: 400px) {
+    .stream-controls .icon-btn {
+        padding: 0.35rem 0.4rem;
+        font-size: 0.7rem;
+    }
+
+    .metric-chip {
+        padding: 0.3rem 0.5rem;
+        font-size: 0.75rem;
+    }
+
+    .gps-status {
+        padding: 0.3rem 0.5rem;
+        font-size: 0.7rem;
+    }
+
+    .zoom-btn {
+        padding: 0.3rem 0.4rem;
+        min-width: 28px;
+        font-size: 0.75rem;
+    }
+}
+
+/* GPS status color states */
+.gps-icon.gps-good { color: var(--success); }
+.gps-icon.gps-medium { color: var(--warning); }
+.gps-icon.gps-poor { color: var(--danger); }
+.gps-status.gps-disabled { opacity: 0.6; }

@@ -6,12 +6,6 @@ import cv2
 To add a new algorithm the only requirement is that it accepts a BGR (opencv) image and returns a grayscale
 image as an output. If it returns a binary image (like hsv) then it must return a boolean True in addition to the image
 as it has already been thresholded.
-
-OPTIMIZATIONS APPLIED (v2.0):
-- cv2.split() for channel extraction (C++ optimized, ~1.3x faster than array slicing)
-- Single cv2.inRange() on 3-channel HSV instead of 3 separate calls (~1.5x faster)
-- cv2.convertScaleAbs() replaces np.clip() + astype() (~1.2x faster)
-- Combined: ~2.4x speedup for exhsv algorithm (17.5ms -> 7.3ms on 1280x720)
 """
 
 
