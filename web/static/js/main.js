@@ -4,18 +4,12 @@ let gpsData = null;
 let zoomLevel = 1;
 let updateInterval = null;
 let pendingRequests = {};
-const SYSTEM_UPDATE_INTERVAL = 1000;
+const SYSTEM_UPDATE_INTERVAL = 2000;  // 2 seconds for responsive hardware control feedback
 const zoomStep = 0.2;
 const maxZoom = 3;
 const minZoom = 1;
 let hardwareControllerActive = false;
 let controllerType = 'none';
-
-// OWL service state tracking
-let owlServiceState = 'unknown'; // 'online', 'offline', 'booting', 'stopping', 'unknown'
-let stateTransitionTimeout = null;
-const BOOT_TIMEOUT = 15000; // Max time to wait for boot
-const STOP_TIMEOUT = 10000; // Max time to wait for stop
 
 document.addEventListener('DOMContentLoaded', function() {
     initTabs();
@@ -160,189 +154,27 @@ function initDashboardControls() {
 }
 
 function startOwl() {
-    // Set transitional state immediately
-    setOwlServiceState('booting');
-
     return apiRequest('/api/owl/start', { method: 'POST' })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
                 showNotification('Success', data.message || 'OWL service starting...', 'success');
-                // Start polling more frequently during boot
-                startTransitionPolling('booting', BOOT_TIMEOUT);
             } else {
-                setOwlServiceState('offline');
                 throw new Error(data.error || 'Failed to start OWL service');
             }
-        })
-        .catch(err => {
-            setOwlServiceState('offline');
-            throw err;
         });
 }
 
 function stopOwl() {
-    // Set transitional state immediately
-    setOwlServiceState('stopping');
-
     return apiRequest('/api/owl/stop', { method: 'POST' })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
                 showNotification('Success', data.message || 'OWL service stopping...', 'success');
-                // Start polling more frequently during stop
-                startTransitionPolling('stopping', STOP_TIMEOUT);
             } else {
-                setOwlServiceState('online');
                 throw new Error(data.error || 'Failed to stop OWL service');
             }
-        })
-        .catch(err => {
-            // Revert to previous state on error
-            updateSystemStats();
-            throw err;
         });
-}
-
-/**
- * Set OWL service state and update all UI elements
- */
-function setOwlServiceState(state) {
-    owlServiceState = state;
-    updateAllStatusIndicators(state);
-}
-
-/**
- * Start frequent polling during state transitions
- */
-function startTransitionPolling(expectedEndState, timeout) {
-    // Clear any existing transition timeout
-    if (stateTransitionTimeout) {
-        clearTimeout(stateTransitionTimeout);
-    }
-
-    // Poll more frequently during transitions
-    const pollInterval = setInterval(() => {
-        apiRequest('/api/system_stats')
-            .then(r => r.json())
-            .then(data => {
-                const isRunning = !!data.owl_running;
-
-                if (expectedEndState === 'booting' && isRunning) {
-                    // Successfully booted
-                    clearInterval(pollInterval);
-                    clearTimeout(stateTransitionTimeout);
-                    setOwlServiceState('online');
-                    updateSystemStats();
-                } else if (expectedEndState === 'stopping' && !isRunning) {
-                    // Successfully stopped
-                    clearInterval(pollInterval);
-                    clearTimeout(stateTransitionTimeout);
-                    setOwlServiceState('offline');
-                    updateSystemStats();
-                }
-            })
-            .catch(() => {});
-    }, 1000);
-
-    // Set timeout to stop polling and update state
-    stateTransitionTimeout = setTimeout(() => {
-        clearInterval(pollInterval);
-        // Force a final check
-        updateSystemStats();
-    }, timeout);
-}
-
-/**
- * Update all status indicators (header, sprayer status, power button)
- */
-function updateAllStatusIndicators(state) {
-    // Header status
-    const statusDot = document.getElementById('statusDot');
-    const statusText = document.getElementById('statusText');
-
-    // Power button
-    const powerBtn = document.getElementById('owlPowerBtn');
-
-    // Remove all state classes first
-    if (statusDot) {
-        statusDot.classList.remove('connected', 'booting', 'stopping');
-    }
-    if (powerBtn) {
-        powerBtn.classList.remove('on', 'booting', 'stopping');
-        powerBtn.disabled = false;
-    }
-
-    switch (state) {
-        case 'online':
-            if (statusDot) statusDot.classList.add('connected');
-            if (statusText) statusText.textContent = 'Online';
-            if (powerBtn) {
-                powerBtn.classList.add('on');
-                powerBtn.setAttribute('aria-pressed', 'true');
-            }
-            break;
-
-        case 'offline':
-            if (statusText) statusText.textContent = 'Offline';
-            if (powerBtn) {
-                powerBtn.setAttribute('aria-pressed', 'false');
-            }
-            // When offline, sprayer must be off
-            updateSprayerStatus('off');
-            break;
-
-        case 'booting':
-            if (statusDot) statusDot.classList.add('booting');
-            if (statusText) statusText.textContent = 'Booting...';
-            if (powerBtn) {
-                powerBtn.classList.add('booting');
-                powerBtn.disabled = true;
-            }
-            break;
-
-        case 'stopping':
-            if (statusDot) statusDot.classList.add('stopping');
-            if (statusText) statusText.textContent = 'Stopping...';
-            if (powerBtn) {
-                powerBtn.classList.add('stopping');
-                powerBtn.disabled = true;
-            }
-            // When stopping, sprayer should show as off
-            updateSprayerStatus('off');
-            break;
-
-        default: // 'unknown'
-            if (statusText) statusText.textContent = 'Connecting...';
-    }
-}
-
-/**
- * Update sprayer status chip
- * @param {string} mode - 'spot-spray', 'blanket', or 'off'
- */
-function updateSprayerStatus(mode) {
-    const chip = document.getElementById('sprayerStatusChip');
-    const text = document.getElementById('sprayerStatusText');
-
-    if (!chip) return;
-
-    // Remove all mode classes
-    chip.classList.remove('spot-spray', 'blanket', 'off');
-
-    switch (mode) {
-        case 'spot-spray':
-            chip.classList.add('spot-spray');
-            if (text) text.textContent = 'Spot Spray';
-            break;
-        case 'blanket':
-            chip.classList.add('blanket');
-            if (text) text.textContent = 'Blanket';
-            break;
-        default:
-            chip.classList.add('off');
-            if (text) text.textContent = 'Off';
-    }
 }
 
 function setSegActive(nodeList, activeBtn) {
@@ -1271,39 +1103,16 @@ function updateSystemStats() {
             setText('memChipVal', `${data.memory_percent}%`);
             setText('tempChipVal', `${data.cpu_temp}°C`);
 
-            // Determine actual OWL state from data
-            const isRunning = !!data.owl_running;
+            // Power button reflects owl_running
+            setPowerButtonState(!!data.owl_running);
 
-            // Only update state if we're not in a transition
-            if (owlServiceState !== 'booting' && owlServiceState !== 'stopping') {
-                const newState = isRunning ? 'online' : 'offline';
-                if (owlServiceState !== newState) {
-                    setOwlServiceState(newState);
-                }
-            }
-
-            // Detection & recording switches
+            // Detection & recording big switches (and status chip)
             const detectionOn = !!(data.detection_running ?? data.detection_enable);
             const recordingOn = !!(data.recording ?? data.image_sample_enable);
 
-            // Detection mode: 0 = detection on (spot spray), 1 = off, 2 = all on (blanket)
-            const detectionMode = data.detection_mode ?? (detectionOn ? 0 : 1);
-
             syncSwitch('detectSwitch', detectionOn);
             syncSwitch('recordSwitch', recordingOn);
-
-            // Update sprayer status based on OWL running state and detection mode
-            if (!isRunning || owlServiceState === 'offline' || owlServiceState === 'stopping') {
-                updateSprayerStatus('off');
-            } else if (detectionMode === 2) {
-                // All nozzles on = blanket spray
-                updateSprayerStatus('blanket');
-            } else if (detectionOn || detectionMode === 0) {
-                // Detection enabled = spot spray
-                updateSprayerStatus('spot-spray');
-            } else {
-                updateSprayerStatus('off');
-            }
+            setStatusChip(document.getElementById('detectStatusChip'), detectionOn);
 
             // Sensitivity Low/High
             const sensLabel = normalizeSensitivity(data); // "Low" | "High"
@@ -1322,10 +1131,13 @@ function updateSystemStats() {
                 rpmEl.textContent = (typeof rpm === 'number') ? `${rpm} rpm` : '—';
             }
 
-            // Update hardware controller disabled states
-            updateHardwareLockedControls();
-
-            // Stream overlay
+            // Optional: header online/offline & stream overlay if still present
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            if (statusDot && statusText) {
+                statusDot.classList.toggle('connected', !!data.owl_running);
+                statusText.textContent = data.owl_running ? 'Online' : 'Offline';
+            }
             const streamOverlay = document.getElementById('stream-status-overlay');
             const streamImg = document.getElementById('stream-img');
             if (streamOverlay && streamImg) {
@@ -1353,13 +1165,28 @@ function updateSystemStats() {
         if (state) state.textContent = on ? 'ON' : 'OFF';
     }
 
-    function normalizeSensitivity(data) {
-        // The API sends the key 'sensitivity_level' with a string value 'low' or 'high'
-        if (data && typeof data.sensitivity_level === 'string') {
-            return data.sensitivity_level.toLowerCase() === 'high' ? 'High' : 'Low';
-        }
-        return 'High';
+    function setStatusChip(chip, on) {
+        if (!chip) return;
+        chip.classList.toggle('on', on);
+        const txt = chip.querySelector('#detectStatusText');
+        if (txt) txt.textContent = on ? 'Running' : 'Stopped';
     }
+
+    function setPowerButtonState(on) {
+        const btn = document.getElementById('owlPowerBtn');
+        if (!btn) return;
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        btn.classList.toggle('on', on);
+    }
+
+    function normalizeSensitivity(data) {
+    // The API sends the key 'sensitivity_level' with a string value 'low' or 'high'
+    if (data && typeof data.sensitivity_level === 'string') {
+        return data.sensitivity_level.toLowerCase() === 'high' ? 'High' : 'Low';
+    }
+
+    return 'High';
+}
 
     function normalizeFanMode(status) {
         if (!status || !status.mode) return 'auto';
@@ -1367,64 +1194,6 @@ function updateSystemStats() {
         if (m.includes('100')) return '100';
         if (m.includes('auto')) return 'auto';
         return (m === '1' || m === '100' || m === '1.0') ? '100' : 'auto';
-    }
-}
-
-/**
- * Update hardware-locked states for sensitivity and fan controls
- */
-function updateHardwareLockedControls() {
-    const controlsStack = document.querySelector('.controls-stack');
-    const sensTile = document.querySelectorAll('.control-tile')[0];
-    const sensSegmented = sensTile?.querySelector('.segmented');
-    const sensBtns = document.querySelectorAll('.seg-btn[data-sens]');
-    const detectSwitch = document.getElementById('detectSwitch');
-    const recordSwitch = document.getElementById('recordSwitch');
-
-    // Handle hardware notice banner
-    let notice = document.getElementById('hardwareNotice');
-
-    if (hardwareControllerActive) {
-        // Add notice banner if not exists
-        if (!notice && controlsStack) {
-            notice = document.createElement('div');
-            notice.id = 'hardwareNotice';
-            notice.className = 'hardware-notice';
-            notice.innerHTML = `
-                <svg class="hardware-notice-icon" viewBox="0 0 24 24">
-                    <path fill="currentColor" d="M12,17A2,2 0 0,0 14,15C14,13.89 13.1,13 12,13A2,2 0 0,0 10,15A2,2 0 0,0 12,17M18,8A2,2 0 0,1 20,10V20A2,2 0 0,1 18,22H6A2,2 0 0,1 4,20V10C4,8.89 4.9,8 6,8H7V6A5,5 0 0,1 12,1A5,5 0 0,1 17,6V8H18M12,3A3,3 0 0,0 9,6V8H15V6A3,3 0 0,0 12,3Z"/>
-                </svg>
-                <span class="hardware-notice-text">Hardware controller active</span>
-            `;
-            controlsStack.insertBefore(notice, controlsStack.firstChild);
-        }
-
-        // Lock sensitivity buttons
-        sensBtns.forEach(btn => {
-            btn.classList.add('hardware-disabled');
-            btn.disabled = true;
-        });
-        if (sensSegmented) sensSegmented.classList.add('hardware-locked');
-        if (sensTile) sensTile.classList.add('hardware-locked');
-
-        // Lock detection/recording switches
-        if (detectSwitch) detectSwitch.classList.add('hardware-locked');
-        if (recordSwitch) recordSwitch.classList.add('hardware-locked');
-    } else {
-        // Remove notice banner
-        if (notice) notice.remove();
-
-        // Unlock sensitivity buttons
-        sensBtns.forEach(btn => {
-            btn.classList.remove('hardware-disabled');
-            btn.disabled = false;
-        });
-        if (sensSegmented) sensSegmented.classList.remove('hardware-locked');
-        if (sensTile) sensTile.classList.remove('hardware-locked');
-
-        // Unlock detection/recording switches
-        if (detectSwitch) detectSwitch.classList.remove('hardware-locked');
-        if (recordSwitch) recordSwitch.classList.remove('hardware-locked');
     }
 }
 
@@ -2643,3 +2412,867 @@ window.addEventListener('unload', () => {
         try { controller.abort(); } catch (e) {}
     });
 });
+
+// =====================
+// CONFIG EDITOR
+// =====================
+
+// Config state
+let originalConfig = {};
+let currentConfig = {};
+let configHasChanges = false;
+let activeConfigPath = '';
+let isDefaultConfig = true;
+let availableConfigs = [];
+
+// Field definitions with types, options, and help text
+const CONFIG_FIELD_DEFS = {
+    'System': {
+        'algorithm': {
+            type: 'select',
+            options: ['exhsv', 'exg', 'hsv', 'gog'],
+            help: 'Detection algorithm: exhsv (recommended), exg, hsv, or gog (green-on-green AI)'
+        },
+        'input_file_or_directory': {
+            type: 'text',
+            help: 'Leave empty for camera input, or specify path for file/directory processing'
+        },
+        'relay_num': {
+            type: 'number',
+            min: 1,
+            max: 8,
+            help: 'Number of relays/nozzles connected (1-8)'
+        },
+        'actuation_duration': {
+            type: 'number',
+            step: 0.01,
+            min: 0.01,
+            max: 2.0,
+            help: 'Spray duration in seconds'
+        },
+        'delay': {
+            type: 'number',
+            step: 0.01,
+            min: 0,
+            max: 5.0,
+            help: 'Delay before actuation in seconds'
+        }
+    },
+    'MQTT': {
+        _warning: 'Changing MQTT settings requires a service restart',
+        'enable': {
+            type: 'boolean',
+            help: 'Enable MQTT for dashboard communication'
+        },
+        'broker_ip': {
+            type: 'text',
+            help: 'MQTT broker IP. Use "localhost" for standalone mode'
+        },
+        'broker_port': {
+            type: 'number',
+            min: 1,
+            max: 65535,
+            help: 'MQTT broker port (default: 1883)'
+        },
+        'device_id': {
+            type: 'text',
+            help: 'Unique device identifier. Use "auto" for hostname'
+        }
+    },
+    'WebDashboard': {
+        _warning: 'Changing port requires service restart',
+        'port': {
+            type: 'number',
+            min: 1024,
+            max: 65535,
+            help: 'Internal Flask port (proxied via Nginx)'
+        }
+    },
+    'Network': {
+        _warning: 'Network changes may disconnect the dashboard',
+        'mode': {
+            type: 'select',
+            options: ['standalone', 'networked'],
+            help: 'Standalone (single OWL) or networked (multiple OWLs)'
+        },
+        'static_ip': {
+            type: 'text',
+            help: 'This OWL\'s static IP address'
+        },
+        'controller_ip': {
+            type: 'text',
+            help: 'Central controller IP (networked mode only)'
+        }
+    },
+    'GPS': {
+        'source': {
+            type: 'select',
+            options: ['none', 'dashboard', 'hat'],
+            help: 'GPS source: none, dashboard (phone), or hat (GPS module)'
+        },
+        'port': {
+            type: 'text',
+            help: 'Serial port for GPS hat (e.g., /dev/ttyUSB0)'
+        },
+        'baudrate': {
+            type: 'select',
+            options: ['4800', '9600', '19200', '38400', '57600', '115200'],
+            help: 'GPS serial baud rate'
+        }
+    },
+    'Controller': {
+        _warning: 'Controller changes require service restart',
+        'controller_type': {
+            type: 'select',
+            options: ['none', 'ute', 'advanced', 'networked'],
+            help: 'Hardware controller type'
+        },
+        'detection_mode_pin_up': {
+            type: 'number',
+            min: 1,
+            max: 40,
+            help: 'GPIO pin for detection mode UP'
+        },
+        'detection_mode_pin_down': {
+            type: 'number',
+            min: 1,
+            max: 40,
+            help: 'GPIO pin for detection mode DOWN'
+        },
+        'recording_pin': {
+            type: 'number',
+            min: 1,
+            max: 40,
+            help: 'GPIO pin for recording switch'
+        },
+        'sensitivity_pin': {
+            type: 'number',
+            min: 1,
+            max: 40,
+            help: 'GPIO pin for sensitivity switch'
+        },
+        'low_sensitivity_config': {
+            type: 'text',
+            help: 'Path to low sensitivity config file'
+        },
+        'medium_sensitivity_config': {
+            type: 'text',
+            help: 'Path to medium sensitivity config file'
+        },
+        'high_sensitivity_config': {
+            type: 'text',
+            help: 'Path to high sensitivity config file'
+        },
+        'switch_purpose': {
+            type: 'select',
+            options: ['recording', 'detection'],
+            help: 'UteController switch function'
+        },
+        'switch_pin': {
+            type: 'number',
+            min: 1,
+            max: 40,
+            help: 'GPIO pin for UteController switch'
+        }
+    },
+    'Visualisation': {
+        'image_loop_time': {
+            type: 'number',
+            min: 1,
+            max: 60,
+            help: 'Seconds between display updates'
+        }
+    },
+    'Camera': {
+        'resolution_width': {
+            type: 'select',
+            options: ['320', '640', '800', '1024', '1280', '1920'],
+            help: 'Camera resolution width'
+        },
+        'resolution_height': {
+            type: 'select',
+            options: ['240', '480', '600', '768', '720', '1080'],
+            help: 'Camera resolution height'
+        },
+        'exp_compensation': {
+            type: 'number',
+            min: -10,
+            max: 10,
+            help: 'Exposure compensation (-10 to +10)'
+        },
+        'crop_factor_horizontal': {
+            type: 'number',
+            step: 0.01,
+            min: 0,
+            max: 0.5,
+            help: 'Horizontal crop to reduce lens aberration (0-0.5)'
+        },
+        'crop_factor_vertical': {
+            type: 'number',
+            step: 0.01,
+            min: 0,
+            max: 0.5,
+            help: 'Vertical crop to reduce lens aberration (0-0.5)'
+        }
+    },
+    'GreenOnGreen': {
+        'model_path': {
+            type: 'text',
+            help: 'Path to AI model directory'
+        },
+        'confidence': {
+            type: 'number',
+            step: 0.05,
+            min: 0.1,
+            max: 1.0,
+            help: 'Detection confidence threshold (0.1-1.0)'
+        },
+        'class_filter_id': {
+            type: 'text',
+            help: 'Filter specific class IDs (comma-separated) or None'
+        }
+    },
+    'GreenOnBrown': {
+        'exg_min': {
+            type: 'number',
+            min: 0,
+            max: 255,
+            help: 'Minimum excess green value (0-255)'
+        },
+        'exg_max': {
+            type: 'number',
+            min: 0,
+            max: 255,
+            help: 'Maximum excess green value (0-255)'
+        },
+        'hue_min': {
+            type: 'number',
+            min: 0,
+            max: 179,
+            help: 'Minimum hue value (0-179)'
+        },
+        'hue_max': {
+            type: 'number',
+            min: 0,
+            max: 179,
+            help: 'Maximum hue value (0-179)'
+        },
+        'saturation_min': {
+            type: 'number',
+            min: 0,
+            max: 255,
+            help: 'Minimum saturation (0-255)'
+        },
+        'saturation_max': {
+            type: 'number',
+            min: 0,
+            max: 255,
+            help: 'Maximum saturation (0-255)'
+        },
+        'brightness_min': {
+            type: 'number',
+            min: 0,
+            max: 255,
+            help: 'Minimum brightness (0-255)'
+        },
+        'brightness_max': {
+            type: 'number',
+            min: 0,
+            max: 255,
+            help: 'Maximum brightness (0-255)'
+        },
+        'min_detection_area': {
+            type: 'number',
+            min: 1,
+            max: 10000,
+            help: 'Minimum contour area to trigger detection'
+        },
+        'invert_hue': {
+            type: 'boolean',
+            help: 'Invert hue range selection'
+        }
+    },
+    'DataCollection': {
+        'image_sample_enable': {
+            type: 'boolean',
+            help: 'Enable automatic image saving'
+        },
+        'sample_method': {
+            type: 'select',
+            options: ['whole', 'bbox', 'square'],
+            help: 'Image crop method: whole frame, bounding box, or square'
+        },
+        'sample_frequency': {
+            type: 'number',
+            min: 1,
+            max: 1000,
+            help: 'Save every Nth detection'
+        },
+        'save_directory': {
+            type: 'directory',
+            help: 'Directory to save images (e.g., /media/owl/SanDisk)'
+        },
+        'detection_enable': {
+            type: 'boolean',
+            help: 'Enable weed detection (disable for data collection only)'
+        },
+        'log_fps': {
+            type: 'boolean',
+            help: 'Log frames per second to console'
+        },
+        'camera_name': {
+            type: 'text',
+            help: 'Camera identifier for multi-camera setups'
+        }
+    },
+    'Relays': {
+        _isRelaySection: true,
+        _help: 'Map relay IDs to GPIO board pins'
+    }
+};
+
+// Sections that require restart
+const RESTART_SECTIONS = ['MQTT', 'Network', 'WebDashboard', 'Controller'];
+
+/**
+ * Initialize config editor
+ */
+function initConfigEditor() {
+    document.getElementById('reloadConfig')?.addEventListener('click', loadConfig);
+    document.getElementById('saveConfig')?.addEventListener('click', saveConfig);
+    document.getElementById('resetDefault')?.addEventListener('click', resetToDefault);
+
+    // Load config when tab is clicked
+    document.querySelector('[data-tab="config"]')?.addEventListener('click', () => {
+        if (Object.keys(currentConfig).length === 0) {
+            loadConfig();
+        }
+    });
+}
+
+/**
+ * Load configuration from server
+ */
+async function loadConfig() {
+    const container = document.getElementById('configSections');
+    container.innerHTML = '<div class="config-loading"><div class="spinner"></div><span>Loading configuration...</span></div>';
+
+    try {
+        const response = await fetch('/api/config');
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to load config');
+        }
+
+        originalConfig = JSON.parse(JSON.stringify(data.config));
+        currentConfig = JSON.parse(JSON.stringify(data.config));
+        activeConfigPath = data.active_config;
+        isDefaultConfig = data.is_default;
+        availableConfigs = data.available_configs || [];
+
+        // Update header info
+        document.getElementById('configFilePath').textContent = data.config_name;
+        updateActiveConfigBadge();
+
+        renderConfigSections();
+        renderConfigSelector();
+        updateChangeIndicators();
+
+    } catch (error) {
+        console.error('Error loading config:', error);
+        container.innerHTML = `<div class="card"><p style="color: #e74c3c; padding: 1rem;">Error loading configuration: ${error.message}</p><button class="btn-primary" onclick="loadConfig()">Retry</button></div>`;
+    }
+}
+
+/**
+ * Update the active config badge
+ */
+function updateActiveConfigBadge() {
+    const badge = document.getElementById('activeConfigBadge');
+    if (badge) {
+        if (isDefaultConfig) {
+            badge.textContent = 'Default';
+            badge.className = 'config-badge default';
+        } else {
+            badge.textContent = 'Custom';
+            badge.className = 'config-badge custom';
+        }
+    }
+}
+
+/**
+ * Render config file selector dropdown
+ */
+function renderConfigSelector() {
+    const selector = document.getElementById('configSelector');
+    if (!selector) return;
+
+    selector.innerHTML = availableConfigs.map(cfg => {
+        const isActive = cfg.path === activeConfigPath;
+        const label = cfg.is_default ? `${cfg.name} (default)` : cfg.name;
+        return `<option value="${cfg.path}" ${isActive ? 'selected' : ''}>${label}</option>`;
+    }).join('');
+
+    selector.onchange = async (e) => {
+        const selectedPath = e.target.value;
+        if (selectedPath !== activeConfigPath) {
+            await switchConfig(selectedPath);
+        }
+    };
+}
+
+/**
+ * Switch to a different config file
+ */
+async function switchConfig(configPath) {
+    if (configHasChanges) {
+        const confirmed = await showConfigConfirmModal(
+            'Unsaved Changes',
+            'You have unsaved changes. Switch configs anyway? Changes will be lost.'
+        );
+        if (!confirmed) {
+            // Reset selector
+            document.getElementById('configSelector').value = activeConfigPath;
+            return;
+        }
+    }
+
+    try {
+        const response = await fetch('/api/config/set-active', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config: configPath })
+        });
+
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error);
+        }
+
+        showNotification('Success', `Switched to ${configPath}`, 'success');
+        loadConfig();
+
+        if (data.restart_required) {
+            showNotification('Info', 'Restart OWL service to use new config', 'info', 5000);
+        }
+
+    } catch (error) {
+        showNotification('Error', error.message, 'error');
+        document.getElementById('configSelector').value = activeConfigPath;
+    }
+}
+
+/**
+ * Render all config sections
+ */
+function renderConfigSections() {
+    const container = document.getElementById('configSections');
+    container.innerHTML = '';
+
+    // Render in a specific order for better UX
+    const sectionOrder = ['System', 'Camera', 'GreenOnBrown', 'GreenOnGreen', 'DataCollection', 'Controller', 'MQTT', 'Network', 'GPS', 'WebDashboard', 'Visualisation', 'Relays'];
+
+    // Add any sections from config that aren't in our order
+    Object.keys(currentConfig).forEach(section => {
+        if (!sectionOrder.includes(section)) {
+            sectionOrder.push(section);
+        }
+    });
+
+    sectionOrder.forEach(section => {
+        if (currentConfig[section]) {
+            container.appendChild(createSectionElement(section, currentConfig[section]));
+        }
+    });
+}
+
+/**
+ * Create a section element
+ */
+function createSectionElement(sectionName, sectionData) {
+    const section = document.createElement('div');
+    section.className = 'config-section';
+    section.dataset.section = sectionName;
+
+    const fieldDefs = CONFIG_FIELD_DEFS[sectionName] || {};
+    const hasWarning = RESTART_SECTIONS.includes(sectionName);
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'config-section-header';
+    header.innerHTML = `
+        <h3>
+            ${sectionName}
+            ${hasWarning ? '<span class="section-badge warning">Restart Required</span>' : ''}
+        </h3>
+        <svg class="collapse-icon" viewBox="0 0 24 24" width="20" height="20">
+            <path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
+        </svg>
+    `;
+    header.addEventListener('click', () => {
+        section.classList.toggle('collapsed');
+    });
+
+    // Body
+    const body = document.createElement('div');
+    body.className = 'config-section-body';
+
+    // Special handling for Relays section
+    if (fieldDefs._isRelaySection) {
+        body.innerHTML = '<div class="relay-mapping"></div>';
+        const relayContainer = body.querySelector('.relay-mapping');
+
+        Object.entries(sectionData).forEach(([key, value]) => {
+            const relayItem = document.createElement('div');
+            relayItem.className = 'relay-item';
+            relayItem.innerHTML = `
+                <label>Relay ${key}:</label>
+                <input type="number" 
+                       data-section="${sectionName}" 
+                       data-key="${key}" 
+                       value="${value}"
+                       min="1" 
+                       max="40">
+            `;
+            relayContainer.appendChild(relayItem);
+        });
+    } else {
+        // Regular fields
+        Object.entries(sectionData).forEach(([key, value]) => {
+            body.appendChild(createFieldElement(sectionName, key, value, fieldDefs[key]));
+        });
+    }
+
+    section.appendChild(header);
+    section.appendChild(body);
+
+    // Add change listeners
+    section.querySelectorAll('input, select, textarea').forEach(input => {
+        input.addEventListener('change', handleFieldChange);
+        input.addEventListener('input', handleFieldChange);
+    });
+
+    return section;
+}
+
+/**
+ * Create a field element
+ */
+function createFieldElement(section, key, value, fieldDef) {
+    const field = document.createElement('div');
+    field.className = 'config-field';
+
+    const def = fieldDef || { type: 'text' };
+    const inputId = `config-${section}-${key}`;
+
+    // Determine field type
+    let inputHtml = '';
+    const strValue = String(value);
+
+    if (def.type === 'boolean' || strValue.toLowerCase() === 'true' || strValue.toLowerCase() === 'false') {
+        const checked = strValue.toLowerCase() === 'true' ? 'checked' : '';
+        inputHtml = `
+            <div class="checkbox-wrapper">
+                <input type="checkbox" id="${inputId}" data-section="${section}" data-key="${key}" ${checked}>
+                <label for="${inputId}">${formatLabel(key)}</label>
+            </div>
+        `;
+        field.innerHTML = inputHtml;
+    } else if (def.type === 'select' && def.options) {
+        const options = def.options.map(opt =>
+            `<option value="${opt}" ${String(opt) === strValue ? 'selected' : ''}>${opt}</option>`
+        ).join('');
+        inputHtml = `
+            <label for="${inputId}">${formatLabel(key)} <span class="field-key">${key}</span></label>
+            <select id="${inputId}" data-section="${section}" data-key="${key}">${options}</select>
+        `;
+        field.innerHTML = inputHtml;
+    } else if (def.type === 'number') {
+        const attrs = [];
+        if (def.min !== undefined) attrs.push(`min="${def.min}"`);
+        if (def.max !== undefined) attrs.push(`max="${def.max}"`);
+        if (def.step !== undefined) attrs.push(`step="${def.step}"`);
+
+        inputHtml = `
+            <label for="${inputId}">${formatLabel(key)} <span class="field-key">${key}</span></label>
+            <input type="number" id="${inputId}" data-section="${section}" data-key="${key}" value="${value}" ${attrs.join(' ')}>
+        `;
+        field.innerHTML = inputHtml;
+    } else {
+        // Default to text input
+        inputHtml = `
+            <label for="${inputId}">${formatLabel(key)} <span class="field-key">${key}</span></label>
+            <input type="text" id="${inputId}" data-section="${section}" data-key="${key}" value="${value}">
+        `;
+        field.innerHTML = inputHtml;
+    }
+
+    // Add help text
+    if (def.help) {
+        const helpSpan = document.createElement('span');
+        helpSpan.className = 'field-help';
+        helpSpan.textContent = def.help;
+        field.appendChild(helpSpan);
+    }
+
+    return field;
+}
+
+/**
+ * Format key to readable label
+ */
+function formatLabel(key) {
+    return key
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, l => l.toUpperCase())
+        .replace(/Ip\b/g, 'IP')
+        .replace(/Mqtt\b/g, 'MQTT')
+        .replace(/Gps\b/g, 'GPS')
+        .replace(/Exg\b/g, 'ExG')
+        .replace(/Fps\b/g, 'FPS');
+}
+
+/**
+ * Handle field value change
+ */
+function handleFieldChange(event) {
+    const input = event.target;
+    const section = input.dataset.section;
+    const key = input.dataset.key;
+
+    let value;
+    if (input.type === 'checkbox') {
+        value = input.checked ? 'True' : 'False';
+    } else {
+        value = input.value;
+    }
+
+    // Update current config
+    if (!currentConfig[section]) currentConfig[section] = {};
+    currentConfig[section][key] = value;
+
+    // Check if modified from original
+    const originalValue = originalConfig[section]?.[key];
+    const isModified = String(originalValue) !== String(value);
+
+    input.classList.toggle('modified', isModified);
+
+    updateChangeIndicators();
+}
+
+/**
+ * Update change indicator banners
+ */
+function updateChangeIndicators() {
+    const hasChanges = JSON.stringify(currentConfig) !== JSON.stringify(originalConfig);
+    configHasChanges = hasChanges;
+
+    document.getElementById('configUnsaved')?.classList.toggle('hidden', !hasChanges);
+
+    // Check if any restart-required sections changed
+    let restartNeeded = false;
+    RESTART_SECTIONS.forEach(section => {
+        if (JSON.stringify(currentConfig[section]) !== JSON.stringify(originalConfig[section])) {
+            restartNeeded = true;
+        }
+    });
+
+    document.getElementById('configWarning')?.classList.toggle('hidden', !restartNeeded);
+}
+
+/**
+ * Save configuration as new file
+ */
+async function saveConfig() {
+    if (!configHasChanges) {
+        showNotification('Info', 'No changes to save', 'info');
+        return;
+    }
+
+    // Generate suggested filename
+    const now = new Date();
+    const timestamp = now.toISOString().slice(0,19).replace(/[-:T]/g, '').replace(/(\d{8})(\d{6})/, '$1_$2');
+    const suggestedName = `config_${timestamp}.ini`;
+
+    // Show save dialog
+    const result = await showSaveConfigModal(suggestedName);
+
+    if (!result) return;
+
+    try {
+        const response = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                config: currentConfig,
+                filename: result.filename,
+                set_active: result.setActive
+            })
+        });
+
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to save config');
+        }
+
+        showNotification('Success', `Saved as ${data.filename}`, 'success');
+
+        // Reload to get fresh state
+        await loadConfig();
+
+        if (data.restart_required) {
+            showNotification('Info', 'Restart OWL service to apply changes', 'info', 5000);
+        }
+
+    } catch (error) {
+        console.error('Error saving config:', error);
+        showNotification('Error', `Failed to save: ${error.message}`, 'error');
+    }
+}
+
+/**
+ * Reset to default configuration
+ */
+async function resetToDefault() {
+    const confirmed = await showConfigConfirmModal(
+        'Reset to Default',
+        'This will set the default configuration (DAY_SENSITIVITY_2.ini) as the active config. Your custom configs will not be deleted. Continue?'
+    );
+
+    if (!confirmed) return;
+
+    try {
+        const response = await fetch('/api/config/reset-default', {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to reset');
+        }
+
+        showNotification('Success', 'Reset to default configuration', 'success');
+        loadConfig();
+
+        if (data.restart_required) {
+            showNotification('Info', 'Restart OWL service to apply changes', 'info', 5000);
+        }
+
+    } catch (error) {
+        console.error('Error resetting config:', error);
+        showNotification('Error', `Failed to reset: ${error.message}`, 'error');
+    }
+}
+
+/**
+ * Show save config modal
+ */
+function showSaveConfigModal(suggestedName) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'config-modal-overlay';
+        overlay.innerHTML = `
+            <div class="config-modal">
+                <h3>Save Configuration</h3>
+                <p>Save your changes as a new configuration file. Default configs are protected and cannot be overwritten.</p>
+                
+                <div class="config-modal-form">
+                    <div class="form-group">
+                        <label for="saveConfigName">Filename:</label>
+                        <input type="text" id="saveConfigName" value="${suggestedName}" class="form-input">
+                    </div>
+                    
+                    <div class="form-group checkbox-group">
+                        <label>
+                            <input type="checkbox" id="setActiveOnSave" checked>
+                            Set as active config (used on next OWL start)
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="config-modal-actions">
+                    <button class="btn-secondary" id="modalCancel">Cancel</button>
+                    <button class="btn-success" id="modalSave">Save</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(overlay);
+
+        const filenameInput = overlay.querySelector('#saveConfigName');
+        filenameInput.focus();
+        filenameInput.select();
+
+        overlay.querySelector('#modalCancel').addEventListener('click', () => {
+            document.body.removeChild(overlay);
+            resolve(null);
+        });
+
+        overlay.querySelector('#modalSave').addEventListener('click', () => {
+            const filename = overlay.querySelector('#saveConfigName').value.trim();
+            const setActive = overlay.querySelector('#setActiveOnSave').checked;
+            document.body.removeChild(overlay);
+            resolve({ filename, setActive });
+        });
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                document.body.removeChild(overlay);
+                resolve(null);
+            }
+        });
+
+        // Handle enter key
+        filenameInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                overlay.querySelector('#modalSave').click();
+            }
+        });
+    });
+}
+
+/**
+ * Show confirmation modal
+ */
+function showConfigConfirmModal(title, message) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'config-modal-overlay';
+        overlay.innerHTML = `
+            <div class="config-modal">
+                <h3>${title}</h3>
+                <p>${message}</p>
+                <div class="config-modal-actions">
+                    <button class="btn-secondary" id="modalCancel">Cancel</button>
+                    <button class="btn-primary" id="modalConfirm">Confirm</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(overlay);
+
+        overlay.querySelector('#modalCancel').addEventListener('click', () => {
+            document.body.removeChild(overlay);
+            resolve(false);
+        });
+
+        overlay.querySelector('#modalConfirm').addEventListener('click', () => {
+            document.body.removeChild(overlay);
+            resolve(true);
+        });
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                document.body.removeChild(overlay);
+                resolve(false);
+            }
+        });
+    });
+}
+
+// Initialize config editor when DOM is ready
+document.addEventListener('DOMContentLoaded', initConfigEditor);

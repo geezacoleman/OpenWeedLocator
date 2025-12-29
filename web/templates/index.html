@@ -45,6 +45,9 @@
         <div class="nav-tab" data-tab="upload">
             <span class="tab-text">Upload</span>
         </div>
+        <div class="nav-tab" data-tab="config">
+            <span class="tab-text">Config</span>
+        </div>
     </div>
 
     <!-- Dashboard Tab -->
@@ -453,6 +456,69 @@
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Config Tab -->
+    <div id="config" class="tab-content">
+        <div class="config-container">
+
+            <!-- Config Header -->
+            <div class="card config-header-card">
+                <div class="config-header">
+                    <div class="config-title">
+                        <h2>Configuration Editor</h2>
+                        <div class="config-file-info">
+                            <span class="config-path" id="configFilePath">Loading...</span>
+                            <span class="config-badge default" id="activeConfigBadge">Default</span>
+                        </div>
+                    </div>
+                    <div class="config-actions">
+                        <select id="configSelector" class="config-select" title="Switch configuration">
+                            <option>Loading...</option>
+                        </select>
+                        <button id="reloadConfig" class="btn-secondary" title="Reload configuration">
+                            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                            Reload
+                        </button>
+                        <button id="resetDefault" class="btn-secondary" title="Reset to default config">
+                            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+                            Reset Default
+                        </button>
+                        <button id="saveConfig" class="btn-success" title="Save as new config file">
+                            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M17 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V7l-4-4zm2 16H5V5h11.17L19 7.83V19zm-7-7c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3zM6 6h9v4H6V6z"/></svg>
+                            Save As...
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Warning Banner -->
+            <div class="config-warning hidden" id="configWarning">
+                <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
+                <span>Changes to MQTT, Network, or Controller settings require an OWL service restart to take effect.</span>
+            </div>
+
+            <!-- Unsaved Changes Banner -->
+            <div class="config-unsaved hidden" id="configUnsaved">
+                <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                <span>You have unsaved changes</span>
+            </div>
+
+            <!-- Info Banner -->
+            <div class="config-info">
+                <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+                <span>Default configs are protected. Changes are saved as new files that can be set as the active boot config.</span>
+            </div>
+
+            <!-- Config Sections -->
+            <div class="config-sections" id="configSections">
+                <div class="config-loading">
+                    <div class="spinner"></div>
+                    <span>Loading configuration...</span>
+                </div>
+            </div>
+
         </div>
     </div>
 </div>

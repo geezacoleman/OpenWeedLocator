@@ -20,6 +20,7 @@ from pathlib import Path
 from datetime import datetime
 import urllib.request
 import urllib.error
+
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utils.mqtt_manager import DashMQTTSubscriber
 from utils.upload_manager import get_uploader
@@ -821,6 +822,343 @@ class OWLDashboard:
 
             errors = self.mqtt_client.get_and_clear_errors()
             return jsonify(errors)
+
+        # =====================
+        # Config Editor Routes
+        # =====================
+
+        # Default config and active config pointer
+        DEFAULT_CONFIG = 'config/DAY_SENSITIVITY_2.ini'
+        ACTIVE_CONFIG_POINTER = 'config/active_config.txt'
+
+        @self.app.route('/api/config', methods=['GET'])
+        def get_config():
+            """Get the current configuration file contents."""
+            try:
+                config = configparser.ConfigParser()
+                config.optionxform = str  # Preserve case
+
+                # Get the active config path
+                active_config = self._get_active_config_path()
+                config_path = self._resolve_config_path(active_config)
+
+                if not config_path or not os.path.exists(config_path):
+                    return jsonify({'success': False, 'error': 'Config file not found'}), 404
+
+                config.read(config_path)
+
+                # Convert to nested dict for JSON
+                config_dict = {}
+                for section in config.sections():
+                    config_dict[section] = {}
+                    for key, value in config.items(section):
+                        config_dict[section][key] = value
+
+                # Get list of available configs
+                available_configs = self._list_config_files()
+
+                # Check if current is the default
+                is_default = (active_config == DEFAULT_CONFIG)
+
+                return jsonify({
+                    'success': True,
+                    'config': config_dict,
+                    'config_path': config_path,
+                    'config_name': os.path.basename(config_path),
+                    'active_config': active_config,
+                    'is_default': is_default,
+                    'available_configs': available_configs,
+                    'default_config': DEFAULT_CONFIG
+                })
+
+            except Exception as e:
+                self.logger.error(f"Error reading config: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/config', methods=['POST'])
+        def save_config():
+            """Save configuration as a new file (never overwrites defaults)."""
+            try:
+                data = request.get_json()
+                if not data or 'config' not in data:
+                    return jsonify({'success': False, 'error': 'No config data provided'}), 400
+
+                # Generate new filename with timestamp
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                suggested_name = data.get('filename', f'config_{timestamp}.ini')
+
+                # Ensure it's in the config directory and has .ini extension
+                if not suggested_name.endswith('.ini'):
+                    suggested_name += '.ini'
+
+                # Sanitize filename
+                safe_name = "".join(c for c in suggested_name if c.isalnum() or c in ('_', '-', '.')).strip()
+                if not safe_name:
+                    safe_name = f'config_{timestamp}.ini'
+
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                new_config_path = os.path.join(base_dir, 'config', safe_name)
+
+                # Don't allow overwriting default configs
+                protected_configs = ['DAY_SENSITIVITY_1.ini', 'DAY_SENSITIVITY_2.ini', 'DAY_SENSITIVITY_3.ini']
+                if safe_name in protected_configs:
+                    return jsonify({
+                        'success': False,
+                        'error': f'Cannot overwrite default config "{safe_name}". Please choose a different name.'
+                    }), 400
+
+                # Build config from data
+                config = configparser.ConfigParser()
+                config.optionxform = str  # Preserve case
+
+                new_config = data['config']
+                for section, options in new_config.items():
+                    if not config.has_section(section):
+                        config.add_section(section)
+                    for key, value in options.items():
+                        config.set(section, key, str(value))
+
+                # Write the new config file
+                with open(new_config_path, 'w') as f:
+                    config.write(f)
+
+                self.logger.info(f"Config saved to new file: {new_config_path}")
+
+                # Optionally set as active
+                set_active = data.get('set_active', False)
+                relative_path = f'config/{safe_name}'
+
+                if set_active:
+                    self._set_active_config(relative_path)
+                    self.logger.info(f"Set as active config: {relative_path}")
+
+                return jsonify({
+                    'success': True,
+                    'message': f'Configuration saved as {safe_name}',
+                    'filename': safe_name,
+                    'config_path': new_config_path,
+                    'relative_path': relative_path,
+                    'is_active': set_active,
+                    'restart_required': set_active
+                })
+
+            except Exception as e:
+                self.logger.error(f"Error saving config: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/config/set-active', methods=['POST'])
+        def set_active_config():
+            """Set a config file as the active boot config."""
+            try:
+                data = request.get_json()
+                config_name = data.get('config')
+
+                if not config_name:
+                    return jsonify({'success': False, 'error': 'No config specified'}), 400
+
+                # Verify the config exists
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+
+                # Handle both relative and just filename
+                if not config_name.startswith('config/'):
+                    config_name = f'config/{config_name}'
+
+                full_path = os.path.join(base_dir, config_name)
+
+                if not os.path.exists(full_path):
+                    return jsonify({'success': False, 'error': f'Config file not found: {config_name}'}), 404
+
+                self._set_active_config(config_name)
+
+                return jsonify({
+                    'success': True,
+                    'message': f'Active config set to {config_name}',
+                    'active_config': config_name,
+                    'restart_required': True
+                })
+
+            except Exception as e:
+                self.logger.error(f"Error setting active config: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/config/reset-default', methods=['POST'])
+        def reset_to_default():
+            """Reset to the default configuration."""
+            try:
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                pointer_path = os.path.join(base_dir, ACTIVE_CONFIG_POINTER)
+
+                # Remove the active config pointer to revert to default
+                if os.path.exists(pointer_path):
+                    os.remove(pointer_path)
+                    self.logger.info("Removed active config pointer - reverting to default")
+
+                return jsonify({
+                    'success': True,
+                    'message': f'Reset to default config: {DEFAULT_CONFIG}',
+                    'active_config': DEFAULT_CONFIG,
+                    'restart_required': True
+                })
+
+            except Exception as e:
+                self.logger.error(f"Error resetting to default: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/config/delete', methods=['POST'])
+        def delete_config():
+            """Delete a custom config file (cannot delete defaults)."""
+            try:
+                data = request.get_json()
+                config_name = data.get('config')
+
+                if not config_name:
+                    return jsonify({'success': False, 'error': 'No config specified'}), 400
+
+                # Don't allow deleting default configs
+                protected_configs = ['DAY_SENSITIVITY_1.ini', 'DAY_SENSITIVITY_2.ini', 'DAY_SENSITIVITY_3.ini']
+                basename = os.path.basename(config_name)
+
+                if basename in protected_configs:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Cannot delete default configuration files'
+                    }), 400
+
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                if not config_name.startswith('config/'):
+                    config_name = f'config/{config_name}'
+
+                full_path = os.path.join(base_dir, config_name)
+
+                if not os.path.exists(full_path):
+                    return jsonify({'success': False, 'error': 'Config file not found'}), 404
+
+                # Check if this is the active config
+                active_config = self._get_active_config_path()
+                if config_name == active_config:
+                    # Reset to default first
+                    pointer_path = os.path.join(base_dir, ACTIVE_CONFIG_POINTER)
+                    if os.path.exists(pointer_path):
+                        os.remove(pointer_path)
+
+                os.remove(full_path)
+                self.logger.info(f"Deleted config file: {full_path}")
+
+                return jsonify({
+                    'success': True,
+                    'message': f'Deleted {basename}',
+                    'was_active': (config_name == active_config)
+                })
+
+            except Exception as e:
+                self.logger.error(f"Error deleting config: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/config/list', methods=['GET'])
+        def list_configs():
+            """List all available config files."""
+            try:
+                configs = self._list_config_files()
+                active = self._get_active_config_path()
+
+                return jsonify({
+                    'success': True,
+                    'configs': configs,
+                    'active_config': active,
+                    'default_config': DEFAULT_CONFIG
+                })
+
+            except Exception as e:
+                self.logger.error(f"Error listing configs: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/config/directories', methods=['GET'])
+        def list_directories():
+            """List available directories for save_directory selection."""
+            try:
+                directories = []
+
+                # Check common mount points
+                mount_points = ['/media/owl', '/media', '/mnt', '/home/owl']
+                for mount in mount_points:
+                    if os.path.exists(mount):
+                        try:
+                            for item in os.listdir(mount):
+                                full_path = os.path.join(mount, item)
+                                if os.path.isdir(full_path):
+                                    directories.append(full_path)
+                        except PermissionError:
+                            continue
+
+                return jsonify({'success': True, 'directories': sorted(set(directories))})
+
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+    def _get_active_config_path(self):
+        """Get the active config path from pointer file, or default."""
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        pointer_path = os.path.join(base_dir, 'config/active_config.txt')
+
+        if os.path.exists(pointer_path):
+            try:
+                with open(pointer_path, 'r') as f:
+                    active = f.read().strip()
+                    if active:
+                        return active
+            except Exception as e:
+                self.logger.warning(f"Could not read active config pointer: {e}")
+
+        return 'config/DAY_SENSITIVITY_2.ini'
+
+    def _resolve_config_path(self, relative_path):
+        """Resolve a relative config path to absolute."""
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        return os.path.join(base_dir, relative_path)
+
+    def _set_active_config(self, config_path):
+        """Set the active config by writing to pointer file."""
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        pointer_path = os.path.join(base_dir, 'config/active_config.txt')
+
+        with open(pointer_path, 'w') as f:
+            f.write(config_path)
+
+        self.logger.info(f"Active config set to: {config_path}")
+
+    def _list_config_files(self):
+        """List all .ini config files."""
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        config_dir = os.path.join(base_dir, 'config')
+
+        configs = []
+        if os.path.exists(config_dir):
+            for f in os.listdir(config_dir):
+                if f.endswith('.ini'):
+                    full_path = os.path.join(config_dir, f)
+                    stat = os.stat(full_path)
+
+                    # Determine if it's a default config
+                    is_default = f in ['DAY_SENSITIVITY_1.ini', 'DAY_SENSITIVITY_2.ini', 'DAY_SENSITIVITY_3.ini']
+
+                    configs.append({
+                        'name': f,
+                        'path': f'config/{f}',
+                        'size': stat.st_size,
+                        'modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        'is_default': is_default
+                    })
+
+        # Sort: defaults first, then by modified date descending
+        configs.sort(key=lambda x: (not x['is_default'], x['modified']), reverse=True)
+        configs.sort(key=lambda x: x['is_default'], reverse=True)
+
+        return configs
+
+    def _check_restart_required(self, changed_sections):
+        """Check if changed sections require a service restart."""
+        restart_sections = {'MQTT', 'Network', 'WebDashboard', 'Controller'}
+        return bool(set(changed_sections) & restart_sections)
 
     def get_system_stats(self):
         """

@@ -20,6 +20,7 @@ def get_python_env():
         return f"Virtual environment: {venv}"
     return "No virtual environment active (using system Python)"
 
+
 def setup_basic_logger():
     """Simple startup logger that uses the same file as LogManager"""
     log_dir = Path(os.getcwd()) / 'logs'
@@ -36,6 +37,7 @@ def setup_basic_logger():
     root_logger.addHandler(console_handler)
 
     return logging.getLogger('owl_startup')
+
 
 logger = setup_basic_logger()
 logger.info("Starting OWL - checking imports...")
@@ -78,14 +80,15 @@ try:
     from version import SystemInfo, VERSION
 
 except ImportError as e:
-   missing_module = str(e).split("'")[1]
-   logger.error(f"Failed to import required module: {missing_module}")
-   logger.error(f"Error details: {str(e)}")
-   logger.error(f"Current virtual env: {os.environ.get('VIRTUAL_ENV', 'None')}")
-   logger.error(f"Current working directory: {os.getcwd()}")
-   raise errors.DependencyError(missing_module, str(e)) from None
+    missing_module = str(e).split("'")[1]
+    logger.error(f"Failed to import required module: {missing_module}")
+    logger.error(f"Error details: {str(e)}")
+    logger.error(f"Current virtual env: {os.environ.get('VIRTUAL_ENV', 'None')}")
+    logger.error(f"Current working directory: {os.getcwd()}")
+    raise errors.DependencyError(missing_module, str(e)) from None
 
 logger.info("All required modules imported successfully")
+
 
 def nothing(x):
     pass
@@ -312,7 +315,8 @@ class Owl:
             if not hasattr(self, 'sensitivity_level'):
                 self.sensitivity_level = Value('i', Sensitivity.HIGH.value)
 
-            self.status_indicator = AdvancedStatusIndicator(save_directory=self.save_directory, status_led_pin='BOARD37')
+            self.status_indicator = AdvancedStatusIndicator(save_directory=self.save_directory,
+                                                            status_led_pin='BOARD37')
             self.controller = AdvancedController(
                 recording_state=self.image_sample_enable,
                 sensitivity_level=self.sensitivity_level,
@@ -354,9 +358,10 @@ class Owl:
             # the older versions of the Pi are known to 'brick' and become unusable if too high resolutions are used.
             self.resolution = (640, 480)
             self.logger.warning(f"Resolution {self.config.getint('Camera', 'resolution_width')}, "
-                                 f"{self.config.getint('Camera', 'resolution_height')} selected is dangerously high. ")
+                                f"{self.config.getint('Camera', 'resolution_height')} selected is dangerously high. ")
         else:
-            self.logger.warning(f'High resolution, expect low framerate. Resolution set to {self.resolution[0]}x{self.resolution[1]}.')
+            self.logger.warning(
+                f'High resolution, expect low framerate. Resolution set to {self.resolution[0]}x{self.resolution[1]}.')
 
         self.frame_width = None
         self.frame_height = None
@@ -408,7 +413,6 @@ class Owl:
 
         else:
             self.logger.error('[ERROR] No frame width or frame height provided.')
-
 
     def hoot(self):
         self.record_video = False  # Flag to control video recording
@@ -470,7 +474,6 @@ class Owl:
                         self.logger.info("[INFO] Frame is None. Stopped.")
                         self.stop()
                         break
-
 
                 # retrieve the trackbar positions for thresholds
                 if self.show_display:
@@ -547,7 +550,7 @@ class Owl:
                         except Exception as e:
                             self.logger.debug(f"Error updating system stats: {e}")
 
-                if self.dash and frame_count % 5 == 0: # send every 5th frame to the streamer to reduce overhead
+                if self.dash and frame_count % 5 == 0:  # send every 5th frame to the streamer to reduce overhead
                     try:
                         if self._detection_enable and image_out is not None:
                             final_frame_to_stream = image_out
@@ -627,7 +630,7 @@ class Owl:
                     cv2.putText(image_out, f'OWL-gorithm: {algorithm}', (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
                                 (80, 80, 255), 1)
                     cv2.putText(image_out, f'Press "S" to save {algorithm} thresholds to file.',
-                                (20, int(image_out.shape[1 ] *0.72)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 80, 255), 1)
+                                (20, int(image_out.shape[1] * 0.72)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 80, 255), 1)
                     cv2.imshow("Detection Output", imutils.resize(image_out, width=600))
 
                 k = cv2.waitKey(1) & 0xFF
@@ -1057,21 +1060,51 @@ if __name__ == "__main__":
     # opening up the OWL code each time.
     ap = argparse.ArgumentParser()
     ap.add_argument('--show-display', action='store_true', default=False, help='show display windows')
-    ap.add_argument('--focus', action='store_true', default=False, help='(DEPRECATED) launch the focus GUI; please use the desktop icon instead')
+    ap.add_argument('--focus', action='store_true', default=False,
+                    help='(DEPRECATED) launch the focus GUI; please use the desktop icon instead')
     ap.add_argument('--input', type=str, default=None, help='path to image directory, single image or video file')
+    ap.add_argument('--config', type=str, default=None, help='path to config file (overrides active_config.txt)')
 
     args = ap.parse_args()
 
     if args.focus:
-        logger.warning("--focus is deprecated, auto-launching focus GUI; please switch to the desktop icon in the future")
+        logger.warning(
+            "--focus is deprecated, auto-launching focus GUI; please switch to the desktop icon in the future")
         import desktop.focus_gui
 
         desktop.focus_gui.main()
         sys.exit(0)
 
-    # this is where you can change the config file default
+    # Determine which config file to use
+    # Priority: 1) --config argument, 2) active_config.txt pointer, 3) default
+    DEFAULT_CONFIG = 'config/DAY_SENSITIVITY_2.ini'
+    ACTIVE_CONFIG_POINTER = Path(__file__).parent / 'config/active_config.txt'
+
+    config_file = DEFAULT_CONFIG
+
+    if args.config:
+        # Command line argument takes priority
+        config_file = args.config
+        logger.info(f"Using config from command line: {config_file}")
+    elif ACTIVE_CONFIG_POINTER.exists():
+        # Check for active config pointer from dashboard
+        try:
+            active_config = ACTIVE_CONFIG_POINTER.read_text().strip()
+            if active_config:
+                # Verify the config file exists
+                active_path = Path(__file__).parent / active_config
+                if active_path.exists():
+                    config_file = active_config
+                    logger.info(f"Using active config from dashboard: {config_file}")
+                else:
+                    logger.warning(f"Active config not found: {active_config}, using default")
+        except Exception as e:
+            logger.warning(f"Could not read active_config.txt: {e}, using default")
+
+    logger.info(f"Starting OWL with config: {config_file}")
+
     owl = Owl(
-        config_file='config/DAY_SENSITIVITY_2.ini',
+        config_file=config_file,
         show_display=args.show_display,
         input_file_or_directory=args.input
     )
