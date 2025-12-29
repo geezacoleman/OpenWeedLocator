@@ -214,17 +214,25 @@ class AdvancedController:
                 self.detection_mode_state.value = mode
             self.status_indicator.generic_notification()
             with self.owl.detection_enable.get_lock():
-                if mode == 0:  # Detection on
+                if mode == 0:  # Detection on (Spot Spray)
                     self.owl.detection_enable.value = True
                     self.status_indicator.enable_weed_detection()
-                elif mode == 2:  # All solenoids on
+                elif mode == 2:  # All solenoids on (Blanket)
                     self.owl.detection_enable.value = False
                     self.status_indicator.disable_weed_detection()
                     self.owl.relay_controller.relay.all_on()
-                else:  # Off
+                else:  # Off (mode 1)
                     self.owl.detection_enable.value = False
                     self.status_indicator.disable_weed_detection()
                     self.owl.relay_controller.relay.all_off()
+
+            # Publish detection mode to MQTT for dashboard (optional - doesn't affect core functionality)
+            try:
+                if hasattr(self.owl, 'mqtt_publisher') and self.owl.mqtt_publisher:
+                    self.owl.mqtt_publisher.set_detection_mode(mode)
+            except Exception as mqtt_err:
+                # MQTT failure should not affect hardware control
+                self.logger.debug(f"MQTT publish failed (non-critical): {mqtt_err}")
 
         except KeyboardInterrupt:
             self.logger.info("[INFO] KeyboardInterrupt received in set_detection_mode. Exiting.")
@@ -300,5 +308,3 @@ def get_rpi_version():
     except Exception as e:
         logging.error(errors.RPVersionError(original_error=str(e)))
         return 'non-rpi'
-
-

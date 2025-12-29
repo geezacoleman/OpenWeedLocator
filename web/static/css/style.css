@@ -2314,12 +2314,6 @@ footer {
 }
 .card-title-row .title-left { display:flex; align-items:center; gap:.75rem; }
 
-/* Power button */
-.icon-btn{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:12px;padding:.5rem;background:#fff}
-.icon-btn:hover{background:#fafafa}
-.power-btn.on{border-color:var(--success); background:linear-gradient(135deg,var(--success) 0%, #27ae60 100%); color:#fff}
-.power-btn.on svg path{fill:#fff}
-
 /* === Hardware Controller Disabled States for Segmented Controls === */
 .segmented.hardware-locked {
     opacity: 0.5;
@@ -2349,7 +2343,19 @@ footer {
     opacity: 0.5;
     cursor: not-allowed;
     pointer-events: none;
-    position: relative;
+}
+
+/* Small lock indicator for switches */
+.owl-switch.hardware-locked .switch-state::before {
+    content: '';
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-right: 4px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23f39c12' d='M12,17A2,2 0 0,0 14,15C14,13.89 13.1,13 12,13A2,2 0 0,0 10,15A2,2 0 0,0 12,17M18,8A2,2 0 0,1 20,10V20A2,2 0 0,1 18,22H6A2,2 0 0,1 4,20V10C4,8.89 4.9,8 6,8H7V6A5,5 0 0,1 12,1A5,5 0 0,1 17,6V8H18M12,3A3,3 0 0,0 9,6V8H15V6A3,3 0 0,0 12,3Z'/%3E%3C/svg%3E");
+    background-size: contain;
+    background-repeat: no-repeat;
+    vertical-align: middle;
 }
 
 /* Hardware locked banner - shown once at top of controls */
@@ -2405,72 +2411,6 @@ footer {
 .gps-icon.gps-medium { color: var(--warning); }
 .gps-icon.gps-poor { color: var(--danger); }
 .gps-status.gps-disabled { opacity: 0.6; }
-
-/* === Power Button States === */
-.power-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border: 2px solid var(--border);
-    border-radius: 12px;
-    padding: 0.5rem 0.75rem;
-    background: #fff;
-    color: var(--secondary);
-    cursor: pointer;
-    transition: all 0.2s ease;
-    gap: 0.4rem;
-    font-weight: 600;
-    font-size: 0.85rem;
-}
-
-.power-btn::before {
-    content: 'Power';
-}
-
-.power-btn:hover:not(:disabled) {
-    background: #f8f9fa;
-    border-color: var(--accent);
-}
-
-.power-btn.on {
-    border-color: var(--success);
-    background: linear-gradient(135deg, var(--success) 0%, #27ae60 100%);
-    color: #fff;
-}
-
-.power-btn.on::before {
-    content: 'Power';
-}
-
-.power-btn.on svg path {
-    fill: #fff;
-}
-
-.power-btn.booting,
-.power-btn.stopping {
-    border-color: var(--warning);
-    background: linear-gradient(135deg, var(--warning) 0%, #e67e22 100%);
-    color: #fff;
-    cursor: wait;
-}
-
-.power-btn.booting::before {
-    content: 'Booting';
-}
-
-.power-btn.stopping::before {
-    content: 'Stopping';
-}
-
-.power-btn.booting svg,
-.power-btn.stopping svg {
-    animation: spin 1s linear infinite;
-}
-
-.power-btn:disabled {
-    opacity: 0.7;
-    cursor: not-allowed;
-}
 
 /* === Status Dot States === */
 .status-dot {
@@ -2544,4 +2484,125 @@ footer {
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
+}
+
+/* === Sprayer Status Chip === */
+.sprayer-status {
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.sprayer-status .dot {
+    width: 8px;
+    height: 8px;
+}
+
+.sprayer-status.spot-spray {
+    background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+    border-color: var(--success);
+    color: #155724;
+}
+
+.sprayer-status.spot-spray .dot {
+    background: var(--success);
+    animation: pulse 1.5s infinite;
+}
+
+.sprayer-status.blanket {
+    background: linear-gradient(135deg, #fff3cd 0%, #ffeeba 100%);
+    border-color: var(--warning);
+    color: #856404;
+}
+
+.sprayer-status.blanket .dot {
+    background: var(--warning);
+}
+
+.sprayer-status.off .dot {
+    background: #95a5a6;
+}
+
+/* === Power Button Fixes === */
+.power-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    border: 2px solid var(--border);
+    border-radius: 12px;
+    padding: 0.5rem 0.85rem;
+    background: #fff;
+    color: var(--secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-weight: 600;
+    font-size: 0.85rem;
+    min-width: 90px;
+}
+
+.power-btn::after {
+    content: 'Power';
+}
+
+.power-btn:hover:not(:disabled) {
+    background: #f0f0f0;
+    border-color: var(--secondary);
+}
+
+/* On state - green */
+.power-btn.on {
+    border-color: var(--success);
+    background: var(--success);
+    color: #fff;
+}
+
+.power-btn.on:hover:not(:disabled) {
+    background: #27ae60;
+    border-color: #27ae60;
+}
+
+.power-btn.on svg path {
+    fill: #fff;
+}
+
+/* Booting state - orange/yellow */
+.power-btn.booting {
+    border-color: var(--warning);
+    background: var(--warning);
+    color: #fff;
+    cursor: wait;
+}
+
+.power-btn.booting::after {
+    content: 'Booting';
+}
+
+.power-btn.booting svg {
+    animation: spin 1s linear infinite;
+}
+
+/* Stopping state - orange */
+.power-btn.stopping {
+    border-color: #e67e22;
+    background: #e67e22;
+    color: #fff;
+    cursor: wait;
+}
+
+.power-btn.stopping::after {
+    content: 'Stopping';
+}
+
+.power-btn.stopping svg {
+    animation: spin 1s linear infinite;
+}
+
+.power-btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+/* Remove any conflicting ::before */
+.power-btn::before {
+    content: none;
 }

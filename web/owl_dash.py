@@ -389,6 +389,7 @@ class OWLDashboard:
                 'detection_enable': mqtt_state.get('detection_enable', False),
                 'image_sample_enable': mqtt_state.get('image_sample_enable', False),
                 'sensitivity_level': mqtt_state.get('sensitivity_level', 'high'),
+                'detection_mode': mqtt_state.get('detection_mode', 1),  # 0=spot, 1=off, 2=blanket
                 'owl_running': mqtt_state.get('owl_running', False),
                 'stream_active': mqtt_state.get('stream_active', False),
                 'weed_detect_indicator': self.mqtt_client.get_weed_detect_indicator() if self.mqtt_client else False,

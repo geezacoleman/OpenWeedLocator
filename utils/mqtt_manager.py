@@ -81,6 +81,7 @@ class OWLMQTTPublisher:
             'detection_enable': False,
             'image_sample_enable': False,
             'sensitivity_level': 'medium',
+            'detection_mode': 1,  # 0=spot spray, 1=off, 2=blanket
             'owl_running': False,
             'stream_active': False,
             # System statistics
@@ -490,6 +491,15 @@ class OWLMQTTPublisher:
         """Set detection enable state (for owl.py internal use)"""
         with self.state_lock:
             self.state['detection_enable'] = bool(value)
+            self.state['last_update'] = time.time()
+        self._publish_state()
+
+    def set_detection_mode(self, mode):
+        """Set detection mode: 0=spot spray, 1=off, 2=blanket (for controller use)"""
+        with self.state_lock:
+            self.state['detection_mode'] = int(mode)
+            # Also update detection_enable for backwards compatibility
+            self.state['detection_enable'] = (mode == 0)
             self.state['last_update'] = time.time()
         self._publish_state()
 
