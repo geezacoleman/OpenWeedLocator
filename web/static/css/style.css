@@ -3102,3 +3102,49 @@ footer {
     width: 16px;
     height: 16px;
 }
+
+/* Hardware notice banner - yellow info banner */
+.hardware-notice {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    margin: 0.75rem 0;
+    background: #fff9e6;
+    border: 1px solid #f0c36d;
+    border-radius: 8px;
+    color: #8a6d3b;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.hardware-notice svg {
+    flex-shrink: 0;
+    fill: #f0ad4e;
+}
+
+/* Lock icon in switch state */
+.lock-icon {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+
+.lock-icon svg {
+    fill: #999;
+}
+
+/* Status chip for Blanket mode */
+.status-chip.blanket {
+    background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%) !important;
+}
+
+.status-chip.blanket .dot {
+    background: #fff;
+}
+
+/* Spot Spray mode (green, same as 'on') */
+.status-chip.on:not(.blanket) {
+    background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+}

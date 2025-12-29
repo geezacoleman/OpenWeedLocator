@@ -1112,7 +1112,10 @@ function updateSystemStats() {
 
             syncSwitch('detectSwitch', detectionOn);
             syncSwitch('recordSwitch', recordingOn);
-            setStatusChip(document.getElementById('detectStatusChip'), detectionOn);
+
+            // Handle detection_mode for status chip (0=Spot Spray, 1=Off, 2=Blanket)
+            const detectionMode = data.detection_mode;
+            updateDetectionModeDisplay(detectionMode, detectionOn);
 
             // Sensitivity Low/High
             const sensLabel = normalizeSensitivity(data); // "Low" | "High"
@@ -1145,6 +1148,9 @@ function updateSystemStats() {
                 streamOverlay.classList.toggle('hidden', on);
                 streamImg.style.display = on ? 'block' : 'none';
             }
+
+            // Update hardware lock UI based on controller status
+            updateHardwareLockUI();
         })
         .catch(err => console.error('Error fetching system stats:', err))
         .finally(() => {
@@ -1165,36 +1171,139 @@ function updateSystemStats() {
         if (state) state.textContent = on ? 'ON' : 'OFF';
     }
 
-    function setStatusChip(chip, on) {
-        if (!chip) return;
-        chip.classList.toggle('on', on);
-        const txt = chip.querySelector('#detectStatusText');
-        if (txt) txt.textContent = on ? 'Running' : 'Stopped';
-    }
-
     function setPowerButtonState(on) {
         const btn = document.getElementById('owlPowerBtn');
         if (!btn) return;
         btn.setAttribute('aria-pressed', on ? 'true' : 'false');
         btn.classList.toggle('on', on);
     }
+}
 
-    function normalizeSensitivity(data) {
+/**
+ * Update detection mode display (Spot Spray / Off / Blanket)
+ */
+function updateDetectionModeDisplay(mode, detectionOn) {
+    const chip = document.getElementById('detectStatusChip');
+    if (!chip) return;
+
+    const txt = chip.querySelector('#detectStatusText');
+
+    // detection_mode: 0 = Spot Spray, 1 = Off, 2 = Blanket
+    if (mode === 0) {
+        chip.classList.add('on');
+        chip.classList.remove('blanket');
+        if (txt) txt.textContent = 'Spot Spray';
+    } else if (mode === 2) {
+        chip.classList.add('on', 'blanket');
+        if (txt) txt.textContent = 'Blanket';
+    } else {
+        // Mode 1 (Off) or undefined - use detection running state
+        chip.classList.remove('blanket');
+        chip.classList.toggle('on', detectionOn);
+        if (txt) txt.textContent = detectionOn ? 'Running' : 'Stopped';
+    }
+}
+
+/**
+ * Update hardware lock UI - shows banner and lock icons when hardware controller active
+ */
+function updateHardwareLockUI() {
+    const detectSwitch = document.getElementById('detectSwitch');
+    const recordSwitch = document.getElementById('recordSwitch');
+    const sensitivityTile = document.querySelector('.control-tile:has(.seg-btn[data-sens])') ||
+                           document.querySelector('.seg-btn[data-sens]')?.closest('.control-tile');
+    const controlsCard = document.getElementById('cameraControlsCard');
+
+    // Get or create the hardware notice banner
+    let banner = document.getElementById('hardwareNoticeBanner');
+
+    if (hardwareControllerActive) {
+        // Add hardware-locked class to switches
+        if (detectSwitch) detectSwitch.classList.add('hardware-locked');
+        if (recordSwitch) recordSwitch.classList.add('hardware-locked');
+        if (sensitivityTile) sensitivityTile.classList.add('hardware-locked');
+
+        // Add lock icons to switch states
+        addLockIcon(detectSwitch);
+        addLockIcon(recordSwitch);
+
+        // Show hardware notice banner
+        if (!banner && controlsCard) {
+            banner = document.createElement('div');
+            banner.id = 'hardwareNoticeBanner';
+            banner.className = 'hardware-notice';
+            banner.innerHTML = `
+                <svg viewBox="0 0 24 24" width="16" height="16">
+                    <path fill="currentColor" d="M12,17A2,2 0 0,0 14,15C14,13.89 13.1,13 12,13A2,2 0 0,0 10,15A2,2 0 0,0 12,17M18,8A2,2 0 0,1 20,10V20A2,2 0 0,1 18,22H6A2,2 0 0,1 4,20V10C4,8.89 4.9,8 6,8H7V6A5,5 0 0,1 12,1A5,5 0 0,1 17,6V8H18M12,3A3,3 0 0,0 9,6V8H15V6A3,3 0 0,0 12,3Z"/>
+                </svg>
+                <span>Hardware controller active</span>
+            `;
+            // Insert after the card-title-row
+            const titleRow = controlsCard.querySelector('.card-title-row');
+            if (titleRow && titleRow.nextSibling) {
+                titleRow.parentNode.insertBefore(banner, titleRow.nextSibling);
+            } else if (controlsCard.firstChild) {
+                controlsCard.insertBefore(banner, controlsCard.firstChild.nextSibling);
+            }
+        }
+    } else {
+        // Remove hardware-locked class from switches
+        if (detectSwitch) detectSwitch.classList.remove('hardware-locked');
+        if (recordSwitch) recordSwitch.classList.remove('hardware-locked');
+        if (sensitivityTile) sensitivityTile.classList.remove('hardware-locked');
+
+        // Remove lock icons
+        removeLockIcon(detectSwitch);
+        removeLockIcon(recordSwitch);
+
+        // Remove hardware notice banner
+        if (banner) banner.remove();
+    }
+}
+
+/**
+ * Add lock icon to switch state display
+ */
+function addLockIcon(switchEl) {
+    if (!switchEl) return;
+    const stateEl = switchEl.querySelector('.switch-state');
+    if (stateEl && !stateEl.querySelector('.lock-icon')) {
+        const lockIcon = document.createElement('span');
+        lockIcon.className = 'lock-icon';
+        lockIcon.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12"><path fill="currentColor" d="M12,17A2,2 0 0,0 14,15C14,13.89 13.1,13 12,13A2,2 0 0,0 10,15A2,2 0 0,0 12,17M18,8A2,2 0 0,1 20,10V20A2,2 0 0,1 18,22H6A2,2 0 0,1 4,20V10C4,8.89 4.9,8 6,8H7V6A5,5 0 0,1 12,1A5,5 0 0,1 17,6V8H18M12,3A3,3 0 0,0 9,6V8H15V6A3,3 0 0,0 12,3Z"/></svg>`;
+        stateEl.insertBefore(lockIcon, stateEl.firstChild);
+    }
+}
+
+/**
+ * Remove lock icon from switch state display
+ */
+function removeLockIcon(switchEl) {
+    if (!switchEl) return;
+    const lockIcon = switchEl.querySelector('.lock-icon');
+    if (lockIcon) lockIcon.remove();
+}
+
+/**
+ * Normalize sensitivity data from API
+ */
+function normalizeSensitivity(data) {
     // The API sends the key 'sensitivity_level' with a string value 'low' or 'high'
     if (data && typeof data.sensitivity_level === 'string') {
         return data.sensitivity_level.toLowerCase() === 'high' ? 'High' : 'Low';
     }
-
     return 'High';
 }
 
-    function normalizeFanMode(status) {
-        if (!status || !status.mode) return 'auto';
-        const m = String(status.mode).toLowerCase();
-        if (m.includes('100')) return '100';
-        if (m.includes('auto')) return 'auto';
-        return (m === '1' || m === '100' || m === '1.0') ? '100' : 'auto';
-    }
+/**
+ * Normalize fan mode from status object
+ */
+function normalizeFanMode(status) {
+    if (!status || !status.mode) return 'auto';
+    const m = String(status.mode).toLowerCase();
+    if (m.includes('100')) return '100';
+    if (m.includes('auto')) return 'auto';
+    return (m === '1' || m === '100' || m === '1.0') ? '100' : 'auto';
 }
 
 /**
