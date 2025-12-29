@@ -277,10 +277,13 @@ class OWLDashboard:
 
         @self.app.route('/api/detection/start', methods=['POST'])
         def start_detection():
-            if self.controller_type == 'advanced':
+            # Read fresh controller type from config
+            controller_type = self._get_controller_type()
+
+            if controller_type not in ('none', ''):
                 return jsonify({
                     'success': False,
-                    'message': f'{self.controller_type.upper()} controller active - use physical switches'
+                    'message': f'{controller_type.upper()} controller active - use physical switches'
                 }), 423  # HTTP 423 Locked
 
             if not self.mqtt_client:
@@ -292,10 +295,13 @@ class OWLDashboard:
         # Replace the existing detection/stop route
         @self.app.route('/api/detection/stop', methods=['POST'])
         def stop_detection():
-            if self.controller_type != 'none':
+            # Read fresh controller type from config
+            controller_type = self._get_controller_type()
+
+            if controller_type not in ('none', ''):
                 return jsonify({
                     'success': False,
-                    'message': f'{self.controller_type.upper()} controller active - use physical switches'
+                    'message': f'{controller_type.upper()} controller active - use physical switches'
                 }), 423  # HTTP 423 Locked
 
             if not self.mqtt_client:
@@ -306,10 +312,13 @@ class OWLDashboard:
 
         @self.app.route('/api/recording/start', methods=['POST'])
         def start_recording():
-            if self.controller_type != 'none':
+            # Read fresh controller type from config
+            controller_type = self._get_controller_type()
+
+            if controller_type not in ('none', ''):
                 return jsonify({
                     'success': False,
-                    'message': f'{self.controller_type.upper()} controller active - use physical switches'
+                    'message': f'{controller_type.upper()} controller active - use physical switches'
                 }), 423  # HTTP 423 Locked
 
             if not self.mqtt_client:
@@ -320,10 +329,13 @@ class OWLDashboard:
 
         @self.app.route('/api/recording/stop', methods=['POST'])
         def stop_recording():
-            if self.controller_type != 'none':
+            # Read fresh controller type from config
+            controller_type = self._get_controller_type()
+
+            if controller_type not in ('none', ''):
                 return jsonify({
                     'success': False,
-                    'message': f'{self.controller_type.upper()} controller active - use physical switches'
+                    'message': f'{controller_type.upper()} controller active - use physical switches'
                 }), 423  # HTTP 423 Locked
 
             if not self.mqtt_client:
@@ -335,10 +347,13 @@ class OWLDashboard:
         @self.app.route('/api/sensitivity/set', methods=['POST'])
         def set_sensitivity():
             """Set sensitivity to specific level"""
-            if self.controller_type != 'none':
+            # Read fresh controller type from config
+            controller_type = self._get_controller_type()
+
+            if controller_type not in ('none', ''):
                 return jsonify({
                     'success': False,
-                    'message': f'{self.controller_type.upper()} controller active - use physical switches'
+                    'message': f'{controller_type.upper()} controller active - use physical switches'
                 }), 423
 
             if not self.mqtt_client:
@@ -1124,6 +1139,21 @@ class OWLDashboard:
 
         # Return default - will be resolved by _resolve_config_path
         return 'config/DAY_SENSITIVITY_2.ini'
+
+    def _get_controller_type(self):
+        """Read controller_type fresh from the active config file."""
+        try:
+            active_config = self._get_active_config_path()
+            config_path = self._resolve_config_path(active_config)
+
+            if os.path.exists(config_path):
+                config = configparser.ConfigParser()
+                config.read(config_path)
+                return config.get('Controller', 'controller_type', fallback='none').strip("'\" ").lower()
+        except Exception as e:
+            self.logger.warning(f"Could not read controller_type: {e}")
+
+        return 'none'
 
     def _resolve_config_path(self, relative_path):
         """Resolve a relative config path to absolute."""
