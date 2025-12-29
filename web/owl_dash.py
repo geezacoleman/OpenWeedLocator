@@ -770,14 +770,22 @@ class OWLDashboard:
 
         @self.app.route('/api/controller_config', methods=['GET'])
         def get_controller_config():
+            """Get controller config - reads fresh from active config file."""
             try:
-                # Read controller type from the loaded config
-                controller_type = self.config.get('Controller', 'controller_type', fallback='none').strip(
-                    "'\" ").lower()
+                # Read fresh from the active config file (not cached self.config)
+                active_config = self._get_active_config_path()
+                config_path = self._resolve_config_path(active_config)
+
+                if os.path.exists(config_path):
+                    config = configparser.ConfigParser()
+                    config.read(config_path)
+                    controller_type = config.get('Controller', 'controller_type', fallback='none').strip("'\" ").lower()
+                else:
+                    controller_type = 'none'
 
                 return jsonify({
                     'controller_type': controller_type,
-                    'hardware_active': controller_type != 'none'
+                    'hardware_active': controller_type not in ('none', '')
                 })
             except Exception as e:
                 self.logger.error(f"Error reading controller config: {e}")
