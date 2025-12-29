@@ -2394,3 +2394,143 @@ footer {
 .gps-icon.gps-medium { color: var(--warning); }
 .gps-icon.gps-poor { color: var(--danger); }
 .gps-status.gps-disabled { opacity: 0.6; }
+
+/* === Power Button States === */
+.power-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid var(--border);
+    border-radius: 12px;
+    padding: 0.5rem 0.75rem;
+    background: #fff;
+    color: var(--secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    gap: 0.4rem;
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+.power-btn::before {
+    content: 'Power';
+}
+
+.power-btn:hover:not(:disabled) {
+    background: #f8f9fa;
+    border-color: var(--accent);
+}
+
+.power-btn.on {
+    border-color: var(--success);
+    background: linear-gradient(135deg, var(--success) 0%, #27ae60 100%);
+    color: #fff;
+}
+
+.power-btn.on::before {
+    content: 'Power';
+}
+
+.power-btn.on svg path {
+    fill: #fff;
+}
+
+.power-btn.booting,
+.power-btn.stopping {
+    border-color: var(--warning);
+    background: linear-gradient(135deg, var(--warning) 0%, #e67e22 100%);
+    color: #fff;
+    cursor: wait;
+}
+
+.power-btn.booting::before {
+    content: 'Booting';
+}
+
+.power-btn.stopping::before {
+    content: 'Stopping';
+}
+
+.power-btn.booting svg,
+.power-btn.stopping svg {
+    animation: spin 1s linear infinite;
+}
+
+.power-btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+/* === Status Dot States === */
+.status-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background-color: var(--danger);
+    animation: pulse 2s infinite;
+}
+
+.status-dot.connected {
+    background-color: var(--success);
+    animation: none;
+}
+
+.status-dot.booting,
+.status-dot.stopping {
+    background-color: var(--warning);
+    animation: pulse 1s infinite;
+}
+
+/* === Status Chip States === */
+.status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.35rem 0.7rem;
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    font-size: 0.85rem;
+}
+
+.status-chip .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: #95a5a6;
+    transition: background 0.2s;
+}
+
+.status-chip.on .dot {
+    background: var(--success);
+}
+
+.status-chip.booting .dot,
+.status-chip.stopping .dot {
+    background: var(--warning);
+    animation: pulse 1s infinite;
+}
+
+/* Ensure spinning animation is defined */
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+
+/* === Visually Hidden (for accessibility) === */
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}

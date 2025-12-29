@@ -11,6 +11,12 @@ const minZoom = 1;
 let hardwareControllerActive = false;
 let controllerType = 'none';
 
+// OWL service state tracking
+let owlServiceState = 'unknown'; // 'online', 'offline', 'booting', 'stopping', 'unknown'
+let stateTransitionTimeout = null;
+const BOOT_TIMEOUT = 15000; // Max time to wait for boot
+const STOP_TIMEOUT = 10000; // Max time to wait for stop
+
 document.addEventListener('DOMContentLoaded', function() {
     initTabs();
     initZoom();
@@ -154,27 +160,177 @@ function initDashboardControls() {
 }
 
 function startOwl() {
+    // Set transitional state immediately
+    setOwlServiceState('booting');
+
     return apiRequest('/api/owl/start', { method: 'POST' })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
                 showNotification('Success', data.message || 'OWL service starting...', 'success');
+                // Start polling more frequently during boot
+                startTransitionPolling('booting', BOOT_TIMEOUT);
             } else {
+                setOwlServiceState('offline');
                 throw new Error(data.error || 'Failed to start OWL service');
             }
+        })
+        .catch(err => {
+            setOwlServiceState('offline');
+            throw err;
         });
 }
 
 function stopOwl() {
+    // Set transitional state immediately
+    setOwlServiceState('stopping');
+
     return apiRequest('/api/owl/stop', { method: 'POST' })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
                 showNotification('Success', data.message || 'OWL service stopping...', 'success');
+                // Start polling more frequently during stop
+                startTransitionPolling('stopping', STOP_TIMEOUT);
             } else {
+                setOwlServiceState('online');
                 throw new Error(data.error || 'Failed to stop OWL service');
             }
+        })
+        .catch(err => {
+            // Revert to previous state on error
+            updateSystemStats();
+            throw err;
         });
+}
+
+/**
+ * Set OWL service state and update all UI elements
+ */
+function setOwlServiceState(state) {
+    owlServiceState = state;
+    updateAllStatusIndicators(state);
+}
+
+/**
+ * Start frequent polling during state transitions
+ */
+function startTransitionPolling(expectedEndState, timeout) {
+    // Clear any existing transition timeout
+    if (stateTransitionTimeout) {
+        clearTimeout(stateTransitionTimeout);
+    }
+
+    // Poll more frequently during transitions
+    const pollInterval = setInterval(() => {
+        apiRequest('/api/system_stats')
+            .then(r => r.json())
+            .then(data => {
+                const isRunning = !!data.owl_running;
+
+                if (expectedEndState === 'booting' && isRunning) {
+                    // Successfully booted
+                    clearInterval(pollInterval);
+                    clearTimeout(stateTransitionTimeout);
+                    setOwlServiceState('online');
+                    updateSystemStats();
+                } else if (expectedEndState === 'stopping' && !isRunning) {
+                    // Successfully stopped
+                    clearInterval(pollInterval);
+                    clearTimeout(stateTransitionTimeout);
+                    setOwlServiceState('offline');
+                    updateSystemStats();
+                }
+            })
+            .catch(() => {});
+    }, 1000);
+
+    // Set timeout to stop polling and update state
+    stateTransitionTimeout = setTimeout(() => {
+        clearInterval(pollInterval);
+        // Force a final check
+        updateSystemStats();
+    }, timeout);
+}
+
+/**
+ * Update all status indicators (header, card chip, power button)
+ */
+function updateAllStatusIndicators(state) {
+    // Header status
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+
+    // Card status chip
+    const detectStatusChip = document.getElementById('detectStatusChip');
+    const detectStatusText = document.getElementById('detectStatusText');
+    const chipDot = detectStatusChip?.querySelector('.dot');
+
+    // Power button
+    const powerBtn = document.getElementById('owlPowerBtn');
+
+    // Remove all state classes first
+    if (statusDot) {
+        statusDot.classList.remove('connected', 'booting', 'stopping');
+    }
+    if (detectStatusChip) {
+        detectStatusChip.classList.remove('on', 'booting', 'stopping');
+    }
+    if (powerBtn) {
+        powerBtn.classList.remove('on', 'booting', 'stopping');
+        powerBtn.disabled = false;
+    }
+
+    switch (state) {
+        case 'online':
+            if (statusDot) statusDot.classList.add('connected');
+            if (statusText) statusText.textContent = 'Online';
+            if (detectStatusChip) detectStatusChip.classList.add('on');
+            if (detectStatusText) detectStatusText.textContent = 'Running';
+            if (chipDot) chipDot.style.background = '';
+            if (powerBtn) {
+                powerBtn.classList.add('on');
+                powerBtn.setAttribute('aria-pressed', 'true');
+            }
+            break;
+
+        case 'offline':
+            if (statusText) statusText.textContent = 'Offline';
+            if (detectStatusText) detectStatusText.textContent = 'Stopped';
+            if (chipDot) chipDot.style.background = '';
+            if (powerBtn) {
+                powerBtn.setAttribute('aria-pressed', 'false');
+            }
+            break;
+
+        case 'booting':
+            if (statusDot) statusDot.classList.add('booting');
+            if (statusText) statusText.textContent = 'Booting...';
+            if (detectStatusChip) detectStatusChip.classList.add('booting');
+            if (detectStatusText) detectStatusText.textContent = 'Booting';
+            if (chipDot) chipDot.style.background = 'var(--warning)';
+            if (powerBtn) {
+                powerBtn.classList.add('booting');
+                powerBtn.disabled = true;
+            }
+            break;
+
+        case 'stopping':
+            if (statusDot) statusDot.classList.add('stopping');
+            if (statusText) statusText.textContent = 'Stopping...';
+            if (detectStatusChip) detectStatusChip.classList.add('stopping');
+            if (detectStatusText) detectStatusText.textContent = 'Stopping';
+            if (chipDot) chipDot.style.background = 'var(--warning)';
+            if (powerBtn) {
+                powerBtn.classList.add('stopping');
+                powerBtn.disabled = true;
+            }
+            break;
+
+        default: // 'unknown'
+            if (statusText) statusText.textContent = 'Connecting...';
+            if (detectStatusText) detectStatusText.textContent = 'Unknown';
+    }
 }
 
 function setSegActive(nodeList, activeBtn) {
@@ -1103,8 +1259,16 @@ function updateSystemStats() {
             setText('memChipVal', `${data.memory_percent}%`);
             setText('tempChipVal', `${data.cpu_temp}°C`);
 
-            // Power button reflects owl_running
-            setPowerButtonState(!!data.owl_running);
+            // Determine actual OWL state from data
+            const isRunning = !!data.owl_running;
+
+            // Only update state if we're not in a transition
+            if (owlServiceState !== 'booting' && owlServiceState !== 'stopping') {
+                const newState = isRunning ? 'online' : 'offline';
+                if (owlServiceState !== newState) {
+                    setOwlServiceState(newState);
+                }
+            }
 
             // Detection & recording big switches (and status chip)
             const detectionOn = !!(data.detection_running ?? data.detection_enable);
@@ -1112,7 +1276,9 @@ function updateSystemStats() {
 
             syncSwitch('detectSwitch', detectionOn);
             syncSwitch('recordSwitch', recordingOn);
-            setStatusChip(document.getElementById('detectStatusChip'), detectionOn);
+
+            // Update detection status chip based on detection state (not OWL running state)
+            updateDetectionChip(detectionOn);
 
             // Sensitivity Low/High
             const sensLabel = normalizeSensitivity(data); // "Low" | "High"
@@ -1131,13 +1297,10 @@ function updateSystemStats() {
                 rpmEl.textContent = (typeof rpm === 'number') ? `${rpm} rpm` : '—';
             }
 
-            // Optional: header online/offline & stream overlay if still present
-            const statusDot = document.getElementById('statusDot');
-            const statusText = document.getElementById('statusText');
-            if (statusDot && statusText) {
-                statusDot.classList.toggle('connected', !!data.owl_running);
-                statusText.textContent = data.owl_running ? 'Online' : 'Offline';
-            }
+            // Update hardware controller disabled states
+            updateHardwareLockedControls();
+
+            // Stream overlay
             const streamOverlay = document.getElementById('stream-status-overlay');
             const streamImg = document.getElementById('stream-img');
             if (streamOverlay && streamImg) {
@@ -1165,28 +1328,27 @@ function updateSystemStats() {
         if (state) state.textContent = on ? 'ON' : 'OFF';
     }
 
-    function setStatusChip(chip, on) {
+    function updateDetectionChip(detectionOn) {
+        const chip = document.getElementById('detectStatusChip');
+        const txt = document.getElementById('detectStatusText');
         if (!chip) return;
-        chip.classList.toggle('on', on);
-        const txt = chip.querySelector('#detectStatusText');
-        if (txt) txt.textContent = on ? 'Running' : 'Stopped';
-    }
 
-    function setPowerButtonState(on) {
-        const btn = document.getElementById('owlPowerBtn');
-        if (!btn) return;
-        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-        btn.classList.toggle('on', on);
+        // Don't override transitional states
+        if (owlServiceState === 'booting' || owlServiceState === 'stopping') {
+            return;
+        }
+
+        chip.classList.toggle('on', detectionOn);
+        if (txt) txt.textContent = detectionOn ? 'Running' : 'Stopped';
     }
 
     function normalizeSensitivity(data) {
-    // The API sends the key 'sensitivity_level' with a string value 'low' or 'high'
-    if (data && typeof data.sensitivity_level === 'string') {
-        return data.sensitivity_level.toLowerCase() === 'high' ? 'High' : 'Low';
+        // The API sends the key 'sensitivity_level' with a string value 'low' or 'high'
+        if (data && typeof data.sensitivity_level === 'string') {
+            return data.sensitivity_level.toLowerCase() === 'high' ? 'High' : 'Low';
+        }
+        return 'High';
     }
-
-    return 'High';
-}
 
     function normalizeFanMode(status) {
         if (!status || !status.mode) return 'auto';
@@ -1194,6 +1356,44 @@ function updateSystemStats() {
         if (m.includes('100')) return '100';
         if (m.includes('auto')) return 'auto';
         return (m === '1' || m === '100' || m === '1.0') ? '100' : 'auto';
+    }
+}
+
+/**
+ * Update hardware-locked states for sensitivity and fan controls
+ */
+function updateHardwareLockedControls() {
+    const sensContainer = document.querySelector('.control-tile .segmented[class*="two"]')?.closest('.control-tile');
+    const sensBtns = document.querySelectorAll('.seg-btn[data-sens]');
+    const detectSwitch = document.getElementById('detectSwitch');
+    const recordSwitch = document.getElementById('recordSwitch');
+
+    if (hardwareControllerActive) {
+        // Lock sensitivity buttons
+        sensBtns.forEach(btn => {
+            btn.classList.add('hardware-disabled');
+            btn.disabled = true;
+        });
+        if (sensContainer) {
+            sensContainer.classList.add('hardware-locked');
+        }
+
+        // Lock detection/recording switches
+        if (detectSwitch) detectSwitch.classList.add('hardware-locked');
+        if (recordSwitch) recordSwitch.classList.add('hardware-locked');
+    } else {
+        // Unlock sensitivity buttons
+        sensBtns.forEach(btn => {
+            btn.classList.remove('hardware-disabled');
+            btn.disabled = false;
+        });
+        if (sensContainer) {
+            sensContainer.classList.remove('hardware-locked');
+        }
+
+        // Unlock detection/recording switches
+        if (detectSwitch) detectSwitch.classList.remove('hardware-locked');
+        if (recordSwitch) recordSwitch.classList.remove('hardware-locked');
     }
 }
 
