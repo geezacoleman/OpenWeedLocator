@@ -205,8 +205,8 @@ class AdvancedController:
 
         # Publish recording state to MQTT for dashboard
         try:
-            if hasattr(self.owl, 'mqtt_publisher') and self.owl.mqtt_publisher:
-                self.owl.mqtt_publisher.set_image_sample_enable(is_pressed)
+            if hasattr(self.owl, 'dash') and self.owl.dash:
+                self.owl.dash.set_image_sample_enable(is_pressed)
         except Exception as mqtt_err:
             self.logger.debug(f"MQTT publish failed (non-critical): {mqtt_err}")
 
@@ -268,8 +268,8 @@ class AdvancedController:
 
             # Publish detection mode to MQTT for dashboard (optional - doesn't affect core functionality)
             try:
-                if hasattr(self.owl, 'mqtt_publisher') and self.owl.mqtt_publisher:
-                    self.owl.mqtt_publisher.set_detection_mode(mode)
+                if hasattr(self.owl, 'dash') and self.owl.dash:
+                    self.owl.dash.set_detection_mode(mode)
             except Exception as mqtt_err:
                 # MQTT failure should not affect hardware control
                 self.logger.debug(f"MQTT publish failed (non-critical): {mqtt_err}")
@@ -337,9 +337,9 @@ class AdvancedController:
 
         # Update MQTT state to show everything is off
         try:
-            if hasattr(self.owl, 'mqtt_publisher') and self.owl.mqtt_publisher:
-                self.owl.mqtt_publisher.set_detection_mode(1)  # Off
-                self.owl.mqtt_publisher.set_image_sample_enable(False)
+            if hasattr(self.owl, 'dash') and self.owl.dash:
+                self.owl.dash.set_detection_mode(1)  # Off
+                self.owl.dash.set_image_sample_enable(False)
         except Exception as e:
             self.logger.debug(f"MQTT update failed during shutdown: {e}")
 
