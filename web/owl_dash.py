@@ -896,8 +896,8 @@ class OWLDashboard:
                 if not safe_name:
                     safe_name = f'config_{timestamp}.ini'
 
-                base_dir = os.path.dirname(os.path.abspath(__file__))
-                new_config_path = os.path.join(base_dir, 'config', safe_name)
+                config_dir = self._get_config_dir()
+                new_config_path = os.path.join(config_dir, safe_name)
 
                 # Don't allow overwriting default configs
                 protected_configs = ['DAY_SENSITIVITY_1.ini', 'DAY_SENSITIVITY_2.ini', 'DAY_SENSITIVITY_3.ini']
@@ -956,14 +956,12 @@ class OWLDashboard:
                 if not config_name:
                     return jsonify({'success': False, 'error': 'No config specified'}), 400
 
-                # Verify the config exists
-                base_dir = os.path.dirname(os.path.abspath(__file__))
-
                 # Handle both relative and just filename
                 if not config_name.startswith('config/'):
                     config_name = f'config/{config_name}'
 
-                full_path = os.path.join(base_dir, config_name)
+                # Verify the config exists using our resolver
+                full_path = self._resolve_config_path(config_name)
 
                 if not os.path.exists(full_path):
                     return jsonify({'success': False, 'error': f'Config file not found: {config_name}'}), 404
@@ -985,8 +983,8 @@ class OWLDashboard:
         def reset_to_default():
             """Reset to the default configuration."""
             try:
-                base_dir = os.path.dirname(os.path.abspath(__file__))
-                pointer_path = os.path.join(base_dir, ACTIVE_CONFIG_POINTER)
+                config_dir = self._get_config_dir()
+                pointer_path = os.path.join(config_dir, 'active_config.txt')
 
                 # Remove the active config pointer to revert to default
                 if os.path.exists(pointer_path):
@@ -1024,11 +1022,10 @@ class OWLDashboard:
                         'error': 'Cannot delete default configuration files'
                     }), 400
 
-                base_dir = os.path.dirname(os.path.abspath(__file__))
                 if not config_name.startswith('config/'):
                     config_name = f'config/{config_name}'
 
-                full_path = os.path.join(base_dir, config_name)
+                full_path = self._resolve_config_path(config_name)
 
                 if not os.path.exists(full_path):
                     return jsonify({'success': False, 'error': 'Config file not found'}), 404
@@ -1036,8 +1033,9 @@ class OWLDashboard:
                 # Check if this is the active config
                 active_config = self._get_active_config_path()
                 if config_name == active_config:
-                    # Reset to default first
-                    pointer_path = os.path.join(base_dir, ACTIVE_CONFIG_POINTER)
+                    # Reset to default first - remove pointer file
+                    config_dir = self._get_config_dir()
+                    pointer_path = os.path.join(config_dir, 'active_config.txt')
                     if os.path.exists(pointer_path):
                         os.remove(pointer_path)
 
@@ -1097,29 +1095,67 @@ class OWLDashboard:
 
     def _get_active_config_path(self):
         """Get the active config path from pointer file, or default."""
+        # Try to find config directory relative to this file
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        pointer_path = os.path.join(base_dir, 'config/active_config.txt')
 
-        if os.path.exists(pointer_path):
-            try:
-                with open(pointer_path, 'r') as f:
-                    active = f.read().strip()
-                    if active:
-                        return active
-            except Exception as e:
-                self.logger.warning(f"Could not read active config pointer: {e}")
+        # Check for pointer file in possible locations
+        pointer_locations = [
+            os.path.join(base_dir, 'config/active_config.txt'),
+            os.path.join(base_dir, '../config/active_config.txt'),
+        ]
 
+        for pointer_path in pointer_locations:
+            if os.path.exists(pointer_path):
+                try:
+                    with open(pointer_path, 'r') as f:
+                        active = f.read().strip()
+                        if active:
+                            return active
+                except Exception as e:
+                    self.logger.warning(f"Could not read active config pointer: {e}")
+
+        # Return default - will be resolved by _resolve_config_path
         return 'config/DAY_SENSITIVITY_2.ini'
 
     def _resolve_config_path(self, relative_path):
         """Resolve a relative config path to absolute."""
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(base_dir, relative_path)
+
+        # Try multiple possible locations
+        possible_paths = [
+            os.path.join(base_dir, relative_path),
+            os.path.join(base_dir, '..', relative_path),
+            os.path.join(base_dir, relative_path.replace('config/', '../config/')),
+        ]
+
+        for path in possible_paths:
+            normalized = os.path.normpath(path)
+            if os.path.exists(normalized):
+                return normalized
+
+        # Return first option even if doesn't exist (for error reporting)
+        return os.path.normpath(possible_paths[0])
+
+    def _get_config_dir(self):
+        """Find the config directory."""
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+        possible_dirs = [
+            os.path.join(base_dir, 'config'),
+            os.path.join(base_dir, '..', 'config'),
+        ]
+
+        for config_dir in possible_dirs:
+            normalized = os.path.normpath(config_dir)
+            if os.path.exists(normalized) and os.path.isdir(normalized):
+                return normalized
+
+        return os.path.normpath(possible_dirs[0])
 
     def _set_active_config(self, config_path):
         """Set the active config by writing to pointer file."""
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        pointer_path = os.path.join(base_dir, 'config/active_config.txt')
+        config_dir = self._get_config_dir()
+        pointer_path = os.path.join(config_dir, 'active_config.txt')
 
         with open(pointer_path, 'w') as f:
             f.write(config_path)
@@ -1128,8 +1164,7 @@ class OWLDashboard:
 
     def _list_config_files(self):
         """List all .ini config files."""
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        config_dir = os.path.join(base_dir, 'config')
+        config_dir = self._get_config_dir()
 
         configs = []
         if os.path.exists(config_dir):

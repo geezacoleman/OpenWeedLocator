@@ -2923,16 +2923,25 @@ footer {
 @media (max-width: 768px) {
     .config-header {
         flex-direction: column;
-        align-items: flex-start;
+        align-items: stretch;
     }
 
     .config-actions {
         width: 100%;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.5rem;
+    }
+
+    .config-actions .config-select {
+        grid-column: 1 / -1;
+        width: 100%;
     }
 
     .config-actions button {
-        flex: 1;
         justify-content: center;
+        white-space: nowrap;
+        padding: 0.6rem 0.5rem;
     }
 
     .config-section-body {
