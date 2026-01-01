@@ -143,7 +143,7 @@ class OWLDashboard:
 
     def setup_logging(self):
         """Setup logging"""
-        log_dir = Path('../logs')
+        log_dir = Path('../../logs')
         log_dir.mkdir(exist_ok=True)
 
         log_file = log_dir / f"owl_dashboard_{datetime.now().strftime('%Y%m%d')}.log"
@@ -531,7 +531,7 @@ class OWLDashboard:
                 temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
 
                 with zipfile.ZipFile(temp_zip.name, 'w') as zip_file:
-                    log_dir = Path('../logs')
+                    log_dir = Path('../../logs')
                     if log_dir.exists():
                         for log_file in log_dir.glob('*.log*'):
                             if log_file.is_file():

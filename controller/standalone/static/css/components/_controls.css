@@ -1,0 +1,685 @@
+/* ==========================================================================
+   OWL Dashboard - Controls
+   Buttons, Switches, Segmented Controls, Power Button
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Base Button Styles
+   -------------------------------------------------------------------------- */
+.control-btn {
+    padding: 1rem 2rem;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 1rem;
+    transition: all 0.2s;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    min-width: 140px;
+}
+
+.control-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+/* Button Variants */
+.control-btn.success {
+    background: linear-gradient(135deg, var(--success) 0%, #27ae60 100%);
+    color: white;
+}
+
+.control-btn.danger {
+    background: linear-gradient(135deg, var(--danger) 0%, #c0392b 100%);
+    color: white;
+}
+
+.control-btn.primary {
+    background: linear-gradient(135deg, var(--accent) 0%, #2980b9 100%);
+    color: white;
+}
+
+.control-btn.secondary {
+    background: linear-gradient(135deg, var(--secondary) 0%, #2c3e50 100%);
+    color: white;
+}
+
+.control-btn.accent {
+    background: linear-gradient(135deg, var(--warning) 0%, #e67e22 100%);
+    color: white;
+}
+
+/* Detection Actions - Compact Buttons */
+.detection-actions .control-btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    min-width: 70px;
+    text-transform: none;
+    letter-spacing: 0;
+    box-shadow: none;
+}
+
+.detection-actions .control-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+/* --------------------------------------------------------------------------
+   Secondary/Primary Button Variants
+   -------------------------------------------------------------------------- */
+.btn-secondary {
+    background: linear-gradient(135deg, var(--secondary) 0%, #2c3e50 100%);
+    color: white;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--accent) 0%, #2980b9 100%);
+    color: white;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.btn-success {
+    background: linear-gradient(135deg, var(--success) 0%, #27ae60 100%);
+    color: white;
+}
+
+.btn-danger {
+    background: linear-gradient(135deg, var(--danger) 0%, #c0392b 100%);
+    color: white;
+}
+
+.btn-secondary:hover,
+.btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.btn-success:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(46, 204, 113, 0.3);
+}
+
+.btn-danger:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(231, 76, 60, 0.3);
+}
+
+/* --------------------------------------------------------------------------
+   Icon Buttons
+   -------------------------------------------------------------------------- */
+.icon-btn {
+    padding: 0.5rem 1rem;
+    border: none;
+    background: var(--accent);
+    color: white;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.icon-btn:hover {
+    background: #2980b9;
+    transform: translateY(-1px);
+}
+
+/* --------------------------------------------------------------------------
+   Control Section Layout
+   -------------------------------------------------------------------------- */
+.control-section {
+    text-align: center;
+}
+
+.control-buttons {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.control-info {
+    font-size: 1rem;
+    color: var(--secondary);
+    font-weight: 500;
+}
+
+.control-description {
+    font-size: 0.9rem;
+    margin-top: 0.5rem;
+    font-style: italic;
+}
+
+/* --------------------------------------------------------------------------
+   Controls Stack (Dashboard)
+   -------------------------------------------------------------------------- */
+.controls-stack {
+    display: grid;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+/* --------------------------------------------------------------------------
+   OWL Switch (Large Toggle)
+   -------------------------------------------------------------------------- */
+.owl-switch {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.9rem 1.1rem;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    cursor: pointer;
+}
+
+.owl-switch .switch-icon {
+    width: 20px;
+    height: 20px;
+}
+
+.owl-switch .switch-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.owl-switch .switch-track {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    width: 78px;
+    height: 34px;
+    border-radius: 999px;
+    background: #cfd6de;
+    transition: background 0.2s;
+}
+
+.owl-switch .switch-thumb {
+    position: absolute;
+    left: 4px;
+    top: 4px;
+    width: 26px;
+    height: 26px;
+    border-radius: 999px;
+    background: #fff;
+    transition: transform 0.2s;
+}
+
+.owl-switch[aria-pressed="true"] .switch-track {
+    background: var(--success);
+}
+
+.owl-switch[aria-pressed="true"] .switch-thumb {
+    transform: translateX(44px);
+}
+
+.owl-switch .switch-state {
+    font-weight: 700;
+    color: var(--secondary);
+}
+
+/* Recording Switch Variant */
+.owl-switch.owl-switch--record[aria-pressed="true"] .switch-track {
+    background: var(--danger);
+}
+
+.owl-switch.owl-switch--record .switch-state {
+    color: var(--danger);
+}
+
+/* --------------------------------------------------------------------------
+   Two-Up Layout (Side by side controls)
+   -------------------------------------------------------------------------- */
+.two-up {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1rem;
+}
+
+.control-tile {
+    /* Container for segmented controls */
+}
+
+.tile-label {
+    margin-bottom: 0.4rem;
+    font-weight: 600;
+    color: var(--secondary);
+}
+
+.tile-subtle {
+    margin-top: 0.4rem;
+    color: var(--text);
+    font-size: 0.9rem;
+}
+
+/* --------------------------------------------------------------------------
+   Segmented Control
+   -------------------------------------------------------------------------- */
+.segmented {
+    display: grid;
+    grid-auto-flow: column;
+    gap: 0.5rem;
+    background: #f0f2f5;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 0.35rem;
+}
+
+.segmented--two {
+    grid-template-columns: repeat(2, 1fr);
+}
+
+.seg-btn {
+    height: 56px;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.seg-btn.active {
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.seg-btn:disabled,
+.seg-btn.hardware-disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   Power Button
+   -------------------------------------------------------------------------- */
+.power-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    border: 2px solid var(--border);
+    border-radius: 12px;
+    padding: 0.5rem 0.85rem;
+    background: #fff;
+    color: var(--secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-weight: 600;
+    font-size: 0.85rem;
+    min-width: 90px;
+}
+
+.power-btn::after {
+    content: 'Power';
+}
+
+.power-btn::before {
+    content: none;
+}
+
+.power-btn:hover:not(:disabled) {
+    background: #f0f0f0;
+    border-color: var(--secondary);
+}
+
+/* On state - green */
+.power-btn.on {
+    border-color: var(--success);
+    background: var(--success);
+    color: #fff;
+}
+
+.power-btn.on:hover:not(:disabled) {
+    background: #27ae60;
+    border-color: #27ae60;
+}
+
+.power-btn.on svg path {
+    fill: #fff;
+}
+
+/* Booting state - orange/yellow */
+.power-btn.booting {
+    border-color: var(--warning);
+    background: var(--warning);
+    color: #fff;
+    cursor: wait;
+}
+
+.power-btn.booting::after {
+    content: 'Booting';
+}
+
+.power-btn.booting svg {
+    animation: spin 1s linear infinite;
+}
+
+/* Stopping state - orange */
+.power-btn.stopping {
+    border-color: #e67e22;
+    background: #e67e22;
+    color: #fff;
+    cursor: wait;
+}
+
+.power-btn.stopping::after {
+    content: 'Stopping';
+}
+
+.power-btn.stopping svg {
+    animation: spin 1s linear infinite;
+}
+
+.power-btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+/* --------------------------------------------------------------------------
+   Power Control (Legacy/Header variant)
+   -------------------------------------------------------------------------- */
+.power-control {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.8rem;
+    margin-right: 1rem;
+    border-radius: 20px;
+    cursor: pointer;
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    transition: all 0.2s ease-in-out;
+}
+
+.power-control:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.power-icon {
+    width: 20px;
+    height: 20px;
+    transition: transform 0.3s ease;
+}
+
+.power-text {
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.power-control.status-on {
+    background: var(--success);
+}
+
+.power-control.status-off {
+    background: var(--danger);
+}
+
+.power-control.status-pending .power-icon {
+    animation: spin 1.5s linear infinite;
+}
+
+/* --------------------------------------------------------------------------
+   Fan Control Button
+   -------------------------------------------------------------------------- */
+.fan-control-button {
+    cursor: pointer;
+    transition: background 0.2s ease-in-out, transform 0.2s;
+}
+
+.fan-control-button:hover:not(.disabled) {
+    background: linear-gradient(135deg, #e9ecef 0%, #dce1e8 100%);
+    transform: translateY(-2px);
+}
+
+.fan-control-button.disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.fan-icon {
+    width: 1em;
+    height: 1em;
+    vertical-align: -0.15em;
+    margin-right: 0.3em;
+}
+
+/* --------------------------------------------------------------------------
+   Hardware Disabled States
+   -------------------------------------------------------------------------- */
+.control-btn.hardware-disabled {
+    opacity: 0.6;
+    cursor: not-allowed !important;
+    position: relative;
+    background: #95a5a6 !important;
+    color: #fff !important;
+}
+
+.control-btn.hardware-disabled::before {
+    content: '🔒 Hardware Control';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 0.75rem;
+    white-space: nowrap;
+    color: white;
+    font-weight: 600;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.control-btn.hardware-disabled:hover {
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+.control-btn.hardware-disabled:active {
+    transform: none !important;
+}
+
+.detection-actions .control-btn.hardware-disabled::before {
+    content: '🔒';
+    font-size: 1rem;
+    font-weight: normal;
+    text-shadow: none;
+    color: white;
+}
+
+/* Hardware Priority Banner */
+.hardware-priority-banner {
+    background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
+    color: white;
+    padding: 1rem 1.5rem;
+    text-align: center;
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin-bottom: 1.5rem;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(243, 156, 18, 0.3);
+    animation: priorityPulse 3s infinite;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+}
+
+.hardware-priority-banner .priority-icon {
+    margin-right: 0.75rem;
+    font-size: 1.2rem;
+}
+
+.hardware-priority-banner .priority-subtext {
+    display: block;
+    font-size: 0.8rem;
+    margin-top: 0.5rem;
+    opacity: 0.9;
+    font-weight: 400;
+}
+
+@keyframes priorityPulse {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.9;
+        transform: scale(1.01);
+    }
+}
+
+/* Hardware Notice Banner */
+.hardware-notice {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+    border: 1px solid var(--warning);
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+    font-size: 0.8rem;
+    color: #856404;
+}
+
+.hardware-notice svg {
+    flex-shrink: 0;
+    fill: #f0ad4e;
+}
+
+.hardware-notice-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.hardware-notice-text {
+    flex: 1;
+}
+
+/* Segmented controls hardware locked */
+.segmented.hardware-locked {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.control-tile.hardware-locked .tile-label {
+    color: var(--secondary);
+}
+
+.control-tile.hardware-locked .tile-label::after {
+    content: ' · Hardware';
+    font-size: 0.7rem;
+    color: #999;
+    font-weight: 400;
+}
+
+/* Owl switches hardware disabled */
+.owl-switch.hardware-locked {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+/* Lock icon in switch state */
+.lock-icon {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+
+.lock-icon svg {
+    fill: #999;
+}
+
+.owl-switch.hardware-locked .switch-state::before {
+    content: '';
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-right: 4px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23f39c12' d='M12,17A2,2 0 0,0 14,15C14,13.89 13.1,13 12,13A2,2 0 0,0 10,15A2,2 0 0,0 12,17M18,8A2,2 0 0,1 20,10V20A2,2 0 0,1 18,22H6A2,2 0 0,1 4,20V10C4,8.89 4.9,8 6,8H7V6A5,5 0 0,1 12,1A5,5 0 0,1 17,6V8H18M12,3A3,3 0 0,0 9,6V8H15V6A3,3 0 0,0 12,3Z'/%3E%3C/svg%3E");
+    background-size: contain;
+    background-repeat: no-repeat;
+    vertical-align: middle;
+}
+
+/* --------------------------------------------------------------------------
+   Controls - Responsive
+   -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+    .control-buttons {
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .control-btn {
+        min-width: 200px;
+    }
+
+    .hardware-priority-banner {
+        padding: 0.75rem 1rem;
+        font-size: 0.85rem;
+        margin-bottom: 1rem;
+    }
+
+    .hardware-priority-banner .priority-subtext {
+        font-size: 0.75rem;
+        margin-top: 0.25rem;
+    }
+
+    .nav-tab.disabled::after {
+        right: 0.25rem;
+        font-size: 0.7rem;
+    }
+
+    .control-btn.hardware-disabled::before {
+        font-size: 0.65rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .control-btn {
+        min-width: 100%;
+        padding: 1rem;
+    }
+
+    .owl-switch .switch-track {
+        width: 72px;
+    }
+
+    .owl-switch[aria-pressed="true"] .switch-thumb {
+        transform: translateX(38px);
+    }
+
+    .hardware-priority-banner {
+        font-size: 0.8rem;
+        padding: 0.5rem 0.75rem;
+    }
+
+    .hardware-priority-banner .priority-icon {
+        margin-right: 0.5rem;
+        font-size: 1rem;
+    }
+
+    .control-btn.hardware-disabled::before {
+        content: '🔒';
+        font-size: 0.8rem;
+    }
+}

@@ -22,11 +22,11 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo -e "${GREEN}============================================${NC}"
-echo -e "${GREEN}    OWL Central Controller Setup${NC}"
+echo -e "${GREEN}    OWL In-Cab Controller Setup${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo -e ""
 echo -e "This script will configure this Raspberry Pi as the"
-echo -e "central controller for multiple OWL units."
+echo -e "in-cab controller for multiple OWL units."
 echo -e ""
 echo -e "The controller will:"
 echo -e "  • Install all required system packages"
@@ -77,7 +77,7 @@ check_status() {
   fi
 }
 
-# Test MQTT broker function (adapted from web_setup.sh)
+# Test MQTT broker function
 test_mqtt_broker() {
     echo -e "${GREEN}[INFO] Testing MQTT broker...${NC}"
     local mqtt_test_passed=false
@@ -152,7 +152,7 @@ final_mqtt_validation() {
     fi
 }
 
-# Masked password input function (from web_setup.sh)
+# Masked password input function
 read_password_masked() {
     local prompt="$1"
     local password=""

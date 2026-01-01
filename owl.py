@@ -880,7 +880,6 @@ class Owl:
     def get_system_stats(self):
         """
         Get system statistics with robust error handling.
-        Based on owl_dash.py implementation.
         """
         import subprocess
         import glob

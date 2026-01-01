@@ -1,0 +1,454 @@
+/* ==========================================================================
+   OWL Dashboard - Cards & Status Components
+   Card containers, grids, status items, detection displays
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Base Card
+   -------------------------------------------------------------------------- */
+.card {
+    background-color: var(--card-bg);
+    border-radius: 0.5rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    border: 1px solid var(--border);
+}
+
+.card h2 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+    color: var(--primary);
+    font-size: 1.3rem;
+}
+
+/* --------------------------------------------------------------------------
+   Grid Layouts
+   -------------------------------------------------------------------------- */
+.dashboard-grid,
+.control-grid,
+.storage-grid {
+    display: grid;
+    gap: 1.5rem;
+}
+
+.status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+}
+
+/* --------------------------------------------------------------------------
+   Status Items
+   -------------------------------------------------------------------------- */
+.status-item {
+    padding: 1.5rem 1rem;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    text-align: center;
+    border: 1px solid var(--border);
+    transition: transform 0.2s;
+}
+
+.status-item:hover {
+    transform: translateY(-2px);
+}
+
+.status-info h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.9rem;
+    color: var(--primary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.status-value {
+    font-size: 2rem;
+    font-weight: bold;
+    color: var(--primary);
+}
+
+.status-value-two-line {
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: var(--primary);
+    line-height: 1.6rem;
+}
+
+/* --------------------------------------------------------------------------
+   Status Chips
+   -------------------------------------------------------------------------- */
+.status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.35rem 0.7rem;
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    font-size: 0.85rem;
+}
+
+.status-chip .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: #95a5a6;
+    transition: background 0.2s;
+}
+
+.status-chip.on .dot {
+    background: var(--success);
+}
+
+.status-chip.off .dot {
+    background: #95a5a6;
+}
+
+.status-chip.booting .dot,
+.status-chip.stopping .dot {
+    background: var(--warning);
+    animation: pulse 1s infinite;
+}
+
+.status-chip.blanket {
+    background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%) !important;
+}
+
+.status-chip.blanket .dot {
+    background: #fff;
+}
+
+/* Spot Spray mode (green, same as 'on') */
+.status-chip.on:not(.blanket) {
+    background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+}
+
+/* --------------------------------------------------------------------------
+   Sprayer Status Chip (Compact variant)
+   -------------------------------------------------------------------------- */
+.sprayer-status {
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.sprayer-status .dot {
+    width: 8px;
+    height: 8px;
+}
+
+.sprayer-status.spot-spray {
+    background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+    border-color: var(--success);
+    color: #155724;
+}
+
+.sprayer-status.spot-spray .dot {
+    background: var(--success);
+    animation: pulse 1.5s infinite;
+}
+
+.sprayer-status.blanket {
+    background: linear-gradient(135deg, #fff3cd 0%, #ffeeba 100%);
+    border-color: var(--warning);
+    color: #856404;
+}
+
+.sprayer-status.blanket .dot {
+    background: var(--warning);
+}
+
+.sprayer-status.off .dot {
+    background: #95a5a6;
+}
+
+/* --------------------------------------------------------------------------
+   Detection Items
+   -------------------------------------------------------------------------- */
+.detection-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    transition: all 0.3s ease;
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+}
+
+.detection-item.status-enabled {
+    background: linear-gradient(135deg, var(--success) 0%, #27ae60 100%);
+    color: white;
+    border-color: var(--success);
+}
+
+.detection-item.status-disabled {
+    background: linear-gradient(135deg, #95a5a6 0%, #7f8c8d 100%);
+    color: white;
+    border-color: #95a5a6;
+}
+
+.detection-item.status-active {
+    background: linear-gradient(135deg, var(--accent) 0%, #2980b9 100%);
+    color: white;
+    border-color: var(--accent);
+}
+
+.detection-item.status-high {
+    background: linear-gradient(135deg, var(--warning) 0%, #e67e22 100%);
+    color: white;
+    border-color: var(--warning);
+}
+
+.detection-item.status-low {
+    background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+    color: white;
+    border-color: #3498db;
+}
+
+.detection-content h4 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.detection-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.status-text {
+    font-size: 1.2rem;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.status-indicator-large {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background-color: rgba(255, 255, 255, 0.8);
+    border: 2px solid rgba(255, 255, 255, 0.9);
+}
+
+/* --------------------------------------------------------------------------
+   Card Title Row (Dashboard)
+   -------------------------------------------------------------------------- */
+.card-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.card-title-row .title-left {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+/* --------------------------------------------------------------------------
+   Collapsible Card Sections
+   -------------------------------------------------------------------------- */
+.status-card .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    padding: 0 0 1rem 0;
+}
+
+.card-header-title {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.status-item-inline {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: #f0f2f5;
+    padding: 0.25rem 0.75rem;
+    border-radius: 15px;
+}
+
+.status-inline-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--secondary);
+}
+
+.status-inline-value {
+    font-size: 0.9rem;
+    font-weight: bold;
+    color: var(--primary);
+}
+
+.toggle-icon {
+    font-size: 1.5rem;
+    color: var(--accent);
+    transition: transform 0.3s ease-in-out;
+}
+
+.collapsible-content {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.35s ease-out;
+}
+
+.status-card.expanded .collapsible-content {
+    max-height: 500px;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+}
+
+.status-card.expanded .toggle-icon {
+    transform: rotate(0deg);
+}
+
+.status-card:not(.expanded) .toggle-icon {
+    transform: rotate(-90deg);
+}
+
+.status-card.expanded .status-item-inline {
+    display: none;
+}
+
+/* --------------------------------------------------------------------------
+   Metrics Row (Dashboard footer chips)
+   -------------------------------------------------------------------------- */
+.metrics-row {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+    justify-content: space-between;
+}
+
+.metric-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    border-radius: 999px;
+    padding: 0.4rem 0.7rem;
+    color: #fff;
+    font-weight: 600;
+    font-size: 0.85rem;
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+}
+
+.metric-chip strong {
+    color: #fff;
+}
+
+.metric-chip.cpu {
+    background: linear-gradient(135deg, var(--accent) 0%, #2980b9 100%);
+}
+
+.metric-chip.mem {
+    background: linear-gradient(135deg, var(--success) 0%, #27ae60 100%);
+}
+
+.metric-chip.temp {
+    background: linear-gradient(135deg, var(--danger) 0%, #c0392b 100%);
+}
+
+/* --------------------------------------------------------------------------
+   Info Items (key-value pairs)
+   -------------------------------------------------------------------------- */
+.info-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 0;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.info-item:last-child {
+    border-bottom: none;
+}
+
+.info-label {
+    font-weight: 600;
+    color: var(--secondary);
+    font-size: 1rem;
+}
+
+.info-value {
+    color: var(--primary);
+    font-weight: bold;
+    font-size: 1rem;
+}
+
+/* --------------------------------------------------------------------------
+   Cards - Responsive
+   -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+    .status-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .info-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .card {
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
+
+    .status-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .status-value {
+        font-size: 1.5rem;
+    }
+
+    .detection-item {
+        flex-direction: column;
+        text-align: center;
+        gap: 1rem;
+    }
+
+    .detection-content {
+        width: 100%;
+    }
+
+    .detection-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+
+    .metric-chip {
+        padding: 0.3rem 0.5rem;
+        font-size: 0.75rem;
+    }
+}
+
+/* --------------------------------------------------------------------------
+   Dark Mode - Cards
+   -------------------------------------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+    .card {
+        background-color: var(--card-bg);
+        color: var(--text);
+    }
+
+    .status-item {
+        background: linear-gradient(135deg, #3a3a3a 0%, #2d2d2d 100%);
+    }
+}

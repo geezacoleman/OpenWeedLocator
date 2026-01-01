@@ -1,0 +1,223 @@
+/* ==========================================================================
+   OWL Dashboard - Layout
+   Header, Container, Footer, Navigation Tabs
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Header
+   -------------------------------------------------------------------------- */
+.header {
+    background: var(--primary);
+    color: white;
+    padding: 1rem;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    width: 100%;
+}
+
+.header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: 1200px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+.logo-section {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.logo {
+    height: 40px;
+    margin-right: 10px;
+}
+
+.header h1 {
+    font-size: 1.5rem;
+    margin: 0;
+}
+
+.status-indicator {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.owl-status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* --------------------------------------------------------------------------
+   Status Dot (Header)
+   -------------------------------------------------------------------------- */
+.status-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background-color: var(--danger);
+    animation: pulse 2s infinite;
+}
+
+.status-dot.connected {
+    background-color: var(--success);
+    animation: none;
+}
+
+.status-dot.booting,
+.status-dot.stopping {
+    background-color: var(--warning);
+    animation: pulse 1s infinite;
+}
+
+/* --------------------------------------------------------------------------
+   Main Container
+   -------------------------------------------------------------------------- */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 1rem;
+    flex-grow: 1;
+    width: 100%;
+}
+
+/* --------------------------------------------------------------------------
+   Navigation Tabs
+   -------------------------------------------------------------------------- */
+.nav-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1.5rem;
+    width: 100%;
+    overflow-x: auto;
+    background: white;
+    border-radius: 8px 8px 0 0;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.nav-tab {
+    flex: 1;
+    min-width: 0;
+    padding: 1rem 0.5rem;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    font-weight: 500;
+    transition: all 0.2s;
+    text-align: center;
+    white-space: nowrap;
+    background: white;
+    color: var(--text);
+}
+
+.nav-tab:hover {
+    color: var(--accent);
+    background: #f8f9fa;
+}
+
+.nav-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    background: white;
+}
+
+.nav-tab.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.tab-text {
+    font-size: 0.95rem;
+    display: block;
+}
+
+/* --------------------------------------------------------------------------
+   Tab Content
+   -------------------------------------------------------------------------- */
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+/* --------------------------------------------------------------------------
+   Footer
+   -------------------------------------------------------------------------- */
+footer {
+    background: linear-gradient(135deg, var(--light) 0%, #dee2e6 100%);
+    color: var(--secondary);
+    padding: 1.5rem;
+    text-align: center;
+    font-size: 0.9rem;
+    margin-top: auto;
+    border-top: 1px solid var(--border);
+}
+
+.footer-content {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.footer-content a {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.footer-content a:hover {
+    text-decoration: underline;
+}
+
+.status-timestamp {
+    margin-top: 0.5rem;
+    opacity: 0.8;
+}
+
+/* --------------------------------------------------------------------------
+   Layout - Responsive
+   -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+    .header-content {
+        flex-direction: column;
+        gap: 1rem;
+        text-align: center;
+    }
+
+    .nav-tab {
+        padding: 0.75rem 0.25rem;
+    }
+
+    .tab-text {
+        font-size: 0.85rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .container {
+        padding: 0.5rem;
+    }
+
+    .header {
+        padding: 0.75rem;
+    }
+
+    .header h1 {
+        font-size: 1.2rem;
+    }
+
+    .logo {
+        height: 30px;
+    }
+
+    .nav-tab {
+        padding: 0.5rem 0.1rem;
+    }
+
+    .tab-text {
+        font-size: 0.8rem;
+    }
+}
