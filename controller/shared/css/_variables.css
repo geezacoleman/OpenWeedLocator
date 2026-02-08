@@ -1,0 +1,119 @@
+/* ==========================================================================
+   OWL Controllers - Shared Design Tokens
+   CSS Custom Properties used by both standalone and networked controllers
+   
+   Usage: @import this file FIRST in your style.css
+   ========================================================================== */
+
+:root {
+    /* -------------------------------------------------------------------------
+       Brand Colors
+       ------------------------------------------------------------------------- */
+    --owl-primary: #022775;
+    --owl-primary-light: #034694;
+    --owl-secondary: #34495e;
+    --owl-accent: #3498db;
+    
+    /* -------------------------------------------------------------------------
+       Semantic Colors
+       ------------------------------------------------------------------------- */
+    --owl-success: #2ecc71;
+    --owl-success-dark: #27ae60;
+    --owl-warning: #f39c12;
+    --owl-warning-dark: #e67e22;
+    --owl-danger: #e74c3c;
+    --owl-danger-dark: #c0392b;
+    --owl-recording-red: #ff4444;
+    
+    /* -------------------------------------------------------------------------
+       Neutral Colors
+       ------------------------------------------------------------------------- */
+    --owl-light: #ecf0f1;
+    --owl-dark: #1a252f;
+    --owl-text: #808080;
+    --owl-text-dark: #2c3e50;
+    --owl-text-light: #7f8c8d;
+    --owl-background: #f5f7fa;
+    --owl-card-bg: #fff;
+    --owl-border: #dce1e8;
+
+    /* -------------------------------------------------------------------------
+       Legacy aliases (for backward compatibility)
+       These map to the owl-prefixed versions above
+       ------------------------------------------------------------------------- */
+    --primary: var(--owl-primary);
+    --primary-light: var(--owl-primary-light);
+    --secondary: var(--owl-secondary);
+    --accent: var(--owl-accent);
+    --success: var(--owl-success);
+    --success-dark: var(--owl-success-dark);
+    --warning: var(--owl-warning);
+    --warning-dark: var(--owl-warning-dark);
+    --danger: var(--owl-danger);
+    --danger-dark: var(--owl-danger-dark);
+    --recording-red: var(--owl-recording-red);
+    --light: var(--owl-light);
+    --dark: var(--owl-dark);
+    --text: var(--owl-text);
+    --text-dark: var(--owl-text-dark);
+    --text-light: var(--owl-text-light);
+    --background: var(--owl-background);
+    --card-bg: var(--owl-card-bg);
+    --border: var(--owl-border);
+
+    /* -------------------------------------------------------------------------
+       Spacing Scale
+       ------------------------------------------------------------------------- */
+    --space-xs: 0.25rem;   /* 4px */
+    --space-sm: 0.5rem;    /* 8px */
+    --space-md: 1rem;      /* 16px */
+    --space-lg: 1.5rem;    /* 24px */
+    --space-xl: 2rem;      /* 32px */
+
+    /* -------------------------------------------------------------------------
+       Border Radius
+       ------------------------------------------------------------------------- */
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-pill: 999px;
+
+    /* -------------------------------------------------------------------------
+       Shadows
+       ------------------------------------------------------------------------- */
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
+    --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.15);
+
+    /* -------------------------------------------------------------------------
+       Transitions
+       ------------------------------------------------------------------------- */
+    --transition-fast: 0.15s ease;
+    --transition-normal: 0.2s ease;
+    --transition-slow: 0.3s ease;
+
+    /* -------------------------------------------------------------------------
+       Touch Targets (for accessibility)
+       ------------------------------------------------------------------------- */
+    --touch-target-min: 44px;
+    --touch-target-kiosk: 64px;
+}
+
+/* -------------------------------------------------------------------------
+   Dark Mode Support
+   ------------------------------------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --owl-background: #1a1a1a;
+        --owl-card-bg: #2d2d2d;
+        --owl-text: #e0e0e0;
+        --owl-border: #444;
+        
+        /* Update legacy aliases */
+        --background: var(--owl-background);
+        --card-bg: var(--owl-card-bg);
+        --text: var(--owl-text);
+        --border: var(--owl-border);
+    }
+}
+    

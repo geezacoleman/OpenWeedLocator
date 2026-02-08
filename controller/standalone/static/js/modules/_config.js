@@ -1,6 +1,7 @@
 /* ==========================================================================
-   OWL Dashboard - Config Editor Module
-   INI configuration editor with sections, fields, and modals
+   OWL Dashboard - Config Editor Module (Standalone)
+   Uses shared CONFIG_FIELD_DEFS, createConfigSection, createConfigField
+   from /shared/js/config.js
    ========================================================================== */
 
 let originalConfig = {};
@@ -9,61 +10,6 @@ let configHasChanges = false;
 let activeConfigPath = '';
 let isDefaultConfig = true;
 let availableConfigs = [];
-
-const CONFIG_FIELD_DEFS = {
-    'System': {
-        'algorithm': { type: 'select', options: ['exhsv', 'exg', 'hsv', 'gog'], help: 'Detection algorithm' },
-        'input_file_or_directory': { type: 'text', help: 'Leave empty for camera input' },
-        'relay_num': { type: 'number', min: 1, max: 8, help: 'Number of relays (1-8)' },
-        'actuation_duration': { type: 'number', step: 0.01, min: 0.01, max: 2.0, help: 'Spray duration in seconds' },
-        'delay': { type: 'number', step: 0.01, min: 0, max: 5.0, help: 'Delay before actuation' }
-    },
-    'MQTT': {
-        'enable': { type: 'boolean', help: 'Enable MQTT communication' },
-        'broker_ip': { type: 'text', help: 'MQTT broker IP address' },
-        'broker_port': { type: 'number', min: 1, max: 65535, help: 'MQTT broker port' },
-        'device_id': { type: 'text', help: 'Device identifier' }
-    },
-    'Camera': {
-        'resolution_width': { type: 'select', options: ['320', '640', '800', '1024', '1280', '1920'], help: 'Width' },
-        'resolution_height': { type: 'select', options: ['240', '480', '600', '768', '720', '1080'], help: 'Height' },
-        'exp_compensation': { type: 'number', min: -10, max: 10, help: 'Exposure compensation' }
-    },
-    'GreenOnBrown': {
-        'exg_min': { type: 'number', min: 0, max: 255 },
-        'exg_max': { type: 'number', min: 0, max: 255 },
-        'hue_min': { type: 'number', min: 0, max: 179 },
-        'hue_max': { type: 'number', min: 0, max: 179 },
-        'saturation_min': { type: 'number', min: 0, max: 255 },
-        'saturation_max': { type: 'number', min: 0, max: 255 },
-        'brightness_min': { type: 'number', min: 0, max: 255 },
-        'brightness_max': { type: 'number', min: 0, max: 255 },
-        'min_detection_area': { type: 'number', min: 1, max: 10000 },
-        'invert_hue': { type: 'boolean' }
-    },
-    'GreenOnGreen': {
-        'model_path': { type: 'text', help: 'Path to AI model' },
-        'confidence': { type: 'number', step: 0.05, min: 0.1, max: 1.0, help: 'Detection threshold' }
-    },
-    'DataCollection': {
-        'image_sample_enable': { type: 'boolean', help: 'Enable image saving' },
-        'sample_method': { type: 'select', options: ['whole', 'bbox', 'square'] },
-        'sample_frequency': { type: 'number', min: 1, max: 1000 },
-        'save_directory': { type: 'text', help: 'Save directory path' },
-        'detection_enable': { type: 'boolean' }
-    },
-    'Controller': {
-        'controller_type': { type: 'select', options: ['none', 'ute', 'advanced', 'networked'] }
-    },
-    'GPS': {
-        'source': { type: 'select', options: ['none', 'dashboard', 'hat'] },
-        'port': { type: 'text' },
-        'baudrate': { type: 'select', options: ['4800', '9600', '19200', '38400', '57600', '115200'] }
-    },
-    'Relays': { _isRelaySection: true }
-};
-
-const RESTART_SECTIONS = ['MQTT', 'Network', 'WebDashboard', 'Controller'];
 
 function initConfigEditor() {
     document.getElementById('reloadConfig')?.addEventListener('click', loadConfig);
@@ -163,64 +109,12 @@ function renderConfigSelector() {
 function renderConfigSections() {
     const container = document.getElementById('configSections');
     container.innerHTML = '';
-    const order = ['System', 'Camera', 'GreenOnBrown', 'GreenOnGreen', 'DataCollection', 'Controller', 'MQTT', 'GPS', 'Relays'];
-    Object.keys(currentConfig).forEach(s => { if (!order.includes(s)) order.push(s); });
-    order.forEach(section => { if (currentConfig[section]) container.appendChild(createSectionElement(section, currentConfig[section])); });
-}
-
-function createSectionElement(sectionName, sectionData) {
-    const section = document.createElement('div');
-    section.className = 'config-section';
-    const fieldDefs = CONFIG_FIELD_DEFS[sectionName] || {};
-    const hasWarning = RESTART_SECTIONS.includes(sectionName);
-    const header = document.createElement('div');
-    header.className = 'config-section-header';
-    header.innerHTML = '<h3>' + sectionName + (hasWarning ? ' <span class="section-badge warning">Restart</span>' : '') + '</h3>';
-    header.addEventListener('click', () => section.classList.toggle('collapsed'));
-    const body = document.createElement('div');
-    body.className = 'config-section-body';
-    if (fieldDefs._isRelaySection) {
-        body.innerHTML = '<div class="relay-mapping"></div>';
-        const rc = body.querySelector('.relay-mapping');
-        Object.entries(sectionData).forEach(([key, value]) => {
-            const item = document.createElement('div');
-            item.className = 'relay-item';
-            item.innerHTML = '<label>Relay ' + key + ':</label><input type="number" data-section="' + sectionName + '" data-key="' + key + '" value="' + value + '" min="1" max="40">';
-            rc.appendChild(item);
-        });
-    } else {
-        Object.entries(sectionData).forEach(([key, value]) => body.appendChild(createFieldElement(sectionName, key, value, fieldDefs[key])));
-    }
-    section.appendChild(header);
-    section.appendChild(body);
-    section.querySelectorAll('input, select').forEach(input => {
-        input.addEventListener('change', handleFieldChange);
-        input.addEventListener('input', handleFieldChange);
+    const order = getOrderedSections(currentConfig);
+    order.forEach(section => {
+        if (currentConfig[section]) {
+            container.appendChild(createConfigSection(section, currentConfig[section], handleFieldChange));
+        }
     });
-    return section;
-}
-
-function createFieldElement(section, key, value, fieldDef) {
-    const field = document.createElement('div');
-    field.className = 'config-field';
-    const def = fieldDef || { type: 'text' };
-    const id = 'config-' + section + '-' + key;
-    const strValue = String(value);
-    let html = '';
-    if (def.type === 'boolean' || strValue.toLowerCase() === 'true' || strValue.toLowerCase() === 'false') {
-        html = '<div class="checkbox-wrapper"><input type="checkbox" id="' + id + '" data-section="' + section + '" data-key="' + key + '"' + (strValue.toLowerCase() === 'true' ? ' checked' : '') + '><label for="' + id + '">' + formatLabel(key) + '</label></div>';
-    } else if (def.type === 'select' && def.options) {
-        const opts = def.options.map(o => '<option value="' + o + '"' + (String(o) === strValue ? ' selected' : '') + '>' + o + '</option>').join('');
-        html = '<label for="' + id + '">' + formatLabel(key) + '</label><select id="' + id + '" data-section="' + section + '" data-key="' + key + '">' + opts + '</select>';
-    } else if (def.type === 'number') {
-        const attrs = (def.min !== undefined ? ' min="' + def.min + '"' : '') + (def.max !== undefined ? ' max="' + def.max + '"' : '') + (def.step !== undefined ? ' step="' + def.step + '"' : '');
-        html = '<label for="' + id + '">' + formatLabel(key) + '</label><input type="number" id="' + id + '" data-section="' + section + '" data-key="' + key + '" value="' + value + '"' + attrs + '>';
-    } else {
-        html = '<label for="' + id + '">' + formatLabel(key) + '</label><input type="text" id="' + id + '" data-section="' + section + '" data-key="' + key + '" value="' + value + '">';
-    }
-    field.innerHTML = html;
-    if (def.help) { const h = document.createElement('span'); h.className = 'field-help'; h.textContent = def.help; field.appendChild(h); }
-    return field;
 }
 
 function handleFieldChange(event) {

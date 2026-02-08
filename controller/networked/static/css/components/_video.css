@@ -1,0 +1,20 @@
+/* ==========================================================================
+   OWL Controller (Networked) - Video Modal
+   Uses shared modal styles, adds kiosk sizing
+   ========================================================================== */
+
+#video-modal .modal-content {
+    max-width: 90%;
+    max-height: 90%;
+}
+
+#video-modal .modal-body {
+    padding: 1rem;
+    background: #000;
+}
+
+#video-feed-img {
+    width: 100%;
+    height: auto;
+    display: block;
+}

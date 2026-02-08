@@ -35,6 +35,7 @@ STATUS_AVAHI_CONFIG=""
 STATUS_SERVICES=""
 STATUS_FAN_PERMISSIONS=""
 STATUS_SERVICE_PERMISSIONS=""
+STATUS_OWL_CONFIG=""
 
 ERROR_PACKAGES=""
 ERROR_MQTT_BROKER=""
@@ -46,6 +47,7 @@ ERROR_AVAHI_CONFIG=""
 ERROR_SERVICES=""
 ERROR_FAN_PERMISSIONS=""
 ERROR_SERVICE_PERMISSIONS=""
+ERROR_OWL_CONFIG=""
 
 # Function to check the exit status of the last executed command
 check_status() {
@@ -84,6 +86,22 @@ _ip_base() {  # first three octets
 _last_octet() {
   IFS='.' read -r _ _ _ d <<<"$1"
   echo "$d"
+}
+
+_update_ini_key() {
+  # Section-aware INI key=value update using awk.
+  # Preserves comments and formatting. Only replaces lines that start with
+  # "key = " inside the target [section].
+  local file="$1"
+  local section="$2"
+  local key="$3"
+  local value="$4"
+
+  awk -v sect="[${section}]" -v key="$key" -v val="$value" '
+    /^\[/ { in_sect = ($0 == sect) }
+    in_sect && index($0, key " = ") == 1 { $0 = key " = " val }
+    { print }
+  ' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
 }
 
 test_mqtt_broker() {
@@ -305,6 +323,39 @@ collect_user_input() {
             fi
         done
 
+        # Screen resolution selection
+        echo ""
+        echo -e "${GREEN}[INFO] Select display resolution (for kiosk/touchscreen):${NC}"
+        echo "  1) 1280x720  (7\" default)"
+        echo "  2) 1024x600  (7\" alternative)"
+        echo "  3) 1920x1080 (Full HD)"
+        echo "  4) Custom"
+        echo ""
+
+        SCREEN_WIDTH=1280
+        SCREEN_HEIGHT=720
+
+        while true; do
+            read -p "Select resolution (1-4, default 1): " res_choice
+            res_choice=${res_choice:-1}
+            case "$res_choice" in
+                1) SCREEN_WIDTH=1280; SCREEN_HEIGHT=720; break ;;
+                2) SCREEN_WIDTH=1024; SCREEN_HEIGHT=600; break ;;
+                3) SCREEN_WIDTH=1920; SCREEN_HEIGHT=1080; break ;;
+                4)
+                    read -p "Enter width (e.g. 1280): " SCREEN_WIDTH
+                    read -p "Enter height (e.g. 720): " SCREEN_HEIGHT
+                    if [[ "$SCREEN_WIDTH" =~ ^[0-9]+$ ]] && [[ "$SCREEN_HEIGHT" =~ ^[0-9]+$ ]]; then
+                        break
+                    else
+                        echo -e "${RED}[ERROR] Invalid dimensions. Enter numbers only.${NC}"
+                    fi
+                    ;;
+                *) echo -e "${RED}[ERROR] Invalid selection.${NC}" ;;
+            esac
+        done
+        echo -e "${GREEN}[INFO] Screen resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}${NC}"
+
         # Confirm standalone settings
         echo -e "${GREEN}[INFO] Standalone Configuration Summary:${NC}"
         echo -e "  Mode: Standalone"
@@ -313,6 +364,7 @@ collect_user_input() {
         echo -e "  Hotspot IP: 10.42.0.1/24"
         echo -e "  MQTT Broker: localhost:1883 (local)"
         echo -e "  Dashboard: https://${HOSTNAME}.local/"
+        echo -e "  Screen Resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}"
         echo ""
 
     else
@@ -466,6 +518,82 @@ EOF
     check_status "Service control sudo permissions" "SERVICE_PERMISSIONS"
 }
 
+update_owl_configs() {
+    echo -e "${GREEN}[INFO] Updating OWL configuration files with network settings...${NC}"
+
+    local OWL_DIR="/home/${CURRENT_USER}/owl"
+    local CONFIG_DIR="${OWL_DIR}/config"
+
+    if [ ! -d "$CONFIG_DIR" ]; then
+        echo -e "${ORANGE}[WARNING] Config directory not found at ${CONFIG_DIR}, skipping config updates${NC}"
+        return 1
+    fi
+
+    # Determine values based on mode
+    local BROKER_IP
+    local NET_MODE
+    local NET_STATIC_IP
+    local NET_CONTROLLER_IP
+
+    if [[ "$OWL_MODE" == "standalone" ]]; then
+        BROKER_IP="localhost"
+        NET_MODE="standalone"
+        NET_STATIC_IP="10.42.0.1"
+        NET_CONTROLLER_IP="localhost"
+    else
+        BROKER_IP="${CONTROLLER_IP}"
+        NET_MODE="networked"
+        NET_STATIC_IP="${STATIC_IP}"
+        NET_CONTROLLER_IP="${CONTROLLER_IP}"
+    fi
+
+    local updated_count=0
+
+    # Update all OWL detection config INI files (DAY_SENSITIVITY_*.ini etc.)
+    for ini_file in "$CONFIG_DIR"/*.ini; do
+        [ -f "$ini_file" ] || continue
+        local fname
+        fname=$(basename "$ini_file")
+
+        # Skip CONTROLLER.ini — handled separately below
+        if [[ "$fname" == "CONTROLLER.ini" ]]; then
+            continue
+        fi
+
+        echo -e "${GREEN}[INFO]   Updating ${fname}...${NC}"
+
+        # [MQTT] section
+        _update_ini_key "$ini_file" "MQTT" "enable" "True"
+        _update_ini_key "$ini_file" "MQTT" "broker_ip" "$BROKER_IP"
+        _update_ini_key "$ini_file" "MQTT" "broker_port" "1883"
+        _update_ini_key "$ini_file" "MQTT" "device_id" "$HOSTNAME"
+
+        # [Network] section
+        _update_ini_key "$ini_file" "Network" "mode" "$NET_MODE"
+        _update_ini_key "$ini_file" "Network" "static_ip" "$NET_STATIC_IP"
+        _update_ini_key "$ini_file" "Network" "controller_ip" "$NET_CONTROLLER_IP"
+
+        ((updated_count++))
+    done
+
+    # Update CONTROLLER.ini if it exists (for the controller Pi)
+    local CTRL_INI="${CONFIG_DIR}/CONTROLLER.ini"
+    if [ -f "$CTRL_INI" ]; then
+        echo -e "${GREEN}[INFO]   Updating CONTROLLER.ini...${NC}"
+        _update_ini_key "$CTRL_INI" "MQTT" "broker_ip" "$BROKER_IP"
+        _update_ini_key "$CTRL_INI" "MQTT" "broker_port" "1883"
+        ((updated_count++))
+    fi
+
+    # Fix file ownership (setup runs as root but configs should be owned by owl user)
+    chown "${CURRENT_USER}:${CURRENT_USER}" "$CONFIG_DIR"/*.ini 2>/dev/null || true
+
+    echo -e "${TICK} Updated ${updated_count} config files"
+    echo -e "${GREEN}[INFO]   MQTT: enable=True, broker=${BROKER_IP}:1883, device_id=${HOSTNAME}${NC}"
+    echo -e "${GREEN}[INFO]   Network: mode=${NET_MODE}, static_ip=${NET_STATIC_IP}, controller=${NET_CONTROLLER_IP}${NC}"
+    return 0
+}
+
 # Step 1: Collect configuration from user
 collect_user_input
 
@@ -616,6 +744,7 @@ sudo ufw allow 22/tcp
 sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
 sudo ufw allow 1883/tcp
+sudo ufw allow 8500/tcp  # GPS NMEA forwarding from Teltonika router
 
 if [[ "$OWL_MODE" == "standalone" ]]; then
     echo -e "${GREEN}[INFO] Configuring UFW for standalone mode...${NC}"
@@ -874,7 +1003,11 @@ else
     echo -e "${GREEN}[INFO] Skipping dashboard service creation (networked mode)${NC}"
 fi
 
-# Step 12: Create configuration summary file
+# Step 12: Update OWL config files with network settings
+update_owl_configs
+check_status "Updating OWL config files" "OWL_CONFIG"
+
+# Step 13: Create configuration summary file
 echo -e "${GREEN}[INFO] Creating configuration summary...${NC}"
 
 if [[ "$OWL_MODE" == "standalone" ]]; then
@@ -887,6 +1020,7 @@ SSID: ${SSID}
 WiFi Password: ${WIFI_PASSWORD}
 IP Address: 10.42.0.1/24
 Hostname: ${HOSTNAME}
+Screen Resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}
 
 Access URLs:
 - https://${HOSTNAME}.local/
@@ -950,7 +1084,7 @@ fi
 
 sudo chmod 644 /opt/owl-dash-config.txt
 
-# Step 13: Final system validation
+# Step 14: Final system validation
 echo -e "${GREEN}[INFO] Performing final system validation...${NC}"
 
 if [[ "$OWL_MODE" == "standalone" ]]; then
@@ -992,6 +1126,7 @@ echo -e "$STATUS_NGINX_CONFIG Nginx Configuration"
 echo -e "$STATUS_SSL_CERT SSL Certificate Generation"
 echo -e "$STATUS_AVAHI_CONFIG Avahi Service Configuration"
 echo -e "$STATUS_SERVICES Service Management"
+echo -e "$STATUS_OWL_CONFIG OWL Config Files"
 
 if [[ "$OWL_MODE" == "standalone" ]]; then
     echo -e "\n${GREEN}[INFO] Standalone Mode - Dashboard Access:${NC}"
@@ -1025,28 +1160,25 @@ else
     echo -e "  ssh owl@${HOSTNAME}.local"
 fi
 
-# Check if OWL dashboard is enabled in config
-echo -e "\n${GREEN}[INFO] Checking OWL configuration...${NC}"
-OWL_CONFIG_FILE="/home/owl/owl/config/DAY_SENSITIVITY_2.ini"
-
-if [ -f "$OWL_CONFIG_FILE" ]; then
+# Config files status
+if [[ "$STATUS_OWL_CONFIG" == "${TICK}" ]]; then
+    echo -e "\n${GREEN}[INFO] OWL config files updated automatically:${NC}"
     if [[ "$OWL_MODE" == "standalone" ]]; then
-        echo -e "${ORANGE}[INFO] Remember to set in OWL config:${NC}"
-        echo -e "  [MQTT]"
-        echo -e "  enable = True"
-        echo -e "  broker_ip = localhost"
-        echo -e "  broker_port = 1883"
-        echo -e "  device_id = ${HOSTNAME}"
+        echo -e "  [MQTT] enable=True, broker_ip=localhost, device_id=${HOSTNAME}"
+        echo -e "  [Network] mode=standalone, static_ip=10.42.0.1"
     else
-        echo -e "${ORANGE}[INFO] Remember to set in OWL config:${NC}"
-        echo -e "  [MQTT]"
-        echo -e "  enable = True"
-        echo -e "  broker_ip = ${CONTROLLER_IP}"
-        echo -e "  broker_port = 1883"
-        echo -e "  device_id = ${HOSTNAME}"
+        echo -e "  [MQTT] enable=True, broker_ip=${CONTROLLER_IP}, device_id=${HOSTNAME}"
+        echo -e "  [Network] mode=networked, static_ip=${STATIC_IP}, controller_ip=${CONTROLLER_IP}"
     fi
 else
-    echo -e "${ORANGE}[WARNING] OWL config file not found at $OWL_CONFIG_FILE${NC}"
+    echo -e "\n${ORANGE}[WARNING] Config files could not be updated automatically.${NC}"
+    echo -e "${ORANGE}[WARNING] Manually set these in your config INI files:${NC}"
+    if [[ "$OWL_MODE" == "standalone" ]]; then
+        echo -e "  [MQTT] enable=True, broker_ip=localhost, broker_port=1883, device_id=${HOSTNAME}"
+    else
+        echo -e "  [MQTT] enable=True, broker_ip=${CONTROLLER_IP}, broker_port=1883, device_id=${HOSTNAME}"
+        echo -e "  [Network] mode=networked, static_ip=${STATIC_IP}, controller_ip=${CONTROLLER_IP}"
+    fi
 fi
 
 if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "$STATUS_WIFI_CONFIG" == "${TICK}" && "$STATUS_UFW_CONFIG" == "${TICK}" && "$STATUS_NGINX_CONFIG" == "${TICK}" && "$STATUS_SSL_CERT" == "${TICK}" && "$STATUS_AVAHI_CONFIG" == "${TICK}" && "$STATUS_SERVICES" == "${TICK}" && "$STATUS_FAN_PERMISSIONS" == "${TICK}" ]]; then
@@ -1096,6 +1228,7 @@ else
     if [[ -n "$ERROR_SSL_CERT" ]]; then echo -e "${RED}[ERROR] SSL Cert: $ERROR_SSL_CERT${NC}"; fi
     if [[ -n "$ERROR_AVAHI_CONFIG" ]]; then echo -e "${RED}[ERROR] Avahi Config: $ERROR_AVAHI_CONFIG${NC}"; fi
     if [[ -n "$ERROR_SERVICES" ]]; then echo -e "${RED}[ERROR] Services: $ERROR_SERVICES${NC}"; fi
+    if [[ -n "$ERROR_OWL_CONFIG" ]]; then echo -e "${RED}[ERROR] OWL Config: $ERROR_OWL_CONFIG${NC}"; fi
 
     echo -e "\n${RED}[ERROR] Please fix the above issues before rebooting.${NC}"
     exit 1

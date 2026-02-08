@@ -191,6 +191,7 @@ class Owl:
         broker_ip = self.config.get('MQTT', 'broker_ip', fallback='localhost')
         broker_port = self.config.getint('MQTT', 'broker_port', fallback=1883)
         device_id = self.config.get('MQTT', 'device_id', fallback='auto')
+        network_mode = self.config.get('Network', 'mode', fallback=None)
         client_id = f"client_{device_id}"
 
         if mqtt_enable:
@@ -201,7 +202,8 @@ class Owl:
                     broker_host=broker_ip,
                     broker_port=broker_port,
                     client_id=client_id,
-                    device_id=device_id)
+                    device_id=device_id,
+                    network_mode=network_mode)
 
                 low_config = self.config.get('Controller', 'low_sensitivity_config',
                                              fallback='config/SENSITIVITY_LOW.ini')
@@ -215,7 +217,7 @@ class Owl:
                 self.dash.start()
 
                 # Enhanced logging
-                mode = 'NETWORKED' if broker_ip not in ['localhost', '127.0.0.1'] else 'STANDALONE'
+                mode = 'NETWORKED' if self.dash.networked_mode else 'STANDALONE'
                 self.logger.info(f"MQTT enabled - Mode: {mode}")
                 self.logger.info(f"MQTT Broker: {broker_ip}:{broker_port}")
                 self.logger.info(f"Device ID: {device_id}")
@@ -413,6 +415,10 @@ class Owl:
 
         else:
             self.logger.error('[ERROR] No frame width or frame height provided.')
+
+    @property
+    def config_path(self):
+        return self._config_path
 
     def hoot(self):
         self.record_video = False  # Flag to control video recording

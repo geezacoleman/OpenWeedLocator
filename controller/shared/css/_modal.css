@@ -1,0 +1,274 @@
+/* ==========================================================================
+   OWL Controllers - Shared Modal & Overlay Styles
+   Modal dialogs and overlay backgrounds
+   
+   Usage: @import after _status.css
+   ========================================================================== */
+
+/* -------------------------------------------------------------------------
+   Overlay Background
+   ------------------------------------------------------------------------- */
+.overlay,
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    visibility: hidden;
+    transition: all var(--transition-slow);
+    z-index: 998;
+}
+
+.overlay.active,
+.overlay.visible,
+.modal-overlay.active,
+.modal-overlay.visible {
+    opacity: 1;
+    visibility: visible;
+}
+
+/* -------------------------------------------------------------------------
+   Base Modal
+   ------------------------------------------------------------------------- */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 1200;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal.show,
+.modal.active {
+    display: flex;
+}
+
+/* -------------------------------------------------------------------------
+   Modal Content
+   ------------------------------------------------------------------------- */
+.modal-content {
+    background: white;
+    border-radius: var(--radius-lg);
+    max-width: 90%;
+    max-height: 90%;
+    overflow: hidden;
+    box-shadow: var(--shadow-lg);
+    animation: scale-in 0.2s ease-out;
+}
+
+/* -------------------------------------------------------------------------
+   Modal Header
+   ------------------------------------------------------------------------- */
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.5rem;
+    border-bottom: 2px solid var(--light);
+    background: var(--primary);
+    color: white;
+}
+
+.modal-header h3 {
+    font-size: 1.2rem;
+    margin: 0;
+    color: white;
+}
+
+.modal-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+/* -------------------------------------------------------------------------
+   Modal Close Button
+   ------------------------------------------------------------------------- */
+.modal-close,
+.close-btn {
+    background: rgba(255, 255, 255, 0.2);
+    border: none;
+    color: white;
+    font-size: 1.8rem;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background var(--transition-fast);
+    line-height: 1;
+}
+
+.modal-close:hover,
+.close-btn:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.modal-close:active,
+.close-btn:active {
+    background: rgba(255, 255, 255, 0.4);
+}
+
+/* -------------------------------------------------------------------------
+   Modal Body
+   ------------------------------------------------------------------------- */
+.modal-body {
+    padding: 1rem;
+    overflow-y: auto;
+    max-height: calc(90vh - 120px);
+}
+
+/* -------------------------------------------------------------------------
+   Modal Footer
+   ------------------------------------------------------------------------- */
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--border);
+    background: #f8f9fa;
+}
+
+/* -------------------------------------------------------------------------
+   Modal Action Button (inside header)
+   ------------------------------------------------------------------------- */
+.modal-action-btn {
+    background: var(--success);
+    border: none;
+    color: white;
+    padding: 0.6rem 1.2rem;
+    border-radius: var(--radius-md);
+    font-size: 0.9rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.modal-action-btn:active {
+    transform: scale(0.95);
+    background: var(--success-dark);
+}
+
+/* -------------------------------------------------------------------------
+   Config Modal (smaller, for forms)
+   ------------------------------------------------------------------------- */
+.config-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.config-modal {
+    background: #fff;
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    max-width: 400px;
+    width: 90%;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+.config-modal h3 {
+    margin: 0 0 1rem 0;
+    font-size: 1.1rem;
+}
+
+.config-modal p {
+    margin: 0 0 1.5rem 0;
+    color: #666;
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+.config-modal-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+}
+
+.config-modal-actions button {
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+    cursor: pointer;
+}
+
+/* -------------------------------------------------------------------------
+   Modal Form Styles
+   ------------------------------------------------------------------------- */
+.config-modal-form {
+    margin: 1rem 0;
+}
+
+.config-modal-form .form-group {
+    margin-bottom: 1rem;
+}
+
+.config-modal-form label {
+    display: block;
+    margin-bottom: 0.35rem;
+    font-weight: 500;
+    font-size: 0.875rem;
+}
+
+.config-modal-form .form-input {
+    width: 100%;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+}
+
+.config-modal-form .checkbox-group {
+    display: flex;
+    align-items: center;
+}
+
+.config-modal-form .checkbox-group label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    margin: 0;
+}
+
+.config-modal-form .checkbox-group input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+}
+
+/* -------------------------------------------------------------------------
+   Modal Sizes
+   ------------------------------------------------------------------------- */
+.modal-sm .modal-content {
+    max-width: 400px;
+}
+
+.modal-lg .modal-content {
+    max-width: 800px;
+}
+
+.modal-fullscreen .modal-content {
+    max-width: 100%;
+    max-height: 100%;
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+}

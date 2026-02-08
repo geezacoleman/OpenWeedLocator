@@ -1,32 +1,41 @@
 /* ==========================================================================
-   OWL Dashboard - Main Stylesheet
+   OWL Dashboard (Standalone) - Main Stylesheet
 
-   This file imports all component stylesheets in the correct cascade order.
-   Do not add styles directly to this file - use the appropriate component file.
+   This file imports shared foundation styles and app-specific components.
 
-   Component Files:
-   - _base.css        : Variables, reset, typography, utilities, animations
-   - _layout.css      : Header, container, footer, navigation
-   - _cards.css       : Card components, grids, status items
-   - _controls.css    : Buttons, switches, segmented controls, power button
-   - _stream.css      : Video stream, zoom, GPS overlay
-   - _storage.css     : Storage tab, file browser, USB devices
-   - _upload.css      : Upload tab, progress bars, credentials
-   - _notifications.css : Notification panel, bell, toasts
-   - _config.css      : Configuration editor
+   IMPORT ORDER MATTERS:
+   1. Shared foundation (variables, reset, animations, utilities)
+   2. Shared components (buttons, status, modal, toast, forms)
+   3. App-specific components (layout, cards, controls, etc.)
    ========================================================================== */
 
-/* Foundation - must be first */
-@import 'components/_base.css';
+/* -------------------------------------------------------------------------
+   Shared Foundation
+   These provide the base design tokens, reset, and utilities
+   ------------------------------------------------------------------------- */
+@import '../../../shared/css/_variables.css';
+@import '../../../shared/css/_reset.css';
+@import '../../../shared/css/_animations.css';
+@import '../../../shared/css/_utilities.css';
 
-/* Layout Structure */
+/* -------------------------------------------------------------------------
+   Shared Components
+   Common UI components used across both controllers
+   ------------------------------------------------------------------------- */
+@import '../../../shared/css/_buttons.css';
+@import '../../../shared/css/_status.css';
+@import '../../../shared/css/_modal.css';
+@import '../../../shared/css/_toast.css';
+@import '../../../shared/css/_forms.css';
+@import '../../../shared/css/_config.css';
+
+/* -------------------------------------------------------------------------
+   App-Specific Components
+   Standalone dashboard-specific styles
+   ------------------------------------------------------------------------- */
 @import 'components/_layout.css';
-
-/* Core Components */
 @import 'components/_cards.css';
 @import 'components/_controls.css';
-
-/* Feature-specific Components */
 @import 'components/_stream.css';
 @import 'components/_storage.css';
 @import 'components/_upload.css';

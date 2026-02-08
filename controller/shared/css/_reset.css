@@ -1,0 +1,151 @@
+/* ==========================================================================
+   OWL Controllers - Shared Reset & Base Elements
+   Box-sizing, reset, typography, base element styles
+   
+   Usage: @import after _variables.css
+   ========================================================================== */
+
+/* -------------------------------------------------------------------------
+   Box Sizing Reset
+   ------------------------------------------------------------------------- */
+*,
+*::before,
+*::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* -------------------------------------------------------------------------
+   Base HTML & Body
+   ------------------------------------------------------------------------- */
+html {
+    font-size: 16px;
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+}
+
+body {
+    font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, 
+                 'Helvetica Neue', Arial, sans-serif;
+    background-color: var(--background);
+    color: var(--text);
+    line-height: 1.6;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    touch-action: manipulation;
+}
+
+/* -------------------------------------------------------------------------
+   Typography
+   ------------------------------------------------------------------------- */
+h1, h2, h3, h4, h5, h6 {
+    color: var(--primary);
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+h1 { font-size: 1.5rem; }
+h2 { font-size: 1.3rem; }
+h3 { font-size: 1.1rem; }
+h4 { font-size: 1rem; }
+
+p {
+    margin-bottom: 1rem;
+}
+
+a {
+    color: var(--accent);
+    text-decoration: none;
+    transition: color var(--transition-fast);
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+/* -------------------------------------------------------------------------
+   Form Elements Base
+   ------------------------------------------------------------------------- */
+button,
+input,
+select,
+textarea {
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+}
+
+button {
+    cursor: pointer;
+    border: none;
+    background: none;
+}
+
+button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+input:focus,
+select:focus,
+textarea:focus,
+button:focus {
+    outline: none;
+}
+
+/* -------------------------------------------------------------------------
+   Images & Media
+   ------------------------------------------------------------------------- */
+img,
+video {
+    max-width: 100%;
+    height: auto;
+    display: block;
+}
+
+/* -------------------------------------------------------------------------
+   Lists
+   ------------------------------------------------------------------------- */
+ul, ol {
+    list-style: none;
+}
+
+/* -------------------------------------------------------------------------
+   Tables
+   ------------------------------------------------------------------------- */
+table {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+/* -------------------------------------------------------------------------
+   Selection
+   ------------------------------------------------------------------------- */
+::selection {
+    background-color: var(--accent);
+    color: white;
+}
+
+/* -------------------------------------------------------------------------
+   Scrollbar Styling (Webkit)
+   ------------------------------------------------------------------------- */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--light);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--secondary);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--primary);
+}

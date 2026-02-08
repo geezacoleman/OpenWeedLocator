@@ -1,0 +1,45 @@
+/* ==========================================================================
+   OWL Controller (Networked) - Tab Bar
+   View toggle tab bar (OWL / GPS), view panels
+   ========================================================================== */
+
+.view-toggle {
+    display: flex;
+    background: var(--dark);
+    border-bottom: 2px solid #2c3e50;
+}
+
+.view-tab {
+    flex: 1;
+    padding: 0.8rem 1rem;
+    border: none;
+    background: transparent;
+    color: #7f8c8d;
+    font-size: 1.1rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all var(--transition-normal);
+    border-bottom: 3px solid transparent;
+}
+
+.view-tab.active {
+    color: white;
+    border-bottom-color: var(--accent);
+}
+
+.view-tab:active {
+    transform: scale(0.98);
+}
+
+/* View panels */
+.view-panel {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2rem;
+}

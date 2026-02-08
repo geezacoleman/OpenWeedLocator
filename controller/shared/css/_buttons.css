@@ -1,0 +1,246 @@
+/* ==========================================================================
+   OWL Controllers - Shared Button Styles
+   Base button classes used by both standalone and networked controllers
+   
+   Usage: @import after _utilities.css
+   ========================================================================== */
+
+/* -------------------------------------------------------------------------
+   Base Button Reset & Defaults
+   ------------------------------------------------------------------------- */
+.btn,
+[class*="btn-"] {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    white-space: nowrap;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition-normal);
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.btn:disabled,
+[class*="btn-"]:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.btn:active:not(:disabled),
+[class*="btn-"]:active:not(:disabled) {
+    transform: scale(0.98);
+}
+
+/* -------------------------------------------------------------------------
+   Primary Button
+   ------------------------------------------------------------------------- */
+.btn-primary {
+    background: linear-gradient(135deg, var(--accent) 0%, #2980b9 100%);
+    color: white;
+    box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: linear-gradient(135deg, #3498db 0%, #2475ab 100%);
+    box-shadow: 0 4px 12px rgba(52, 152, 219, 0.4);
+}
+
+/* -------------------------------------------------------------------------
+   Secondary Button
+   ------------------------------------------------------------------------- */
+.btn-secondary {
+    background: white;
+    color: var(--secondary);
+    border: 2px solid var(--border);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: var(--light);
+    border-color: var(--secondary);
+}
+
+/* -------------------------------------------------------------------------
+   Success Button
+   ------------------------------------------------------------------------- */
+.btn-success {
+    background: linear-gradient(135deg, var(--success) 0%, var(--success-dark) 100%);
+    color: white;
+    box-shadow: 0 2px 8px rgba(46, 204, 113, 0.3);
+}
+
+.btn-success:hover:not(:disabled) {
+    background: linear-gradient(135deg, #27ae60 0%, #219a52 100%);
+    box-shadow: 0 4px 12px rgba(46, 204, 113, 0.4);
+}
+
+/* -------------------------------------------------------------------------
+   Danger Button
+   ------------------------------------------------------------------------- */
+.btn-danger {
+    background: linear-gradient(135deg, var(--danger) 0%, var(--danger-dark) 100%);
+    color: white;
+    box-shadow: 0 2px 8px rgba(231, 76, 60, 0.3);
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: linear-gradient(135deg, #c0392b 0%, #a93226 100%);
+    box-shadow: 0 4px 12px rgba(231, 76, 60, 0.4);
+}
+
+/* -------------------------------------------------------------------------
+   Warning Button
+   ------------------------------------------------------------------------- */
+.btn-warning {
+    background: linear-gradient(135deg, var(--warning) 0%, var(--warning-dark) 100%);
+    color: white;
+    box-shadow: 0 2px 8px rgba(243, 156, 18, 0.3);
+}
+
+.btn-warning:hover:not(:disabled) {
+    background: linear-gradient(135deg, #e67e22 0%, #d35400 100%);
+    box-shadow: 0 4px 12px rgba(243, 156, 18, 0.4);
+}
+
+/* -------------------------------------------------------------------------
+   Ghost/Outline Buttons
+   ------------------------------------------------------------------------- */
+.btn-ghost {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid transparent;
+}
+
+.btn-ghost:hover:not(:disabled) {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+.btn-outline-primary {
+    background: transparent;
+    color: var(--accent);
+    border: 2px solid var(--accent);
+}
+
+.btn-outline-primary:hover:not(:disabled) {
+    background: var(--accent);
+    color: white;
+}
+
+.btn-outline-success {
+    background: transparent;
+    color: var(--success);
+    border: 2px solid var(--success);
+}
+
+.btn-outline-success:hover:not(:disabled) {
+    background: var(--success);
+    color: white;
+}
+
+.btn-outline-danger {
+    background: transparent;
+    color: var(--danger);
+    border: 2px solid var(--danger);
+}
+
+.btn-outline-danger:hover:not(:disabled) {
+    background: var(--danger);
+    color: white;
+}
+
+/* -------------------------------------------------------------------------
+   Button Sizes
+   ------------------------------------------------------------------------- */
+.btn-sm {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.8rem;
+}
+
+.btn-lg {
+    padding: 0.8rem 1.5rem;
+    font-size: 1rem;
+}
+
+.btn-xl {
+    padding: 1rem 2rem;
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+
+/* -------------------------------------------------------------------------
+   Icon Button (square, icon-only)
+   ------------------------------------------------------------------------- */
+.btn-icon,
+.icon-btn {
+    padding: 0.5rem;
+    min-width: var(--touch-target-min);
+    min-height: var(--touch-target-min);
+    border-radius: var(--radius-md);
+    background: white;
+    border: 1px solid var(--border);
+    color: var(--primary);
+}
+
+.btn-icon:hover:not(:disabled),
+.icon-btn:hover:not(:disabled) {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+}
+
+.btn-icon svg,
+.icon-btn svg {
+    width: 20px;
+    height: 20px;
+}
+
+/* -------------------------------------------------------------------------
+   Button with Icon
+   ------------------------------------------------------------------------- */
+.btn svg,
+[class*="btn-"] svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+/* -------------------------------------------------------------------------
+   Button Group
+   ------------------------------------------------------------------------- */
+.btn-group {
+    display: inline-flex;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.btn-group .btn,
+.btn-group [class*="btn-"] {
+    border-radius: 0;
+    margin: 0;
+}
+
+.btn-group .btn:first-child,
+.btn-group [class*="btn-"]:first-child {
+    border-radius: var(--radius-md) 0 0 var(--radius-md);
+}
+
+.btn-group .btn:last-child,
+.btn-group [class*="btn-"]:last-child {
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+
+/* -------------------------------------------------------------------------
+   Full Width Button
+   ------------------------------------------------------------------------- */
+.btn-block {
+    display: flex;
+    width: 100%;
+}

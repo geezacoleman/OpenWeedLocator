@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OWL Dashboard</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+    <!-- Shared JS utilities (load first) -->
+    <script src="/shared/js/api.js" defer></script>
+    <script src="/shared/js/utils.js" defer></script>
+    <script src="/shared/js/toast.js" defer></script>
+    <script src="/shared/js/config.js" defer></script>
+
+    <!-- App-specific JS modules -->
     <script src="{{ url_for('static', filename='js/modules/_core.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/modules/_notifications.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/modules/_stream.js') }}" defer></script>
@@ -19,7 +27,7 @@
 <div class="header">
     <div class="header-content">
         <div class="logo-section">
-            <img src="{{ url_for('static', filename='images/owl-logo-wht.png') }}" alt="OWL Logo" class="logo">
+            <img src="/shared/images/owl-logo-wht.png" alt="OWL Logo" class="logo">
             <h1>OWL Dashboard</h1>
         </div>
         <div class="status-indicator">

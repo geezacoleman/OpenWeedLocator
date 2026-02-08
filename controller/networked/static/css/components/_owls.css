@@ -1,0 +1,175 @@
+/* ==========================================================================
+   OWL Controller (Networked) - OWL Grid & Cards
+   OWL units grid, cards, badges, stats, card buttons, empty state, restart
+   ========================================================================== */
+
+/* OWL Units Grid */
+
+.owls-container {
+    display: flex;
+    gap: 1.5rem;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+    max-width: 1100px;
+}
+
+.owl-box {
+    background: white;
+    border-radius: var(--radius-lg);
+    padding: 1rem;
+    box-shadow: var(--shadow-md);
+    min-width: 200px;
+    max-width: 220px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    transition: all var(--transition-normal);
+    border: 2px solid transparent;
+}
+
+.owl-box.online {
+    border-color: var(--success);
+}
+
+.owl-box.offline {
+    border-color: var(--danger);
+    opacity: 0.7;
+}
+
+.owl-box:active {
+    transform: scale(0.98);
+}
+
+.owl-box-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--light);
+}
+
+.owl-card-title h3 {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-dark);
+    margin: 0;
+}
+
+/* OWL status badge - extends shared .status-badge */
+.owl-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: var(--radius-pill);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.owl-status-badge.online {
+    background: #d4edda;
+    color: var(--success-dark);
+}
+
+.owl-status-badge.offline {
+    background: #f8d7da;
+    color: var(--danger-dark);
+}
+
+.owl-stats {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+}
+
+.owl-stat-item {
+    display: flex;
+    flex-direction: column;
+    padding: 0.5rem;
+    background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+    border-radius: var(--radius-md);
+}
+
+.owl-stat-label {
+    font-size: 0.7rem;
+    color: var(--text-light);
+    font-weight: 600;
+    text-transform: uppercase;
+    margin-bottom: 0.2rem;
+}
+
+.owl-stat-value {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text-dark);
+}
+
+.owl-stat-value.good { color: var(--success); }
+.owl-stat-value.warning { color: var(--warning); }
+.owl-stat-value.danger { color: var(--danger); }
+
+.owl-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+/* OWL card buttons - kiosk touch-friendly */
+.owl-btn {
+    flex: 1;
+    min-width: 0;
+    padding: 0.6rem 0.5rem;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all var(--transition-normal);
+    color: white;
+}
+
+.owl-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.owl-btn:active:not(:disabled) {
+    transform: scale(0.95);
+}
+
+.owl-btn.btn-video {
+    background: linear-gradient(135deg, var(--accent), #2980b9);
+}
+
+.owl-btn.btn-detection {
+    background: linear-gradient(135deg, var(--success), var(--success-dark));
+}
+
+.owl-btn.btn-recording {
+    background: linear-gradient(135deg, var(--danger), var(--danger-dark));
+}
+
+/* Restart button */
+.owl-btn.btn-restart {
+    background: linear-gradient(135deg, var(--warning), #d68910);
+}
+
+/* Empty state */
+.empty-state {
+    text-align: center;
+    padding: 2rem;
+}
+
+.empty-state-text {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--text-dark);
+    margin-bottom: 0.5rem;
+}
+
+.empty-state-subtext {
+    font-size: 0.9rem;
+    color: var(--text-light);
+}

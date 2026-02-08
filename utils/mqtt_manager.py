@@ -8,6 +8,7 @@ import json
 import time
 import threading
 import logging
+import os
 import cv2
 import configparser
 import socket
@@ -27,7 +28,7 @@ class OWLMQTTPublisher:
     Supports both standalone (localhost) and networked (central controller) modes
     """
 
-    def __init__(self, broker_host='localhost', broker_port=1883, client_id='owl_main', device_id=None):
+    def __init__(self, broker_host='localhost', broker_port=1883, client_id='owl_main', device_id=None, network_mode=None):
         self.broker_host = broker_host
         self.broker_port = broker_port
         self.client_id = client_id
@@ -41,8 +42,11 @@ class OWLMQTTPublisher:
 
         self.device_id = device_id
 
-        # Determine if we're in networked mode
-        self.networked_mode = (broker_host.lower() not in ['localhost', '127.0.0.1'])
+        # Determine if we're in networked mode from config, fall back to broker IP heuristic
+        if network_mode is not None:
+            self.networked_mode = (network_mode.lower() == 'networked')
+        else:
+            self.networked_mode = (broker_host.lower() not in ['localhost', '127.0.0.1'])
 
         if self.networked_mode:
             self.logger.info(f"Running in NETWORKED mode - connecting to broker at {broker_host}:{broker_port}")
@@ -116,6 +120,10 @@ class OWLMQTTPublisher:
 
         # Thread safety
         self.state_lock = threading.RLock()
+        self.config_lock = threading.Lock()
+
+        # Config file path (set via set_owl_instance or directly)
+        self.config_file = None
 
         # OWL instance reference
         self.owl_instance = None
@@ -145,6 +153,10 @@ class OWLMQTTPublisher:
         self.low_sensitivity_config = low_config
         self.medium_sensitivity_config = medium_config
         self.high_sensitivity_config = high_config
+
+        # Capture the config file path from the owl instance
+        if hasattr(owl_instance, 'config_path'):
+            self.config_file = owl_instance.config_path
 
         self.logger.info(f"OWL instance configured with sensitivity configs:")
         self.logger.info(f"  Low: {low_config}")
@@ -317,17 +329,171 @@ class OWLMQTTPublisher:
                     self.logger.info(f"Updating GreenOnBrown parameter: {param_name} = {param_value}")
                     self._update_greenonbrown_param(param_name, param_value)
 
+            elif action == 'get_config':
+                self._handle_get_config()
+
+            elif action == 'set_config_section':
+                section = command.get('section')
+                params = command.get('params', {})
+                if section and params:
+                    self._handle_set_config_section(section, params)
+
+            elif action == 'save_config':
+                filename = command.get('filename')
+                self._handle_save_config(filename)
+
+            elif action == 'set_active_config':
+                config_path = command.get('config')
+                if config_path:
+                    self._handle_set_active_config(config_path)
+
             elif action == 'reboot':
                 self.logger.warning("Reboot command received - this requires system privileges")
                 # Future implementation
 
             elif action == 'restart_service':
                 self.logger.warning("Service restart command received")
-                # Future implementation
+                self._handle_restart_service()
 
             # Update timestamp and publish new state
             self.state['last_update'] = time.time()
             self._publish_state()
+
+    def _handle_get_config(self):
+        """Read current config from disk and publish as JSON to config topic"""
+        try:
+            config_path = self._resolve_config_path()
+            if not config_path:
+                self.logger.error("Cannot get config - no config file path available")
+                return
+
+            with self.config_lock:
+                config = configparser.ConfigParser()
+                config.read(config_path)
+
+            # Convert to dict
+            config_dict = {}
+            for section in config.sections():
+                config_dict[section] = dict(config[section])
+
+            payload = {
+                'config': config_dict,
+                'config_path': str(config_path),
+                'config_name': os.path.basename(config_path),
+                'device_id': self.device_id,
+                'timestamp': time.time()
+            }
+
+            self.client.publish(self.topics['config'], json.dumps(payload), retain=False)
+            self.logger.info(f"Published config from {config_path} ({len(config_dict)} sections)")
+
+        except Exception as e:
+            self.logger.error(f"Error handling get_config: {e}")
+
+    def _handle_set_config_section(self, section, params):
+        """Update multiple parameters in a section on the live OWL instance"""
+        if self.owl_instance is None:
+            self.logger.warning("Cannot set config section - OWL instance not set")
+            return
+
+        try:
+            for key, value in params.items():
+                # Update GreenOnBrown params on the live instance
+                if section == 'GreenOnBrown':
+                    self._update_greenonbrown_param(key, value)
+                elif hasattr(self.owl_instance, key):
+                    # Try to set attribute directly on owl instance
+                    setattr(self.owl_instance, key, value)
+                    self.logger.info(f"Set {section}.{key} = {value} on live instance")
+
+                # Also update the config object for persistence
+                with self.config_lock:
+                    if hasattr(self.owl_instance, 'config'):
+                        if not self.owl_instance.config.has_section(section):
+                            self.owl_instance.config.add_section(section)
+                        self.owl_instance.config.set(section, key, str(value))
+
+            self.logger.info(f"Applied {len(params)} params to [{section}]")
+
+        except Exception as e:
+            self.logger.error(f"Error setting config section [{section}]: {e}")
+
+    def _handle_save_config(self, filename=None):
+        """Write current config to disk"""
+        try:
+            if not hasattr(self.owl_instance, 'config'):
+                self.logger.error("Cannot save config - OWL has no config object")
+                return
+
+            if filename:
+                # Save to a new file in the config directory
+                config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
+                save_path = os.path.join(config_dir, filename)
+
+                # Safety: don't overwrite default presets
+                basename = os.path.basename(save_path)
+                if basename.startswith('DAY_SENSITIVITY_'):
+                    self.logger.error(f"Cannot overwrite default preset: {basename}")
+                    return
+            else:
+                save_path = self._resolve_config_path()
+                if not save_path:
+                    self.logger.error("Cannot save config - no config file path")
+                    return
+
+            with self.config_lock:
+                with open(save_path, 'w') as f:
+                    self.owl_instance.config.write(f)
+
+            self.logger.info(f"Config saved to {save_path}")
+
+        except Exception as e:
+            self.logger.error(f"Error saving config: {e}")
+
+    def _handle_set_active_config(self, config_path):
+        """Write config path to active_config.txt"""
+        try:
+            config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
+            active_path = os.path.join(config_dir, 'active_config.txt')
+
+            with self.config_lock:
+                with open(active_path, 'w') as f:
+                    f.write(config_path.strip() + '\n')
+
+            self.logger.info(f"Active config set to: {config_path}")
+
+        except Exception as e:
+            self.logger.error(f"Error setting active config: {e}")
+
+    def _handle_restart_service(self):
+        """Restart the owl.service via systemctl (same mechanism as standalone)"""
+        try:
+            import subprocess
+            self.logger.warning("Restarting owl.service...")
+            subprocess.Popen(
+                ['sudo', 'systemctl', 'restart', 'owl.service'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+        except Exception as e:
+            self.logger.error(f"Error restarting service: {e}")
+
+    def _resolve_config_path(self):
+        """Resolve the current config file path"""
+        if self.config_file:
+            return self.config_file
+
+        if self.owl_instance and hasattr(self.owl_instance, 'config_path'):
+            return self.owl_instance.config_path
+
+        # Fallback: try active_config.txt
+        config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
+        active_path = os.path.join(config_dir, 'active_config.txt')
+        if os.path.exists(active_path):
+            with open(active_path, 'r') as f:
+                return f.read().strip()
+
+        return None
 
     def _apply_sensitivity_preset(self, preset):
         """

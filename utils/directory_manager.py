@@ -39,9 +39,10 @@ class DirectorySetup:
         """
         Handle USB mount errors on Raspberry Pi systems.
         Searches /media directory for mounted, writable USB drives.
+        On non-Linux platforms (Windows/Mac), falls back to a local directory for testing.
         """
         if platform.system() != 'Linux':
-            raise errors.StorageSystemError(platform=platform.system())
+            return self._setup_local_fallback()
 
         media_dir = '/media'
         try:
@@ -97,6 +98,18 @@ class DirectorySetup:
             self.logger.error(f'Failed to access {drive_path}', exc_info=True)
 
         return False
+
+    def _setup_local_fallback(self):
+        """Fall back to a local directory for testing on non-Linux platforms."""
+        self.save_directory = os.path.join(os.getcwd(), 'owl_data')
+        self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
+        os.makedirs(self.save_subdirectory, exist_ok=True)
+
+        if not self.test_file_write():
+            raise errors.USBWriteError(device=self.save_directory)
+
+        self.logger.info(f"[TEST MODE] Non-Linux platform detected. Saving to local directory: {self.save_subdirectory}")
+        return self.save_directory, self.save_subdirectory
 
     def test_file_write(self):
         test_file_path = os.path.join(self.save_subdirectory, 'test_write.txt')

@@ -1,0 +1,71 @@
+/* ==========================================================================
+   OWL Controller (Networked) - Layout
+   Kiosk viewport, header, main container
+   ========================================================================== */
+
+/* Kiosk Viewport Override
+   Uses viewport units for natural scaling across screen sizes.
+   The <meta viewport> tag sets the reference width for rendering. */
+
+html, body {
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* Header - kiosk-specific: gradient background, fixed height */
+
+.header {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+    color: white;
+    padding: 0 1.5rem;
+    display: flex;
+    align-items: center;
+    box-shadow: var(--shadow-lg);
+    height: 60px;
+}
+
+.header-content {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.logo-section {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.logo {
+    height: 36px;
+    width: auto;
+}
+
+.logo-section h1 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: white;
+    margin: 0;
+}
+
+.mqtt-status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+}
+
+/* Main Container */
+
+.main-container {
+    height: calc(100vh - 60px - 46px); /* header + tab bar */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem 2rem;
+    gap: 1rem;
+    position: relative;
+}

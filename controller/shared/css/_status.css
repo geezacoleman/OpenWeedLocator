@@ -1,0 +1,272 @@
+/* ==========================================================================
+   OWL Controllers - Shared Status Components
+   Status dots, badges, chips used by both controllers
+   
+   Usage: @import after _buttons.css
+   ========================================================================== */
+
+/* -------------------------------------------------------------------------
+   Status Dot
+   Small circular indicator for connection/online status
+   ------------------------------------------------------------------------- */
+.status-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background-color: var(--danger);
+    flex-shrink: 0;
+    transition: background-color var(--transition-normal);
+}
+
+.status-dot.connected,
+.status-dot.online {
+    background-color: var(--success);
+    animation: none;
+}
+
+.status-dot.disconnected,
+.status-dot.offline {
+    background-color: var(--danger);
+    animation: pulse 2s infinite;
+}
+
+.status-dot.connecting,
+.status-dot.booting,
+.status-dot.stopping {
+    background-color: var(--warning);
+    animation: pulse 1s infinite;
+}
+
+/* Smaller variant */
+.status-dot--sm {
+    width: 8px;
+    height: 8px;
+}
+
+/* Larger variant */
+.status-dot--lg {
+    width: 16px;
+    height: 16px;
+}
+
+/* -------------------------------------------------------------------------
+   Status Badge
+   Pill-shaped badge with dot and text
+   ------------------------------------------------------------------------- */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: var(--radius-pill);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.status-badge .badge-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.status-badge.online {
+    background: #d4edda;
+    color: var(--success-dark);
+}
+
+.status-badge.offline {
+    background: #f8d7da;
+    color: var(--danger-dark);
+}
+
+.status-badge.warning {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.status-badge.info {
+    background: #d1ecf1;
+    color: #0c5460;
+}
+
+/* -------------------------------------------------------------------------
+   Status Chip
+   Larger status indicator with dot, used in dashboards
+   ------------------------------------------------------------------------- */
+.status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    padding: 0.35rem 0.7rem;
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: all var(--transition-normal);
+}
+
+.status-chip .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #95a5a6;
+    transition: background var(--transition-normal);
+}
+
+.status-chip.on .dot {
+    background: var(--success);
+}
+
+.status-chip.off .dot {
+    background: #95a5a6;
+}
+
+.status-chip.booting .dot,
+.status-chip.stopping .dot {
+    background: var(--warning);
+    animation: pulse 1s infinite;
+}
+
+/* Active/enabled state */
+.status-chip.on:not(.blanket) {
+    background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+    color: white;
+    border-color: var(--success);
+}
+
+.status-chip.on:not(.blanket) .dot {
+    background: white;
+}
+
+/* Blanket spray mode */
+.status-chip.blanket {
+    background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%) !important;
+    color: white;
+    border-color: var(--warning);
+}
+
+.status-chip.blanket .dot {
+    background: white;
+}
+
+/* -------------------------------------------------------------------------
+   Sprayer Status Chip (Compact variant)
+   ------------------------------------------------------------------------- */
+.sprayer-status {
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.sprayer-status .dot {
+    width: 8px;
+    height: 8px;
+}
+
+.sprayer-status.spot-spray {
+    background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+    border-color: var(--success);
+    color: #155724;
+}
+
+.sprayer-status.spot-spray .dot {
+    background: var(--success);
+    animation: pulse 1.5s infinite;
+}
+
+.sprayer-status.blanket {
+    background: linear-gradient(135deg, #fff3cd 0%, #ffeeba 100%);
+    border-color: var(--warning);
+    color: #856404;
+}
+
+.sprayer-status.blanket .dot {
+    background: var(--warning);
+}
+
+.sprayer-status.off .dot {
+    background: #95a5a6;
+}
+
+/* -------------------------------------------------------------------------
+   Metric Chip
+   Colored chip displaying system metrics
+   ------------------------------------------------------------------------- */
+.metric-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    border-radius: var(--radius-pill);
+    padding: 0.4rem 0.7rem;
+    color: #fff;
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-align: center;
+}
+
+.metric-chip strong {
+    color: #fff;
+}
+
+.metric-chip.cpu {
+    background: linear-gradient(135deg, var(--accent) 0%, #2980b9 100%);
+}
+
+.metric-chip.mem {
+    background: linear-gradient(135deg, var(--success) 0%, #27ae60 100%);
+}
+
+.metric-chip.temp {
+    background: linear-gradient(135deg, var(--danger) 0%, #c0392b 100%);
+}
+
+.metric-chip.disk {
+    background: linear-gradient(135deg, var(--warning) 0%, #e67e22 100%);
+}
+
+/* -------------------------------------------------------------------------
+   Config Badge
+   Used in config editor for default/custom labels
+   ------------------------------------------------------------------------- */
+.config-badge {
+    font-size: 0.7rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.config-badge.default {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
+.config-badge.custom {
+    background: #e3f2fd;
+    color: #1565c0;
+}
+
+/* -------------------------------------------------------------------------
+   Section Badge
+   Used in collapsible sections
+   ------------------------------------------------------------------------- */
+.section-badge {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 10px;
+    font-weight: 500;
+}
+
+.section-badge.warning {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.section-badge.info {
+    background: #e3f2fd;
+    color: #1565c0;
+}

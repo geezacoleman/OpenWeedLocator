@@ -442,6 +442,12 @@ class OWLDashboard:
         def static_files(filename):
             return send_from_directory(self.app.static_folder, filename)
 
+        shared_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'shared')
+
+        @self.app.route('/shared/<path:filename>')
+        def shared_static(filename):
+            return send_from_directory(shared_dir, filename)
+
         @self.app.route('/api/usb_storage')
         def api_usb_storage():
             devices = self.get_usb_storage_info()

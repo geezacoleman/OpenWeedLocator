@@ -139,3 +139,7 @@ cython_debug/
 
 # OWL non-template log files
 owl.jsonl
+
+# Internal design docs (not for public repo)
+claude_docs/
+.claude/
