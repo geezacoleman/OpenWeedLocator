@@ -10,6 +10,9 @@ logger = logging.getLogger(__name__)
 class ConfigValidator:
     """Validates OWL configuration files"""
 
+    # Infrastructure sections that must exist in CONTROLLER.ini
+    CONTROLLER_INI_SECTIONS = {'MQTT', 'WebDashboard', 'Network', 'GPS'}
+
     REQUIRED_CONFIG = {
         'System': {
             'required_keys': {'algorithm', 'relay_num', 'actuation_duration', 'delay'},
@@ -339,6 +342,28 @@ class ConfigValidator:
         return True, {}, warnings
 
     @classmethod
+    def validate_controller_ini(cls, config_path: Path) -> None:
+        """Verify CONTROLLER.ini exists alongside the detection config and has required sections."""
+        controller_ini = config_path.parent / 'CONTROLLER.ini'
+        if not controller_ini.exists():
+            logger.warning(f"CONTROLLER.ini not found at {controller_ini} - infrastructure defaults will be used")
+            return
+
+        ctrl_config = ConfigParser()
+        try:
+            ctrl_config.read(controller_ini)
+        except ConfigParserError as e:
+            logger.warning(f"CONTROLLER.ini parse error: {e}")
+            return
+
+        missing = cls.CONTROLLER_INI_SECTIONS - set(ctrl_config.sections())
+        if missing:
+            logger.warning(
+                f"CONTROLLER.ini missing sections: {', '.join(sorted(missing))}. "
+                f"Infrastructure defaults will be used."
+            )
+
+    @classmethod
     def load_and_validate_config(cls, config_path: Path) -> ConfigParser:
         """Load and validate configuration file."""
         config = ConfigParser()
@@ -356,6 +381,9 @@ class ConfigValidator:
                 raise errors.ConfigFileError(config_path, "File could not be read")
         except ConfigParserError as e:
             raise errors.ConfigFileError(config_path, f"Parse error: {str(e)}")
+
+        # Verify CONTROLLER.ini exists and has infrastructure sections
+        cls.validate_controller_ini(config_path)
 
         # Create working copy of config requirements
         working_config = dict(cls.REQUIRED_CONFIG)

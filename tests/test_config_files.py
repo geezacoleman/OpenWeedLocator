@@ -15,10 +15,11 @@ INI_FILES = [
 ]
 
 EXPECTED_SECTIONS = [
-    'System', 'MQTT', 'WebDashboard', 'Network', 'GPS',
-    'Controller', 'Visualisation', 'Camera', 'GreenOnGreen',
+    'System', 'Controller', 'Visualisation', 'Camera', 'GreenOnGreen',
     'GreenOnBrown', 'DataCollection', 'Relays'
 ]
+
+CONTROLLER_INI_SECTIONS = ['MQTT', 'WebDashboard', 'Network', 'GPS']
 
 
 @pytest.mark.unit
@@ -51,13 +52,35 @@ class TestConfigFiles:
             )
 
     def test_all_configs_have_expected_sections(self):
-        """All configs should have all 12 expected sections."""
+        """All configs should have all 8 expected detection sections."""
         for ini_name in INI_FILES:
             config = configparser.ConfigParser()
             config.read(CONFIG_DIR / ini_name)
             for section in EXPECTED_SECTIONS:
                 assert config.has_section(section), (
                     f"{ini_name} missing section [{section}]"
+                )
+
+    def test_controller_ini_has_infrastructure_sections(self):
+        """CONTROLLER.ini should have the 4 infrastructure sections."""
+        path = CONFIG_DIR / 'CONTROLLER.ini'
+        assert path.exists(), "CONTROLLER.ini not found in config/"
+
+        config = configparser.ConfigParser()
+        config.read(path)
+        for section in CONTROLLER_INI_SECTIONS:
+            assert config.has_section(section), (
+                f"CONTROLLER.ini missing section [{section}]"
+            )
+
+    def test_sensitivity_configs_do_not_have_infrastructure_sections(self):
+        """DAY_SENSITIVITY configs should NOT have MQTT/WebDashboard/Network/GPS."""
+        for ini_name in INI_FILES:
+            config = configparser.ConfigParser()
+            config.read(CONFIG_DIR / ini_name)
+            for section in CONTROLLER_INI_SECTIONS:
+                assert not config.has_section(section), (
+                    f"{ini_name} should not have [{section}] (moved to CONTROLLER.ini)"
                 )
 
     def test_configs_have_medium_sensitivity_key(self):

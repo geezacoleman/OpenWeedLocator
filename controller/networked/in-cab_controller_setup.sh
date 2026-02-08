@@ -491,7 +491,7 @@ Group=$(id -g -n ${CURRENT_USER})
 WorkingDirectory=${SCRIPT_DIR}
 Environment="PATH=${VENV_PATH}/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PYTHONUNBUFFERED=1"
-ExecStart=${VENV_PATH}/bin/gunicorn --bind 127.0.0.1:8000 --workers 1 --timeout 300 networked_controller:app
+ExecStart=${VENV_PATH}/bin/gunicorn --bind 127.0.0.1:8000 --workers 1 --timeout 300 networked:app
 Restart=always
 RestartSec=5
 KillMode=mixed

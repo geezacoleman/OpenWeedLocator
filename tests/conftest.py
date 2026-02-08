@@ -27,10 +27,10 @@ PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# All 12 sections present in the OWL INI configs
+# All 8 detection sections present in the OWL INI configs
+# (MQTT, WebDashboard, Network, GPS moved to CONTROLLER.ini)
 EXPECTED_SECTIONS = [
-    'System', 'MQTT', 'WebDashboard', 'Network', 'GPS',
-    'Controller', 'Visualisation', 'Camera', 'GreenOnGreen',
+    'System', 'Controller', 'Visualisation', 'Camera', 'GreenOnGreen',
     'GreenOnBrown', 'DataCollection', 'Relays'
 ]
 
@@ -45,25 +45,6 @@ input_file_or_directory =
 relay_num = 4
 actuation_duration = 0.15
 delay = 0
-
-[MQTT]
-enable = False
-broker_ip = localhost
-broker_port = 1883
-device_id = test-owl
-
-[WebDashboard]
-port = 8000
-
-[Network]
-mode = standalone
-static_ip = 192.168.1.11
-controller_ip = 192.168.1.2
-
-[GPS]
-source = none
-port = /dev/ttyUSB0
-baudrate = 9600
 
 [Controller]
 controller_type = none

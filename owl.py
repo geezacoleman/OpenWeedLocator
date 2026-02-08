@@ -115,6 +115,7 @@ class Owl:
             raise
 
         self.config.read(self._config_path)
+        self.config.read(Path(__file__).parent / 'config' / 'CONTROLLER.ini')
         self.RPI_VERSION = get_rpi_version()
         self.logger.info(msg=f'Raspberry Pi version: {self.RPI_VERSION}')
 

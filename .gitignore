@@ -143,3 +143,6 @@ owl.jsonl
 # Internal design docs (not for public repo)
 claude_docs/
 .claude/
+PROJECT_NOTES.md
+CLAUDE.md
+tmpclaude-*

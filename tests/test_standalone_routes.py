@@ -29,7 +29,7 @@ class TestGetConfig:
         data = resp.get_json()
 
         config = data['config']
-        for section in ['System', 'MQTT', 'GreenOnBrown', 'Camera', 'Relays']:
+        for section in ['System', 'GreenOnBrown', 'Camera', 'Controller', 'DataCollection', 'Relays']:
             assert section in config, f"Missing section: {section}"
 
     def test_returns_404_when_config_missing(self, standalone_test_client):

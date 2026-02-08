@@ -16,7 +16,7 @@ STATIC_IP=""          # Only for networked mode
 
 if [ "$EUID" -ne 0 ]; then
    echo -e "${RED}[ERROR] This script must be run with sudo privileges.${NC}"
-   echo -e "${RED}[ERROR] Please run: sudo ./web_setup.sh${NC}"
+   echo -e "${RED}[ERROR] Please run: sudo bash controller/shared/setup.sh${NC}"
    exit 1
 fi
 
@@ -478,7 +478,7 @@ setup_fan_permissions() {
     PINCTRL_BIN="$(command -v pinctrl 2>/dev/null || echo /usr/bin/pinctrl)"
 
     sudo tee "$SUDOERS_FILE" > /dev/null <<EOF
-# Managed by OWL web_setup.sh
+# Managed by OWL controller/shared/setup.sh
 # Allow 'owl' to control Raspberry Pi 5 fan without a password.
 # We restrict to EXACT command lines to minimize risk.
 
@@ -521,8 +521,8 @@ EOF
 update_owl_configs() {
     echo -e "${GREEN}[INFO] Updating OWL configuration files with network settings...${NC}"
 
-    local OWL_DIR="/home/${CURRENT_USER}/owl"
-    local CONFIG_DIR="${OWL_DIR}/config"
+    local CONFIG_DIR="/home/${CURRENT_USER}/owl/config"
+    local CTRL_INI="${CONFIG_DIR}/CONTROLLER.ini"
 
     if [ ! -d "$CONFIG_DIR" ]; then
         echo -e "${ORANGE}[WARNING] Config directory not found at ${CONFIG_DIR}, skipping config updates${NC}"
@@ -530,11 +530,7 @@ update_owl_configs() {
     fi
 
     # Determine values based on mode
-    local BROKER_IP
-    local NET_MODE
-    local NET_STATIC_IP
-    local NET_CONTROLLER_IP
-
+    local BROKER_IP DEVICE_ID NET_MODE NET_STATIC_IP NET_CONTROLLER_IP
     if [[ "$OWL_MODE" == "standalone" ]]; then
         BROKER_IP="localhost"
         NET_MODE="standalone"
@@ -546,50 +542,33 @@ update_owl_configs() {
         NET_STATIC_IP="${STATIC_IP}"
         NET_CONTROLLER_IP="${CONTROLLER_IP}"
     fi
+    DEVICE_ID="${HOSTNAME}"
 
-    local updated_count=0
+    cat > "$CTRL_INI" <<EOF
+[MQTT]
+enable = True
+broker_ip = ${BROKER_IP}
+broker_port = 1883
+device_id = ${DEVICE_ID}
 
-    # Update all OWL detection config INI files (DAY_SENSITIVITY_*.ini etc.)
-    for ini_file in "$CONFIG_DIR"/*.ini; do
-        [ -f "$ini_file" ] || continue
-        local fname
-        fname=$(basename "$ini_file")
+[WebDashboard]
+port = 8000
 
-        # Skip CONTROLLER.ini — handled separately below
-        if [[ "$fname" == "CONTROLLER.ini" ]]; then
-            continue
-        fi
+[Network]
+mode = ${NET_MODE}
+static_ip = ${NET_STATIC_IP}
+controller_ip = ${NET_CONTROLLER_IP}
 
-        echo -e "${GREEN}[INFO]   Updating ${fname}...${NC}"
+[GPS]
+source = none
+port = /dev/ttyUSB0
+baudrate = 9600
+EOF
 
-        # [MQTT] section
-        _update_ini_key "$ini_file" "MQTT" "enable" "True"
-        _update_ini_key "$ini_file" "MQTT" "broker_ip" "$BROKER_IP"
-        _update_ini_key "$ini_file" "MQTT" "broker_port" "1883"
-        _update_ini_key "$ini_file" "MQTT" "device_id" "$HOSTNAME"
+    chown "${CURRENT_USER}:${CURRENT_USER}" "$CTRL_INI"
 
-        # [Network] section
-        _update_ini_key "$ini_file" "Network" "mode" "$NET_MODE"
-        _update_ini_key "$ini_file" "Network" "static_ip" "$NET_STATIC_IP"
-        _update_ini_key "$ini_file" "Network" "controller_ip" "$NET_CONTROLLER_IP"
-
-        ((updated_count++))
-    done
-
-    # Update CONTROLLER.ini if it exists (for the controller Pi)
-    local CTRL_INI="${CONFIG_DIR}/CONTROLLER.ini"
-    if [ -f "$CTRL_INI" ]; then
-        echo -e "${GREEN}[INFO]   Updating CONTROLLER.ini...${NC}"
-        _update_ini_key "$CTRL_INI" "MQTT" "broker_ip" "$BROKER_IP"
-        _update_ini_key "$CTRL_INI" "MQTT" "broker_port" "1883"
-        ((updated_count++))
-    fi
-
-    # Fix file ownership (setup runs as root but configs should be owned by owl user)
-    chown "${CURRENT_USER}:${CURRENT_USER}" "$CONFIG_DIR"/*.ini 2>/dev/null || true
-
-    echo -e "${TICK} Updated ${updated_count} config files"
-    echo -e "${GREEN}[INFO]   MQTT: enable=True, broker=${BROKER_IP}:1883, device_id=${HOSTNAME}${NC}"
+    echo -e "${TICK} CONTROLLER.ini written"
+    echo -e "${GREEN}[INFO]   MQTT: enable=True, broker=${BROKER_IP}:1883, device_id=${DEVICE_ID}${NC}"
     echo -e "${GREEN}[INFO]   Network: mode=${NET_MODE}, static_ip=${NET_STATIC_IP}, controller=${NET_CONTROLLER_IP}${NC}"
     return 0
 }
@@ -599,7 +578,11 @@ collect_user_input
 
 echo -e "${GREEN}[INFO] If you are using a wifi connection to access the Pi over SSH or for internet, your network connection will be replaced with the new connection settings.${NC}"
 echo -e "${ORANGE}[WARNING] If so it is likely this will drop out when the network is reconnected under a different IP address${NC}"
-echo -e "${ORANGE}[WARNING] Reconnect under the details entered above. OWL Static IP: ${STATIC_IP} ${NC}"
+if [[ "$OWL_MODE" == "standalone" ]]; then
+    echo -e "${ORANGE}[WARNING] Reconnect under the details entered above. OWL Static IP: 10.42.0.1 ${NC}"
+else
+    echo -e "${ORANGE}[WARNING] Reconnect under the details entered above. OWL Static IP: ${STATIC_IP} ${NC}"
+fi
 echo -e "${ORANGE}[WARNING] Make sure you have physical access to the Pi in case of issues${NC}"
 read -p "Do you want to continue? (y/n): " network_warning
 if [[ ! "$network_warning" =~ ^[Yy]$ ]]; then
@@ -958,27 +941,30 @@ check_status "Starting services" "SERVICES"
 if [[ "$OWL_MODE" == "standalone" ]]; then
     echo -e "${GREEN}[INFO] Creating systemd service for OWL Dashboard...${NC}"
 
+    STANDALONE_DIR="/home/${CURRENT_USER}/owl/controller/standalone"
+    VENV_BIN="/home/${CURRENT_USER}/.virtualenvs/owl/bin"
+
     sudo tee /etc/systemd/system/owl-dash.service > /dev/null <<EOF
-    [Unit]
-    Description=OWL Dashboard Service
-    After=network.target mosquitto.service
-    Requires=mosquitto.service
+[Unit]
+Description=OWL Dashboard Service
+After=network.target mosquitto.service
+Requires=mosquitto.service
 
-    [Service]
-    Type=simple
-    User=owl
-    Group=owl
-    WorkingDirectory=/home/owl/owl/web
-    Environment="PATH=%h/.virtualenvs/owl/bin:/usr/local/bin:/usr/bin:/bin"
-    ExecStart=/home/owl/.virtualenvs/owl/bin/gunicorn --bind 127.0.0.1:8000 --workers 1 --timeout 300 owl_dash:app
-    Restart=always
-    RestartSec=3
-    KillMode=mixed
-    KillSignal=SIGINT
-    TimeoutStopSec=5
+[Service]
+Type=simple
+User=${CURRENT_USER}
+Group=$(id -g -n ${CURRENT_USER})
+WorkingDirectory=${STANDALONE_DIR}
+Environment="PATH=${VENV_BIN}:/usr/local/bin:/usr/bin:/bin"
+ExecStart=${VENV_BIN}/gunicorn --bind 127.0.0.1:8000 --workers 1 --timeout 300 standalone:app
+Restart=always
+RestartSec=3
+KillMode=mixed
+KillSignal=SIGINT
+TimeoutStopSec=5
 
-    [Install]
-    WantedBy=multi-user.target
+[Install]
+WantedBy=multi-user.target
 EOF
 
     sudo systemctl daemon-reload

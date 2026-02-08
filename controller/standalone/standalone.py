@@ -119,6 +119,7 @@ class OWLDashboard:
         self.config = configparser.ConfigParser()
         if config_path.exists():
             self.config.read(config_path)
+            self.config.read(Path(__file__).parent.parent.parent / 'config' / 'CONTROLLER.ini')
             self.logger.info(f"Config loaded from {config_path}")
             self.controller_type = self.config.get('Controller', 'controller_type', fallback='none').strip(
                 "'\" ").lower()
@@ -1236,7 +1237,7 @@ class OWLDashboard:
 
     def _check_restart_required(self, changed_sections):
         """Check if changed sections require a service restart."""
-        restart_sections = {'MQTT', 'Network', 'WebDashboard', 'Controller'}
+        restart_sections = {'Controller'}
         return bool(set(changed_sections) & restart_sections)
 
     def get_system_stats(self):
