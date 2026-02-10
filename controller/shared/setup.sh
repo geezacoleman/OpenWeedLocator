@@ -528,9 +528,17 @@ static_ip = ${NET_STATIC_IP}
 controller_ip = ${NET_CONTROLLER_IP}
 
 [GPS]
+# GPS data source for owl.py (none / serial / tcp)
 source = none
+# Serial GPS settings (only when source = serial)
 port = /dev/ttyUSB0
 baudrate = 9600
+
+# Networked controller GPS server (not used by OWL units)
+enable = False
+nmea_port = 8500
+boom_width = 12.0
+track_save_directory = tracks
 EOF
 
     chown "${CURRENT_USER}:${CURRENT_USER}" "$CTRL_INI"

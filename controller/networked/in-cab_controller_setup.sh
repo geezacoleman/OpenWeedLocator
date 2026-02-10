@@ -50,6 +50,7 @@ STATUS_DASHBOARD_SERVICE=""
 STATUS_KIOSK_MODE=""
 STATUS_UFW_CONFIG=""
 STATUS_SERVICES=""
+STATUS_CONTROLLER_INI=""
 
 ERROR_PACKAGES=""
 ERROR_WIFI_CONNECT=""
@@ -63,6 +64,7 @@ ERROR_DASHBOARD_SERVICE=""
 ERROR_KIOSK_MODE=""
 ERROR_UFW_CONFIG=""
 ERROR_SERVICES=""
+ERROR_CONTROLLER_INI=""
 
 # Function to check the exit status of the last executed command
 check_status() {
@@ -561,6 +563,7 @@ configure_firewall() {
     ufw allow 80/tcp comment 'HTTP' > /dev/null 2>&1
     ufw allow 443/tcp comment 'HTTPS' > /dev/null 2>&1
     ufw allow 1883/tcp comment 'MQTT' > /dev/null 2>&1
+    ufw allow 8500/tcp comment 'GPS NMEA from Teltonika' > /dev/null 2>&1
     ufw allow 5353/udp comment 'mDNS' > /dev/null 2>&1
 
     ufw allow 'Nginx Full'
@@ -697,7 +700,58 @@ start_services() {
     fi
 }
 
-# Step 13: Create configuration summary file
+# Step 13: Create CONTROLLER.ini for networked.py
+create_controller_ini() {
+    echo -e "${GREEN}[INFO] Creating CONTROLLER.ini for the networked dashboard...${NC}"
+
+    local CONFIG_DIR="${SCRIPT_DIR}/../../config"
+    local CTRL_INI="${CONFIG_DIR}/CONTROLLER.ini"
+
+    if [ ! -d "$CONFIG_DIR" ]; then
+        echo -e "${ORANGE}[WARNING] Config directory not found at ${CONFIG_DIR}, skipping${NC}"
+        check_status "CONTROLLER.ini creation" "CONTROLLER_INI"
+        return 1
+    fi
+
+    cat > "$CTRL_INI" <<EOF
+[MQTT]
+enable = True
+broker_ip = localhost
+broker_port = 1883
+device_id = auto
+
+[WebDashboard]
+port = 8000
+
+[Network]
+mode = networked
+static_ip = ${STATIC_IP}
+controller_ip = localhost
+
+[GPS]
+# GPS data source for owl.py (none / serial / tcp)
+source = none
+# Serial GPS settings (only when source = serial)
+port = /dev/ttyUSB0
+baudrate = 9600
+
+# Networked controller GPS server (Teltonika NMEA-over-TCP)
+enable = False
+nmea_port = 8500
+boom_width = 12.0
+track_save_directory = tracks
+EOF
+
+    chown "${CURRENT_USER}:${CURRENT_USER}" "$CTRL_INI"
+
+    echo -e "${TICK} CONTROLLER.ini written to ${CTRL_INI}"
+    echo -e "${GREEN}[INFO]   MQTT: broker=localhost:1883 (this controller IS the broker)${NC}"
+    echo -e "${GREEN}[INFO]   Network: mode=networked, static_ip=${STATIC_IP}${NC}"
+    echo -e "${GREEN}[INFO]   GPS: disabled by default — edit enable=True to activate${NC}"
+    check_status "CONTROLLER.ini creation" "CONTROLLER_INI"
+}
+
+# Step 14: Create configuration summary file
 create_config_summary() {
     echo -e "${GREEN}[INFO] Creating configuration summary...${NC}"
 
@@ -724,6 +778,7 @@ Service Configuration:
 - SSL Private Key: /etc/ssl/private/owl-controller.key
 - Avahi Service: /etc/avahi/services/owl-controller.service
 - Dashboard Service: /etc/systemd/system/owl-controller.service
+- OWL Config: ${SCRIPT_DIR}/../../config/CONTROLLER.ini
 - Python Venv: /home/${CURRENT_USER}/controller_venv
 
 Testing Commands:
@@ -811,19 +866,22 @@ main() {
     # Step 10: Create dashboard service
     create_dashboard_service
 
-    # Step 11: Configure kiosk mode
+    # Step 11: Create CONTROLLER.ini
+    create_controller_ini
+
+    # Step 12: Configure kiosk mode
     configure_kiosk_mode
 
-    # Step 12: Configure network
+    # Step 13: Configure network
     configure_network
 
-    # Step 13: Start services
+    # Step 14: Start services
     start_services
 
-    # Step 14: Create config summary
+    # Step 15: Create config summary
     create_config_summary
 
-    # Step 15: Final validation
+    # Step 16: Final validation
     final_validation
 
     # Final Summary
@@ -838,6 +896,7 @@ main() {
     echo -e "$STATUS_AVAHI_CONFIG Avahi (.local) Configuration"
     echo -e "$STATUS_UFW_CONFIG Firewall Configuration"
     echo -e "$STATUS_DASHBOARD_SERVICE Dashboard Service"
+    echo -e "$STATUS_CONTROLLER_INI CONTROLLER.ini"
     echo -e "$STATUS_SERVICES Service Management"
 
     if [[ "$STATUS_KIOSK_MODE" == "${TICK}" ]]; then
@@ -864,14 +923,18 @@ main() {
     echo -e "  journalctl -u owl-controller -f"
 
     echo -e "\n${GREEN}[INFO] Next Steps for OWL Configuration:${NC}"
-    echo -e "1. On each OWL unit, edit the configuration file"
-    echo -e "2. Set network_mode = 'networked_owl'"
-    echo -e "3. Set controller_ip = '${STATIC_IP}'"
-    echo -e "4. Set mqtt_broker = '${STATIC_IP}'"
-    echo -e "5. OWLs will automatically connect to this controller"
+    echo -e "1. On each OWL unit, run: sudo bash owl/controller/shared/setup.sh"
+    echo -e "2. Choose 'networked' mode when prompted"
+    echo -e "3. Enter this controller's IP: ${STATIC_IP}"
+    echo -e "4. OWLs will automatically connect to this controller"
+    echo -e ""
+    echo -e "${GREEN}[INFO] GPS Setup (optional):${NC}"
+    echo -e "  Edit config/CONTROLLER.ini and set [GPS] enable = True"
+    echo -e "  Configure your Teltonika router to forward NMEA to ${STATIC_IP}:8500"
+    echo -e "  See config/README.md for full GPS setup instructions"
 
     # Check overall success
-    if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_PYTHON_VENV" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "$STATUS_NGINX_CONFIG" == "${TICK}" && "$STATUS_SSL_CERT" == "${TICK}" && "$STATUS_AVAHI_CONFIG" == "${TICK}" && "$STATUS_UFW_CONFIG" == "${TICK}" && "$STATUS_DASHBOARD_SERVICE" == "${TICK}" && "$STATUS_SERVICES" == "${TICK}" ]]; then
+    if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_PYTHON_VENV" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "$STATUS_NGINX_CONFIG" == "${TICK}" && "$STATUS_SSL_CERT" == "${TICK}" && "$STATUS_AVAHI_CONFIG" == "${TICK}" && "$STATUS_UFW_CONFIG" == "${TICK}" && "$STATUS_DASHBOARD_SERVICE" == "${TICK}" && "$STATUS_CONTROLLER_INI" == "${TICK}" && "$STATUS_SERVICES" == "${TICK}" ]]; then
         echo -e "\n${GREEN}[COMPLETE] OWL Controller setup completed successfully!${NC}"
         echo -e "${GREEN}============================================${NC}"
 
