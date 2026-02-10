@@ -36,6 +36,7 @@ STATUS_SERVICES=""
 STATUS_FAN_PERMISSIONS=""
 STATUS_SERVICE_PERMISSIONS=""
 STATUS_OWL_CONFIG=""
+STATUS_HOSTNAME=""
 
 ERROR_PACKAGES=""
 ERROR_MQTT_BROKER=""
@@ -48,6 +49,7 @@ ERROR_SERVICES=""
 ERROR_FAN_PERMISSIONS=""
 ERROR_SERVICE_PERMISSIONS=""
 ERROR_OWL_CONFIG=""
+ERROR_HOSTNAME=""
 
 # Function to check the exit status of the last executed command
 check_status() {
@@ -323,39 +325,6 @@ collect_user_input() {
             fi
         done
 
-        # Screen resolution selection
-        echo ""
-        echo -e "${GREEN}[INFO] Select display resolution (for kiosk/touchscreen):${NC}"
-        echo "  1) 1280x720  (7\" default)"
-        echo "  2) 1024x600  (7\" alternative)"
-        echo "  3) 1920x1080 (Full HD)"
-        echo "  4) Custom"
-        echo ""
-
-        SCREEN_WIDTH=1280
-        SCREEN_HEIGHT=720
-
-        while true; do
-            read -p "Select resolution (1-4, default 1): " res_choice
-            res_choice=${res_choice:-1}
-            case "$res_choice" in
-                1) SCREEN_WIDTH=1280; SCREEN_HEIGHT=720; break ;;
-                2) SCREEN_WIDTH=1024; SCREEN_HEIGHT=600; break ;;
-                3) SCREEN_WIDTH=1920; SCREEN_HEIGHT=1080; break ;;
-                4)
-                    read -p "Enter width (e.g. 1280): " SCREEN_WIDTH
-                    read -p "Enter height (e.g. 720): " SCREEN_HEIGHT
-                    if [[ "$SCREEN_WIDTH" =~ ^[0-9]+$ ]] && [[ "$SCREEN_HEIGHT" =~ ^[0-9]+$ ]]; then
-                        break
-                    else
-                        echo -e "${RED}[ERROR] Invalid dimensions. Enter numbers only.${NC}"
-                    fi
-                    ;;
-                *) echo -e "${RED}[ERROR] Invalid selection.${NC}" ;;
-            esac
-        done
-        echo -e "${GREEN}[INFO] Screen resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}${NC}"
-
         # Confirm standalone settings
         echo -e "${GREEN}[INFO] Standalone Configuration Summary:${NC}"
         echo -e "  Mode: Standalone"
@@ -364,7 +333,6 @@ collect_user_input() {
         echo -e "  Hotspot IP: 10.42.0.1/24"
         echo -e "  MQTT Broker: localhost:1883 (local)"
         echo -e "  Dashboard: https://${HOSTNAME}.local/"
-        echo -e "  Screen Resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}"
         echo ""
 
     else
@@ -745,14 +713,13 @@ check_status "UFW firewall configuration" "UFW_CONFIG"
 # Step 6: Set hostname
 echo -e "${GREEN}[INFO] Setting hostname to ${HOSTNAME}...${NC}"
 sudo hostnamectl set-hostname "${HOSTNAME}"
-check_status "Setting hostname" "WIFI_CONFIG"
 
 echo -e "${GREEN}[INFO] Updating local hostname resolution...${NC}"
 sudo sed -i "/${HOSTNAME}/d" /etc/hosts
 echo "127.0.0.1 ${HOSTNAME}" | sudo tee -a /etc/hosts
 echo "127.0.1.1 ${HOSTNAME}" | sudo tee -a /etc/hosts
 
-check_status "Setting hostname and local resolution" "WIFI_CONFIG"
+check_status "Setting hostname and local resolution" "HOSTNAME"
 
 # Set the permissions for each service
 setup_fan_permissions
@@ -1006,7 +973,6 @@ SSID: ${SSID}
 WiFi Password: ${WIFI_PASSWORD}
 IP Address: 10.42.0.1/24
 Hostname: ${HOSTNAME}
-Screen Resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}
 
 Access URLs:
 - https://${HOSTNAME}.local/
@@ -1093,21 +1059,15 @@ else
     fi
 fi
 
-# Test dashboard service
-echo -e "${GREEN}[INFO] Testing dashboard service...${NC}"
-if curl -k -s https://localhost/ > /dev/null 2>&1; then
-    echo -e "${TICK} Dashboard service is responding"
-else
-    echo -e "${ORANGE}[WARNING] Dashboard service may not be ready yet${NC}"
-fi
-
 # Final Summary
 echo -e "\n${GREEN}[INFO] OWL Setup Summary:${NC}"
 echo -e "$STATUS_PACKAGES System Packages"
 echo -e "$STATUS_MQTT_BROKER MQTT Configuration"
 echo -e "$STATUS_WIFI_CONFIG Network Configuration"
+echo -e "$STATUS_HOSTNAME Hostname Configuration"
 echo -e "$STATUS_UFW_CONFIG UFW Firewall Configuration"
 echo -e "$STATUS_FAN_PERMISSIONS Fan Control Permissions"
+echo -e "$STATUS_SERVICE_PERMISSIONS Service Control Permissions"
 echo -e "$STATUS_NGINX_CONFIG Nginx Configuration"
 echo -e "$STATUS_SSL_CERT SSL Certificate Generation"
 echo -e "$STATUS_AVAHI_CONFIG Avahi Service Configuration"
@@ -1167,7 +1127,7 @@ else
     fi
 fi
 
-if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "$STATUS_WIFI_CONFIG" == "${TICK}" && "$STATUS_UFW_CONFIG" == "${TICK}" && "$STATUS_NGINX_CONFIG" == "${TICK}" && "$STATUS_SSL_CERT" == "${TICK}" && "$STATUS_AVAHI_CONFIG" == "${TICK}" && "$STATUS_SERVICES" == "${TICK}" && "$STATUS_FAN_PERMISSIONS" == "${TICK}" ]]; then
+if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "$STATUS_WIFI_CONFIG" == "${TICK}" && "$STATUS_HOSTNAME" == "${TICK}" && "$STATUS_UFW_CONFIG" == "${TICK}" && "$STATUS_NGINX_CONFIG" == "${TICK}" && "$STATUS_SSL_CERT" == "${TICK}" && "$STATUS_AVAHI_CONFIG" == "${TICK}" && "$STATUS_SERVICES" == "${TICK}" && "$STATUS_FAN_PERMISSIONS" == "${TICK}" && "$STATUS_SERVICE_PERMISSIONS" == "${TICK}" && "$STATUS_OWL_CONFIG" == "${TICK}" ]]; then
     echo -e "\n${GREEN}[COMPLETE] OWL setup completed successfully!${NC}"
 
     echo -e "\n${GREEN}[INFO] Setup Complete - Reboot Recommended${NC}"
@@ -1207,6 +1167,7 @@ else
     if [[ -n "$ERROR_PACKAGES" ]]; then echo -e "${RED}[ERROR] Packages: $ERROR_PACKAGES${NC}"; fi
     if [[ -n "$ERROR_MQTT_BROKER" ]]; then echo -e "${RED}[ERROR] MQTT Broker: $ERROR_MQTT_BROKER${NC}"; fi
     if [[ -n "$ERROR_WIFI_CONFIG" ]]; then echo -e "${RED}[ERROR] WiFi Config: $ERROR_WIFI_CONFIG${NC}"; fi
+    if [[ -n "$ERROR_HOSTNAME" ]]; then echo -e "${RED}[ERROR] Hostname: $ERROR_HOSTNAME${NC}"; fi
     if [[ -n "$ERROR_UFW_CONFIG" ]]; then echo -e "${RED}[ERROR] UFW Config: $ERROR_UFW_CONFIG${NC}"; fi
     if [[ -n "$ERROR_FAN_PERMISSIONS" ]]; then echo -e "${RED}[ERROR] Fan Permissions: $ERROR_FAN_PERMISSIONS${NC}"; fi
     if [[ -n "$ERROR_SERVICE_PERMISSIONS" ]]; then echo -e "${RED}[ERROR] OWL Service Permissions: $ERROR_SERVICE_PERMISSIONS${NC}"; fi

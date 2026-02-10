@@ -186,6 +186,32 @@ read_password_masked() {
     REPLY="$password"
 }
 
+_validate_ip() {
+  local ip="$1"
+  # Basic format check
+  if ! [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    return 1
+  fi
+  # Octet range check 0..255
+  IFS='.' read -r a b c d <<<"$ip"
+  for o in "$a" "$b" "$c" "$d"; do
+    if (( o < 0 || o > 255 )); then
+      return 1
+    fi
+  done
+  return 0
+}
+
+_ip_base() {  # first three octets
+  IFS='.' read -r a b c _ <<<"$1"
+  echo "${a}.${b}.${c}"
+}
+
+_last_octet() {
+  IFS='.' read -r _ _ _ d <<<"$1"
+  echo "$d"
+}
+
 # Collect user input
 collect_user_input() {
     echo -e "${GREEN}[INFO] Controller Configuration${NC}"
@@ -215,12 +241,45 @@ collect_user_input() {
         break
     done
 
-    # Network Configuration
-    read -p "Enter controller static IP (default: 192.168.1.2): " STATIC_IP
-    STATIC_IP=${STATIC_IP:-192.168.1.2}
+    # Network Configuration (with validation)
+    while :; do
+        # Static IP
+        read -r -p "Enter controller static IP (default: 192.168.1.2): " STATIC_IP
+        STATIC_IP=${STATIC_IP:-192.168.1.2}
+        while ! _validate_ip "$STATIC_IP"; do
+          echo -e "${RED}[ERROR] Invalid IP format. Please enter a valid IPv4 address.${NC}"
+          read -r -p "Enter controller static IP (default: 192.168.1.2): " STATIC_IP
+          STATIC_IP=${STATIC_IP:-192.168.1.2}
+        done
+        # Avoid .0/.255 for the host
+        lo="$(_last_octet "$STATIC_IP")"
+        if [[ "$lo" == "0" || "$lo" == "255" ]]; then
+          echo -e "${ORANGE}[WARN] Host octet .0 or .255 is usually reserved. Choose another IP.${NC}"
+          continue
+        fi
 
-    read -p "Enter router/gateway IP (default: 192.168.1.1): " GATEWAY_IP
-    GATEWAY_IP=${GATEWAY_IP:-192.168.1.1}
+        # Gateway
+        read -r -p "Enter router/gateway IP (default: 192.168.1.1): " GATEWAY_IP
+        GATEWAY_IP=${GATEWAY_IP:-192.168.1.1}
+        while ! _validate_ip "$GATEWAY_IP"; do
+          echo -e "${RED}[ERROR] Invalid gateway IP.${NC}"
+          read -r -p "Enter router/gateway IP (default: 192.168.1.1): " GATEWAY_IP
+          GATEWAY_IP=${GATEWAY_IP:-192.168.1.1}
+        done
+
+        # Subnet consistency check
+        STATIC_BASE="$(_ip_base "$STATIC_IP")"
+        GATE_BASE="$(_ip_base "$GATEWAY_IP")"
+
+        if [[ "$STATIC_BASE" != "$GATE_BASE" ]]; then
+          echo -e "${ORANGE}[WARN] Controller IP base (${STATIC_BASE}.x) differs from Gateway base (${GATE_BASE}.x).${NC}"
+          echo -e "${ORANGE}[WARN] Please re-enter so they share the same subnet.${NC}"
+          continue
+        fi
+
+        echo -e "${GREEN}[OK] Network OK: Controller ${STATIC_IP}, Gateway ${GATEWAY_IP} (base ${STATIC_BASE}.x).${NC}"
+        break
+    done
 
     read -p "Enter hostname (default: owl-controller): " HOSTNAME
     HOSTNAME=${HOSTNAME:-owl-controller}
@@ -228,6 +287,41 @@ collect_user_input() {
     # Kiosk Mode
     read -p "Enable kiosk mode on boot? (y/n, default: y): " KIOSK_MODE
     KIOSK_MODE=${KIOSK_MODE:-y}
+
+    # Screen resolution (for kiosk display)
+    SCREEN_WIDTH=1280
+    SCREEN_HEIGHT=720
+
+    if [[ "$KIOSK_MODE" =~ ^[Yy]$ ]]; then
+        echo ""
+        echo -e "${GREEN}[INFO] Select display resolution (for kiosk/touchscreen):${NC}"
+        echo "  1) 1280x720  (7\" default)"
+        echo "  2) 1024x600  (7\" alternative)"
+        echo "  3) 1920x1080 (Full HD)"
+        echo "  4) Custom"
+        echo ""
+
+        while true; do
+            read -p "Select resolution (1-4, default 1): " res_choice
+            res_choice=${res_choice:-1}
+            case "$res_choice" in
+                1) SCREEN_WIDTH=1280; SCREEN_HEIGHT=720; break ;;
+                2) SCREEN_WIDTH=1024; SCREEN_HEIGHT=600; break ;;
+                3) SCREEN_WIDTH=1920; SCREEN_HEIGHT=1080; break ;;
+                4)
+                    read -p "Enter width (e.g. 1280): " SCREEN_WIDTH
+                    read -p "Enter height (e.g. 720): " SCREEN_HEIGHT
+                    if [[ "$SCREEN_WIDTH" =~ ^[0-9]+$ ]] && [[ "$SCREEN_HEIGHT" =~ ^[0-9]+$ ]]; then
+                        break
+                    else
+                        echo -e "${RED}[ERROR] Invalid dimensions. Enter numbers only.${NC}"
+                    fi
+                    ;;
+                *) echo -e "${RED}[ERROR] Invalid selection.${NC}" ;;
+            esac
+        done
+        echo -e "${GREEN}[INFO] Screen resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}${NC}"
+    fi
 
     # Display Summary
     echo -e ""
@@ -239,6 +333,9 @@ collect_user_input() {
     echo -e "Gateway: ${GATEWAY_IP}"
     echo -e "Hostname: ${HOSTNAME}"
     echo -e "Kiosk Mode: ${KIOSK_MODE}"
+    if [[ "$KIOSK_MODE" =~ ^[Yy]$ ]]; then
+        echo -e "Screen Resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}"
+    fi
     echo -e ""
     echo -e "Access Information:"
     echo -e "  Dashboard: https://${HOSTNAME}.local/ or https://${STATIC_IP}/"
@@ -612,6 +709,8 @@ Static IP: ${STATIC_IP}
 Gateway: ${GATEWAY_IP}
 WiFi SSID: ${WIFI_SSID}
 WiFi Password: [HIDDEN]
+Kiosk Mode: ${KIOSK_MODE}
+Screen Resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}
 
 Access URLs:
 - Dashboard: https://${HOSTNAME}.local/ or https://${STATIC_IP}/
