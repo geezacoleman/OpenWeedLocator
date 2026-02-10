@@ -398,6 +398,7 @@ class Owl:
         self.inference_resolution = self.config.getint('GreenOnGreen', 'inference_resolution', fallback=320)
         self.crop_buffer_px = self.config.getint('GreenOnGreen', 'crop_buffer_px', fallback=20)
         self._pending_algorithm = None
+        self._pending_trackbar_updates = {}
 
         # Crop factors to reduce edge artifacts (0.1 = 10% crop from each side)
         self.crop_factor_horizontal = self.config.getfloat('Camera', 'crop_factor_horizontal', fallback=0.1)
@@ -518,6 +519,13 @@ class Owl:
                         self.logger.info("[INFO] Frame is None. Stopped.")
                         self.stop()
                         break
+
+                # Drain queued trackbar updates from MQTT thread (thread-safe)
+                if self.show_display and self._pending_trackbar_updates:
+                    pending = self._pending_trackbar_updates
+                    self._pending_trackbar_updates = {}
+                    for tb_name, tb_val in pending.items():
+                        cv2.setTrackbarPos(tb_name, self.window_name, tb_val)
 
                 # retrieve the trackbar positions for thresholds
                 if self.show_display:

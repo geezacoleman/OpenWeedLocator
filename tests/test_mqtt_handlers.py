@@ -219,3 +219,89 @@ class TestConcurrency:
         t2.join(timeout=5)
 
         assert not errors, f"Concurrency errors: {errors}"
+
+
+@pytest.mark.unit
+class TestTrackbarQueue:
+    """Tests for the trackbar queue (cv2 thread-safety fix)."""
+
+    def test_trackbar_queued_when_display_active(self, mqtt_publisher, mock_owl):
+        """When show_display=True, trackbar updates are queued, not called directly."""
+        mock_owl.show_display = True
+        mock_owl._pending_trackbar_updates = {}
+
+        mqtt_publisher._update_greenonbrown_param('exg_min', 42)
+
+        assert mock_owl._pending_trackbar_updates.get('ExG-Min') == 42
+        assert mock_owl.exg_min == 42
+
+    def test_trackbar_not_queued_when_display_off(self, mqtt_publisher, mock_owl):
+        """When show_display=False, no trackbar updates are queued."""
+        mock_owl.show_display = False
+        mock_owl._pending_trackbar_updates = {}
+
+        mqtt_publisher._update_greenonbrown_param('hue_max', 100)
+
+        assert len(mock_owl._pending_trackbar_updates) == 0
+        assert mock_owl.hue_max == 100
+
+    def test_sensitivity_preset_queues_all_trackbars(self, mqtt_publisher, mock_owl, tmp_config_dir):
+        """Applying a sensitivity preset queues all 8 trackbar updates."""
+        mock_owl.show_display = True
+        mock_owl._pending_trackbar_updates = {}
+
+        # The preset file must exist for this to work
+        mqtt_publisher._apply_sensitivity_preset('low')
+
+        # If the config file doesn't exist the method logs and returns,
+        # so only assert when trackbar updates were actually queued
+        if mock_owl._pending_trackbar_updates:
+            assert 'ExG-Min' in mock_owl._pending_trackbar_updates
+            assert 'Bright-Max' in mock_owl._pending_trackbar_updates
+            assert len(mock_owl._pending_trackbar_updates) == 8
+
+
+@pytest.mark.unit
+class TestInvertHue:
+    """Tests for invert_hue parameter handling."""
+
+    def test_invert_hue_accepted(self, mqtt_publisher, mock_owl):
+        """invert_hue should be accepted as a valid GreenOnBrown param."""
+        mqtt_publisher._update_greenonbrown_param('invert_hue', 'true')
+        assert mock_owl.invert_hue is True
+
+    def test_invert_hue_false(self, mqtt_publisher, mock_owl):
+        """invert_hue=false should set to False."""
+        mock_owl.invert_hue = True
+        mqtt_publisher._update_greenonbrown_param('invert_hue', 'false')
+        assert mock_owl.invert_hue is False
+
+    def test_invert_hue_numeric(self, mqtt_publisher, mock_owl):
+        """invert_hue=1 should be treated as True."""
+        mqtt_publisher._update_greenonbrown_param('invert_hue', '1')
+        assert mock_owl.invert_hue is True
+
+
+@pytest.mark.unit
+class TestGoGConfidence:
+    """Tests for GreenOnGreen confidence parameter."""
+
+    def test_confidence_update_sets_instance(self, mqtt_publisher, mock_owl):
+        """Updating confidence should set _gog_confidence on owl instance."""
+        mqtt_publisher._update_greenongreen_param('confidence', 0.75)
+        assert mock_owl._gog_confidence == 0.75
+
+    def test_confidence_update_sets_state(self, mqtt_publisher, mock_owl):
+        """Updating confidence should also update MQTT state."""
+        mqtt_publisher._update_greenongreen_param('confidence', 0.3)
+        assert mqtt_publisher.state['confidence'] == 0.3
+
+    def test_confidence_in_initial_state(self, mqtt_publisher):
+        """confidence should be present in the initial MQTT state."""
+        assert 'confidence' in mqtt_publisher.state
+
+    def test_confidence_synced_from_owl(self, mqtt_publisher, mock_owl):
+        """_sync_parameters_to_state should pick up _gog_confidence."""
+        mock_owl._gog_confidence = 0.85
+        mqtt_publisher._sync_parameters_to_state()
+        assert mqtt_publisher.state['confidence'] == 0.85

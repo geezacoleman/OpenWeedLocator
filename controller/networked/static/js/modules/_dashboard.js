@@ -17,13 +17,20 @@ function syncConfigFromOWLState(owlState) {
     var synced = false;
     var params = ['exg_min', 'exg_max', 'hue_min', 'hue_max',
                   'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
-                  'min_detection_area', 'crop_buffer_px'];
+                  'min_detection_area', 'crop_buffer_px', 'confidence'];
 
     for (var i = 0; i < params.length; i++) {
         var key = params[i];
         if (key in configParams && typeof owlState[key] !== 'undefined') {
             var newVal = Number(owlState[key]);
-            if (!isNaN(newVal) && configParams[key].value !== newVal) {
+            if (isNaN(newVal)) continue;
+
+            // Confidence comes from OWL as float 0.0-1.0, convert to pct 0-100
+            if (key === 'confidence') {
+                newVal = Math.round(newVal * 100);
+            }
+
+            if (configParams[key].value !== newVal) {
                 configParams[key].value = newVal;
                 synced = true;
             }

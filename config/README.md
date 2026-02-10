@@ -207,7 +207,7 @@ cp config/CONTROLLER_TEMPLATE.ini config/CONTROLLER.ini
 | `[MQTT]` | Enable/disable MQTT, broker address, device ID |
 | `[Network]` | Operation mode (`standalone` or `networked`), IP addresses |
 | `[WebDashboard]` | Flask dashboard port |
-| `[GPS]` | GPS source type and serial port settings |
+| `[GPS]` | GPS source, serial settings, networked GPS server config |
 
 ## How the two files work together
 
@@ -246,6 +246,106 @@ Each OWL connects to the network as a client with a static IP and publishes its 
 1. **On the central controller Pi:** Run `controller/networked/in-cab_controller_setup.sh`. This installs the MQTT broker, the networked dashboard, configures WiFi, and optionally sets up kiosk mode for a touchscreen.
 
 2. **On each OWL Pi:** Run `owl_setup.sh`, select "yes" to dashboard, then select "Networked" mode. Enter the central controller's IP when prompted. The setup script configures WiFi as a client, writes `CONTROLLER.ini` with `mode = networked` and the broker IP pointing to the controller.
+
+## GPS Setup
+
+OWL supports GPS tracking via a Teltonika RUTX14 (or similar) industrial router that pushes NMEA sentences over TCP. GPS data is used for:
+
+- Live speed, heading, and satellite display on the GPS tab
+- Session statistics: distance travelled, time active, area covered (hectares)
+- GeoJSON track recording saved to disk for each detection session
+
+### How it works
+
+The **central controller** (networked mode) runs a TCP server that listens for NMEA connections. The Teltonika router connects to this server and pushes standard NMEA sentences (`$GPRMC`, `$GPGGA`, `$GPVTG`, `$GPGSV`). The GPS Manager parses these, updates the live GPS state, and feeds the session tracker and track recorder.
+
+```
+Teltonika RUTX14          Central Controller (Pi)           Browser
+    GPS antenna               GPSManager                    GPS Tab
+        |                         |                            |
+        +--- NMEA over TCP ------>| port 8500                  |
+                                  |  parse NMEA                |
+                                  |  update GPSState           |
+                                  |  update SessionStats       |
+                                  |  write GeoJSON track       |
+                                  |                            |
+                                  +--- /api/gps (JSON) ------->|
+                                                               | speed, heading
+                                                               | satellites, area
+```
+
+Sessions auto-start when any OWL begins detection and auto-stop when all OWLs stop.
+
+### Step 1: Configure CONTROLLER.ini on the central controller
+
+Edit `config/CONTROLLER.ini` on the Pi running the networked controller:
+
+```ini
+[GPS]
+# Enable the GPS TCP server
+enable = True
+
+# TCP port to listen on (must match Teltonika config)
+nmea_port = 8500
+
+# Spray boom width in metres (for area calculation)
+boom_width = 12.0
+
+# Directory for GeoJSON track files
+track_save_directory = tracks
+```
+
+The `source`, `port`, and `baudrate` keys are only used by owl.py for serial GPS modules -- they are ignored by the networked controller.
+
+### Step 2: Configure the Teltonika RUTX14
+
+On the Teltonika router's web interface (typically `192.168.1.1`):
+
+1. **Services > GPS > General**: Enable GPS
+2. **Services > GPS > NMEA Forwarding**:
+   - Enable NMEA forwarding
+   - Protocol: **TCP**
+   - Hostname/IP: the central controller's IP address (e.g. `192.168.1.2`)
+   - Port: **8500** (must match `nmea_port` in CONTROLLER.ini)
+   - NMEA sentences: enable at minimum **GGA** and **RMC**. Also enable **VTG** (speed) and **GSV** (satellites) for full data.
+
+### Step 3: Firewall
+
+The setup script (`controller/shared/setup.sh`) automatically opens port 8500 in UFW:
+
+```bash
+sudo ufw allow 8500/tcp
+```
+
+If you didn't use the setup script, add this rule manually.
+
+### Step 4: Verify
+
+1. Restart the networked controller: `sudo systemctl restart owl-controller.service` (or run `python controller/networked/networked.py` manually)
+2. Check the logs for: `GPS Manager started on port 8500` and `GPS client connected from ...`
+3. Open the GPS tab in the browser -- it should show satellite count, speed, and heading once the Teltonika gets a GPS fix
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| GPS tab shows "DISCONNECTED" | GPSManager not started | Check `enable = True` in `[GPS]` section of CONTROLLER.ini |
+| GPSManager started but no client connects | Teltonika can't reach the controller | Verify network connectivity: `ping <controller-ip>` from Teltonika. Check UFW: `sudo ufw status` should show 8500/tcp ALLOW |
+| Client connects but no fix data | Teltonika GPS has no satellite lock | Check the Teltonika GPS status page. Move to a location with sky visibility. First fix can take several minutes |
+| Speed shows 0 but position is valid | VTG sentence not enabled on Teltonika | Enable VTG in Teltonika NMEA forwarding settings |
+| Track files are empty | Session never started | Detection must be enabled on at least one OWL. Sessions auto-start/stop with detection |
+
+### GPS config reference
+
+| Key | Used by | Default | Description |
+|-----|---------|---------|-------------|
+| `source` | owl.py | `none` | GPS source for individual OWL (`none`/`serial`/`tcp`) |
+| `port` | owl.py | `/dev/ttyUSB0` | Serial port (when `source = serial`) |
+| `baudrate` | owl.py | `9600` | Serial baud rate (when `source = serial`) |
+| `enable` | networked controller | `False` | Start GPS TCP server on the central controller |
+| `nmea_port` | networked controller | `8500` | TCP port for NMEA connections |
+| `boom_width` | networked controller | `12.0` | Boom width in metres for area calculation |
+| `track_save_directory` | networked controller | `tracks` | Directory for GeoJSON track files |
 
 ## Custom presets saved from the dashboard
 

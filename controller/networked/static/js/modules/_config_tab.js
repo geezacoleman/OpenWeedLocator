@@ -260,6 +260,9 @@ function sendConfigUpdate(param, value) {
     // Crop buffer uses dedicated MQTT command (not set_greenonbrown_param)
     if (param === 'crop_buffer_px') {
         sendCommand(target, 'set_crop_buffer', value);
+    } else if (param === 'confidence') {
+        // Convert percentage (0-100) to float (0.0-1.0) for OWL
+        sendCommand(target, 'set_greenongreen_param', { key: 'confidence', value: value / 100 });
     } else {
         sendCommand(target, 'set_config', { key: param, value: value });
     }
@@ -363,20 +366,24 @@ function toggleAdvancedSettings() {
 // ============================================
 
 function updateSliderVisibility(algorithm) {
-    var gobSliders = document.querySelectorAll('.config-slider-group:not(#crop-buffer-slider-group)');
+    var gobSliders = document.querySelectorAll('.config-slider-group:not(#crop-buffer-slider-group):not(#confidence-slider-group)');
     var bufferSlider = document.getElementById('crop-buffer-slider-group');
+    var confidenceSlider = document.getElementById('confidence-slider-group');
 
     if (algorithm === 'gog') {
-        // Pure AI: hide all sliders
+        // Pure AI: hide GoB sliders, show confidence only
         gobSliders.forEach(function(el) { el.style.display = 'none'; });
         if (bufferSlider) bufferSlider.style.display = 'none';
+        if (confidenceSlider) confidenceSlider.style.display = '';
     } else if (algorithm === 'gog-hybrid') {
-        // Hybrid: show GoB sliders + buffer slider
+        // Hybrid: show GoB sliders + buffer + confidence
         gobSliders.forEach(function(el) { el.style.display = ''; });
         if (bufferSlider) bufferSlider.style.display = '';
+        if (confidenceSlider) confidenceSlider.style.display = '';
     } else {
-        // Colour: show GoB sliders, hide buffer
+        // Colour: show GoB sliders, hide buffer and confidence
         gobSliders.forEach(function(el) { el.style.display = ''; });
         if (bufferSlider) bufferSlider.style.display = 'none';
+        if (confidenceSlider) confidenceSlider.style.display = 'none';
     }
 }

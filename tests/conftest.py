@@ -143,6 +143,15 @@ def mock_owl(tmp_config_dir):
     owl.crop_buffer_px = 20
     owl.inference_resolution = 320
 
+    # Display and trackbar queue
+    owl.show_display = False
+    owl._pending_trackbar_updates = {}
+
+    # Additional detection params
+    owl.min_detection_area = 10
+    owl.invert_hue = False
+    owl._gog_confidence = 0.5
+
     return owl
 
 

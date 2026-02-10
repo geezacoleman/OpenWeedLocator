@@ -250,6 +250,27 @@
                             </div>
                         </div>
 
+                        <!-- AI Confidence (single, gog/hybrid only) -->
+                        <div class="config-slider-group" id="confidence-slider-group" style="display:none;">
+                            <div class="slider-header">
+                                <span class="slider-title">AI Confidence</span>
+                                <span class="slider-values">
+                                    <span class="slider-val" id="confidence-value">--</span>
+                                    <span class="slider-val-unit">%</span>
+                                </span>
+                            </div>
+                            <div class="single-slider" data-param="confidence">
+                                <div class="slider-rail">
+                                    <div class="slider-track"><div class="slider-fill"></div></div>
+                                    <div class="slider-knob active" data-param="confidence" id="confidence-knob"></div>
+                                </div>
+                            </div>
+                            <div class="slider-fine-tune">
+                                <button class="fine-btn" data-delta="-5">&minus;</button>
+                                <button class="fine-btn" data-delta="5">+</button>
+                            </div>
+                        </div>
+
                         <!-- Crop Buffer (single, hybrid mode only) -->
                         <div class="config-slider-group" id="crop-buffer-slider-group" style="display:none;">
                             <div class="slider-header">

@@ -9,7 +9,7 @@ import time
 import threading
 import logging
 import os
-import cv2
+import sys
 import configparser
 import socket
 
@@ -112,6 +112,8 @@ class OWLMQTTPublisher:
             'model_available': False,
             'crop_buffer_px': 20,
             'inference_resolution': 320,
+            # GreenOnGreen parameters
+            'confidence': 0.5,
             # GreenOnBrown parameters (will be populated on first update)
             'exg_min': None,
             'exg_max': None,
@@ -187,6 +189,9 @@ class OWLMQTTPublisher:
             self.state['brightness_max'] = self.owl_instance.brightness_max
             self.state['min_detection_area'] = getattr(
                 self.owl_instance, 'min_detection_area', 10)
+
+            self.state['confidence'] = getattr(
+                self.owl_instance, '_gog_confidence', 0.5)
 
             # Algorithm state
             self.state['algorithm'] = self.owl_instance.config.get(
@@ -308,7 +313,8 @@ class OWLMQTTPublisher:
                 self._handle_gps_update(payload)
 
         except Exception as e:
-            self.logger.error(f"Error processing MQTT message on topic {msg.topic}: {e}")
+            self.logger.error(f"Error processing MQTT message on topic {msg.topic}: {e}", exc_info=True)
+            print(f"[OWL MQTT ERROR] {msg.topic}: {e}", file=sys.stderr)
 
     def _handle_command(self, command):
         """Handle control commands from dashboard or central controller"""
@@ -587,16 +593,18 @@ class OWLMQTTPublisher:
             self.owl_instance.brightness_min = config.getint('GreenOnBrown', 'brightness_min')
             self.owl_instance.brightness_max = config.getint('GreenOnBrown', 'brightness_max')
 
-            # Update trackbars if display is active (same as AdvancedController)
+            # Queue trackbar updates for main thread (cv2 HighGUI is not thread-safe)
             if self.owl_instance.show_display:
-                cv2.setTrackbarPos("ExG-Min", self.owl_instance.window_name, self.owl_instance.exg_min)
-                cv2.setTrackbarPos("ExG-Max", self.owl_instance.window_name, self.owl_instance.exg_max)
-                cv2.setTrackbarPos("Hue-Min", self.owl_instance.window_name, self.owl_instance.hue_min)
-                cv2.setTrackbarPos("Hue-Max", self.owl_instance.window_name, self.owl_instance.hue_max)
-                cv2.setTrackbarPos("Sat-Min", self.owl_instance.window_name, self.owl_instance.saturation_min)
-                cv2.setTrackbarPos("Sat-Max", self.owl_instance.window_name, self.owl_instance.saturation_max)
-                cv2.setTrackbarPos("Bright-Min", self.owl_instance.window_name, self.owl_instance.brightness_min)
-                cv2.setTrackbarPos("Bright-Max", self.owl_instance.window_name, self.owl_instance.brightness_max)
+                self.owl_instance._pending_trackbar_updates.update({
+                    'ExG-Min': self.owl_instance.exg_min,
+                    'ExG-Max': self.owl_instance.exg_max,
+                    'Hue-Min': self.owl_instance.hue_min,
+                    'Hue-Max': self.owl_instance.hue_max,
+                    'Sat-Min': self.owl_instance.saturation_min,
+                    'Sat-Max': self.owl_instance.saturation_max,
+                    'Bright-Min': self.owl_instance.brightness_min,
+                    'Bright-Max': self.owl_instance.brightness_max,
+                })
 
             self.logger.info(f"Applied {preset} sensitivity preset from {config_file}")
 
@@ -619,7 +627,7 @@ class OWLMQTTPublisher:
         valid_params = [
             'exg_min', 'exg_max', 'hue_min', 'hue_max',
             'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
-            'min_detection_area'
+            'min_detection_area', 'invert_hue'
         ]
 
         if param_name not in valid_params:
@@ -627,13 +635,17 @@ class OWLMQTTPublisher:
             return
 
         try:
-            # Convert to int
-            param_value = int(param_value)
+            # Boolean params
+            if param_name == 'invert_hue':
+                param_value = str(param_value).lower() in ('true', '1', 'yes')
+            else:
+                # Convert to int
+                param_value = int(param_value)
 
             # Update the Owl instance attribute directly
             setattr(self.owl_instance, param_name, param_value)
 
-            # Update trackbar if display is active
+            # Queue trackbar update for main thread (cv2 HighGUI is not thread-safe)
             if self.owl_instance.show_display:
                 trackbar_map = {
                     'exg_min': 'ExG-Min',
@@ -647,7 +659,7 @@ class OWLMQTTPublisher:
                 }
                 trackbar_name = trackbar_map.get(param_name)
                 if trackbar_name:
-                    cv2.setTrackbarPos(trackbar_name, self.owl_instance.window_name, param_value)
+                    self.owl_instance._pending_trackbar_updates[trackbar_name] = param_value
 
             self.logger.info(f"Updated {param_name} = {param_value}")
 
@@ -681,6 +693,9 @@ class OWLMQTTPublisher:
                     self.logger.info(f"GreenOnGreen not active, storing config only")
                     if hasattr(self.owl_instance, 'config'):
                         self.owl_instance.config.set('GreenOnGreen', 'confidence', str(param_value))
+
+                with self.state_lock:
+                    self.state['confidence'] = param_value
             except Exception as e:
                 self.logger.error(f"Error updating GreenOnGreen confidence: {e}")
         else:

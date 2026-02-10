@@ -20,7 +20,8 @@ const configParams = {
     brightness_min: { value: 0, min: 0, max: 255 },
     brightness_max: { value: 0, min: 0, max: 255 },
     min_detection_area: { value: 0, min: 1, max: 1000 },
-    crop_buffer_px: { value: 20, min: 0, max: 50 }
+    crop_buffer_px: { value: 20, min: 0, max: 50 },
+    confidence: { value: 50, min: 5, max: 100 }
 };
 
 // Global detection state

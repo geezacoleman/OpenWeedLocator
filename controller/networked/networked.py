@@ -51,6 +51,7 @@ class CentralController:
 
         # State management
         self.owls_state = {}
+        self.desired_state = {}  # {device_id: {'detection_enable': bool, ...}}
         self.mqtt_connected = False
         self.mqtt_lock = threading.Lock()
 
@@ -164,6 +165,7 @@ class CentralController:
             current_time = time.time()
 
             # Update state
+            is_reconnect = False
             with self.mqtt_lock:
                 if device_id not in self.owls_state:
                     self.owls_state[device_id] = {
@@ -172,7 +174,12 @@ class CentralController:
                         'last_seen': current_time,
                         'connected': True
                     }
+                    is_reconnect = True
                     logger.info(f"New OWL discovered: {device_id}")
+                else:
+                    was_connected = self.owls_state[device_id].get('connected', False)
+                    if not was_connected:
+                        is_reconnect = True
 
                 # Merge payload into state
                 if topic_type == 'state':
@@ -190,6 +197,10 @@ class CentralController:
 
                 self.owls_state[device_id]['last_seen'] = current_time
                 self.owls_state[device_id]['connected'] = True
+
+            # Push desired state on reconnect (outside lock to avoid deadlock)
+            if is_reconnect:
+                self._push_desired_state(device_id)
 
             logger.debug(f"Updated {device_id} ({topic_type})")
 
@@ -236,6 +247,27 @@ class CentralController:
             self.gps_manager.start_session()
         elif not any_detecting and self.gps_manager.session_active:
             self.gps_manager.stop_session()
+
+    def _push_desired_state(self, device_id):
+        """Push stored desired state to a (re)connected OWL device."""
+        # Merge 'all' defaults with device-specific overrides
+        merged = {}
+        merged.update(self.desired_state.get('all', {}))
+        merged.update(self.desired_state.get(device_id, {}))
+
+        if not merged:
+            return
+
+        topic = f"owl/{device_id}/commands"
+        if 'detection_enable' in merged:
+            payload = json.dumps({'action': 'set_detection_enable', 'value': merged['detection_enable']})
+            self.mqtt_client.publish(topic, payload)
+            logger.info(f"Pushed detection_enable={merged['detection_enable']} to {device_id}")
+
+        if 'image_sample_enable' in merged:
+            payload = json.dumps({'action': 'set_image_sample_enable', 'value': merged['image_sample_enable']})
+            self.mqtt_client.publish(topic, payload)
+            logger.info(f"Pushed image_sample_enable={merged['image_sample_enable']} to {device_id}")
 
     def get_owls(self):
         """Get current state of all OWLs"""
@@ -351,16 +383,28 @@ class CentralController:
         if action == 'toggle_detection':
             if device_id != 'all':
                 current = self.owls_state.get(device_id, {}).get('detection_enable', False)
-                payload = {'action': 'set_detection_enable', 'value': not current}
+                new_val = not current
+                payload = {'action': 'set_detection_enable', 'value': new_val}
+                self.desired_state.setdefault(device_id, {})['detection_enable'] = new_val
             else:
                 payload = {'action': 'set_detection_enable', 'value': value}
+                self.desired_state.setdefault('all', {})['detection_enable'] = value
+                with self.mqtt_lock:
+                    for oid in self.owls_state:
+                        self.desired_state.setdefault(oid, {})['detection_enable'] = value
 
         elif action == 'toggle_recording':
             if device_id != 'all':
                 current = self.owls_state.get(device_id, {}).get('image_sample_enable', False)
-                payload = {'action': 'set_image_sample_enable', 'value': not current}
+                new_val = not current
+                payload = {'action': 'set_image_sample_enable', 'value': new_val}
+                self.desired_state.setdefault(device_id, {})['image_sample_enable'] = new_val
             else:
                 payload = {'action': 'set_image_sample_enable', 'value': value}
+                self.desired_state.setdefault('all', {})['image_sample_enable'] = value
+                with self.mqtt_lock:
+                    for oid in self.owls_state:
+                        self.desired_state.setdefault(oid, {})['image_sample_enable'] = value
 
         elif action == 'set_sensitivity':
             payload = {'action': 'set_sensitivity_level', 'level': value}
@@ -370,6 +414,13 @@ class CentralController:
                 'action': 'set_greenonbrown_param',
                 'param': value.get('key'),
                 'value': value.get('value')
+            }
+
+        elif action == 'set_greenongreen_param':
+            payload = {
+                'action': 'set_config_section',
+                'section': 'GreenOnGreen',
+                'params': {value.get('key'): str(value.get('value'))}
             }
 
         elif action == 'set_config_section':
