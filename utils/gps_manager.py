@@ -287,8 +287,8 @@ class GPSState:
                 self.longitude = data['lon']
                 self.fix_valid = True
                 self.last_fix_time = time.time()
-            else:
-                self.fix_valid = False
+            # Don't clear fix_valid here — a GGA fix may still be valid.
+            # The 10s staleness check in get_dict() handles true fix loss.
 
             if data.get('speed_knots') is not None:
                 self.speed_kmh = data['speed_knots'] * KNOTS_TO_KMH
