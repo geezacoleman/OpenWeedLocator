@@ -374,6 +374,141 @@ class TestZoneActuation:
         assert np.count_nonzero(mask[:, 300:640]) == 0
 
 
+class TestHybridMode:
+    """Test hybrid pipeline: YOLO crop mask + ExHSV weed detection."""
+
+    @patch('utils.greenongreen.YOLO')
+    @patch('utils.greenonbrown.GreenOnBrown')
+    def test_hybrid_init_creates_gob(self, mock_gob_cls, mock_yolo_cls, tmp_path):
+        """hybrid_mode=True creates internal GreenOnBrown."""
+        (tmp_path / 'model.pt').touch()
+        mock_yolo_cls.return_value = make_mock_yolo()
+
+        from utils.greenongreen import GreenOnGreen
+        gog = GreenOnGreen(model_path=str(tmp_path), hybrid_mode=True)
+
+        assert gog.hybrid_mode is True
+        assert gog._gob is not None
+        mock_gob_cls.assert_called_once_with(algorithm='exhsv')
+
+    @patch('utils.greenongreen.YOLO')
+    @patch('utils.greenonbrown.GreenOnBrown')
+    def test_hybrid_returns_standard_tuple(self, mock_gob_cls, mock_yolo_cls, tmp_path):
+        """Hybrid inference returns 4-element tuple (contours, boxes, centres, image)."""
+        (tmp_path / 'model.pt').touch()
+        mock_yolo_cls.return_value = make_mock_yolo(task='detect')
+
+        # Mock GreenOnBrown.inference to return a weed detection
+        mock_gob = MagicMock()
+        mock_gob.inference.return_value = (
+            None,                                   # contours
+            [[300, 200, 40, 40]],                   # boxes (outside crop zone)
+            [[320, 220]],                           # centres
+            np.zeros((480, 640, 3), dtype=np.uint8) # image
+        )
+        mock_gob_cls.return_value = mock_gob
+
+        from utils.greenongreen import GreenOnGreen
+        gog = GreenOnGreen(model_path=str(tmp_path), hybrid_mode=True)
+
+        image = np.zeros((480, 640, 3), dtype=np.uint8)
+        result = gog.inference(image)
+
+        assert len(result) == 4
+        contours, boxes, weed_centres, image_out = result
+
+    @patch('utils.greenongreen.YOLO')
+    @patch('utils.greenonbrown.GreenOnBrown')
+    def test_hybrid_filters_crop_detections(self, mock_gob_cls, mock_yolo_cls, tmp_path):
+        """Weeds whose centre falls in crop mask area are removed."""
+        (tmp_path / 'model.pt').touch()
+
+        # YOLO detects crop at (100,50)-(200,150)
+        mock_yolo_cls.return_value = make_mock_yolo(task='detect')
+
+        # GoB finds two weeds: one IN crop zone, one OUTSIDE
+        mock_gob = MagicMock()
+        mock_gob.inference.return_value = (
+            None,
+            [[150, 100, 20, 20], [400, 300, 20, 20]],  # boxes
+            [[160, 110], [410, 310]],                     # centres (first in crop, second outside)
+            np.zeros((480, 640, 3), dtype=np.uint8)
+        )
+        mock_gob_cls.return_value = mock_gob
+
+        from utils.greenongreen import GreenOnGreen
+        gog = GreenOnGreen(model_path=str(tmp_path), hybrid_mode=True, crop_buffer_px=0)
+
+        image = np.zeros((480, 640, 3), dtype=np.uint8)
+        _, boxes, centres, _ = gog.inference(image)
+
+        # Only the weed outside the crop zone should remain
+        assert len(boxes) == 1
+        assert centres[0] == [410, 310]
+
+    @patch('utils.greenongreen.YOLO')
+    def test_dilate_kernel_precomputed(self, mock_yolo_cls, tmp_path):
+        """Kernel shape = (2*px+1, 2*px+1)."""
+        (tmp_path / 'model.pt').touch()
+        mock_yolo_cls.return_value = make_mock_yolo()
+
+        from utils.greenongreen import GreenOnGreen
+        gog = GreenOnGreen(model_path=str(tmp_path), hybrid_mode=True, crop_buffer_px=15)
+
+        assert gog._dilate_kernel is not None
+        assert gog._dilate_kernel.shape == (31, 31)
+
+    @patch('utils.greenongreen.YOLO')
+    def test_zero_buffer_no_kernel(self, mock_yolo_cls, tmp_path):
+        """buffer=0 -> kernel is None."""
+        (tmp_path / 'model.pt').touch()
+        mock_yolo_cls.return_value = make_mock_yolo()
+
+        from utils.greenongreen import GreenOnGreen
+        gog = GreenOnGreen(model_path=str(tmp_path), hybrid_mode=True, crop_buffer_px=0)
+
+        assert gog._dilate_kernel is None
+
+    @patch('utils.greenongreen.YOLO')
+    def test_set_crop_buffer_rebuilds_kernel(self, mock_yolo_cls, tmp_path):
+        """set_crop_buffer only rebuilds when value changes."""
+        (tmp_path / 'model.pt').touch()
+        mock_yolo_cls.return_value = make_mock_yolo()
+
+        from utils.greenongreen import GreenOnGreen
+        gog = GreenOnGreen(model_path=str(tmp_path), hybrid_mode=True, crop_buffer_px=10)
+
+        old_kernel = gog._dilate_kernel
+        gog.set_crop_buffer(10)  # Same value, no rebuild
+        assert gog._dilate_kernel is old_kernel
+
+        gog.set_crop_buffer(25)  # Different value, rebuild
+        assert gog._dilate_kernel is not old_kernel
+        assert gog._dilate_kernel.shape == (51, 51)
+
+    @patch('utils.greenongreen.YOLO')
+    @patch('utils.greenonbrown.GreenOnBrown')
+    def test_hybrid_show_display_overlay(self, mock_gob_cls, mock_yolo_cls, tmp_path):
+        """show_display in hybrid mode returns annotated copy."""
+        (tmp_path / 'model.pt').touch()
+        mock_yolo_cls.return_value = make_mock_yolo(task='detect')
+
+        mock_gob = MagicMock()
+        mock_gob.inference.return_value = (
+            None, [], [], np.zeros((480, 640, 3), dtype=np.uint8)
+        )
+        mock_gob_cls.return_value = mock_gob
+
+        from utils.greenongreen import GreenOnGreen
+        gog = GreenOnGreen(model_path=str(tmp_path), hybrid_mode=True)
+
+        image = np.zeros((480, 640, 3), dtype=np.uint8)
+        _, _, _, image_out = gog.inference(image, show_display=True)
+
+        # Returns a copy, not original
+        assert image_out is not image
+
+
 class TestConfigIntegration:
     """Test that updated config files are valid."""
 

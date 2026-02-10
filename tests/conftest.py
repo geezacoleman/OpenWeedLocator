@@ -74,6 +74,8 @@ confidence = 0.5
 detect_classes =
 actuation_mode = centre
 min_detection_pixels = 50
+inference_resolution = 320
+crop_buffer_px = 20
 
 [GreenOnBrown]
 exg_min = 25
@@ -135,6 +137,11 @@ def mock_owl(tmp_config_dir):
     owl.saturation_max = 220
     owl.brightness_min = 60
     owl.brightness_max = 190
+
+    # Algorithm and hybrid params
+    owl._pending_algorithm = None
+    owl.crop_buffer_px = 20
+    owl.inference_resolution = 320
 
     return owl
 

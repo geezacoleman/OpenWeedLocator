@@ -41,7 +41,7 @@ Defaults shown are from `DAY_SENSITIVITY_2.ini` (the medium sensitivity preset).
 
 | Key | Default | Range / Valid values | Description |
 |-----|---------|---------------------|-------------|
-| `algorithm` | `exhsv` | `exg`, `exgr`, `maxg`, `nexg`, `exhsv`, `hsv`, `gndvi`, `gog` | Detection algorithm (see table below) |
+| `algorithm` | `exhsv` | `exg`, `exgr`, `maxg`, `nexg`, `exhsv`, `hsv`, `gndvi`, `gog`, `gog-hybrid` | Detection algorithm (see table below) |
 | `input_file_or_directory` | *(empty)* | File or directory path | Path to video, image, or directory for offline processing. Leave empty for live camera |
 | `relay_num` | `4` | 0+ (integer) | Number of relays connected to the OWL. Must match entries in `[Relays]` |
 | `actuation_duration` | `0.15` | Seconds (float) | How long each relay stays on when a weed is detected |
@@ -59,8 +59,9 @@ Defaults shown are from `DAY_SENSITIVITY_2.ini` (the medium sensitivity preset).
 | `hsv` | HSV thresholding | Hue/Saturation/Value range filter | Fast, but sensitive to lighting changes |
 | `gndvi` | Green NDVI | (NIR - green) / (NIR + green) | **Requires NIR camera.** Not for standard setups |
 | `gog` | Green-on-Green | Ultralytics YOLO object detection | For in-crop weed detection. Requires a trained model (see `[GreenOnGreen]`) |
+| `gog-hybrid` | AI + Colour | YOLO crop mask + ExHSV colour detection | Uses YOLO to identify crop regions, then runs ExHSV on non-crop areas. Best of both worlds for in-crop scenarios |
 
-All algorithms except `gog` and `hsv` use the `[GreenOnBrown]` thresholds. The `hsv` algorithm uses only the HSV thresholds (hue, saturation, brightness). The `gog` algorithm ignores `[GreenOnBrown]` entirely and uses `[GreenOnGreen]` settings instead.
+All algorithms except `gog`, `gog-hybrid`, and `hsv` use the `[GreenOnBrown]` thresholds. The `hsv` algorithm uses only the HSV thresholds (hue, saturation, brightness). The `gog` algorithm ignores `[GreenOnBrown]` entirely and uses `[GreenOnGreen]` settings instead. The `gog-hybrid` algorithm uses both `[GreenOnGreen]` (for YOLO crop detection) and `[GreenOnBrown]` (for ExHSV weed detection in non-crop areas).
 
 ### `[Camera]`
 
@@ -95,7 +96,7 @@ Used by all algorithms except `gog`. The ExG thresholds are used by `exg`, `exgr
 
 ### `[GreenOnGreen]`
 
-Used only when `algorithm = gog`. Green-on-Green detection uses [Ultralytics YOLO](https://docs.ultralytics.com/) for object detection or instance segmentation, allowing OWL to identify weeds growing within a crop (where colour-based methods can't distinguish weed from crop).
+Used when `algorithm = gog` or `algorithm = gog-hybrid`. Green-on-Green detection uses [Ultralytics YOLO](https://docs.ultralytics.com/) for object detection or instance segmentation. In `gog` mode, YOLO detects weeds directly. In `gog-hybrid` mode, YOLO identifies crop regions, which are masked out before running ExHSV colour detection on the remaining (non-crop) areas -- this combines AI crop recognition with colour-based weed detection for in-crop scenarios.
 
 **Model format:** NCNN is the recommended format for Raspberry Pi -- it runs fastest on ARM CPUs. PyTorch (.pt) models also work but are slower. To convert a model to NCNN, use `yolo export model=your_model.pt format=ncnn`.
 
@@ -108,6 +109,8 @@ Used only when `algorithm = gog`. Green-on-Green detection uses [Ultralytics YOL
 | `detect_classes` | *(empty)* | Comma-separated class names | Filter detections to specific classes. Empty = detect all classes the model knows |
 | `actuation_mode` | `centre` | `centre`, `zone` | How detections trigger relays (see below) |
 | `min_detection_pixels` | `50` | 1+ (integer) | Minimum weed pixels in a relay lane to trigger actuation. Only used in `zone` mode |
+| `inference_resolution` | `320` | 160--1280 (integer) | YOLO input resolution for `gog-hybrid` mode. Lower = faster inference, higher = better crop detection. Only used in hybrid mode |
+| `crop_buffer_px` | `20` | 0--50 (integer) | Dilation buffer in pixels around detected crop regions in `gog-hybrid` mode. Larger buffer = more area masked as crop (fewer false positives on crop edges). Only used in hybrid mode |
 
 **Actuation modes:**
 

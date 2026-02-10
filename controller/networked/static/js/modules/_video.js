@@ -75,3 +75,29 @@ function downloadVideoFrame() {
         showToast('Failed to download image', 'error');
     }
 }
+
+// ============================================
+// FRAME GRAB VIEWER
+// ============================================
+
+function grabFrame(deviceId) {
+    var img = document.getElementById('frame-viewer-img');
+    var title = document.getElementById('frame-viewer-title');
+    var modal = document.getElementById('frame-viewer-modal');
+
+    if (!img || !modal) return;
+
+    // Fetch single high-quality frame via snapshot proxy
+    img.src = '/api/snapshot/' + deviceId + '?t=' + Date.now();
+
+    if (title) title.textContent = deviceId;
+    modal.style.display = 'flex';
+}
+
+function closeFrameViewer() {
+    var modal = document.getElementById('frame-viewer-modal');
+    var img = document.getElementById('frame-viewer-img');
+
+    if (modal) modal.style.display = 'none';
+    if (img) img.src = '';
+}

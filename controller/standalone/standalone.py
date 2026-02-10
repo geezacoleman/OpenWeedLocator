@@ -406,18 +406,34 @@ class OWLDashboard:
 
             stats = self.get_system_stats()
 
+            # Add fields only available via MQTT that aren't in get_system_stats()
+            # Note: owl_running is intentionally NOT overridden here — the systemd
+            # value from get_system_stats() is the ground truth. The MQTT heartbeat
+            # value can lag behind on startup/shutdown.
             stats.update({
-                'detection_enable': mqtt_state.get('detection_enable', False),
-                'image_sample_enable': mqtt_state.get('image_sample_enable', False),
-                'sensitivity_level': mqtt_state.get('sensitivity_level', 'high'),
                 'detection_mode': mqtt_state.get('detection_mode', 1),  # 0=spot, 1=off, 2=blanket
-                'owl_running': mqtt_state.get('owl_running', False),
-                'stream_active': mqtt_state.get('stream_active', False),
-                'weed_detect_indicator': self.mqtt_client.get_weed_detect_indicator() if self.mqtt_client else False,
-                'image_write_indicator': self.mqtt_client.get_image_write_indicator() if self.mqtt_client else False
+                'algorithm': mqtt_state.get('algorithm', 'exhsv'),
+                'model_available': mqtt_state.get('model_available', False)
             })
 
             return jsonify(stats)
+
+        @self.app.route('/api/algorithm/set', methods=['POST'])
+        def set_algorithm():
+            """Set detection algorithm via MQTT command."""
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            try:
+                data = request.get_json() or {}
+                algorithm = data.get('algorithm', '').lower()
+                valid = {'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'gog', 'gog-hybrid'}
+                if algorithm not in valid:
+                    return jsonify({'success': False, 'error': f'Invalid algorithm: {algorithm}'}), 400
+                result = self.mqtt_client._send_command('set_algorithm', value=algorithm)
+                return jsonify(result)
+            except Exception as e:
+                self.logger.error(f"Error setting algorithm: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
 
         @self.app.route('/api/download_frame', methods=['POST'])
         def download_frame():

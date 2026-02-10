@@ -43,6 +43,13 @@
             </button>
         </div>
 
+        <!-- Pipeline Mode Selector -->
+        <div class="mode-selector" id="pipeline-mode-selector">
+            <button class="mode-btn active" data-mode="gob" onclick="setPipelineMode('gob')">COLOUR</button>
+            <button class="mode-btn" data-mode="gog" onclick="setPipelineMode('gog')">AI</button>
+            <button class="mode-btn" data-mode="hybrid" onclick="setPipelineMode('hybrid')">HYBRID</button>
+        </div>
+
         <!-- OWL Units Grid -->
         <div class="owls-container" id="owls-grid">
             <div class="empty-state">
@@ -242,6 +249,27 @@
                                 <button class="fine-btn" data-delta="1">+</button>
                             </div>
                         </div>
+
+                        <!-- Crop Buffer (single, hybrid mode only) -->
+                        <div class="config-slider-group" id="crop-buffer-slider-group" style="display:none;">
+                            <div class="slider-header">
+                                <span class="slider-title">Crop Buffer</span>
+                                <span class="slider-values">
+                                    <span class="slider-val" id="crop_buffer_px-value">20</span>
+                                    <span class="slider-val-unit">px</span>
+                                </span>
+                            </div>
+                            <div class="single-slider" data-param="crop_buffer_px">
+                                <div class="slider-rail">
+                                    <div class="slider-track"><div class="slider-fill"></div></div>
+                                    <div class="slider-knob active" data-param="crop_buffer_px" id="crop_buffer_px-knob"></div>
+                                </div>
+                            </div>
+                            <div class="slider-fine-tune">
+                                <button class="fine-btn" data-delta="-1">&minus;</button>
+                                <button class="fine-btn" data-delta="1">+</button>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Advanced Settings (collapsible full config editor) -->
@@ -320,6 +348,17 @@
             <button class="config-action-btn secondary" onclick="closeSaveAsModal()">CANCEL</button>
             <button class="config-action-btn primary" id="save-as-confirm-btn" onclick="confirmSaveAs()">SAVE</button>
         </div>
+    </div>
+</div>
+
+<!-- Frame Viewer Modal (grab frame for inspection) -->
+<div id="frame-viewer-modal" class="frame-viewer-modal" style="display:none">
+    <div class="frame-viewer-header">
+        <span id="frame-viewer-title">--</span>
+        <button class="frame-viewer-close" onclick="closeFrameViewer()">X</button>
+    </div>
+    <div class="frame-viewer-body">
+        <img id="frame-viewer-img" src="" alt="Grabbed frame" />
     </div>
 </div>
 

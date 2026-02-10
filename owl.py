@@ -394,6 +394,11 @@ class Owl:
         # to be updated too. Fairly straightforward, so an opportunity for more precise application
         self.relay_num = self.config.getint('System', 'relay_num')
 
+        # GreenOnGreen / hybrid config
+        self.inference_resolution = self.config.getint('GreenOnGreen', 'inference_resolution', fallback=320)
+        self.crop_buffer_px = self.config.getint('GreenOnGreen', 'crop_buffer_px', fallback=20)
+        self._pending_algorithm = None
+
         # Crop factors to reduce edge artifacts (0.1 = 10% crop from each side)
         self.crop_factor_horizontal = self.config.getfloat('Camera', 'crop_factor_horizontal', fallback=0.1)
         self.crop_factor_vertical = self.config.getfloat('Camera', 'crop_factor_vertical', fallback=0.1)
@@ -445,27 +450,43 @@ class Owl:
         if log_fps:
             fps = FPS().start()
 
-        try:
-            if algorithm == 'gog':
-                from utils.greenongreen import GreenOnGreen
-                model_path = self.config.get('GreenOnGreen', 'model_path')
-                self._gog_confidence = self.config.getfloat('GreenOnGreen', 'confidence')
-                detect_classes_str = self.config.get('GreenOnGreen', 'detect_classes', fallback='')
-                detect_classes = [c.strip() for c in detect_classes_str.split(',') if c.strip()] or None
-                actuation_mode = self.config.get('GreenOnGreen', 'actuation_mode', fallback='centre')
-                min_detection_pixels = self.config.getint('GreenOnGreen', 'min_detection_pixels', fallback=50)
+        # GoG shared config (used by both gog and gog-hybrid)
+        model_path = self.config.get('GreenOnGreen', 'model_path')
+        self._gog_confidence = self.config.getfloat('GreenOnGreen', 'confidence')
+        detect_classes_str = self.config.get('GreenOnGreen', 'detect_classes', fallback='')
+        detect_classes = [c.strip() for c in detect_classes_str.split(',') if c.strip()] or None
+        actuation_mode = self.config.get('GreenOnGreen', 'actuation_mode', fallback='centre')
+        min_detection_pixels = self.config.getint('GreenOnGreen', 'min_detection_pixels', fallback=50)
 
-                weed_detector = GreenOnGreen(
+        # GoB shared config (used by both colour and gog-hybrid)
+        # Instance attributes so MQTT can update them live
+        self.min_detection_area = self.config.getint('GreenOnBrown', 'min_detection_area')
+        self.invert_hue = self.config.getboolean('GreenOnBrown', 'invert_hue')
+
+        def _create_detector(algo):
+            """Three-way detector factory."""
+            if algo == 'gog':
+                from utils.greenongreen import GreenOnGreen
+                return GreenOnGreen(
                     model_path=model_path,
                     confidence=self._gog_confidence,
                     detect_classes=detect_classes
                 )
-
+            elif algo == 'gog-hybrid':
+                from utils.greenongreen import GreenOnGreen
+                return GreenOnGreen(
+                    model_path=model_path,
+                    confidence=self._gog_confidence,
+                    detect_classes=detect_classes,
+                    hybrid_mode=True,
+                    inference_resolution=self.inference_resolution,
+                    crop_buffer_px=self.crop_buffer_px
+                )
             else:
-                min_detection_area = self.config.getint('GreenOnBrown', 'min_detection_area')
-                invert_hue = self.config.getboolean('GreenOnBrown', 'invert_hue')
+                return GreenOnBrown(algorithm=algo)
 
-                weed_detector = GreenOnBrown(algorithm=algorithm)
+        try:
+            weed_detector = _create_detector(algorithm)
 
         except (ModuleNotFoundError, IndexError, FileNotFoundError, ValueError) as e:
             algo_error = errors.AlgorithmError(algorithm, e)
@@ -511,6 +532,26 @@ class Owl:
 
                 # pass image, thresholds to green_on_brown function
                 if self._detection_enable:
+                    # Live algorithm switching
+                    if self._pending_algorithm and self._pending_algorithm != algorithm:
+                        try:
+                            weed_detector = _create_detector(self._pending_algorithm)
+                            algorithm = self._pending_algorithm
+                            self.logger.info(f"Live algorithm switch to: {algorithm}")
+                        except Exception as e:
+                            self.logger.error(f"Failed to load detector for {self._pending_algorithm}: {e}")
+                            # Revert — keep using current weed_detector and algorithm
+                            if self.dash:
+                                self.dash.state['algorithm'] = algorithm
+                                self.dash.state['algorithm_error'] = str(e)
+                        self._pending_algorithm = None
+
+                    # Live crop buffer update (hybrid mode only)
+                    if (algorithm == 'gog-hybrid'
+                            and hasattr(weed_detector, 'set_crop_buffer')
+                            and weed_detector.crop_buffer_px != self.crop_buffer_px):
+                        weed_detector.set_crop_buffer(self.crop_buffer_px)
+
                     cropped_frame = frame[self.crop_slice]
 
                     return_image_out = self.show_display or bool(self.dash)
@@ -521,6 +562,17 @@ class Owl:
                             confidence=self._gog_confidence,
                             show_display=return_image_out,
                             build_mask=(actuation_mode == 'zone')
+                        )
+                    elif algorithm == 'gog-hybrid':
+                        cnts, boxes, weed_centres, image_out = weed_detector.inference(
+                            cropped_frame,
+                            confidence=self._gog_confidence,
+                            show_display=return_image_out,
+                            exg_min=self.exg_min, exg_max=self.exg_max,
+                            hue_min=self.hue_min, hue_max=self.hue_max,
+                            saturation_min=self.saturation_min, saturation_max=self.saturation_max,
+                            brightness_min=self.brightness_min, brightness_max=self.brightness_max,
+                            min_detection_area=self.min_detection_area, invert_hue=self.invert_hue
                         )
                     else:
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
@@ -535,8 +587,8 @@ class Owl:
                             brightness_max=self.brightness_max,
                             show_display=return_image_out,
                             algorithm=algorithm,
-                            min_detection_area=min_detection_area,
-                            invert_hue=invert_hue,
+                            min_detection_area=self.min_detection_area,
+                            invert_hue=self.invert_hue,
                             label='WEED'
                         )
 
@@ -546,8 +598,8 @@ class Owl:
                         if self.controller:
                             self.controller.weed_detect_indicator()
 
-                    # Zone-based actuation (segmentation models with gog)
-                    if (algorithm == 'gog'
+                    # Zone-based actuation (segmentation models with gog/gog-hybrid)
+                    if (algorithm.startswith('gog')
                             and actuation_mode == 'zone'
                             and hasattr(weed_detector, 'detection_mask')
                             and weed_detector.detection_mask is not None):

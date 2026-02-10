@@ -83,6 +83,14 @@ function updateSystemStats() {
 
             // Update hardware lock UI based on controller status
             updateHardwareLockUI();
+
+            // Pipeline mode selector
+            if (typeof updatePipelineModeUI === 'function' && data.algorithm) {
+                updatePipelineModeUI(data.algorithm);
+            }
+            if (typeof updateModeAvailability === 'function') {
+                updateModeAvailability(!!data.model_available);
+            }
         })
         .catch(err => {
             // Silent fail for stats polling

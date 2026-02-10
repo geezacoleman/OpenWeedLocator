@@ -125,6 +125,49 @@ class TestSaveConfig:
 
 
 @pytest.mark.unit
+class TestSetAlgorithm:
+    """Tests for set_algorithm command handler."""
+
+    def test_set_algorithm_updates_state(self, mqtt_publisher, mock_owl):
+        """set_algorithm updates state and owl instance."""
+        mqtt_publisher._handle_command({'action': 'set_algorithm', 'value': 'gog-hybrid'})
+
+        assert mqtt_publisher.state['algorithm'] == 'gog-hybrid'
+        assert mock_owl._pending_algorithm == 'gog-hybrid'
+
+    def test_set_algorithm_invalid_rejected(self, mqtt_publisher, mock_owl):
+        """Invalid algorithm value is rejected, state unchanged."""
+        mqtt_publisher.state['algorithm'] = 'exhsv'
+        mqtt_publisher._handle_command({'action': 'set_algorithm', 'value': 'invalid_algo'})
+
+        assert mqtt_publisher.state['algorithm'] == 'exhsv'
+
+    def test_algorithm_in_state(self, mqtt_publisher):
+        """algorithm is published in MQTT state dict."""
+        assert 'algorithm' in mqtt_publisher.state
+
+
+@pytest.mark.unit
+class TestSetCropBuffer:
+    """Tests for set_crop_buffer command handler."""
+
+    def test_set_crop_buffer_updates_state(self, mqtt_publisher, mock_owl):
+        """set_crop_buffer updates state and owl instance, clamped to 0-50."""
+        mqtt_publisher._handle_command({'action': 'set_crop_buffer', 'value': 35})
+
+        assert mqtt_publisher.state['crop_buffer_px'] == 35
+        assert mock_owl.crop_buffer_px == 35
+
+    def test_set_crop_buffer_clamped(self, mqtt_publisher, mock_owl):
+        """Values outside 0-50 are clamped."""
+        mqtt_publisher._handle_command({'action': 'set_crop_buffer', 'value': 100})
+        assert mqtt_publisher.state['crop_buffer_px'] == 50
+
+        mqtt_publisher._handle_command({'action': 'set_crop_buffer', 'value': -10})
+        assert mqtt_publisher.state['crop_buffer_px'] == 0
+
+
+@pytest.mark.unit
 class TestSetActiveConfig:
     """Tests for _handle_set_active_config handler."""
 

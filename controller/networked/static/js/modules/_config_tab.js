@@ -256,7 +256,13 @@ function updateAllSliders() {
 function sendConfigUpdate(param, value) {
     var sel = document.getElementById('config-editor-device');
     var target = sel ? sel.value : 'all';
-    sendCommand(target, 'set_config', { key: param, value: value });
+
+    // Crop buffer uses dedicated MQTT command (not set_greenonbrown_param)
+    if (param === 'crop_buffer_px') {
+        sendCommand(target, 'set_crop_buffer', value);
+    } else {
+        sendCommand(target, 'set_config', { key: param, value: value });
+    }
 }
 
 function applyConfigToAll() {
@@ -350,4 +356,27 @@ function toggleAdvancedSettings() {
 
     var isOpen = toggle.classList.toggle('open');
     body.classList.toggle('open', isOpen);
+}
+
+// ============================================
+// SLIDER VISIBILITY BY MODE
+// ============================================
+
+function updateSliderVisibility(algorithm) {
+    var gobSliders = document.querySelectorAll('.config-slider-group:not(#crop-buffer-slider-group)');
+    var bufferSlider = document.getElementById('crop-buffer-slider-group');
+
+    if (algorithm === 'gog') {
+        // Pure AI: hide all sliders
+        gobSliders.forEach(function(el) { el.style.display = 'none'; });
+        if (bufferSlider) bufferSlider.style.display = 'none';
+    } else if (algorithm === 'gog-hybrid') {
+        // Hybrid: show GoB sliders + buffer slider
+        gobSliders.forEach(function(el) { el.style.display = ''; });
+        if (bufferSlider) bufferSlider.style.display = '';
+    } else {
+        // Colour: show GoB sliders, hide buffer
+        gobSliders.forEach(function(el) { el.style.display = ''; });
+        if (bufferSlider) bufferSlider.style.display = 'none';
+    }
 }

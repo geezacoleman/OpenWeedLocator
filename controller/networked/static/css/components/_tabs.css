@@ -1,32 +1,38 @@
 /* ==========================================================================
    OWL Controller (Networked) - Tab Bar
-   View toggle tab bar (OWL / GPS), view panels
+   Page-style tabs: active tab lifts, inactive tabs clearly visible
    ========================================================================== */
 
 .view-toggle {
     display: flex;
-    background: var(--dark);
-    border-bottom: 2px solid #2c3e50;
+    background: #dde2e8;
+    padding: 0.4rem 0.75rem 0;
+    gap: 2px;
 }
 
 .view-tab {
-    flex: 1;
-    padding: 0.8rem 1rem;
+    flex: 0 1 auto;
+    padding: 0.6rem 2rem;
     border: none;
-    background: transparent;
-    color: #7f8c8d;
-    font-size: 1.1rem;
+    background: #c8ced6;
+    color: #5a6577;
+    font-size: 0.9rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 1px;
     cursor: pointer;
     transition: all var(--transition-normal);
-    border-bottom: 3px solid transparent;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+.view-tab:hover:not(.active) {
+    background: #d8dde3;
+    color: #3d4a5c;
 }
 
 .view-tab.active {
-    color: white;
-    border-bottom-color: var(--accent);
+    color: var(--primary);
+    background: var(--background);
 }
 
 .view-tab:active {
@@ -41,5 +47,5 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 2rem;
+    gap: 1.5rem;
 }

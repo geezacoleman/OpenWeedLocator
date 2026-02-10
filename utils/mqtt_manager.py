@@ -107,6 +107,11 @@ class OWLMQTTPublisher:
             'last_update': time.time(),
             'networked_mode': self.networked_mode,
             'broker_host': broker_host,
+            # Algorithm state
+            'algorithm': 'exhsv',
+            'model_available': False,
+            'crop_buffer_px': 20,
+            'inference_resolution': 320,
             # GreenOnBrown parameters (will be populated on first update)
             'exg_min': None,
             'exg_max': None,
@@ -167,7 +172,7 @@ class OWLMQTTPublisher:
         self._sync_parameters_to_state()
 
     def _sync_parameters_to_state(self):
-        """Sync current OWL GreenOnBrown parameters to MQTT state"""
+        """Sync current OWL parameters to MQTT state"""
         if self.owl_instance is None:
             return
 
@@ -180,6 +185,19 @@ class OWLMQTTPublisher:
             self.state['saturation_max'] = self.owl_instance.saturation_max
             self.state['brightness_min'] = self.owl_instance.brightness_min
             self.state['brightness_max'] = self.owl_instance.brightness_max
+            self.state['min_detection_area'] = getattr(
+                self.owl_instance, 'min_detection_area', 10)
+
+            # Algorithm state
+            self.state['algorithm'] = self.owl_instance.config.get(
+                'System', 'algorithm', fallback='exhsv')
+            self.state['crop_buffer_px'] = getattr(
+                self.owl_instance, 'crop_buffer_px', 20)
+            self.state['inference_resolution'] = getattr(
+                self.owl_instance, 'inference_resolution', 320)
+
+            # Check model availability (any NCNN dirs or .pt files in models/)
+            self.state['model_available'] = self._check_model_available()
 
     def start(self):
         """Start the MQTT IPC server"""
@@ -329,6 +347,27 @@ class OWLMQTTPublisher:
                     self.logger.info(f"Updating GreenOnBrown parameter: {param_name} = {param_value}")
                     self._update_greenonbrown_param(param_name, param_value)
 
+            elif action == 'set_algorithm':
+                value = command.get('value', '').lower()
+                valid = {'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'gog', 'gog-hybrid'}
+                if value in valid:
+                    self.state['algorithm'] = value
+                    if self.owl_instance:
+                        self.owl_instance._pending_algorithm = value
+                    self.logger.info(f"Algorithm set to: {value}")
+                else:
+                    self.logger.error(f"Invalid algorithm: {value}")
+
+            elif action == 'set_crop_buffer':
+                try:
+                    value = max(0, min(50, int(command.get('value', 20))))
+                    self.state['crop_buffer_px'] = value
+                    if self.owl_instance:
+                        self.owl_instance.crop_buffer_px = value
+                    self.logger.info(f"Crop buffer set to: {value}px")
+                except (ValueError, TypeError) as e:
+                    self.logger.error(f"Invalid crop_buffer value: {e}")
+
             elif action == 'get_config':
                 self._handle_get_config()
 
@@ -403,10 +442,25 @@ class OWLMQTTPublisher:
                     self._update_greenonbrown_param(key, value)
                 elif section == 'GreenOnGreen':
                     self._update_greenongreen_param(key, value)
+                elif section == 'System' and key == 'algorithm':
+                    # Route algorithm changes through set_algorithm handler
+                    self._handle_command({'action': 'set_algorithm', 'value': value})
                 elif hasattr(self.owl_instance, key):
-                    # Try to set attribute directly on owl instance
-                    setattr(self.owl_instance, key, value)
-                    self.logger.info(f"Set {section}.{key} = {value} on live instance")
+                    # Type-convert to match existing attribute type (INI values are strings)
+                    current = getattr(self.owl_instance, key)
+                    try:
+                        if isinstance(current, bool):
+                            typed = str(value).lower() in ('true', '1', 'yes')
+                        elif isinstance(current, int):
+                            typed = int(float(value))
+                        elif isinstance(current, float):
+                            typed = float(value)
+                        else:
+                            typed = value
+                        setattr(self.owl_instance, key, typed)
+                        self.logger.info(f"Set {section}.{key} = {typed} on live instance")
+                    except (ValueError, TypeError) as e:
+                        self.logger.warning(f"Cannot convert {section}.{key}={value}: {e}")
 
                 # Also update the config object for persistence
                 with self.config_lock:
@@ -564,7 +618,8 @@ class OWLMQTTPublisher:
         # Validate parameter name
         valid_params = [
             'exg_min', 'exg_max', 'hue_min', 'hue_max',
-            'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max'
+            'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
+            'min_detection_area'
         ]
 
         if param_name not in valid_params:
@@ -631,6 +686,25 @@ class OWLMQTTPublisher:
         else:
             # Other params (model_path, detect_classes, actuation_mode) require restart
             self.logger.info(f"GreenOnGreen.{param_name} updated in config (restart required)")
+
+    def _check_model_available(self):
+        """Check if any YOLO model is available in the models/ directory."""
+        try:
+            models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')
+            if not os.path.isdir(models_dir):
+                return False
+            # Check for NCNN subdirs (have .param files) or .pt files
+            for item in os.listdir(models_dir):
+                item_path = os.path.join(models_dir, item)
+                if item.endswith('.pt'):
+                    return True
+                if os.path.isdir(item_path):
+                    for f in os.listdir(item_path):
+                        if f.endswith('.param'):
+                            return True
+            return False
+        except Exception:
+            return False
 
     def _handle_gps_update(self, gps_data):
         """Handle GPS updates from dashboard or central controller"""

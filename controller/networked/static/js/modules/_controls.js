@@ -71,3 +71,83 @@ async function restartOWL(deviceId) {
         btn.textContent = 'RESTART';
     }, 10000);
 }
+
+// ============================================
+// PIPELINE MODE SELECTOR
+// ============================================
+
+// Remember GoB algorithm when switching modes
+let lastGoBAlgorithm = 'exhsv';
+let pendingMode = null;
+
+function setPipelineMode(mode) {
+    var btn = document.querySelector('.mode-btn[data-mode="' + mode + '"]');
+    if (!btn || btn.classList.contains('disabled') || btn.classList.contains('loading')) return;
+
+    // Map mode to algorithm value
+    var algorithm;
+    if (mode === 'gob') {
+        algorithm = lastGoBAlgorithm;
+    } else if (mode === 'gog') {
+        algorithm = 'gog';
+    } else if (mode === 'hybrid') {
+        algorithm = 'gog-hybrid';
+    } else {
+        return;
+    }
+
+    // Show loading state
+    pendingMode = mode;
+    btn.classList.add('loading');
+
+    // Send command to all OWLs
+    sendCommand('all', 'set_algorithm', algorithm);
+}
+
+function updatePipelineModeUI(algorithm) {
+    var mode;
+    if (algorithm === 'gog') {
+        mode = 'gog';
+    } else if (algorithm === 'gog-hybrid') {
+        mode = 'hybrid';
+    } else {
+        mode = 'gob';
+        // Remember the GoB algorithm for switching back
+        if (algorithm) lastGoBAlgorithm = algorithm;
+    }
+
+    // Update button states
+    document.querySelectorAll('.mode-btn').forEach(function(btn) {
+        btn.classList.remove('active', 'loading');
+        if (btn.dataset.mode === mode) {
+            btn.classList.add('active');
+        }
+    });
+
+    pendingMode = null;
+
+    // Update slider visibility
+    if (typeof updateSliderVisibility === 'function') {
+        updateSliderVisibility(algorithm);
+    }
+}
+
+function updateModeAvailability(modelAvailable) {
+    var gogBtn = document.querySelector('.mode-btn[data-mode="gog"]');
+    var hybridBtn = document.querySelector('.mode-btn[data-mode="hybrid"]');
+
+    if (gogBtn) {
+        if (modelAvailable) {
+            gogBtn.classList.remove('disabled');
+        } else {
+            gogBtn.classList.add('disabled');
+        }
+    }
+    if (hybridBtn) {
+        if (modelAvailable) {
+            hybridBtn.classList.remove('disabled');
+        } else {
+            hybridBtn.classList.add('disabled');
+        }
+    }
+}

@@ -94,6 +94,34 @@ class TestConfigFiles:
 
 
 @pytest.mark.unit
+class TestHybridConfigValidation:
+    """Validate hybrid detection config values."""
+
+    @pytest.mark.parametrize('ini_name', INI_FILES)
+    def test_new_gog_keys_in_presets(self, ini_name):
+        """inference_resolution and crop_buffer_px present in all presets."""
+        config = configparser.ConfigParser()
+        config.read(CONFIG_DIR / ini_name)
+
+        assert config.has_option('GreenOnGreen', 'inference_resolution'), \
+            f'{ini_name} missing inference_resolution'
+        assert config.has_option('GreenOnGreen', 'crop_buffer_px'), \
+            f'{ini_name} missing crop_buffer_px'
+
+        # Verify values are sensible
+        res = config.getint('GreenOnGreen', 'inference_resolution')
+        assert 160 <= res <= 1280, f'{ini_name} inference_resolution out of range: {res}'
+
+        buf = config.getint('GreenOnGreen', 'crop_buffer_px')
+        assert 0 <= buf <= 50, f'{ini_name} crop_buffer_px out of range: {buf}'
+
+    def test_gog_hybrid_valid_algorithm(self):
+        """gog-hybrid is accepted by ConfigValidator."""
+        from utils.config_manager import ConfigValidator
+        assert 'gog-hybrid' in ConfigValidator.VALID_ALGORITHMS
+
+
+@pytest.mark.unit
 class TestOwlConfigPath:
     """Verify the Owl class exposes config_path as a public property (BUG 1 fix)."""
 

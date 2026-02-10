@@ -761,6 +761,25 @@ def restart_owl(device_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/snapshot/<device_id>')
+def snapshot_proxy(device_id):
+    """Proxy single JPEG frame from OWL device (95% quality)."""
+    device_id = device_id.replace('_', '-')
+    snapshot_url = f"http://{device_id}.local:8001/latest_frame.jpg"
+    try:
+        r = requests.get(snapshot_url, timeout=5, verify=False)
+        if r.status_code != 200:
+            logger.error(f"Failed to get snapshot from {device_id} (Status: {r.status_code})")
+            return f"Error: Could not get snapshot from {device_id}.", 502
+        return Response(r.content, mimetype='image/jpeg')
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"Connection error getting snapshot from {device_id}: {e}")
+        return f"Error: {device_id} is offline or unreachable.", 502
+    except Exception as e:
+        logger.error(f"Error getting snapshot from {device_id}: {e}")
+        return f"Error: An unknown error occurred.", 500
+
+
 @app.route('/api/video_feed/<device_id>')
 def video_feed_proxy(device_id):
     """Proxies the MJPEG stream from an OWL, ignoring SSL errors."""

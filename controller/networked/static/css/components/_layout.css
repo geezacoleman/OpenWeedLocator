@@ -3,26 +3,21 @@
    Kiosk viewport, header, main container
    ========================================================================== */
 
-/* Kiosk Viewport Override
-   Uses viewport units for natural scaling across screen sizes.
-   The <meta viewport> tag sets the reference width for rendering. */
-
 html, body {
     width: 100vw;
     height: 100vh;
     overflow: hidden;
 }
 
-/* Header - kiosk-specific: gradient background, fixed height */
+/* Header */
 
 .header {
-    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+    background: var(--primary);
     color: white;
     padding: 0 1.5rem;
     display: flex;
     align-items: center;
-    box-shadow: var(--shadow-lg);
-    height: 60px;
+    height: 54px;
 }
 
 .header-content {
@@ -39,12 +34,12 @@ html, body {
 }
 
 .logo {
-    height: 36px;
+    height: 32px;
     width: auto;
 }
 
 .logo-section h1 {
-    font-size: 1.25rem;
+    font-size: 1.15rem;
     font-weight: 600;
     color: white;
     margin: 0;
@@ -54,13 +49,13 @@ html, body {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
 }
 
 /* Main Container */
 
 .main-container {
-    height: calc(100vh - 60px - 46px); /* header + tab bar */
+    height: calc(100vh - 54px - 46px); /* header + tab bar */
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -68,4 +63,5 @@ html, body {
     padding: 1rem 2rem;
     gap: 1rem;
     position: relative;
+    background: var(--background);
 }

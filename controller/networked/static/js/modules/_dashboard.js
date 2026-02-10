@@ -4,6 +4,38 @@
 // ============================================
 
 // ============================================
+// CONFIG SYNC FROM OWL STATE
+// ============================================
+
+/**
+ * Sync slider configParams from the OWL's published state.
+ * Called on each dashboard poll so sliders always match the device.
+ */
+function syncConfigFromOWLState(owlState) {
+    if (!owlState) return;
+
+    var synced = false;
+    var params = ['exg_min', 'exg_max', 'hue_min', 'hue_max',
+                  'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
+                  'min_detection_area', 'crop_buffer_px'];
+
+    for (var i = 0; i < params.length; i++) {
+        var key = params[i];
+        if (key in configParams && typeof owlState[key] !== 'undefined') {
+            var newVal = Number(owlState[key]);
+            if (!isNaN(newVal) && configParams[key].value !== newVal) {
+                configParams[key].value = newVal;
+                synced = true;
+            }
+        }
+    }
+
+    if (synced && typeof updateAllSliders === 'function') {
+        updateAllSliders();
+    }
+}
+
+// ============================================
 // CONFIG DEFAULTS LOADING
 // ============================================
 
@@ -73,6 +105,25 @@ async function updateDashboard() {
         // Update config editor device selector if it exists
         if (typeof updateConfigEditorDevices === 'function') {
             updateConfigEditorDevices();
+        }
+
+        // Sync pipeline mode from first connected OWL
+        var firstOwl = null;
+        for (var id in owlsData) {
+            if (owlsData[id] && owlsData[id].connected) {
+                firstOwl = owlsData[id];
+                break;
+            }
+        }
+        if (firstOwl) {
+            if (typeof updatePipelineModeUI === 'function' && firstOwl.algorithm) {
+                updatePipelineModeUI(firstOwl.algorithm);
+            }
+            if (typeof updateModeAvailability === 'function') {
+                updateModeAvailability(!!firstOwl.model_available);
+            }
+            // Sync slider values from OWL state so dashboard matches device
+            syncConfigFromOWLState(firstOwl);
         }
     } catch (err) {
         console.error('Dashboard update error:', err);
@@ -171,6 +222,9 @@ function buildOWLCard(deviceId, owl) {
             <div class="owl-actions">
                 <button class="owl-btn btn-video" onclick="openVideoFeed('${deviceId}')" ${disAttr}>
                     VIDEO
+                </button>
+                <button class="owl-btn btn-frame" onclick="grabFrame('${deviceId}')" ${disAttr}>
+                    GRAB FRAME
                 </button>
                 <button class="owl-btn btn-restart" onclick="restartOWL('${deviceId}')" ${disAttr}>
                     RESTART

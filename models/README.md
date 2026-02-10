@@ -39,6 +39,8 @@ YOLO supports two task types, both work with the OWL:
 - **Detection models** (`yolo11n.pt`) — output bounding boxes only. Use with `actuation_mode = centre`.
 - **Segmentation models** (`yolo11n-seg.pt`) — output bounding boxes + pixel masks. Use with `actuation_mode = centre` or `actuation_mode = zone`.
 
+Both model types also work with `gog-hybrid` mode. Segmentation models provide precise crop boundaries; detection models use filled bounding boxes as crop exclusion zones (coarser but functional). The buffer dilation smooths the edges either way.
+
 The task type is auto-detected from the model's `metadata.yaml`.
 
 ## Exporting to NCNN
@@ -83,9 +85,11 @@ confidence = 0.5                     # Detection threshold (0.0-1.0)
 detect_classes =                     # Comma-separated class names (empty = all)
 actuation_mode = centre              # 'centre' or 'zone'
 min_detection_pixels = 50            # Min pixels per lane for zone mode
+inference_resolution = 320           # YOLO input resolution for hybrid mode (160-1280)
+crop_buffer_px = 20                  # Buffer around crop regions in hybrid mode (0-50)
 ```
 
-Then set `algorithm = gog` in the `[System]` section.
+Then set `algorithm = gog` (pure AI detection) or `algorithm = gog-hybrid` (AI crop mask + colour weed detection) in the `[System]` section.
 
 ## Actuation Modes
 

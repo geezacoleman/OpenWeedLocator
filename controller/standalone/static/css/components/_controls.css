@@ -621,6 +621,76 @@
 }
 
 /* --------------------------------------------------------------------------
+   Pipeline Mode Selector
+   -------------------------------------------------------------------------- */
+
+.mode-selector {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-secondary, #1a1a2e);
+    border-radius: 12px;
+    padding: 4px;
+    margin: 0.75rem 0;
+}
+
+.mode-btn {
+    min-height: 48px;
+    min-width: 110px;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: transparent;
+    color: var(--text-secondary, #8892b0);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 0 1rem;
+}
+
+.mode-btn:active {
+    transform: scale(0.98);
+}
+
+.mode-btn.active {
+    background: linear-gradient(135deg, var(--accent) 0%, #2980b9 100%);
+    color: white;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.mode-btn.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.mode-btn.loading {
+    position: relative;
+    pointer-events: none;
+    color: transparent;
+}
+
+.mode-btn.loading::after {
+    content: '';
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    top: 50%;
+    left: 50%;
+    margin: -10px 0 0 -10px;
+    border: 3px solid rgba(255,255,255,0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: mode-spin 0.8s linear infinite;
+}
+
+@keyframes mode-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* --------------------------------------------------------------------------
    Controls - Responsive
    -------------------------------------------------------------------------- */
 @media (max-width: 768px) {

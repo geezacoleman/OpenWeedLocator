@@ -61,7 +61,8 @@ class ConfigValidator:
         },
         'GreenOnGreen': {
             'required_keys': {'model_path', 'confidence'},
-            'optional_keys': {'detect_classes', 'actuation_mode', 'min_detection_pixels'}
+            'optional_keys': {'detect_classes', 'actuation_mode', 'min_detection_pixels',
+                            'inference_resolution', 'crop_buffer_px'}
         },
         'GreenOnBrown': {
             'required_keys': {
@@ -96,11 +97,13 @@ class ConfigValidator:
         'resolution_width': ('int', 1, None),
         'resolution_height': ('int', 1, None),
         # Camera settings
-        'exp_compensation': ('float', -10, 10),
+        'exp_compensation': ('int', -10, 10),
         # Detection confidence
         'confidence': ('float', 0, 1),
         # GreenOnGreen
         'min_detection_pixels': ('int', 1, None),
+        'inference_resolution': ('int', 160, 1280),
+        'crop_buffer_px': ('int', 0, 50),
         # GPIO pins
         'switch_pin': ('pin', 1, 40),
         'detection_mode_pin_up': ('pin', 1, 40),
@@ -109,7 +112,7 @@ class ConfigValidator:
         'sensitivity_pin': ('pin', 1, 40),
     }
 
-    VALID_ALGORITHMS = {'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'gog'}
+    VALID_ALGORITHMS = {'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'gog', 'gog-hybrid'}
     VALID_CONTROLLER_TYPES = {'none', 'ute', 'advanced'}
     VALID_SWITCH_PURPOSES = {'recording', 'detection'}
     VALID_ACTUATION_MODES = {'centre', 'zone'}

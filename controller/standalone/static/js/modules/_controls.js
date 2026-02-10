@@ -460,3 +460,90 @@ function removeLockIcon(element) {
     const lockIcon = element.querySelector('.lock-icon');
     if (lockIcon) lockIcon.remove();
 }
+
+/* --------------------------------------------------------------------------
+   Pipeline Mode Selector
+   -------------------------------------------------------------------------- */
+
+let lastGoBAlgorithm = 'exhsv';
+let pendingMode = null;
+
+function setPipelineMode(mode) {
+    var btn = document.querySelector('.mode-btn[data-mode="' + mode + '"]');
+    if (!btn || btn.classList.contains('disabled') || btn.classList.contains('loading')) return;
+
+    var algorithm;
+    if (mode === 'gob') {
+        algorithm = lastGoBAlgorithm;
+    } else if (mode === 'gog') {
+        algorithm = 'gog';
+    } else if (mode === 'hybrid') {
+        algorithm = 'gog-hybrid';
+    } else {
+        return;
+    }
+
+    pendingMode = mode;
+    btn.classList.add('loading');
+
+    apiRequest('/api/algorithm/set', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ algorithm: algorithm })
+    })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Success', 'Algorithm set to ' + algorithm, 'success', 2000);
+            } else {
+                showNotification('Error', data.error || 'Failed to set algorithm', 'error');
+                btn.classList.remove('loading');
+                pendingMode = null;
+            }
+        })
+        .catch(err => {
+            showNotification('Error', err.message || 'Failed to set algorithm', 'error');
+            btn.classList.remove('loading');
+            pendingMode = null;
+        });
+}
+
+function updatePipelineModeUI(algorithm) {
+    var mode;
+    if (algorithm === 'gog') {
+        mode = 'gog';
+    } else if (algorithm === 'gog-hybrid') {
+        mode = 'hybrid';
+    } else {
+        mode = 'gob';
+        if (algorithm) lastGoBAlgorithm = algorithm;
+    }
+
+    document.querySelectorAll('.mode-btn').forEach(function(btn) {
+        btn.classList.remove('active', 'loading');
+        if (btn.dataset.mode === mode) {
+            btn.classList.add('active');
+        }
+    });
+    pendingMode = null;
+}
+
+function updateModeAvailability(modelAvailable) {
+    var gogBtn = document.querySelector('.mode-btn[data-mode="gog"]');
+    var hybridBtn = document.querySelector('.mode-btn[data-mode="hybrid"]');
+
+    if (gogBtn) {
+        if (modelAvailable) {
+            gogBtn.classList.remove('disabled');
+        } else {
+            gogBtn.classList.add('disabled');
+        }
+    }
+    if (hybridBtn) {
+        if (modelAvailable) {
+            hybridBtn.classList.remove('disabled');
+        } else {
+            hybridBtn.classList.add('disabled');
+        }
+    }
+}

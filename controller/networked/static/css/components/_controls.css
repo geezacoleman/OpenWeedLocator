@@ -1,6 +1,6 @@
 /* ==========================================================================
-   OWL Controller (Networked) - Giant Action Buttons
-   Kiosk-specific: extra large touch targets
+   OWL Controller (Networked) - Action Buttons & Mode Selector
+   Kiosk-specific: extra large touch targets, clean design
    ========================================================================== */
 
 .action-buttons {
@@ -11,15 +11,14 @@
 }
 
 .action-button {
-    width: 350px;
-    height: 90px;
+    width: 340px;
+    height: 80px;
     border: none;
-    border-radius: var(--radius-lg);
-    font-size: 1.6rem;
+    border-radius: var(--radius-md);
+    font-size: 1.5rem;
     font-weight: 700;
     cursor: pointer;
     transition: all var(--transition-normal);
-    box-shadow: var(--shadow-lg);
     text-transform: uppercase;
     letter-spacing: 1px;
     color: white;
@@ -27,20 +26,100 @@
 
 .action-button:active {
     transform: scale(0.98);
+    filter: brightness(0.95);
 }
 
 .action-button.btn-detection {
-    background: linear-gradient(135deg, var(--success) 0%, var(--success-dark) 100%);
+    background: #27ae60;
+    box-shadow: 0 3px 0 #1e8449, 0 4px 12px rgba(39, 174, 96, 0.25);
 }
 
 .action-button.btn-detection.off {
-    background: linear-gradient(135deg, var(--danger) 0%, var(--danger-dark) 100%);
+    background: #d63031;
+    box-shadow: 0 3px 0 #b71c1c, 0 4px 12px rgba(214, 48, 49, 0.25);
 }
 
 .action-button.btn-recording {
-    background: linear-gradient(135deg, #95a5a6 0%, #7f8c8d 100%);
+    background: #7f8fa6;
+    box-shadow: 0 3px 0 #6b7a8d, 0 4px 12px rgba(127, 143, 166, 0.25);
 }
 
 .action-button.btn-recording.active {
-    background: linear-gradient(135deg, var(--danger) 0%, var(--danger-dark) 100%) !important;
+    background: #d63031 !important;
+    box-shadow: 0 3px 0 #b71c1c, 0 4px 12px rgba(214, 48, 49, 0.25) !important;
+}
+
+/* ==========================================================================
+   Pipeline Mode Selector
+   Three-way: COLOUR / AI / HYBRID
+   ========================================================================== */
+
+.mode-selector {
+    display: inline-flex;
+    gap: 0;
+    align-items: center;
+    justify-content: center;
+    background: #d5dbe3;
+    border-radius: var(--radius-md);
+    padding: 4px;
+}
+
+.mode-btn {
+    min-height: 52px;
+    min-width: 140px;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all var(--transition-normal);
+    background: transparent;
+    color: #5a6577;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 0 1.5rem;
+}
+
+.mode-btn:hover:not(.active):not(.disabled) {
+    color: #3d4a5c;
+    background: rgba(255, 255, 255, 0.5);
+}
+
+.mode-btn:active:not(.disabled) {
+    transform: scale(0.98);
+}
+
+.mode-btn.active {
+    background: var(--primary);
+    color: white;
+    box-shadow: 0 2px 8px rgba(2, 39, 117, 0.3);
+}
+
+.mode-btn.disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.mode-btn.loading {
+    position: relative;
+    pointer-events: none;
+    color: transparent;
+}
+
+.mode-btn.loading::after {
+    content: '';
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    top: 50%;
+    left: 50%;
+    margin: -12px 0 0 -12px;
+    border: 3px solid rgba(255,255,255,0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: mode-spin 0.8s linear infinite;
+}
+
+@keyframes mode-spin {
+    to { transform: rotate(360deg); }
 }

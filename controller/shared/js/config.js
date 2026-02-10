@@ -12,7 +12,7 @@
  */
 const CONFIG_FIELD_DEFS = {
     'System': {
-        'algorithm': { type: 'select', options: ['exhsv', 'exg', 'hsv', 'gog'], help: 'Detection algorithm' },
+        'algorithm': { type: 'select', options: ['exhsv', 'exg', 'hsv', 'gog', 'gog-hybrid'], help: 'Detection algorithm' },
         'input_file_or_directory': { type: 'text', help: 'Leave empty for camera input' },
         'relay_num': { type: 'number', min: 1, max: 8, help: 'Number of relays (1-8)' },
         'actuation_duration': { type: 'number', step: 0.01, min: 0.01, max: 2.0, help: 'Spray duration in seconds' },
@@ -46,7 +46,9 @@ const CONFIG_FIELD_DEFS = {
         'confidence': { type: 'number', step: 0.05, min: 0.1, max: 1.0, help: 'Detection confidence threshold' },
         'detect_classes': { type: 'text', help: 'Classes to detect (comma-separated names, empty = all)' },
         'actuation_mode': { type: 'select', options: ['centre', 'zone'], help: 'centre = box centre, zone = mask pixel coverage per lane' },
-        'min_detection_pixels': { type: 'number', min: 1, max: 10000, help: 'Min weed pixels in lane to trigger relay (zone mode only)' }
+        'min_detection_pixels': { type: 'number', min: 1, max: 10000, help: 'Min weed pixels in lane to trigger relay (zone mode only)' },
+        'inference_resolution': { type: 'number', min: 160, max: 1280, help: 'YOLO input resolution (lower = faster)' },
+        'crop_buffer_px': { type: 'number', min: 0, max: 50, help: 'Buffer around detected crop in pixels (hybrid mode)' }
     },
     'DataCollection': {
         'image_sample_enable': { type: 'boolean', help: 'Enable image saving' },
