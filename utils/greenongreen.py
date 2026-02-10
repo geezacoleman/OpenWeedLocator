@@ -1,92 +1,166 @@
 #!/usr/bin/env python
-from pycoral.adapters.common import input_size
-from pycoral.adapters.detect import get_objects
-from pycoral.utils.dataset import read_label_file
-from pycoral.utils.edgetpu import make_interpreter
-from pycoral.utils.edgetpu import run_inference
+"""Green-on-Green weed detection using Ultralytics YOLO.
+
+Supports both detection and segmentation models in NCNN or PyTorch format.
+NCNN is the recommended format for Raspberry Pi (fastest on ARM CPU).
+"""
+
+import logging
 from pathlib import Path
 
 import cv2
+import numpy as np
+from ultralytics import YOLO
+
+logger = logging.getLogger(__name__)
 
 
 class GreenOnGreen:
-    def __init__(self, model_path='models', label_file='models/labels.txt'):
-        if model_path is None:
-            print('[WARNING] No model directory or path provided with --model-path flag. '
-                  'Attempting to load from default...')
-            model_path = 'models'
+    def __init__(self, model_path='models', confidence=0.5, detect_classes=None):
+        """
+        Args:
+            model_path: Path to NCNN model dir, .pt file, or parent dir containing models.
+            confidence: Detection confidence threshold (0.0-1.0).
+            detect_classes: List of class names to detect (None = all).
+        """
         self.model_path = Path(model_path)
+        self.confidence = confidence
+        self.model = self._load_model()
+        self.task = self.model.task  # 'detect' or 'segment'
+        self.detection_mask = None  # Combined binary mask, set after inference (seg only)
 
+        # Map class names to IDs after model is loaded
+        self._detect_class_ids = self._resolve_classes(detect_classes)
+
+        logger.info(f'GreenOnGreen initialized: task={self.task}, '
+                     f'classes={list(self.model.names.values())}, '
+                     f'filtering={detect_classes or "all"}')
+
+    def _load_model(self):
+        """Load YOLO model -- supports NCNN dirs and .pt files."""
         if self.model_path.is_dir():
-            model_files = list(self.model_path.glob('*.tflite'))
-            if not model_files:
-                raise FileNotFoundError('No .tflite model files found. Please provide a directory or .tflite file.')
+            # Check if this IS an NCNN model dir (has .param + .bin)
+            if list(self.model_path.glob('*.param')):
+                logger.info(f'Using NCNN model: {self.model_path.name}')
+                return YOLO(str(self.model_path))
 
+            # Search for NCNN subdirs first, then .pt files
+            ncnn_dirs = [d for d in self.model_path.iterdir()
+                         if d.is_dir() and list(d.glob('*.param'))]
+            if ncnn_dirs:
+                selected = ncnn_dirs[0]
+                logger.info(f'Using NCNN model: {selected.name}')
+                return YOLO(str(selected))
+
+            pt_files = list(self.model_path.glob('*.pt'))
+            if pt_files:
+                logger.info(f'Using PyTorch model: {pt_files[0].name}')
+                return YOLO(str(pt_files[0]))
+
+            raise FileNotFoundError(f'No YOLO models found in {self.model_path}')
+
+        elif self.model_path.exists():
+            logger.info(f'Using model: {self.model_path.name}')
+            return YOLO(str(self.model_path))
+
+        raise FileNotFoundError(f'Model path does not exist: {self.model_path}')
+
+    def _resolve_classes(self, class_names):
+        """Map class names to model class IDs. Returns None if all classes."""
+        if not class_names:
+            return None
+
+        name_to_id = {v.lower(): k for k, v in self.model.names.items()}
+        ids = []
+        for name in class_names:
+            name_lower = name.strip().lower()
+            if name_lower in name_to_id:
+                ids.append(name_to_id[name_lower])
             else:
-                self.model_path = model_files[0]
-                print(f'[INFO] Using {self.model_path.stem} model...')
+                logger.warning(f"Class '{name}' not found in model. "
+                               f"Available: {list(self.model.names.values())}")
 
-        elif self.model_path.suffix == '.tflite':
-            print(f'[INFO] Using {self.model_path.stem} model...')
+        return ids if ids else None
 
-        else:
-            print(f'[WARNING] Specified model path {model_path} is unsupported, attempting to use default...')
+    @property
+    def class_names(self):
+        """Return dict of {id: name} from loaded model."""
+        return self.model.names
 
-            model_files = Path('models').glob('*.tflite')
-            try:
-                self.model_path = next(model_files)
-                print(f'[INFO] Using {self.model_path.stem} model...')
+    def inference(self, image, confidence=0.5, show_display=False,
+                  filter_id=None, label='WEED', build_mask=False):
+        """
+        Run YOLO inference. Returns same tuple as GreenOnBrown.
 
-            except StopIteration:
-                print('[ERROR] No model files found.')
+        Args:
+            image: BGR numpy array.
+            confidence: Detection confidence threshold.
+            show_display: If True, return annotated image copy.
+            filter_id: Unused, kept for API compatibility.
+            label: Fallback label for display.
+            build_mask: If True and model is segmentation, build self.detection_mask
+                        for zone-based actuation. Skipped when False to save CPU.
 
-        self.labels = read_label_file(label_file)
-        self.interpreter = make_interpreter(self.model_path.as_posix())
-        self.interpreter.allocate_tensors()
-        self.inference_size = input_size(self.interpreter)
-        self.objects = None
+        Returns:
+            (contours, boxes, weed_centres, image_out)
+            - contours: mask polygons (segmentation) or None (detection)
+            - boxes: list of [x, y, w, h]
+            - weed_centres: list of [cx, cy]
+            - image_out: annotated image if show_display, else original image
+        """
+        self.detection_mask = None  # Reset each frame
 
-    def inference(self, image, confidence=0.5, filter_id=0):
-        cv2_im_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        cv2_im_rgb = cv2.resize(cv2_im_rgb, self.inference_size)
-        run_inference(self.interpreter, cv2_im_rgb.tobytes())
-        self.objects = get_objects(self.interpreter, confidence)
-        self.filter_id = filter_id
+        results = self.model.predict(
+            source=image,
+            conf=confidence,
+            classes=self._detect_class_ids,
+            verbose=False,
+            device='cpu'
+        )
 
-        height, width, channels = image.shape
-        scale_x, scale_y = width / self.inference_size[0], height / self.inference_size[1]
-        self.weed_centers = []
-        self.boxes = []
+        boxes = []
+        weed_centres = []
+        contours = None
 
-        for det_object in self.objects:
-            if det_object.id == self.filter_id:
-                bbox = det_object.bbox.scale(scale_x, scale_y)
+        for result in results:
+            # Process bounding boxes (works for both detect and segment)
+            for box in result.boxes:
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                w, h = x2 - x1, y2 - y1
+                boxes.append([x1, y1, w, h])
+                weed_centres.append([x1 + w // 2, y1 + h // 2])
 
-                startX, startY = int(bbox.xmin), int(bbox.ymin)
-                endX, endY = int(bbox.xmax), int(bbox.ymax)
-                boxW = endX - startX
-                boxH = endY - startY
+            # Extract mask contours for segmentation models
+            if result.masks is not None:
+                contours = [c.astype(np.int32).reshape(-1, 1, 2)
+                            for c in result.masks.xy]
 
-                # save the bounding box
-                self.boxes.append([startX, startY, boxW, boxH])
-                # compute box center
-                centerX = int(startX + (boxW / 2))
-                centerY = int(startY + (boxH / 2))
-                self.weed_centers.append([centerX, centerY])
+                # Only build combined binary mask when zone actuation needs it
+                if build_mask:
+                    self.detection_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+                    cv2.drawContours(self.detection_mask, contours, -1, 255, -1)
 
-                percent = int(100 * det_object.score)
-                label = f'{percent}% {self.labels.get(det_object.id, det_object.id)}'
-                cv2.rectangle(image, (startX, startY), (endX, endY), (0, 0, 255), 2)
-                cv2.putText(image, label, (startX, startY + 30),
-                                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
-            else:
-                pass
-        # print(self.weedCenters)
-        return None, self.boxes, self.weed_centers, image
+        if show_display:
+            image_out = image.copy()
 
+            # Draw segmentation masks if available
+            if contours is not None:
+                overlay = image_out.copy()
+                for contour in contours:
+                    cv2.drawContours(overlay, [contour], -1, (0, 255, 0), -1)
+                cv2.addWeighted(overlay, 0.3, image_out, 0.7, 0, image_out)
 
+            # Draw bounding boxes + labels
+            for i, box_data in enumerate(boxes):
+                x, y, w, h = box_data
+                conf_val = float(result.boxes[i].conf[0]) if i < len(result.boxes) else confidence
+                cls_id = int(result.boxes[i].cls[0]) if i < len(result.boxes) else 0
+                cls_name = self.model.names.get(cls_id, label)
+                box_label = f'{int(conf_val * 100)}% {cls_name}'
+                cv2.rectangle(image_out, (x, y), (x + w, y + h), (0, 0, 255), 2)
+                cv2.putText(image_out, box_label, (x, y - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
+            return contours, boxes, weed_centres, image_out
 
-
-
-
+        return contours, boxes, weed_centres, image

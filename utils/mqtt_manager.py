@@ -401,6 +401,8 @@ class OWLMQTTPublisher:
                 # Update GreenOnBrown params on the live instance
                 if section == 'GreenOnBrown':
                     self._update_greenonbrown_param(key, value)
+                elif section == 'GreenOnGreen':
+                    self._update_greenongreen_param(key, value)
                 elif hasattr(self.owl_instance, key):
                     # Try to set attribute directly on owl instance
                     setattr(self.owl_instance, key, value)
@@ -604,6 +606,31 @@ class OWLMQTTPublisher:
 
         except Exception as e:
             self.logger.error(f"Error updating {param_name}: {e}")
+
+    def _update_greenongreen_param(self, param_name, param_value):
+        """Update a GreenOnGreen parameter in real-time. Only confidence can be hot-updated."""
+        if self.owl_instance is None:
+            self.logger.warning("Cannot update parameter - OWL instance not set")
+            return
+
+        if param_name == 'confidence':
+            try:
+                param_value = float(param_value)
+                if hasattr(self.owl_instance, '_gog_confidence'):
+                    self.owl_instance._gog_confidence = param_value
+                    self.logger.info(f"Updated GreenOnGreen confidence = {param_value}")
+
+                    if hasattr(self.owl_instance, 'config'):
+                        self.owl_instance.config.set('GreenOnGreen', 'confidence', str(param_value))
+                else:
+                    self.logger.info(f"GreenOnGreen not active, storing config only")
+                    if hasattr(self.owl_instance, 'config'):
+                        self.owl_instance.config.set('GreenOnGreen', 'confidence', str(param_value))
+            except Exception as e:
+                self.logger.error(f"Error updating GreenOnGreen confidence: {e}")
+        else:
+            # Other params (model_path, detect_classes, actuation_mode) require restart
+            self.logger.info(f"GreenOnGreen.{param_name} updated in config (restart required)")
 
     def _handle_gps_update(self, gps_data):
         """Handle GPS updates from dashboard or central controller"""

@@ -63,6 +63,7 @@ except ImportError as e:
     raise errors.OpenCVError(str(e)) from None
 
 try:
+    import numpy as np
     import imutils
     from imutils.video import FPS
     from utils.input_manager import UteController, AdvancedController, get_rpi_version
@@ -270,11 +271,9 @@ class Owl:
             self.sensitivity_level = Value('i', Sensitivity.HIGH.value)
 
         if self.controller_type != 'none' or self.dash:
-            if self.dash:
-                self.dash.set_image_sample_enable(True)
-            else:
-                with self.image_sample_enable.get_lock():
-                    self.image_sample_enable.value = True
+            # Force infrastructure setup (directories, ImageRecorder) so
+            # controller/dashboard can toggle recording when ready.
+            # Actual recording state is set after setup — see below.
             self._image_sample_enable = True
 
         # if controller is 'none' but _image_sample_enable is True, then it will set everything up
@@ -345,6 +344,15 @@ class Owl:
 
             else:
                 self.status_indicator = HeadlessStatusIndicator(save_directory=None, no_save=True)
+
+        # Infrastructure is set up. Now set the actual initial recording state.
+        # Dashboard-only (no hardware controller): start OFF — user enables via dashboard.
+        # Hardware controllers: switch position was read during controller init above.
+        if self.dash and self.controller_type == 'none':
+            self._image_sample_enable = False
+            with self.image_sample_enable.get_lock():
+                self.image_sample_enable.value = False
+            self.dash.set_image_sample_enable(False)
 
         if self.dash or self.controller_type != 'none':
             threading.Thread(target=self.update_state, daemon=True).start()
@@ -441,9 +449,17 @@ class Owl:
             if algorithm == 'gog':
                 from utils.greenongreen import GreenOnGreen
                 model_path = self.config.get('GreenOnGreen', 'model_path')
-                confidence = self.config.getfloat('GreenOnGreen', 'confidence')
+                self._gog_confidence = self.config.getfloat('GreenOnGreen', 'confidence')
+                detect_classes_str = self.config.get('GreenOnGreen', 'detect_classes', fallback='')
+                detect_classes = [c.strip() for c in detect_classes_str.split(',') if c.strip()] or None
+                actuation_mode = self.config.get('GreenOnGreen', 'actuation_mode', fallback='centre')
+                min_detection_pixels = self.config.getint('GreenOnGreen', 'min_detection_pixels', fallback=50)
 
-                weed_detector = GreenOnGreen(model_path=model_path)
+                weed_detector = GreenOnGreen(
+                    model_path=model_path,
+                    confidence=self._gog_confidence,
+                    detect_classes=detect_classes
+                )
 
             else:
                 min_detection_area = self.config.getint('GreenOnBrown', 'min_detection_area')
@@ -497,19 +513,16 @@ class Owl:
                 if self._detection_enable:
                     cropped_frame = frame[self.crop_slice]
 
+                    return_image_out = self.show_display or bool(self.dash)
+
                     if algorithm == 'gog':
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
                             cropped_frame,
-                            confidence=confidence,
-                            filter_id=63
+                            confidence=self._gog_confidence,
+                            show_display=return_image_out,
+                            build_mask=(actuation_mode == 'zone')
                         )
                     else:
-                        if self.show_display or self.dash:
-                            return_image_out = True
-
-                        else:
-                            return_image_out = False
-
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
                             cropped_frame,
                             exg_min=self.exg_min,
@@ -533,20 +546,39 @@ class Owl:
                         if self.controller:
                             self.controller.weed_detect_indicator()
 
-                    # loop over the weed centres
-                    for centre in weed_centres:
+                    # Zone-based actuation (segmentation models with gog)
+                    if (algorithm == 'gog'
+                            and actuation_mode == 'zone'
+                            and hasattr(weed_detector, 'detection_mask')
+                            and weed_detector.detection_mask is not None):
                         actuation_time = time.time()
-                        centre_x = centre[0]
-
                         for i in range(self.relay_num):
                             lane_start = self.lane_coords_int[i]
-                            lane_end = lane_start + self.lane_width
-                            if lane_start <= centre_x < lane_end:
+                            lane_end = int(lane_start + self.lane_width)
+                            lane_pixels = np.count_nonzero(
+                                weed_detector.detection_mask[:, lane_start:lane_end]
+                            )
+                            if lane_pixels >= min_detection_pixels:
                                 self.relay_controller.receive(
                                     relay=i,
                                     delay=delay,
                                     time_stamp=actuation_time,
                                     duration=actuation_duration)
+                    else:
+                        # Centre-based actuation (default, works for all model types)
+                        for centre in weed_centres:
+                            actuation_time = time.time()
+                            centre_x = centre[0]
+
+                            for i in range(self.relay_num):
+                                lane_start = self.lane_coords_int[i]
+                                lane_end = lane_start + self.lane_width
+                                if lane_start <= centre_x < lane_end:
+                                    self.relay_controller.receive(
+                                        relay=i,
+                                        delay=delay,
+                                        time_stamp=actuation_time,
+                                        duration=actuation_duration)
 
                 ##### Update Dashboard Stream #####
                 if frame_count % 90 == 0:  # Every 90 frames (~3 seconds at 30fps)

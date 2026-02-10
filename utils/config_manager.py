@@ -27,6 +27,7 @@ class ConfigValidator:
                 'recording_pin',
                 'sensitivity_pin',
                 'low_sensitivity_config',
+                'medium_sensitivity_config',
                 'high_sensitivity_config',
                 'switch_purpose',
                 'switch_pin'
@@ -56,7 +57,11 @@ class ConfigValidator:
         },
         'Camera': {
             'required_keys': {'resolution_width', 'resolution_height'},
-            'optional_keys': {'exp_compensation'}
+            'optional_keys': {'exp_compensation', 'crop_factor_horizontal', 'crop_factor_vertical'}
+        },
+        'GreenOnGreen': {
+            'required_keys': {'model_path', 'confidence'},
+            'optional_keys': {'detect_classes', 'actuation_mode', 'min_detection_pixels'}
         },
         'GreenOnBrown': {
             'required_keys': {
@@ -94,6 +99,8 @@ class ConfigValidator:
         'exp_compensation': ('float', -10, 10),
         # Detection confidence
         'confidence': ('float', 0, 1),
+        # GreenOnGreen
+        'min_detection_pixels': ('int', 1, None),
         # GPIO pins
         'switch_pin': ('pin', 1, 40),
         'detection_mode_pin_up': ('pin', 1, 40),
@@ -104,7 +111,8 @@ class ConfigValidator:
 
     VALID_ALGORITHMS = {'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'gog'}
     VALID_CONTROLLER_TYPES = {'none', 'ute', 'advanced'}
-    VALID_SWITCH_PURPOSES = {'recording', 'sensitivity'}
+    VALID_SWITCH_PURPOSES = {'recording', 'detection'}
+    VALID_ACTUATION_MODES = {'centre', 'zone'}
 
     # to check for valid ranges
     THRESHOLD_PAIRS = [
@@ -405,6 +413,16 @@ class ConfigValidator:
         is_valid, algorithm_errors = cls.validate_algorithm(config)
         if not is_valid:
             validation_errors.update(algorithm_errors)
+
+        # Validate actuation_mode if present
+        if config.has_option('GreenOnGreen', 'actuation_mode'):
+            act_mode = config.get('GreenOnGreen', 'actuation_mode').strip().lower()
+            if act_mode and act_mode not in cls.VALID_ACTUATION_MODES:
+                if 'GreenOnGreen' not in validation_errors:
+                    validation_errors['GreenOnGreen'] = {}
+                validation_errors['GreenOnGreen']['actuation_mode'] = (
+                    f'Invalid actuation mode. Must be one of: {", ".join(sorted(cls.VALID_ACTUATION_MODES))}'
+                )
 
         # Threshold validation
         is_valid, threshold_errors = cls.validate_thresholds(config)

@@ -42,8 +42,11 @@ const CONFIG_FIELD_DEFS = {
         'invert_hue': { type: 'boolean' }
     },
     'GreenOnGreen': {
-        'model_path': { type: 'text', help: 'Path to AI model' },
-        'confidence': { type: 'number', step: 0.05, min: 0.1, max: 1.0, help: 'Detection threshold' }
+        'model_path': { type: 'text', help: 'Path to YOLO model (NCNN dir or .pt file)' },
+        'confidence': { type: 'number', step: 0.05, min: 0.1, max: 1.0, help: 'Detection confidence threshold' },
+        'detect_classes': { type: 'text', help: 'Classes to detect (comma-separated names, empty = all)' },
+        'actuation_mode': { type: 'select', options: ['centre', 'zone'], help: 'centre = box centre, zone = mask pixel coverage per lane' },
+        'min_detection_pixels': { type: 'number', min: 1, max: 10000, help: 'Min weed pixels in lane to trigger relay (zone mode only)' }
     },
     'DataCollection': {
         'image_sample_enable': { type: 'boolean', help: 'Enable image saving' },

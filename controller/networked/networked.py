@@ -39,7 +39,9 @@ SHARED_DIR = os.path.join(os.path.dirname(__file__), '..', 'shared')
 class CentralController:
     """Central controller for managing multiple OWLs via MQTT"""
 
-    def __init__(self, config_file='../config/CONTROLLER.ini'):
+    def __init__(self, config_file=None):
+        if config_file is None:
+            config_file = Path(__file__).parent.parent.parent / 'config' / 'CONTROLLER.ini'
         self.config = self._load_config(config_file)
 
         # MQTT Configuration from config file
@@ -77,9 +79,6 @@ class CentralController:
     def _load_config(self, config_file):
         """Load configuration from file"""
         config_path = Path(config_file)
-        if not config_path.exists():
-            config_path = Path(__file__).parent / config_file
-
         config = configparser.ConfigParser()
 
         if config_path.exists():
@@ -87,7 +86,6 @@ class CentralController:
             logger.info(f"Config loaded from {config_path}")
         else:
             logger.warning(f"Config file not found at {config_path}, using defaults")
-            # Create default config sections
             config.add_section('MQTT')
             config.set('MQTT', 'broker_ip', 'localhost')
             config.set('MQTT', 'broker_port', '1883')

@@ -137,6 +137,15 @@ cython_debug/
 *.crt
 .htpasswd-*
 
+# OWL configuration (created by setup.sh, contains site-specific settings)
+config/CONTROLLER.ini
+
+# User-saved config presets (created from dashboard Save As)
+config/config_*
+
+# OWL collected images (created during detection/recording)
+owl_data/
+
 # OWL non-template log files
 owl.jsonl
 

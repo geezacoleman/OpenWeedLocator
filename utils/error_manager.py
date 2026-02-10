@@ -490,29 +490,24 @@ class AlgorithmError(OWLError):
 
     ERROR_MESSAGES = {
         ModuleNotFoundError: {
-            'coral': {
-                'message': "Coral AI device support not installed",
-                'details': "Visit: https://coral.ai/docs/accelerator/get-started/#requirements",
-                'fix': "Install pycoral using: pip install pycoral"
+            'ultralytics': {
+                'message': "Ultralytics YOLO not installed",
+                'details': "The ultralytics package is required for AI weed detection",
+                'fix': "Install with: pip install ultralytics"
             }
         },
         (IndexError, FileNotFoundError): {
             'models': {
                 'message': "Model files not found",
-                'details': "Required model files are missing from the 'models' directory",
-                'fix': "Ensure model files are present in the 'models' directory"
+                'details': "No YOLO model (.pt or NCNN) found in the specified path",
+                'fix': "Place a YOLO model in the 'models' directory or update model_path in config"
             }
         },
-        ValueError: {
-            'delegate': {
-                'message': "Coral AI device not recognized",
-                'details': "Google Coral device connection issue",
-                'fix': (
-                    "1. Check device connection\n"
-                    "2. Try unplugging and reconnecting the device\n"
-                    "3. Restart the Raspberry Pi\n"
-                    "More info: https://github.com/tensorflow/tensorflow/issues/32743"
-                )
+        (RuntimeError, ValueError): {
+            'inference': {
+                'message': "Model inference failed",
+                'details': "YOLO model failed during inference",
+                'fix': "Check model format is compatible (NCNN or .pt) and not corrupted"
             }
         }
     }

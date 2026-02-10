@@ -71,7 +71,9 @@ crop_factor_vertical = 0.02
 [GreenOnGreen]
 model_path = models
 confidence = 0.5
-class_filter_id = None
+detect_classes =
+actuation_mode = centre
+min_detection_pixels = 50
 
 [GreenOnBrown]
 exg_min = 25
