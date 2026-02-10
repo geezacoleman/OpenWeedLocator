@@ -34,9 +34,20 @@ function updateSystemStats() {
             syncSwitch('detectSwitch', detectionOn);
             syncSwitch('recordSwitch', recordingOn);
 
-            // Handle detection_mode for status chip (0=Spot Spray, 1=Off, 2=Blanket)
-            const detectionMode = data.detection_mode;
-            updateDetectionModeDisplay(detectionMode, detectionOn);
+            // OWL service status chip
+            const owlChip = document.getElementById('owlStatusChip');
+            const owlText = document.getElementById('owlStatusText');
+            if (owlChip && owlText) {
+                if (data.owl_running) {
+                    owlChip.classList.add('on');
+                    owlChip.classList.remove('off');
+                    owlText.textContent = 'Running';
+                } else {
+                    owlChip.classList.remove('on');
+                    owlChip.classList.add('off');
+                    owlText.textContent = 'Stopped';
+                }
+            }
 
             // Sensitivity Low/High
             const sensLabel = normalizeSensitivity(data);
@@ -101,38 +112,6 @@ function updateSystemStats() {
         btn.classList.remove('booting', 'stopping');
         btn.setAttribute('aria-pressed', on ? 'true' : 'false');
         btn.classList.toggle('on', on);
-    }
-}
-
-/**
- * Update detection mode display (Spot Spray / Off / Blanket)
- */
-function updateDetectionModeDisplay(mode, detectionOn) {
-    const chip = document.getElementById('sprayerStatusChip');
-    if (!chip) return;
-
-    const txt = document.getElementById('sprayerStatusText');
-
-    // detection_mode: 0 = Spot Spray, 1 = Off, 2 = Blanket
-    if (mode === 0) {
-        chip.classList.add('on');
-        chip.classList.remove('blanket', 'off');
-        if (txt) txt.textContent = 'Spot Spray';
-    } else if (mode === 2) {
-        chip.classList.add('on', 'blanket');
-        chip.classList.remove('off');
-        if (txt) txt.textContent = 'Blanket';
-    } else {
-        chip.classList.remove('blanket');
-        if (detectionOn) {
-            chip.classList.add('on');
-            chip.classList.remove('off');
-            if (txt) txt.textContent = 'Running';
-        } else {
-            chip.classList.remove('on');
-            chip.classList.add('off');
-            if (txt) txt.textContent = 'Off';
-        }
     }
 }
 

@@ -92,6 +92,10 @@ class OWLDashboard:
         try:
             self.logger.info(f"Attempting to run systemctl action: '{action}'")
 
+            if action == "start":
+                # Clear any failed state first (idempotent, harmless if not failed)
+                self._run_systemctl_command(["reset-failed", "owl.service"], needs_sudo=True)
+
             result = self._run_systemctl_command([action, "owl.service"], needs_sudo=True)
 
             self.logger.info(f"systemctl command finished with return code: {result.returncode}")
@@ -1132,6 +1136,7 @@ class OWLDashboard:
         pointer_locations = [
             os.path.join(base_dir, 'config/active_config.txt'),
             os.path.join(base_dir, '../config/active_config.txt'),
+            os.path.join(base_dir, '../../config/active_config.txt'),
         ]
 
         for pointer_path in pointer_locations:
@@ -1170,6 +1175,7 @@ class OWLDashboard:
         possible_paths = [
             os.path.join(base_dir, relative_path),
             os.path.join(base_dir, '..', relative_path),
+            os.path.join(base_dir, '..', '..', relative_path),
             os.path.join(base_dir, relative_path.replace('config/', '../config/')),
         ]
 
@@ -1188,6 +1194,7 @@ class OWLDashboard:
         possible_dirs = [
             os.path.join(base_dir, 'config'),
             os.path.join(base_dir, '..', 'config'),
+            os.path.join(base_dir, '..', '..', 'config'),
         ]
 
         for config_dir in possible_dirs:

@@ -454,8 +454,8 @@ Cmnd_Alias OWL_FAN_TOGGLE = \
     ${PINCTRL_BIN} FAN_PWM a0, \
     ${PINCTRL_BIN} FAN_PWM op dl
 
-owl ALL=(root) NOPASSWD: OWL_FAN_TOGGLE
-Defaults:owl secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+${CURRENT_USER} ALL=(root) NOPASSWD: OWL_FAN_TOGGLE
+Defaults:${CURRENT_USER} secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 EOF
 
     sudo chmod 0440 "$SUDOERS_FILE"
@@ -474,10 +474,10 @@ setup_service_control_permissions() {
 # It allows the 'owl' user to manage the main owl.service
 # without a password, which is required for the web dashboard power button.
 
-Cmnd_Alias OWL_SERVICE_CMDS = ${SYSTEMCTL_BIN} start owl.service, ${SYSTEMCTL_BIN} stop owl.service, ${SYSTEMCTL_BIN} is-active owl.service
+Cmnd_Alias OWL_SERVICE_CMDS = ${SYSTEMCTL_BIN} start owl.service, ${SYSTEMCTL_BIN} stop owl.service, ${SYSTEMCTL_BIN} is-active owl.service, ${SYSTEMCTL_BIN} reset-failed owl.service
 
-# Grant the 'owl' user permission to run ONLY the commands in the alias.
-owl ALL=(ALL) NOPASSWD: OWL_SERVICE_CMDS
+# Grant the user permission to run ONLY the commands in the alias.
+${CURRENT_USER} ALL=(ALL) NOPASSWD: OWL_SERVICE_CMDS
 EOF
 
     # Sudoers files require strict permissions to be active.

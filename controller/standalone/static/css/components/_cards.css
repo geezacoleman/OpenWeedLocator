@@ -249,6 +249,7 @@
     display: flex;
     align-items: center;
     gap: 0.75rem;
+    flex-wrap: wrap;
 }
 
 /* --------------------------------------------------------------------------
@@ -325,7 +326,7 @@
    -------------------------------------------------------------------------- */
 .metrics-row {
     display: flex;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     gap: 0.5rem;
     margin-top: 1rem;
     justify-content: space-between;
