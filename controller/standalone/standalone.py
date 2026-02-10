@@ -21,7 +21,7 @@ from datetime import datetime
 import urllib.request
 import urllib.error
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from utils.mqtt_manager import DashMQTTSubscriber
 from utils.upload_manager import get_uploader
 from utils.input_manager import get_rpi_version
