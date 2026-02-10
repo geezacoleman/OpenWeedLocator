@@ -80,19 +80,6 @@ year = {2022}
 
 </details>
 
-# Acknowledgements
-
-<details>
-<summary>Acknowledgements</summary>
-<br>
-
-This project has been developed by Guy Coleman and William Salter at the University of Sydney, Precision Weed Control
-Lab. It was supported and funded by the Grains Research and Development Corporation (GRDC) and Landcare Australia as
-part of the University of Sydney's Digifarm project in Narrabri, NSW, Australia. We would like to thank all the farmers
-that assisted in data collection, validation and feedback on the initial design.
-
-</details>
-
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
