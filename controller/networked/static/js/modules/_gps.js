@@ -13,10 +13,13 @@ const GPS_POLL_MS = 1000;
 function switchToOWLTab() {
     document.getElementById('tab-owls').classList.add('active');
     document.getElementById('tab-gps').classList.remove('active');
+    document.getElementById('tab-ai').classList.remove('active');
     document.getElementById('tab-config').classList.remove('active');
     document.getElementById('view-owls').style.display = '';
     document.getElementById('view-gps').style.display = 'none';
+    document.getElementById('view-ai').style.display = 'none';
     document.getElementById('view-config').style.display = 'none';
+    aiTabActive = false;
     stopGPSPolling();
     stopConfigPreview();
 }
@@ -24,10 +27,13 @@ function switchToOWLTab() {
 function switchToGPSTab() {
     document.getElementById('tab-gps').classList.add('active');
     document.getElementById('tab-owls').classList.remove('active');
+    document.getElementById('tab-ai').classList.remove('active');
     document.getElementById('tab-config').classList.remove('active');
     document.getElementById('view-gps').style.display = '';
     document.getElementById('view-owls').style.display = 'none';
+    document.getElementById('view-ai').style.display = 'none';
     document.getElementById('view-config').style.display = 'none';
+    aiTabActive = false;
     startGPSPolling();
     stopConfigPreview();
 }
@@ -36,9 +42,12 @@ function switchToConfigTab() {
     document.getElementById('tab-config').classList.add('active');
     document.getElementById('tab-owls').classList.remove('active');
     document.getElementById('tab-gps').classList.remove('active');
+    document.getElementById('tab-ai').classList.remove('active');
     document.getElementById('view-config').style.display = '';
     document.getElementById('view-owls').style.display = 'none';
     document.getElementById('view-gps').style.display = 'none';
+    document.getElementById('view-ai').style.display = 'none';
+    aiTabActive = false;
     stopGPSPolling();
 }
 
@@ -102,13 +111,13 @@ function updateGPSConnectionStatus(tcpConnected, fixValid) {
 
     if (!tcpConnected) {
         banner.classList.add('disconnected');
-        text.textContent = 'GPS DISCONNECTED';
+        text.textContent = 'GPS Disconnected';
     } else if (!fixValid) {
         banner.classList.add('searching');
-        text.textContent = 'SEARCHING FOR SATELLITES...';
+        text.textContent = 'Searching for Satellites...';
     } else {
         banner.classList.add('connected');
-        text.textContent = 'GPS CONNECTED';
+        text.textContent = 'GPS Connected';
     }
 }
 

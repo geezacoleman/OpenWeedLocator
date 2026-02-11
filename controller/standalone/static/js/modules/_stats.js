@@ -66,19 +66,22 @@ function updateSystemStats() {
                 rpmEl.textContent = (typeof rpm === 'number') ? `${rpm} rpm` : '—';
             }
 
-            // Header online/offline & stream overlay
+            // Header online/offline
             const statusDot = document.getElementById('statusDot');
             const statusText = document.getElementById('statusText');
             if (statusDot && statusText) {
                 statusDot.classList.toggle('connected', !!data.owl_running);
                 statusText.textContent = data.owl_running ? 'Online' : 'Offline';
             }
-            const streamOverlay = document.getElementById('stream-status-overlay');
-            const streamImg = document.getElementById('stream-img');
-            if (streamOverlay && streamImg) {
-                const on = !!data.stream_active;
-                streamOverlay.classList.toggle('hidden', on);
-                streamImg.style.display = on ? 'block' : 'none';
+
+            // Sync AI tab if function exists
+            if (typeof syncAITabFromStats === 'function') {
+                syncAITabFromStats(data);
+            }
+
+            // Sync config sliders from MQTT state
+            if (typeof syncSlidersFromStats === 'function') {
+                syncSlidersFromStats(data);
             }
 
             // Update hardware lock UI based on controller status

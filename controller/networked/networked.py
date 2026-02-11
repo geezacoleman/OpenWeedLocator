@@ -13,6 +13,7 @@ import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
+from collections import deque
 from flask import Flask, render_template, jsonify, request, Response, stream_with_context, send_from_directory
 import urllib3
 import paho.mqtt.client as mqtt
@@ -35,6 +36,127 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 SHARED_DIR = os.path.join(os.path.dirname(__file__), '..', 'shared')
+
+
+class SpeedAverager:
+    """Time-windowed moving average of GPS speed."""
+
+    def __init__(self, window_seconds=5.0):
+        self.window_seconds = window_seconds
+        self._samples = deque()  # (timestamp, speed_kmh)
+        self._lock = threading.Lock()
+        self._last_valid_avg = None
+        self._last_sample_time = None
+
+    def add_sample(self, speed_kmh):
+        """Add a speed sample and return current average."""
+        now = time.time()
+        with self._lock:
+            self._samples.append((now, speed_kmh))
+            self._prune()
+            avg = self._compute_avg()
+            if avg is not None:
+                self._last_valid_avg = avg
+            self._last_sample_time = now
+            return avg
+
+    def get_average(self):
+        """Current window average without adding a sample."""
+        with self._lock:
+            self._prune()
+            return self._compute_avg()
+
+    def get_fallback_speed(self):
+        """Last known valid average for GPS dropout."""
+        with self._lock:
+            return self._last_valid_avg
+
+    def seconds_since_update(self):
+        """Time since last GPS sample."""
+        with self._lock:
+            if self._last_sample_time is None:
+                return None
+            return time.time() - self._last_sample_time
+
+    def _prune(self):
+        """Remove samples older than the window."""
+        cutoff = time.time() - self.window_seconds
+        while self._samples and self._samples[0][0] < cutoff:
+            self._samples.popleft()
+
+    def _compute_avg(self):
+        """Compute average from current window."""
+        if not self._samples:
+            return None
+        total = sum(s[1] for s in self._samples)
+        return total / len(self._samples)
+
+
+class ActuationCalculator:
+    """Pure math: converts speed + geometry into actuation timing."""
+
+    MIN_SPEED = 0.5   # km/h — below this, use fallback
+    MIN_DURATION = 0.01  # seconds floor
+    MAX_DURATION = 5.0   # seconds cap
+
+    def __init__(self, actuation_length_cm=10.0, offset_cm=30.0,
+                 fallback_duration=0.15, fallback_delay=0.0):
+        self.actuation_length_cm = actuation_length_cm
+        self.offset_cm = offset_cm
+        self.fallback_duration = fallback_duration
+        self.fallback_delay = fallback_delay
+
+    def compute(self, speed_kmh):
+        """Compute actuation params from speed.
+
+        Returns dict with actuation_duration, delay, source, speed_used.
+        """
+        if speed_kmh is None or speed_kmh < self.MIN_SPEED:
+            return {
+                'actuation_duration': self.fallback_duration,
+                'delay': self.fallback_delay,
+                'source': 'config',
+                'speed_used': 0.0
+            }
+
+        speed_m_s = speed_kmh / 3.6
+        duration = (self.actuation_length_cm / 100.0) / speed_m_s
+        delay = (self.offset_cm / 100.0) / speed_m_s
+
+        # Clamp to safety bounds
+        duration = max(self.MIN_DURATION, min(self.MAX_DURATION, duration))
+        delay = max(0.0, min(self.MAX_DURATION, delay))
+
+        return {
+            'actuation_duration': round(duration, 4),
+            'delay': round(delay, 4),
+            'source': 'gps',
+            'speed_used': round(speed_kmh, 2)
+        }
+
+    def check_coverage(self, speed_kmh, avg_loop_time_ms):
+        """Check if actuation length covers the gap between frames.
+
+        Returns dict with coverage_ok, min_gap_cm, message.
+        """
+        if speed_kmh is None or speed_kmh < self.MIN_SPEED or avg_loop_time_ms <= 0:
+            return {'coverage_ok': True, 'min_gap_cm': 0.0, 'message': ''}
+
+        # Distance travelled per frame (loop iteration)
+        min_gap_cm = (speed_kmh / 3.6) * (avg_loop_time_ms / 1000.0) * 100.0
+        coverage_ok = self.actuation_length_cm >= min_gap_cm
+
+        message = ''
+        if not coverage_ok:
+            message = (f"Coverage gap: actuation {self.actuation_length_cm}cm "
+                       f"< frame gap {min_gap_cm:.1f}cm at {speed_kmh:.1f} km/h")
+
+        return {
+            'coverage_ok': coverage_ok,
+            'min_gap_cm': round(min_gap_cm, 1),
+            'message': message
+        }
+
 
 class CentralController:
     """Central controller for managing multiple OWLs via MQTT"""
@@ -74,6 +196,29 @@ class CentralController:
                 logger.info("GPS Manager initialized")
             except Exception as e:
                 logger.error(f"Failed to initialize GPS Manager: {e}")
+
+        # Actuation calculator (speed-adaptive relay timing)
+        self.speed_averager = SpeedAverager(
+            window_seconds=self.config.getfloat('Actuation', 'speed_avg_window', fallback=5.0)
+        )
+        self.actuation_calculator = ActuationCalculator(
+            actuation_length_cm=self.config.getfloat('Actuation', 'actuation_length_cm', fallback=10.0),
+            offset_cm=self.config.getfloat('Actuation', 'offset_cm', fallback=30.0),
+            fallback_duration=self.config.getfloat('Actuation', 'actuation_duration', fallback=0.15),
+            fallback_delay=self.config.getfloat('Actuation', 'delay', fallback=0.0),
+        )
+        self._actuation_state = {
+            'speed_kmh': 0.0,
+            'actuation_duration': self.actuation_calculator.fallback_duration,
+            'delay': self.actuation_calculator.fallback_delay,
+            'source': 'config',
+            'gps_status': 'no_gps',
+            'coverage_ok': True,
+            'min_gap_cm': 0.0,
+            'coverage_message': '',
+            'actuation_length_cm': self.actuation_calculator.actuation_length_cm,
+            'offset_cm': self.actuation_calculator.offset_cm,
+        }
 
         logger.info(f"Central Controller initialized (broker: {self.broker_host}:{self.broker_port})")
 
@@ -269,6 +414,96 @@ class CentralController:
             self.mqtt_client.publish(topic, payload)
             logger.info(f"Pushed image_sample_enable={merged['image_sample_enable']} to {device_id}")
 
+        if 'detect_classes' in merged:
+            payload = json.dumps({'action': 'set_detect_classes', 'value': merged['detect_classes']})
+            self.mqtt_client.publish(topic, payload)
+            logger.info(f"Pushed detect_classes={merged['detect_classes']} to {device_id}")
+
+        if 'model' in merged:
+            payload = json.dumps({'action': 'set_model', 'value': merged['model']})
+            self.mqtt_client.publish(topic, payload)
+            logger.info(f"Pushed model={merged['model']} to {device_id}")
+
+    def _actuation_broadcast_loop(self):
+        """Broadcast computed actuation params to all connected OWLs every 1s."""
+        while True:
+            try:
+                # Read speed from GPS manager
+                speed_kmh = None
+                gps_status = 'no_gps'
+
+                if self.gps_manager:
+                    gps_state = self.gps_manager.get_state()
+                    fix = gps_state.get('fix', {})
+                    conn = gps_state.get('connection', {})
+
+                    if fix.get('speed_kmh') is not None:
+                        raw_speed = fix['speed_kmh']
+                        avg = self.speed_averager.add_sample(raw_speed)
+                        speed_kmh = avg
+                        gps_status = 'active'
+                    else:
+                        # GPS connected but no valid fix
+                        ssu = self.speed_averager.seconds_since_update()
+                        if ssu is not None and ssu < 30:
+                            speed_kmh = self.speed_averager.get_fallback_speed()
+                            gps_status = 'stale'
+                        elif self.speed_averager.get_fallback_speed() is not None:
+                            speed_kmh = self.speed_averager.get_fallback_speed()
+                            gps_status = 'stale'
+
+                # Compute actuation params
+                result = self.actuation_calculator.compute(speed_kmh)
+
+                # Compute avg loop time across all OWLs
+                loop_times = []
+                with self.mqtt_lock:
+                    for state in self.owls_state.values():
+                        lt = state.get('avg_loop_time_ms', 0)
+                        if lt > 0:
+                            loop_times.append(lt)
+                avg_loop_time = sum(loop_times) / len(loop_times) if loop_times else 0.0
+
+                # Check coverage
+                coverage = self.actuation_calculator.check_coverage(
+                    speed_kmh, avg_loop_time
+                )
+
+                # Update state
+                self._actuation_state = {
+                    'speed_kmh': round(speed_kmh or 0.0, 2),
+                    'actuation_duration': result['actuation_duration'],
+                    'delay': result['delay'],
+                    'source': result['source'],
+                    'gps_status': gps_status,
+                    'coverage_ok': coverage['coverage_ok'],
+                    'min_gap_cm': coverage['min_gap_cm'],
+                    'coverage_message': coverage['message'],
+                    'actuation_length_cm': self.actuation_calculator.actuation_length_cm,
+                    'offset_cm': self.actuation_calculator.offset_cm,
+                    'avg_loop_time_ms': round(avg_loop_time, 1),
+                }
+
+                # Broadcast to all connected OWLs
+                if self.mqtt_client and self.mqtt_connected:
+                    payload = json.dumps({
+                        'action': 'set_actuation_params',
+                        'actuation_duration': result['actuation_duration'],
+                        'delay': result['delay'],
+                        'source': result['source']
+                    })
+                    with self.mqtt_lock:
+                        for owl_id, state in self.owls_state.items():
+                            if state.get('connected', False):
+                                topic = f"owl/{owl_id}/commands"
+                                self.mqtt_client.publish(topic, payload)
+
+                time.sleep(1.0)
+
+            except Exception as e:
+                logger.error(f"Error in actuation broadcast loop: {e}")
+                time.sleep(2.0)
+
     def get_owls(self):
         """Get current state of all OWLs"""
         with self.mqtt_lock:
@@ -405,6 +640,15 @@ class CentralController:
                 with self.mqtt_lock:
                     for oid in self.owls_state:
                         self.desired_state.setdefault(oid, {})['image_sample_enable'] = value
+
+        elif action == 'set_detect_classes':
+            payload = {'action': 'set_detect_classes', 'value': value}
+            # Store so reconnecting OWLs get the class filter
+            self.desired_state.setdefault('all', {})['detect_classes'] = value
+
+        elif action == 'set_model':
+            payload = {'action': 'set_model', 'value': value}
+            self.desired_state.setdefault('all', {})['model'] = value
 
         elif action == 'set_sensitivity':
             payload = {'action': 'set_sensitivity_level', 'level': value}
@@ -864,6 +1108,43 @@ def video_feed_proxy(device_id):
 
 
 # ---------------------------------------------------------------------------
+# Actuation API routes
+# ---------------------------------------------------------------------------
+
+@app.route('/api/actuation')
+def api_actuation():
+    """Current actuation state: speed, computed params, coverage."""
+    return jsonify(controller._actuation_state)
+
+
+@app.route('/api/actuation/config', methods=['POST'])
+def api_actuation_config():
+    """Update actuation geometry (length_cm, offset_cm) at runtime."""
+    data = request.json or {}
+    calc = controller.actuation_calculator
+
+    if 'actuation_length_cm' in data:
+        try:
+            val = float(data['actuation_length_cm'])
+            calc.actuation_length_cm = max(2.0, min(50.0, val))
+        except (ValueError, TypeError):
+            return jsonify({'success': False, 'error': 'Invalid actuation_length_cm'}), 400
+
+    if 'offset_cm' in data:
+        try:
+            val = float(data['offset_cm'])
+            calc.offset_cm = max(0.0, min(100.0, val))
+        except (ValueError, TypeError):
+            return jsonify({'success': False, 'error': 'Invalid offset_cm'}), 400
+
+    return jsonify({
+        'success': True,
+        'actuation_length_cm': calc.actuation_length_cm,
+        'offset_cm': calc.offset_cm
+    })
+
+
+# ---------------------------------------------------------------------------
 # GPS API routes
 # ---------------------------------------------------------------------------
 
@@ -944,6 +1225,10 @@ def init_app():
     # Start connection checker
     checker_thread = threading.Thread(target=controller.check_connections, daemon=True)
     checker_thread.start()
+
+    # Start actuation broadcast loop
+    actuation_thread = threading.Thread(target=controller._actuation_broadcast_loop, daemon=True)
+    actuation_thread.start()
 
 
 init_app()

@@ -19,7 +19,7 @@
     font-weight: 700;
     cursor: pointer;
     transition: all var(--transition-normal);
-    text-transform: uppercase;
+
     letter-spacing: 1px;
     color: white;
 }
@@ -75,7 +75,7 @@
     transition: all var(--transition-normal);
     background: transparent;
     color: #5a6577;
-    text-transform: uppercase;
+
     letter-spacing: 1px;
     padding: 0 1.5rem;
 }

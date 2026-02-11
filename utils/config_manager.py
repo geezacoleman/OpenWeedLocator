@@ -11,12 +11,12 @@ class ConfigValidator:
     """Validates OWL configuration files"""
 
     # Infrastructure sections that must exist in CONTROLLER.ini
-    CONTROLLER_INI_SECTIONS = {'MQTT', 'WebDashboard', 'Network', 'GPS'}
+    CONTROLLER_INI_SECTIONS = {'MQTT', 'WebDashboard', 'Network', 'GPS', 'Actuation'}
 
     REQUIRED_CONFIG = {
         'System': {
-            'required_keys': {'algorithm', 'relay_num', 'actuation_duration', 'delay'},
-            'optional_keys': {'input_file_or_directory'}
+            'required_keys': {'algorithm', 'relay_num'},
+            'optional_keys': {'input_file_or_directory', 'actuation_duration', 'delay'}
         },
         'Controller': {
             # Base requirements for all controller types

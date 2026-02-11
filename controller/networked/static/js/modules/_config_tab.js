@@ -303,7 +303,7 @@ function toggleConfigPreview() {
     if (configPreviewActive) {
         split.classList.add('preview-active');
         if (btn) {
-            btn.textContent = 'HIDE PREVIEW';
+            btn.textContent = 'Hide Preview';
             btn.classList.add('active');
         }
         var deviceId = deviceSel ? deviceSel.value : null;
@@ -313,7 +313,7 @@ function toggleConfigPreview() {
     } else {
         split.classList.remove('preview-active');
         if (btn) {
-            btn.textContent = 'PREVIEW';
+            btn.textContent = 'Preview';
             btn.classList.remove('active');
         }
         img.src = '';
@@ -342,7 +342,7 @@ function stopConfigPreview() {
     if (split) split.classList.remove('preview-active');
     if (img) img.src = '';
     if (btn) {
-        btn.textContent = 'PREVIEW';
+        btn.textContent = 'Preview';
         btn.classList.remove('active');
     }
 }

@@ -131,7 +131,13 @@ async function updateDashboard() {
             }
             // Sync slider values from OWL state so dashboard matches device
             syncConfigFromOWLState(firstOwl);
+            // Sync sensitivity dial from OWL state
+            if (typeof updateSensitivityDial === 'function' && firstOwl.sensitivity_level) {
+                updateSensitivityDial(firstOwl.sensitivity_level);
+            }
         }
+        // Sync AI tab if it's active
+        if (typeof syncAITabFromDashboard === 'function') syncAITabFromDashboard();
     } catch (err) {
         console.error('Dashboard update error:', err);
         mqttConnected = false;
@@ -156,7 +162,7 @@ function updateMQTTStatus() {
 }
 
 function updateOWLGrid() {
-    const grid = document.getElementById('owls-grid');
+    const grid = document.getElementById('owls-column');
     if (!grid) return;
 
     // Filter to only show OWLs that have been seen recently (connected=true)
@@ -169,7 +175,7 @@ function updateOWLGrid() {
         grid.innerHTML = `
             <div class="empty-state">
                 <div class="empty-state-text">No OWLs Connected</div>
-                <div class="empty-state-subtext">Waiting for MQTT…</div>
+                <div class="empty-state-subtext">Waiting for MQTT...</div>
             </div>
         `;
         return;
@@ -184,58 +190,36 @@ function buildOWLCard(deviceId, owl) {
 
     // Get stats
     const temp = owl.cpu_temp ?? 0;
-    const fan = owl.fan_status?.rpm ?? 0;
     const cpu = owl.cpu_percent ?? 0;
     const mem = owl.memory_percent ?? 0;
+    const loopMs = owl.avg_loop_time_ms ?? 0;
 
     // Determine temp class
-    let tempClass = 'good';
-    if (temp > 70) tempClass = 'danger';
-    else if (temp > 60) tempClass = 'warning';
+    let tempClass = '';
+    if (temp > 70) tempClass = ' style="color:#c0392b"';
+    else if (temp > 60) tempClass = ' style="color:#d4820a"';
 
     const disAttr = isOnline ? '' : 'disabled';
 
     return `
-        <div class="owl-box ${onlineClass}">
-            <div class="owl-box-header">
-                <div class="owl-card-title">
-                    <h3>${deviceId}</h3>
-                </div>
+        <div class="owl-card-compact ${onlineClass}">
+            <div class="owl-card-compact-header">
+                <h4>${deviceId}</h4>
                 <span class="owl-status-badge ${onlineClass}">
                     <span class="badge-dot"></span>
-                    ${isOnline ? 'ONLINE' : 'OFFLINE'}
+                    ${isOnline ? 'Online' : 'Offline'}
                 </span>
             </div>
-
-            <div class="owl-stats">
-                <div class="owl-stat-item">
-                    <div class="owl-stat-label">CPU Temp</div>
-                    <div class="owl-stat-value ${tempClass}">${temp.toFixed(1)}°C</div>
-                </div>
-                <div class="owl-stat-item">
-                    <div class="owl-stat-label">Fan</div>
-                    <div class="owl-stat-value">${fan} RPM</div>
-                </div>
-                <div class="owl-stat-item">
-                    <div class="owl-stat-label">CPU</div>
-                    <div class="owl-stat-value">${cpu.toFixed(0)}%</div>
-                </div>
-                <div class="owl-stat-item">
-                    <div class="owl-stat-label">Memory</div>
-                    <div class="owl-stat-value">${mem.toFixed(0)}%</div>
-                </div>
+            <div class="owl-compact-stats">
+                <div class="owl-compact-stat"><strong${tempClass}>${temp.toFixed(0)}°C</strong> CPU</div>
+                <div class="owl-compact-stat"><strong>${cpu.toFixed(0)}%</strong> Load</div>
+                <div class="owl-compact-stat"><strong>${mem.toFixed(0)}%</strong> Mem</div>
+                <div class="owl-compact-stat"><strong>${loopMs > 0 ? loopMs.toFixed(0) + 'ms' : '--'}</strong> Loop</div>
             </div>
-
-            <div class="owl-actions">
-                <button class="owl-btn btn-video" onclick="openVideoFeed('${deviceId}')" ${disAttr}>
-                    VIDEO
-                </button>
-                <button class="owl-btn btn-frame" onclick="grabFrame('${deviceId}')" ${disAttr}>
-                    GRAB FRAME
-                </button>
-                <button class="owl-btn btn-restart" onclick="restartOWL('${deviceId}')" ${disAttr}>
-                    RESTART
-                </button>
+            <div class="owl-compact-actions">
+                <button class="owl-compact-btn btn-video" onclick="openVideoFeed('${deviceId}')" ${disAttr}>Video</button>
+                <button class="owl-compact-btn btn-frame" onclick="grabFrame('${deviceId}')" ${disAttr}>Frame</button>
+                <button class="owl-compact-btn btn-restart" onclick="restartOWL('${deviceId}')" ${disAttr}>Restart</button>
             </div>
         </div>
     `;

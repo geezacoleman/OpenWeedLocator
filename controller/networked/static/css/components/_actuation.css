@@ -1,0 +1,505 @@
+/* ==========================================================================
+   OWL Controller (Networked) - Three-Column OWL Status Layout
+   Panel-based dashboard: OWL Devices | System Health | Controls + Actuation
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   Three-Column Grid
+   LEFT:   OWL devices panel (scrollable cards)
+   CENTRE: System health panel (speed + loop time gauges)
+   RIGHT:  Controls panel + actuation panel
+   --------------------------------------------------------------------------- */
+
+.owl-status-layout {
+    display: grid;
+    grid-template-columns: 280px 240px 1fr;
+    gap: 1rem;
+    width: 100%;
+    max-width: 1240px;
+    height: 100%;
+}
+
+/* Shared panel section title */
+.section-title {
+    font-size: 0.7rem;
+    font-weight: 700;
+
+    letter-spacing: 0.5px;
+    color: var(--text-light);
+    margin-bottom: 0.5rem;
+    flex-shrink: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   LEFT COLUMN: OWL Devices panel
+   --------------------------------------------------------------------------- */
+
+.owls-column {
+    background: white;
+    border-radius: var(--radius-md);
+    border: 1px solid #dce1e8;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.owls-card-list {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    overflow-y: auto;
+    padding-right: 0.25rem;
+}
+
+.owls-card-list .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 1.5rem;
+    color: var(--text-light);
+}
+
+/* OWL compact cards */
+.owl-card-compact {
+    background: #f5f7fa;
+    border-radius: var(--radius-md);
+    padding: 0.6rem 0.75rem;
+    border-left: 4px solid #cbd5e0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.owl-card-compact.online {
+    border-left-color: var(--success);
+}
+
+.owl-card-compact.offline {
+    border-left-color: var(--danger);
+    opacity: 0.65;
+}
+
+.owl-card-compact-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.owl-card-compact-header h4 {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--text-dark);
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 120px;
+}
+
+.owl-compact-stats {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.25rem;
+}
+
+.owl-compact-stat {
+    font-size: 0.65rem;
+    color: var(--text-light);
+}
+
+.owl-compact-stat strong {
+    color: var(--text-dark);
+    font-weight: 700;
+}
+
+.owl-compact-actions {
+    display: flex;
+    gap: 0.3rem;
+}
+
+.owl-compact-btn {
+    flex: 1;
+    padding: 0.35rem 0.25rem;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.6rem;
+    font-weight: 700;
+    cursor: pointer;
+    color: white;
+
+    letter-spacing: 0.3px;
+}
+
+.owl-compact-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.owl-compact-btn:active:not(:disabled) {
+    transform: scale(0.95);
+}
+
+.owl-compact-btn.btn-video { background: #2980b9; }
+.owl-compact-btn.btn-frame { background: #6c5ce7; }
+.owl-compact-btn.btn-restart { background: #e67e22; }
+
+/* ---------------------------------------------------------------------------
+   CENTRE COLUMN: System Health + Sensitivity
+   --------------------------------------------------------------------------- */
+
+.gauges-column {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    overflow: hidden;
+}
+
+.gauges-panel {
+    background: white;
+    border-radius: var(--radius-md);
+    border: 1px solid #dce1e8;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+}
+
+.gauges-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+/* SVG Arc Gauge */
+.gauge-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.gauge-svg {
+    width: 140px;
+    height: 90px;
+}
+
+.gauge-arc-bg {
+    fill: none;
+    stroke: #e8ecf0;
+    stroke-width: 12;
+    stroke-linecap: round;
+}
+
+.gauge-arc-fill {
+    fill: none;
+    stroke-width: 12;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.5s ease, stroke 0.3s ease;
+}
+
+.gauge-arc-fill.speed { stroke: #27ae60; }
+.gauge-arc-fill.speed.stale { stroke: #f39c12; }
+.gauge-arc-fill.speed.no-gps { stroke: #95a5a6; }
+
+.gauge-arc-fill.loop-good { stroke: #27ae60; }
+.gauge-arc-fill.loop-warn { stroke: #f39c12; }
+.gauge-arc-fill.loop-danger { stroke: #e74c3c; }
+
+.gauge-value {
+    font-size: 1.6rem;
+    font-weight: 800;
+    color: var(--text-dark);
+    line-height: 1;
+    margin-top: -0.25rem;
+    text-align: center;
+}
+
+.gauge-unit {
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: var(--text-light);
+
+    letter-spacing: 0.5px;
+    text-align: center;
+}
+
+.gauge-label {
+    font-size: 0.6rem;
+    font-weight: 700;
+    color: var(--text-light);
+
+    letter-spacing: 0.5px;
+    margin-top: 0.15rem;
+    text-align: center;
+}
+
+/* GPS Status Badge */
+.gps-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: var(--radius-pill);
+    font-size: 0.6rem;
+    font-weight: 700;
+
+    letter-spacing: 0.5px;
+    margin-top: 0.25rem;
+}
+
+.gps-badge.active { background: #e6f7ed; color: #1b7a3d; }
+.gps-badge.stale { background: #fef3cd; color: #856404; }
+.gps-badge.no-gps { background: #e8ecf0; color: #6c757d; }
+
+/* Coverage Warning Banner */
+.coverage-warning {
+    display: none;
+    background: #fef3cd;
+    border: 1px solid #ffc107;
+    border-radius: var(--radius-md);
+    padding: 0.4rem 0.6rem;
+    font-size: 0.65rem;
+    font-weight: 600;
+    color: #856404;
+    text-align: center;
+    width: 100%;
+}
+
+.coverage-warning.visible {
+    display: block;
+}
+
+/* ---------------------------------------------------------------------------
+   RIGHT COLUMN: Controls panel + Actuation panel
+   --------------------------------------------------------------------------- */
+
+.controls-column {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+/* Controls panel — buttons + mode selector */
+.controls-panel {
+    background: white;
+    border-radius: var(--radius-md);
+    border: 1px solid #dce1e8;
+    padding: 0.75rem 1rem;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+/* Hero buttons */
+.hero-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    width: 100%;
+}
+
+.hero-buttons .action-button {
+    width: 100%;
+    height: 80px;
+}
+
+/* Detection Mode panel — own box at bottom of controls */
+.mode-panel {
+    background: #f5f7fa;
+    border-radius: var(--radius-md);
+    padding: 0.5rem 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    flex-shrink: 0;
+}
+
+.mode-panel-title {
+    font-size: 0.6rem;
+    font-weight: 700;
+
+    letter-spacing: 0.5px;
+    color: var(--text-light);
+}
+
+.mode-panel .mode-selector {
+    display: flex;
+    width: 100%;
+}
+
+.mode-panel .mode-btn {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Actuation Panel */
+.actuation-panel {
+    background: white;
+    border-radius: var(--radius-md);
+    border: 1px solid #dce1e8;
+    padding: 0.75rem 1rem;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+    width: 100%;
+}
+
+.actuation-panel-title {
+    font-size: 0.7rem;
+    font-weight: 700;
+
+    letter-spacing: 0.5px;
+    color: var(--text-light);
+    margin-bottom: 0.5rem;
+}
+
+.actuation-slider-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+}
+
+.actuation-slider-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-dark);
+    min-width: 90px;
+    flex-shrink: 0;
+}
+
+.actuation-slider-wrap {
+    flex: 1;
+    position: relative;
+}
+
+/* Reuse the same slider styling as config tab */
+.actuation-slider-wrap .single-slider {
+    margin: 0;
+}
+
+.actuation-slider-value {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--text-dark);
+    min-width: 50px;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+/* Computed values row */
+.actuation-computed {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 0.4rem;
+    border-top: 1px solid #edf0f3;
+    margin-top: 0.4rem;
+    font-size: 0.7rem;
+}
+
+.actuation-computed-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.actuation-computed-label {
+    font-size: 0.55rem;
+    font-weight: 700;
+
+    color: var(--text-light);
+    letter-spacing: 0.3px;
+}
+
+.actuation-computed-value {
+    font-size: 0.85rem;
+    font-weight: 800;
+    color: var(--text-dark);
+}
+
+.actuation-source {
+    font-size: 0.6rem;
+    font-weight: 700;
+
+    letter-spacing: 0.3px;
+}
+
+.actuation-source.gps { color: #27ae60; }
+.actuation-source.config { color: #95a5a6; }
+
+/* GPS-dependent slider disabled state (actuation length only) */
+.actuation-gps-group.no-gps {
+    opacity: 0.35;
+    pointer-events: none;
+}
+
+/* Mode-dependent slider disabled state (AI confidence when not AI mode) */
+.actuation-slider-group.disabled {
+    opacity: 0.35;
+    pointer-events: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Sensitivity Panel (3-segment SVG arc with needle)
+   --------------------------------------------------------------------------- */
+
+.sensitivity-panel {
+    background: white;
+    border-radius: var(--radius-md);
+    border: 1px solid #dce1e8;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+    padding: 0.5rem 0.75rem;
+    flex-shrink: 0;
+}
+
+.sensitivity-panel .section-title {
+    text-align: center;
+    margin-bottom: 0.25rem;
+}
+
+.sensitivity-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.sensitivity-svg {
+    width: 180px;
+    height: 105px;
+}
+
+.sensitivity-segment {
+    transition: opacity 0.2s ease;
+    cursor: pointer;
+}
+
+.sensitivity-level-text {
+    font-size: 1rem;
+    font-weight: 800;
+    margin-top: -0.1rem;
+    text-align: center;
+    color: #27ae60;
+}
+
+/* ---------------------------------------------------------------------------
+   Responsive: Stack columns on narrow screens (<900px)
+   --------------------------------------------------------------------------- */
+
+@media (max-width: 900px) {
+    .owl-status-layout {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto auto auto;
+        height: auto;
+    }
+
+    .controls-column { order: -2; }
+    .gauges-column { order: -1; }
+    .owls-column { order: 0; }
+
+    .controls-panel { flex: none; }
+}

@@ -6,6 +6,7 @@ import logging
 import argparse
 import time
 import threading
+from collections import deque
 from datetime import datetime
 from multiprocessing import Process, Value
 from pathlib import Path
@@ -64,8 +65,6 @@ except ImportError as e:
 
 try:
     import numpy as np
-    import imutils
-    from imutils.video import FPS
     from utils.input_manager import UteController, AdvancedController, get_rpi_version
     from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator
     from utils.directory_manager import DirectorySetup
@@ -358,6 +357,20 @@ class Owl:
             threading.Thread(target=self.update_state, daemon=True).start()
             self.logger.info("State monitoring thread started")
 
+        # Actuation timing — read from [Actuation] (CONTROLLER.ini), fall back to [System]
+        if self.config.has_section('Actuation'):
+            self.actuation_duration = self.config.getfloat('Actuation', 'actuation_duration',
+                                                           fallback=self.config.getfloat('System', 'actuation_duration'))
+            self.delay = self.config.getfloat('Actuation', 'delay',
+                                              fallback=self.config.getfloat('System', 'delay'))
+        else:
+            self.actuation_duration = self.config.getfloat('System', 'actuation_duration')
+            self.delay = self.config.getfloat('System', 'delay')
+
+        # Loop time tracking (30-frame rolling window)
+        self._loop_times = deque(maxlen=30)
+        self._avg_loop_time_ms = 0.0
+
         self.relay_vis = None
 
         # Check which Raspberry Pi is being used and adjust the resolution accordingly.
@@ -399,6 +412,9 @@ class Owl:
         self.crop_buffer_px = self.config.getint('GreenOnGreen', 'crop_buffer_px', fallback=20)
         self._pending_algorithm = None
         self._pending_trackbar_updates = {}
+        self._pending_model = None
+        self._pending_detect_classes = None
+        self._gog_detector = None
 
         # Crop factors to reduce edge artifacts (0.1 = 10% crop from each side)
         self.crop_factor_horizontal = self.config.getfloat('Camera', 'crop_factor_horizontal', fallback=0.1)
@@ -445,17 +461,17 @@ class Owl:
         if self.controller:
             self.controller.update_state()
 
-        # track FPS and framecount
+        # track framecount
         frame_count = 0
-
-        if log_fps:
-            fps = FPS().start()
+        last_fps_time = time.time()
+        fps_frame_count = 0
 
         # GoG shared config (used by both gog and gog-hybrid)
-        model_path = self.config.get('GreenOnGreen', 'model_path')
+        self._model_path = self.config.get('GreenOnGreen', 'model_path')
         self._gog_confidence = self.config.getfloat('GreenOnGreen', 'confidence')
         detect_classes_str = self.config.get('GreenOnGreen', 'detect_classes', fallback='')
-        detect_classes = [c.strip() for c in detect_classes_str.split(',') if c.strip()] or None
+        self._detect_classes_list = [c.strip() for c in detect_classes_str.split(',') if c.strip()]
+        detect_classes = self._detect_classes_list or None
         actuation_mode = self.config.get('GreenOnGreen', 'actuation_mode', fallback='centre')
         min_detection_pixels = self.config.getint('GreenOnGreen', 'min_detection_pixels', fallback=50)
 
@@ -466,19 +482,20 @@ class Owl:
 
         def _create_detector(algo):
             """Three-way detector factory."""
+            current_classes = self._detect_classes_list or None
             if algo == 'gog':
                 from utils.greenongreen import GreenOnGreen
                 return GreenOnGreen(
-                    model_path=model_path,
+                    model_path=self._model_path,
                     confidence=self._gog_confidence,
-                    detect_classes=detect_classes
+                    detect_classes=current_classes
                 )
             elif algo == 'gog-hybrid':
                 from utils.greenongreen import GreenOnGreen
                 return GreenOnGreen(
-                    model_path=model_path,
+                    model_path=self._model_path,
                     confidence=self._gog_confidence,
-                    detect_classes=detect_classes,
+                    detect_classes=current_classes,
                     hybrid_mode=True,
                     inference_resolution=self.inference_resolution,
                     crop_buffer_px=self.crop_buffer_px
@@ -488,6 +505,8 @@ class Owl:
 
         try:
             weed_detector = _create_detector(algorithm)
+            if algorithm in ('gog', 'gog-hybrid'):
+                self._gog_detector = weed_detector
 
         except (ModuleNotFoundError, IndexError, FileNotFoundError, ValueError) as e:
             algo_error = errors.AlgorithmError(algorithm, e)
@@ -503,22 +522,14 @@ class Owl:
             self.relay_controller.vis = True
 
         try:
-            actuation_duration = self.config.getfloat('System', 'actuation_duration')
-            delay = self.config.getfloat('System', 'delay')
-
             while True:
+                loop_start = time.time()
                 frame = self.cam.read()
 
                 if frame is None:
-                    if log_fps:
-                        fps.stop()
-                        self.logger.info(f"[INFO] Stopped. Approximate FPS: {fps.fps():.2f}")
-                        self.stop()
-                        break
-                    else:
-                        self.logger.info("[INFO] Frame is None. Stopped.")
-                        self.stop()
-                        break
+                    self.logger.info("[INFO] Frame is None. Stopped.")
+                    self.stop()
+                    break
 
                 # Drain queued trackbar updates from MQTT thread (thread-safe)
                 if self.show_display and self._pending_trackbar_updates:
@@ -545,6 +556,8 @@ class Owl:
                         try:
                             weed_detector = _create_detector(self._pending_algorithm)
                             algorithm = self._pending_algorithm
+                            if algorithm in ('gog', 'gog-hybrid'):
+                                self._gog_detector = weed_detector
                             self.logger.info(f"Live algorithm switch to: {algorithm}")
                         except Exception as e:
                             self.logger.error(f"Failed to load detector for {self._pending_algorithm}: {e}")
@@ -553,6 +566,28 @@ class Owl:
                                 self.dash.state['algorithm'] = algorithm
                                 self.dash.state['algorithm_error'] = str(e)
                         self._pending_algorithm = None
+
+                    # Live model switching
+                    if self._pending_model:
+                        new_model = self._pending_model
+                        self._pending_model = None
+                        try:
+                            self._model_path = new_model
+                            weed_detector = _create_detector(algorithm)
+                            if algorithm in ('gog', 'gog-hybrid'):
+                                self._gog_detector = weed_detector
+                            self.logger.info(f"Live model switch to: {new_model}")
+                        except Exception as e:
+                            self.logger.error(f"Failed to switch model: {e}")
+
+                    # Live detect_classes update
+                    if self._pending_detect_classes is not None:
+                        new_classes = self._pending_detect_classes
+                        self._pending_detect_classes = None
+                        self._detect_classes_list = new_classes
+                        if hasattr(weed_detector, 'update_detect_classes'):
+                            weed_detector.update_detect_classes(new_classes or None)
+                        self.logger.info(f"detect_classes updated: {new_classes}")
 
                     # Live crop buffer update (hybrid mode only)
                     if (algorithm == 'gog-hybrid'
@@ -621,9 +656,9 @@ class Owl:
                             if lane_pixels >= min_detection_pixels:
                                 self.relay_controller.receive(
                                     relay=i,
-                                    delay=delay,
+                                    delay=self.delay,
                                     time_stamp=actuation_time,
-                                    duration=actuation_duration)
+                                    duration=self.actuation_duration)
                     else:
                         # Centre-based actuation (default, works for all model types)
                         for centre in weed_centres:
@@ -636,9 +671,9 @@ class Owl:
                                 if lane_start <= centre_x < lane_end:
                                     self.relay_controller.receive(
                                         relay=i,
-                                        delay=delay,
+                                        delay=self.delay,
                                         time_stamp=actuation_time,
-                                        duration=actuation_duration)
+                                        duration=self.actuation_duration)
 
                 ##### Update Dashboard Stream #####
                 if frame_count % 90 == 0:  # Every 90 frames (~3 seconds at 30fps)
@@ -701,14 +736,20 @@ class Owl:
 
                 frame_count = frame_count + 1 if frame_count < 900 else 1
 
-                if log_fps and frame_count % 900 == 0:
-                    fps.stop()
-                    self.logger.info(f"[INFO] Approximate FPS: {fps.fps():.2f}")
-                    fps = FPS().start()
+                # Loop time tracking
+                loop_time_ms = (time.time() - loop_start) * 1000
+                self._loop_times.append(loop_time_ms)
+                self._avg_loop_time_ms = sum(self._loop_times) / len(self._loop_times)
 
-                # update the framerate counter
+                # FPS logging (time-based, replaces imutils FPS)
                 if log_fps:
-                    fps.update()
+                    fps_frame_count += 1
+                    elapsed = time.time() - last_fps_time
+                    if elapsed >= 30.0:
+                        approx_fps = fps_frame_count / elapsed
+                        self.logger.info(f"[INFO] Approximate FPS: {approx_fps:.2f} | Avg loop: {self._avg_loop_time_ms:.1f}ms")
+                        fps_frame_count = 0
+                        last_fps_time = time.time()
 
                 if self.show_display:
                     if not self._detection_enable:
@@ -730,7 +771,9 @@ class Owl:
                                 (80, 80, 255), 1)
                     cv2.putText(image_out, f'Press "S" to save {algorithm} thresholds to file.',
                                 (20, int(image_out.shape[1] * 0.72)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 80, 255), 1)
-                    cv2.imshow("Detection Output", imutils.resize(image_out, width=600))
+                    h, w = image_out.shape[:2]
+                    display_frame = cv2.resize(image_out, (600, int(h * 600 / w))) if w != 600 else image_out
+                    cv2.imshow("Detection Output", display_frame)
 
                 k = cv2.waitKey(1) & 0xFF
                 if k == ord('s'):
@@ -749,9 +792,6 @@ class Owl:
                         self.logger.info("[INFO] Stopped video recording.")
 
                 elif k == 27:
-                    if log_fps:
-                        fps.stop()
-                        self.logger.info(f"[INFO] Approximate FPS: {fps.fps():.2f}")
                     if self.show_display:
                         self.relay_controller.relay_vis.close()
 
@@ -760,9 +800,6 @@ class Owl:
                     break
 
         except KeyboardInterrupt:
-            if log_fps:
-                fps.stop()
-                self.logger.info(f"[INFO] Approximate FPS: {fps.fps():.2f}")
             if self.show_display:
                 self.relay_controller.relay_vis.close()
             self.logger.info("[INFO] Stopped.")
@@ -1056,6 +1093,10 @@ class Owl:
 
         except Exception as e:
             self.logger.warning(f"Error getting system stats: {e}")
+
+        stats['avg_loop_time_ms'] = round(self._avg_loop_time_ms, 1)
+        stats['actuation_duration'] = self.actuation_duration
+        stats['delay'] = self.delay
 
         return stats
 

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OWL Dashboard</title>
+    <title>OWL Controller</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 
     <!-- Shared JS utilities (load first) -->
@@ -15,11 +15,11 @@
     <!-- App-specific JS modules -->
     <script src="{{ url_for('static', filename='js/modules/_core.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/modules/_notifications.js') }}" defer></script>
-    <script src="{{ url_for('static', filename='js/modules/_stream.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/modules/_controls.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/modules/_storage.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/modules/_stats.js') }}" defer></script>
-    <script src="{{ url_for('static', filename='js/modules/_upload.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/modules/_ai_tab.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/modules/_config_tab.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/modules/_config.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
 </head>
@@ -27,8 +27,7 @@
 <div class="header">
     <div class="header-content">
         <div class="logo-section">
-            <img src="/shared/images/owl-logo-wht.png" alt="OWL Logo" class="logo">
-            <h1>OWL Dashboard</h1>
+            <h1>OWL Controller</h1>
         </div>
         <div class="status-indicator">
             <!-- Notification bell -->
@@ -52,14 +51,11 @@
         <div class="nav-tab active" data-tab="dashboard">
             <span class="tab-text">Dashboard</span>
         </div>
-        <div class="nav-tab" data-tab="stream">
-            <span class="tab-text">Stream</span>
-        </div>
         <div class="nav-tab" data-tab="storage">
             <span class="tab-text">Storage</span>
         </div>
-        <div class="nav-tab" data-tab="upload">
-            <span class="tab-text">Upload</span>
+        <div class="nav-tab" data-tab="ai">
+            <span class="tab-text">AI</span>
         </div>
         <div class="nav-tab" data-tab="config">
             <span class="tab-text">Config</span>
@@ -123,9 +119,9 @@
 
                 <!-- Pipeline Mode Selector -->
                 <div class="mode-selector" id="pipeline-mode-selector">
-                    <button class="mode-btn active" data-mode="gob" onclick="setPipelineMode('gob')">COLOUR</button>
+                    <button class="mode-btn active" data-mode="gob" onclick="setPipelineMode('gob')">Colour</button>
                     <button class="mode-btn" data-mode="gog" onclick="setPipelineMode('gog')">AI</button>
-                    <button class="mode-btn" data-mode="hybrid" onclick="setPipelineMode('hybrid')">HYBRID</button>
+                    <button class="mode-btn" data-mode="hybrid" onclick="setPipelineMode('hybrid')">Hybrid</button>
                 </div>
 
                 <!-- Same-row -->
@@ -150,55 +146,60 @@
                     </div>
                 </div>
 
+                <!-- AI Confidence (visible in AI/Hybrid mode) -->
+                <div class="config-slider-group dash-confidence-slider" id="dash-confidence-group" style="display:none;">
+                    <div class="slider-header">
+                        <span class="slider-title">AI Confidence</span>
+                        <span class="slider-values">
+                            <span class="slider-val" id="dash-confidence-value">--</span>
+                            <span class="slider-val-sep">%</span>
+                        </span>
+                    </div>
+                    <div class="single-slider" data-param="confidence">
+                        <div class="slider-rail">
+                            <div class="slider-track"><div class="slider-fill"></div></div>
+                            <div class="slider-knob active" data-param="confidence" id="dash-confidence-knob"></div>
+                        </div>
+                    </div>
+                    <div class="slider-fine-tune">
+                        <button class="fine-btn" data-delta="-5">&minus;</button>
+                        <button class="fine-btn" data-delta="5">+</button>
+                    </div>
+                </div>
+
+                <!-- GPS Indicator -->
+                <div class="gps-indicator" id="gpsIndicator">
+                    <svg class="gps-indicator-icon" viewBox="0 0 24 24" width="18" height="18">
+                        <path fill="currentColor" d="M12,2A7,7 0 0,1 19,9C19,14.25 12,22 12,22C12,22 5,14.25 5,9A7,7 0 0,1 12,2M12,4A5,5 0 0,0 7,9C7,10 7,12 12,18.71C17,12 17,10 17,9A5,5 0 0,0 12,4M12,6.5A2.5,2.5 0 0,1 14.5,9A2.5,2.5 0 0,1 12,11.5A2.5,2.5 0 0,1 9.5,9A2.5,2.5 0 0,1 12,6.5"/>
+                    </svg>
+                    <span id="gpsStatusText">GPS Off</span>
+                    <label class="gps-label">
+                        <input type="checkbox" id="gpsToggle">
+                        <span class="gps-toggle-track"></span>
+                    </label>
+                </div>
+
                 <!-- Metrics footer with gradients -->
                 <div class="metrics-row">
                     <span class="metric-chip cpu" id="chipCpu">CPU  <strong id="cpuChipVal">0%</strong></span>
                     <span class="metric-chip mem" id="chipMem">Mem  <strong id="memChipVal">0%</strong></span>
                     <span class="metric-chip temp" id="chipTemp">Temp <strong id="tempChipVal">0°C</strong></span>
                 </div>
-            </div>
 
-        </div>
-    </div>
-
-    <!-- Stream Tab -->
-    <div id="stream" class="tab-content">
-        <div class="stream-card">
-            <div class="stream-header">
-                <h2>Live Camera Feed</h2>
-                <div class="stream-controls">
-                    <button id="fullscreenBtn" class="icon-btn" title="Fullscreen">Fullscreen</button>
-                    <button id="downloadFrame" class="icon-btn" title="Download Frame">Download</button>
-                    <button id="refreshStreamBtn" class="icon-btn" title="Refresh Stream">Refresh</button>
-                </div>
-            </div>
-            <div class="stream-container">
-                <div class="zoom-container">
-                    <img id="stream-img" class="stream zoom-image" src="/video_feed" alt="Camera Feed">
-                    <div id="stream-status-overlay" class="stream-overlay-message hidden">
-                        <p>Video Stream Unavailable</p>
-                        <small>Check owl.py logs for details. Core functions may still be active.</small>
+                <!-- Video Feed Toggle -->
+                <button class="preview-toggle-btn" id="previewToggle">Video Feed</button>
+                <div class="preview-container hidden" id="previewContainer">
+                    <img id="stream-img" class="preview-stream" src="/video_feed" alt="Camera Feed">
+                    <div id="stream-status-overlay" class="preview-overlay-message hidden">
+                        <p>Stream Unavailable</p>
                     </div>
-                    <div class="stream-overlay">
-                        <div class="overlay-item gps-status">
-                            <svg class="gps-icon" viewBox="0 0 24 24">
-                                <path fill="currentColor" d="M12,2A7,7 0 0,1 19,9C19,14.25 12,22 12,22C12,22 5,14.25 5,9A7,7 0 0,1 12,2M12,4A5,5 0 0,0 7,9C7,10 7,12 12,18.71C17,12 17,10 17,9A5,5 0 0,0 12,4M12,6.5A2.5,2.5 0 0,1 14.5,9A2.5,2.5 0 0,1 12,11.5A2.5,2.5 0 0,1 9.5,9A2.5,2.5 0 0,1 12,6.5"/>
-                            </svg>
-                            <label class="gps-label">
-                                <input type="checkbox" id="gps-toggle" checked>
-                                <span class="gps-toggle-track"></span>
-                            </label>
-                            <span id="gps-accuracy">GPS Off</span>
-                        </div>
-
-                        <div class="overlay-item zoom-controls">
-                            <button class="zoom-btn" id="zoomIn">+</button>
-                            <button class="zoom-btn" id="zoomOut">-</button>
-                            <button class="zoom-btn" id="zoomReset">Reset</button>
-                        </div>
+                    <div class="preview-controls">
+                        <button class="icon-btn" id="fullscreenBtn">Fullscreen</button>
+                        <button class="icon-btn" id="downloadFrame">Save Frame</button>
                     </div>
                 </div>
             </div>
+
         </div>
     </div>
     <!-- Storage Tab -->
@@ -252,232 +253,42 @@
         </div>
     </div>
 
-    <!-- Upload Tab -->
-    <div id="upload" class="tab-content">
-        <div class="upload-container">
+    <!-- AI Tab -->
+    <div id="ai" class="tab-content">
+        <div class="ai-panel">
+            <!-- Status banner -->
+            <div class="ai-status-banner disconnected" id="ai-status-banner">
+                <span id="ai-status-text">Connecting...</span>
+            </div>
 
-            <!-- Connection Check Section -->
-            <div class="card">
-                <h2>Network Connection</h2>
-                <div class="connection-section">
-                    <div class="connection-status" id="connectionStatus">
-                        <div class="status-indicator" id="connectionIndicator">❓</div>
-                        <span id="connectionText">Click to check connection</span>
+            <!-- Model selector -->
+            <div class="ai-model-row">
+                <div class="ai-model-selector">
+                    <label for="ai-model-select">Model:</label>
+                    <div class="select-wrapper">
+                        <select class="ai-model-select" id="ai-model-select" onchange="onModelSelected()">
+                            <option value="">No models available</option>
+                        </select>
                     </div>
-                    <button id="checkConnection" class="btn-primary">Check Ethernet Connection</button>
+                </div>
+                <div class="ai-model-info" id="ai-model-info"></div>
+            </div>
+
+            <!-- Class grid section -->
+            <div class="ai-classes-section">
+                <div class="ai-classes-header">
+                    <span class="ai-classes-title">Detection Classes</span>
+                    <span class="ai-classes-hint" id="ai-classes-hint">Select classes to detect (empty = all)</span>
+                </div>
+                <div class="ai-classes-grid" id="ai-classes-grid">
+                    <span style="color:var(--text-light);">Load a model to see classes</span>
                 </div>
             </div>
 
-            <!-- S3 Credentials Section -->
-            <div class="card">
-                <h2>S3 Configuration</h2>
-                <div class="credentials-form">
-
-                    <!-- USB Key File Section -->
-                    <div class="key-file-section">
-                        <h4>Load Credentials from USB</h4>
-                        <div class="key-file-controls">
-                            <button id="findKeyFiles" class="btn-secondary">Find Key Files on USB</button>
-                            <div id="keyFilesList" class="key-files-list hidden"></div>
-                        </div>
-                    </div>
-
-                    <div class="form-divider">
-                        <span>OR</span>
-                    </div>
-
-                    <!-- Manual Entry Section -->
-                    <div class="manual-entry-section">
-                        <h4>Manual Entry</h4>
-                        <div class="form-grid">
-                            <div class="form-group">
-                                <label for="accessKey">Access Key:</label>
-                                <input type="text" id="accessKey" placeholder="Your S3 access key" class="form-input">
-                            </div>
-                            <div class="form-group">
-                                <label for="secretKey">Secret Key:</label>
-                                <input type="password" id="secretKey" placeholder="Your S3 secret key" class="form-input">
-                            </div>
-                            <div class="form-group">
-                                <label for="bucketName">Bucket Name:</label>
-                                <input type="text" id="bucketName" placeholder="your-bucket-name" class="form-input">
-                            </div>
-                            <div class="form-group">
-                                <label for="region">Region:</label>
-                                <select id="region" class="form-input">
-                                    <option value="us-east-1">US East (N. Virginia)</option>
-                                    <option value="us-west-2">US West (Oregon)</option>
-                                    <option value="eu-west-1">Europe (Ireland)</option>
-                                    <option value="ap-southeast-2">Asia Pacific (Sydney)</option>
-                                    <option value="fsn1">Hetzner (Falkenstein)</option>
-                                    <option value="hel1">Hetzner (Helsinki)</option>
-                                    <option value="nbg1">Hetzner (Nuremburg)</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label for="s3Prefix">S3 Path Prefix (optional):</label>
-                                <input type="text" id="s3Prefix" placeholder="owl-data/site-name/" class="form-input">
-                            </div>
-                            <div class="form-group">
-                                <label for="endpointUrl">Custom Endpoint:</label>
-                                <input type="text" id="endpointUrl" placeholder="Auto-filled for Hetzner" class="form-input" readonly>
-                                <small class="form-help">Automatically configured for Hetzner regions</small>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="credentials-actions">
-                        <button id="testCredentials" class="btn-secondary">Test Credentials</button>
-                        <div class="credentials-status" id="credentialsStatus"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Directory Selection Section -->
-            <div class="card">
-                <h2>Select Upload Directory</h2>
-                <div class="directory-selection">
-                    <div class="current-selection">
-                        <strong>Selected Directory:</strong>
-                        <span id="selectedDirectory">None selected</span>
-                    </div>
-
-                    <div class="directory-browser">
-                        <div class="browser-header">
-                            <button id="browseDirectories" class="btn-secondary">Browse Directories</button>
-                            <button id="scanDirectory" class="btn-primary" disabled>Scan Selected Directory</button>
-                        </div>
-
-                        <div id="directoryBrowser" class="directory-list hidden">
-                            <div id="directoryBreadcrumbs" class="breadcrumbs"></div>
-                            <div id="directoryContents" class="directory-contents">
-                                <p>Click "Browse Directories" to start</p>
-                            </div>
-                        </div>
-
-                        <div id="scanResults" class="scan-results hidden">
-                            <h4>Directory Contents:</h4>
-                            <div class="scan-info">
-                                <div class="scan-stat">
-                                    <span class="scan-label">Files:</span>
-                                    <span id="scanFileCount">0</span>
-                                </div>
-                                <div class="scan-stat">
-                                    <span class="scan-label">Total Size:</span>
-                                    <span id="scanTotalSize">0 B</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <h2>Upload Metadata</h2>
-                <div class="metadata-form">
-                    <p class="metadata-description">Provide information about this upload that will be saved with your data.</p>
-
-                    <div class="form-grid">
-                        <div class="form-group">
-                            <label for="metadataName">Name/Title:</label>
-                            <input type="text" id="metadataName" placeholder="e.g., North Field Survey" class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label for="metadataDate">Date:</label>
-                            <input type="date" id="metadataDate" class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label for="metadataLocation">Location/Farm:</label>
-                            <input type="text" id="metadataLocation" placeholder="e.g., Smith Farm, Paddock 7" class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label for="metadataField">Field ID:</label>
-                            <input type="text" id="metadataField" placeholder="e.g., Field A, Block 3" class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label for="metadataWeather">Weather Conditions:</label>
-                            <input type="text" id="metadataWeather" placeholder="e.g., Sunny, 25°C, Light wind" class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label for="metadataCrop">Crop Type:</label>
-                            <input type="text" id="metadataCrop" placeholder="e.g., Wheat, Canola, Barley" class="form-input">
-                        </div>
-                        <div class="form-group full-width">
-                            <label for="metadataWeeds">Expected Weeds:</label>
-                            <input type="text" id="metadataWeeds" placeholder="e.g., Wild radish, Ryegrass, Volunteer canola" class="form-input">
-                        </div>
-                        <div class="form-group full-width">
-                            <label for="metadataNotes">Additional Notes:</label>
-                            <textarea id="metadataNotes" placeholder="Any additional information about this data collection..." class="form-textarea" rows="3"></textarea>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Upload Section -->
-            <div class="card">
-                <h2>Upload Control</h2>
-                <div class="upload-section">
-                    <div class="upload-actions">
-                        <button id="startUpload" class="btn-success upload-btn" disabled>Start Upload</button>
-                        <button id="stopUpload" class="btn-danger upload-btn" disabled>Stop Upload</button>
-                    </div>
-
-                    <div id="uploadProgress" class="upload-progress hidden">
-                        <div class="progress-header">
-                            <h4>Upload Progress</h4>
-                            <span id="uploadStatus">Preparing...</span>
-                        </div>
-
-                        <div class="progress-bars">
-                            <div class="progress-item">
-                                <label>Overall Progress:</label>
-                                <div class="progress-bar">
-                                    <div id="overallProgressBar" class="progress-fill"></div>
-                                </div>
-                                <span id="overallProgressText">0%</span>
-                            </div>
-
-                            <div class="progress-item">
-                                <label>Files:</label>
-                                <span id="fileProgressText">0 / 0</span>
-                            </div>
-                        </div>
-
-                        <div class="progress-stats">
-                            <div class="stat-item">
-                                <span class="stat-label">Speed:</span>
-                                <span id="uploadSpeed">0 MB/s</span>
-                            </div>
-                            <div class="stat-item">
-                                <span class="stat-label">ETA:</span>
-                                <span id="uploadETA">--</span>
-                            </div>
-                            <div class="stat-item">
-                                <span class="stat-label">Current File:</span>
-                                <span id="currentFile">--</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div id="uploadResults" class="upload-results hidden">
-                        <h4>Upload Complete</h4>
-                        <div class="results-summary">
-                            <div class="result-item success">
-                                <span class="result-label">Successful:</span>
-                                <span id="successCount">0</span>
-                            </div>
-                            <div class="result-item error">
-                                <span class="result-label">Failed:</span>
-                                <span id="failedCount">0</span>
-                            </div>
-                            <div class="result-item">
-                                <span class="result-label">Total Time:</span>
-                                <span id="totalTime">--</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+            <!-- Action bar -->
+            <div class="ai-action-bar">
+                <button class="btn-secondary" onclick="clearAIClassSelection()">Clear Selection</button>
+                <button class="btn-primary" onclick="applyAIClassSelection()">Apply</button>
             </div>
         </div>
     </div>
@@ -516,29 +327,193 @@
                 </div>
             </div>
 
-            <!-- Warning Banner -->
-            <div class="config-warning hidden" id="configWarning">
-                <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
-                <span>Changes to MQTT, Network, or Controller settings require an OWL service restart to take effect.</span>
+            <!-- Live Slider Controls -->
+            <div class="config-sliders-grid">
+                <!-- ExG Threshold (range) -->
+                <div class="config-slider-group">
+                    <div class="slider-header">
+                        <span class="slider-title">ExG Threshold</span>
+                        <span class="slider-values">
+                            <span class="slider-val" id="exg_min-value">--</span>
+                            <span class="slider-val-sep">&mdash;</span>
+                            <span class="slider-val" id="exg_max-value">--</span>
+                        </span>
+                    </div>
+                    <div class="range-slider" data-param-min="exg_min" data-param-max="exg_max">
+                        <div class="slider-rail">
+                            <div class="slider-track"><div class="slider-fill"></div></div>
+                            <div class="slider-knob active" data-param="exg_min" id="exg_min-knob"></div>
+                            <div class="slider-knob" data-param="exg_max" id="exg_max-knob"></div>
+                        </div>
+                    </div>
+                    <div class="slider-fine-tune">
+                        <button class="fine-btn" data-delta="-1">&minus;</button>
+                        <button class="fine-btn" data-delta="1">+</button>
+                    </div>
+                </div>
+
+                <!-- Hue Range (range) -->
+                <div class="config-slider-group">
+                    <div class="slider-header">
+                        <span class="slider-title">Hue Range</span>
+                        <span class="slider-values">
+                            <span class="slider-val" id="hue_min-value">--</span>
+                            <span class="slider-val-sep">&mdash;</span>
+                            <span class="slider-val" id="hue_max-value">--</span>
+                        </span>
+                    </div>
+                    <div class="range-slider" data-param-min="hue_min" data-param-max="hue_max">
+                        <div class="slider-rail">
+                            <div class="slider-track"><div class="slider-fill"></div></div>
+                            <div class="slider-knob active" data-param="hue_min" id="hue_min-knob"></div>
+                            <div class="slider-knob" data-param="hue_max" id="hue_max-knob"></div>
+                        </div>
+                    </div>
+                    <div class="slider-fine-tune">
+                        <button class="fine-btn" data-delta="-1">&minus;</button>
+                        <button class="fine-btn" data-delta="1">+</button>
+                    </div>
+                </div>
+
+                <!-- Saturation (range) -->
+                <div class="config-slider-group">
+                    <div class="slider-header">
+                        <span class="slider-title">Saturation</span>
+                        <span class="slider-values">
+                            <span class="slider-val" id="saturation_min-value">--</span>
+                            <span class="slider-val-sep">&mdash;</span>
+                            <span class="slider-val" id="saturation_max-value">--</span>
+                        </span>
+                    </div>
+                    <div class="range-slider" data-param-min="saturation_min" data-param-max="saturation_max">
+                        <div class="slider-rail">
+                            <div class="slider-track"><div class="slider-fill"></div></div>
+                            <div class="slider-knob active" data-param="saturation_min" id="saturation_min-knob"></div>
+                            <div class="slider-knob" data-param="saturation_max" id="saturation_max-knob"></div>
+                        </div>
+                    </div>
+                    <div class="slider-fine-tune">
+                        <button class="fine-btn" data-delta="-1">&minus;</button>
+                        <button class="fine-btn" data-delta="1">+</button>
+                    </div>
+                </div>
+
+                <!-- Brightness (range) -->
+                <div class="config-slider-group">
+                    <div class="slider-header">
+                        <span class="slider-title">Brightness</span>
+                        <span class="slider-values">
+                            <span class="slider-val" id="brightness_min-value">--</span>
+                            <span class="slider-val-sep">&mdash;</span>
+                            <span class="slider-val" id="brightness_max-value">--</span>
+                        </span>
+                    </div>
+                    <div class="range-slider" data-param-min="brightness_min" data-param-max="brightness_max">
+                        <div class="slider-rail">
+                            <div class="slider-track"><div class="slider-fill"></div></div>
+                            <div class="slider-knob active" data-param="brightness_min" id="brightness_min-knob"></div>
+                            <div class="slider-knob" data-param="brightness_max" id="brightness_max-knob"></div>
+                        </div>
+                    </div>
+                    <div class="slider-fine-tune">
+                        <button class="fine-btn" data-delta="-1">&minus;</button>
+                        <button class="fine-btn" data-delta="1">+</button>
+                    </div>
+                </div>
+
+                <!-- Min Detection Area (single) -->
+                <div class="config-slider-group">
+                    <div class="slider-header">
+                        <span class="slider-title">Min Detection Area</span>
+                        <span class="slider-values">
+                            <span class="slider-val" id="min_detection_area-value">--</span>
+                        </span>
+                    </div>
+                    <div class="single-slider" data-param="min_detection_area">
+                        <div class="slider-rail">
+                            <div class="slider-track"><div class="slider-fill"></div></div>
+                            <div class="slider-knob active" data-param="min_detection_area" id="min_detection_area-knob"></div>
+                        </div>
+                    </div>
+                    <div class="slider-fine-tune">
+                        <button class="fine-btn" data-delta="-10">&minus;</button>
+                        <button class="fine-btn" data-delta="10">+</button>
+                    </div>
+                </div>
+
+                <!-- AI Confidence (single, hidden when not AI mode) -->
+                <div class="config-slider-group" id="confidence-slider-group" style="display:none;">
+                    <div class="slider-header">
+                        <span class="slider-title">AI Confidence</span>
+                        <span class="slider-values">
+                            <span class="slider-val" id="confidence-value">--</span>
+                            <span class="slider-val-sep">%</span>
+                        </span>
+                    </div>
+                    <div class="single-slider" data-param="confidence">
+                        <div class="slider-rail">
+                            <div class="slider-track"><div class="slider-fill"></div></div>
+                            <div class="slider-knob active" data-param="confidence" id="confidence-knob"></div>
+                        </div>
+                    </div>
+                    <div class="slider-fine-tune">
+                        <button class="fine-btn" data-delta="-5">&minus;</button>
+                        <button class="fine-btn" data-delta="5">+</button>
+                    </div>
+                </div>
+
+                <!-- Crop Buffer (single, hidden when not hybrid mode) -->
+                <div class="config-slider-group" id="crop-buffer-slider-group" style="display:none;">
+                    <div class="slider-header">
+                        <span class="slider-title">Crop Buffer</span>
+                        <span class="slider-values">
+                            <span class="slider-val" id="crop_buffer_px-value">--</span>
+                            <span class="slider-val-sep">px</span>
+                        </span>
+                    </div>
+                    <div class="single-slider" data-param="crop_buffer_px">
+                        <div class="slider-rail">
+                            <div class="slider-track"><div class="slider-fill"></div></div>
+                            <div class="slider-knob active" data-param="crop_buffer_px" id="crop_buffer_px-knob"></div>
+                        </div>
+                    </div>
+                    <div class="slider-fine-tune">
+                        <button class="fine-btn" data-delta="-1">&minus;</button>
+                        <button class="fine-btn" data-delta="1">+</button>
+                    </div>
+                </div>
             </div>
 
-            <!-- Unsaved Changes Banner -->
-            <div class="config-unsaved hidden" id="configUnsaved">
-                <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
-                <span>You have unsaved changes</span>
+            <!-- Advanced Settings (collapsible INI editor) -->
+            <div class="config-advanced-toggle" id="config-advanced-toggle" onclick="toggleAdvancedSettings()">
+                <span class="config-advanced-arrow">&#9654;</span>
+                <span>Advanced Settings</span>
             </div>
+            <div class="config-advanced-body" id="config-advanced-body">
+                <!-- Warning Banner -->
+                <div class="config-warning hidden" id="configWarning">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
+                    <span>Changes to MQTT, Network, or Controller settings require an OWL service restart to take effect.</span>
+                </div>
 
-            <!-- Info Banner -->
-            <div class="config-info">
-                <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
-                <span>Default configs are protected. Changes are saved as new files that can be set as the active boot config.</span>
-            </div>
+                <!-- Unsaved Changes Banner -->
+                <div class="config-unsaved hidden" id="configUnsaved">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                    <span>You have unsaved changes</span>
+                </div>
 
-            <!-- Config Sections -->
-            <div class="config-sections" id="configSections">
-                <div class="config-loading">
-                    <div class="spinner"></div>
-                    <span>Loading configuration...</span>
+                <!-- Info Banner -->
+                <div class="config-info">
+                    <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+                    <span>Default configs are protected. Changes are saved as new files that can be set as the active boot config.</span>
+                </div>
+
+                <!-- Config Sections (full INI editor) -->
+                <div class="config-sections" id="configSections">
+                    <div class="config-loading">
+                        <div class="spinner"></div>
+                        <span>Loading configuration...</span>
+                    </div>
                 </div>
             </div>
 

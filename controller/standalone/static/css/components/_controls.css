@@ -171,6 +171,9 @@
     display: grid;
     gap: 0.75rem;
     margin-bottom: 1rem;
+    background: #f5f7fa;
+    border-radius: var(--radius-md, 8px);
+    padding: 0.75rem;
 }
 
 /* --------------------------------------------------------------------------
@@ -252,6 +255,9 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 1rem;
+    background: #f5f7fa;
+    border-radius: var(--radius-md, 8px);
+    padding: 0.75rem;
 }
 
 .control-tile {
@@ -626,29 +632,32 @@
 
 .mode-selector {
     display: flex;
-    gap: 4px;
+    width: 100%;
+    gap: 0;
     align-items: center;
-    justify-content: center;
-    background: var(--bg-secondary, #1a1a2e);
-    border-radius: 12px;
+    background: #d5dbe3;
+    border-radius: var(--radius-md, 8px);
     padding: 4px;
-    margin: 0.75rem 0;
 }
 
 .mode-btn {
+    flex: 1;
     min-height: 48px;
-    min-width: 110px;
+    min-width: 0;
     border: none;
-    border-radius: 8px;
+    border-radius: 6px;
     font-size: 0.95rem;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.2s;
     background: transparent;
-    color: var(--text-secondary, #8892b0);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    padding: 0 1rem;
+    color: #5a6577;
+    padding: 0 0.5rem;
+}
+
+.mode-btn:hover:not(.active):not(.disabled) {
+    color: #3d4a5c;
+    background: rgba(255,255,255,0.5);
 }
 
 .mode-btn:active {
@@ -656,13 +665,13 @@
 }
 
 .mode-btn.active {
-    background: linear-gradient(135deg, var(--accent) 0%, #2980b9 100%);
+    background: var(--primary);
     color: white;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    box-shadow: 0 2px 8px rgba(2, 39, 117, 0.3);
 }
 
 .mode-btn.disabled {
-    opacity: 0.4;
+    opacity: 0.35;
     cursor: not-allowed;
 }
 
@@ -730,8 +739,28 @@
         padding: 1rem;
     }
 
+    .mode-btn {
+        font-size: 0.85rem;
+        min-height: 42px;
+    }
+
+    /* Power button: let it shrink */
+    .power-btn {
+        min-width: auto;
+    }
+
+    /* OWL switches: prevent state text from clipping */
+    .owl-switch {
+        min-width: 0;
+    }
+
+    .owl-switch .switch-state {
+        white-space: nowrap;
+    }
+
     .owl-switch .switch-track {
         width: 72px;
+        flex-shrink: 0;
     }
 
     .owl-switch[aria-pressed="true"] .switch-thumb {

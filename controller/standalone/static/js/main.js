@@ -4,12 +4,12 @@
    Load order (all modules must be loaded before this file):
    1. _core.js       - Global state, API helper, utilities
    2. _notifications.js - Notification system (required by all modules)
-   3. _stream.js     - Video stream, zoom, GPS
-   4. _controls.js   - Dashboard controls, power, detection, recording
-   5. _storage.js    - File browser, USB devices
-   6. _stats.js      - System status polling
-   7. _upload.js     - S3 upload system
-   8. _config.js     - Configuration editor
+   3. _controls.js   - Dashboard controls, power, detection, recording, preview
+   4. _storage.js    - File browser, USB devices
+   5. _stats.js      - System status polling
+   6. _ai_tab.js     - AI model selection and class filtering
+   7. _config_tab.js  - Config tab range sliders
+   8. _config.js     - Configuration editor (INI)
    9. main.js        - This file (initialization)
    ========================================================================== */
 
@@ -40,8 +40,8 @@ function initTabs() {
                 document.getElementById('usbDevices').innerHTML = '<p>Scanning for USB devices...</p>';
                 document.getElementById('fileList').innerHTML = '<p>Click Refresh to browse recordings</p>';
                 loadStorageData();
-            } else if (targetId === 'upload') {
-                initUploadTab();
+            } else if (targetId === 'ai') {
+                refreshAITab();
             }
         });
     });
@@ -56,22 +56,15 @@ function initTabs() {
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize all modules
     initTabs();
-    initZoom();
-    initGPS();
     initControlButtons();
     initStorageTab();
-    initVideoStream();
-    initUploadTab();
+    initPreview();
+    initGPS();
     initNotifications();
     initHardwareControllerCheck();
     initDashboardControls();
     initConfigEditor();
-
-    // Fullscreen button
-    const fullscreenBtn = document.getElementById('fullscreenBtn');
-    if (fullscreenBtn) {
-        fullscreenBtn.addEventListener('click', toggleFullscreen);
-    }
+    initSliders();
 
     // Start system stats polling
     startUpdateInterval();

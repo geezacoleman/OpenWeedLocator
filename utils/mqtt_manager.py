@@ -114,6 +114,11 @@ class OWLMQTTPublisher:
             'inference_resolution': 320,
             # GreenOnGreen parameters
             'confidence': 0.5,
+            # AI tab: model + class info
+            'current_model': '',
+            'available_models': [],
+            'model_classes': {},
+            'detect_classes': [],
             # GreenOnBrown parameters (will be populated on first update)
             'exg_min': None,
             'exg_max': None,
@@ -122,7 +127,12 @@ class OWLMQTTPublisher:
             'saturation_min': None,
             'saturation_max': None,
             'brightness_min': None,
-            'brightness_max': None
+            'brightness_max': None,
+            # Actuation state
+            'avg_loop_time_ms': 0.0,
+            'actuation_duration': 0.15,
+            'delay': 0.0,
+            'actuation_source': 'config'
         }
 
         # Thread safety
@@ -203,6 +213,17 @@ class OWLMQTTPublisher:
 
             # Check model availability (any NCNN dirs or .pt files in models/)
             self.state['model_available'] = self._check_model_available()
+
+            # AI tab: available models, current model, class names
+            self.state['available_models'] = self._list_available_models()
+            self.state['detect_classes'] = getattr(self.owl_instance, '_detect_classes_list', [])
+            gog = getattr(self.owl_instance, '_gog_detector', None)
+            if gog and hasattr(gog, 'model'):
+                self.state['current_model'] = getattr(gog, '_model_filename', '')
+                self.state['model_classes'] = {str(k): v for k, v in gog.model.names.items()}
+            else:
+                self.state['current_model'] = ''
+                self.state['model_classes'] = {}
 
     def start(self):
         """Start the MQTT IPC server"""
@@ -360,9 +381,24 @@ class OWLMQTTPublisher:
                     self.state['algorithm'] = value
                     if self.owl_instance:
                         self.owl_instance._pending_algorithm = value
+                        # Update config so heartbeat reads new value immediately
+                        if hasattr(self.owl_instance, 'config'):
+                            self.owl_instance.config.set('System', 'algorithm', value)
                     self.logger.info(f"Algorithm set to: {value}")
                 else:
                     self.logger.error(f"Invalid algorithm: {value}")
+
+            elif action == 'set_greenongreen_param':
+                key = command.get('key')
+                value = command.get('value')
+                if key and value is not None:
+                    self._update_greenongreen_param(key, value)
+
+            elif action == 'set_config':
+                key = command.get('key')
+                value = command.get('value')
+                if key is not None and value is not None:
+                    self._update_greenonbrown_param(key, value)
 
             elif action == 'set_crop_buffer':
                 try:
@@ -373,6 +409,27 @@ class OWLMQTTPublisher:
                     self.logger.info(f"Crop buffer set to: {value}px")
                 except (ValueError, TypeError) as e:
                     self.logger.error(f"Invalid crop_buffer value: {e}")
+
+            elif action == 'set_detect_classes':
+                raw = command.get('value', [])
+                if isinstance(raw, str):
+                    class_list = [c.strip() for c in raw.split(',') if c.strip()]
+                elif isinstance(raw, list):
+                    class_list = [str(c).strip() for c in raw if str(c).strip()]
+                else:
+                    class_list = []
+                if self.owl_instance:
+                    self.owl_instance._pending_detect_classes = class_list
+                self.state['detect_classes'] = class_list
+                self.logger.info(f"detect_classes queued: {class_list}")
+
+            elif action == 'set_model':
+                model_name = command.get('value', '')
+                if model_name and self.owl_instance:
+                    # Resolve to models/ directory path so GreenOnGreen can find it
+                    model_path = os.path.join('models', str(model_name))
+                    self.owl_instance._pending_model = model_path
+                    self.logger.info(f"Model switch queued: {model_path}")
 
             elif action == 'get_config':
                 self._handle_get_config()
@@ -391,6 +448,9 @@ class OWLMQTTPublisher:
                 config_path = command.get('config')
                 if config_path:
                     self._handle_set_active_config(config_path)
+
+            elif action == 'set_actuation_params':
+                self._handle_set_actuation_params(command)
 
             elif action == 'reboot':
                 self.logger.warning("Reboot command received - this requires system privileges")
@@ -539,6 +599,33 @@ class OWLMQTTPublisher:
             )
         except Exception as e:
             self.logger.error(f"Error restarting service: {e}")
+
+    def _handle_set_actuation_params(self, command):
+        """Handle actuation parameter updates from central controller"""
+        MIN_DURATION = 0.01
+        MAX_DURATION = 5.0
+
+        try:
+            duration = float(command.get('actuation_duration', 0))
+            delay = float(command.get('delay', 0))
+            source = command.get('source', 'controller')
+
+            # Clamp to safety bounds
+            duration = max(MIN_DURATION, min(MAX_DURATION, duration))
+            delay = max(0.0, min(MAX_DURATION, delay))
+
+            if self.owl_instance:
+                self.owl_instance.actuation_duration = duration
+                self.owl_instance.delay = delay
+
+            self.state['actuation_duration'] = duration
+            self.state['delay'] = delay
+            self.state['actuation_source'] = source
+
+            self.logger.info(f"Actuation params updated: duration={duration:.4f}s, delay={delay:.4f}s, source={source}")
+
+        except (ValueError, TypeError) as e:
+            self.logger.error(f"Invalid actuation params: {e}")
 
     def _resolve_config_path(self):
         """Resolve the current config file path"""
@@ -721,6 +808,26 @@ class OWLMQTTPublisher:
         except Exception:
             return False
 
+    def _list_available_models(self):
+        """List available YOLO models (.pt files and NCNN subdirs) in models/ directory."""
+        models = []
+        try:
+            models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')
+            if not os.path.isdir(models_dir):
+                return models
+            for item in sorted(os.listdir(models_dir)):
+                item_path = os.path.join(models_dir, item)
+                if item.endswith('.pt'):
+                    models.append(item)
+                elif os.path.isdir(item_path):
+                    for f in os.listdir(item_path):
+                        if f.endswith('.param'):
+                            models.append(item)
+                            break
+        except Exception:
+            pass
+        return models
+
     def _handle_gps_update(self, gps_data):
         """Handle GPS updates from dashboard or central controller"""
         with self.state_lock:
@@ -750,12 +857,38 @@ class OWLMQTTPublisher:
         while self.running:
             try:
                 if self.connected:
+                    self._refresh_ai_state()
                     with self.state_lock:
                         self._publish_state()
                 time.sleep(heartbeat_interval)
             except Exception as e:
                 self.logger.error(f"Error in heartbeat loop: {e}")
                 time.sleep(heartbeat_interval)
+
+    def _refresh_ai_state(self):
+        """Refresh AI tab state from live OWL detector. Called every heartbeat."""
+        if self.owl_instance is None:
+            return
+        with self.state_lock:
+            # Refresh algorithm from live config (handles runtime changes)
+            self.state['algorithm'] = self.owl_instance.config.get(
+                'System', 'algorithm', fallback=self.state.get('algorithm', 'exhsv'))
+
+            gog = getattr(self.owl_instance, '_gog_detector', None)
+            if gog and hasattr(gog, 'model'):
+                self.state['current_model'] = getattr(gog, '_model_filename', '')
+                self.state['model_classes'] = {str(k): v for k, v in gog.model.names.items()}
+            else:
+                self.state['current_model'] = ''
+                self.state['model_classes'] = {}
+            # Use pending classes if OWL hasn't processed them yet,
+            # otherwise use the active detect_classes_list
+            pending = getattr(self.owl_instance, '_pending_detect_classes', None)
+            if pending is not None:
+                self.state['detect_classes'] = pending
+            else:
+                self.state['detect_classes'] = getattr(self.owl_instance, '_detect_classes_list', [])
+            self.state['available_models'] = self._list_available_models()
 
     def _publish_state(self):
         """Publish current state to MQTT"""
@@ -884,6 +1017,9 @@ class OWLMQTTPublisher:
             self.state['disk_total'] = stats_dict.get('disk_total', 0)
             self.state['fan_status'] = stats_dict.get('fan_status', {'is_rpi5': False, 'mode': 'unavailable', 'rpm': 0})
             self.state['owl_running'] = stats_dict.get('owl_running', True)  # owl.py is running if calling this
+            self.state['avg_loop_time_ms'] = stats_dict.get('avg_loop_time_ms', 0.0)
+            self.state['actuation_duration'] = stats_dict.get('actuation_duration', self.state.get('actuation_duration', 0.15))
+            self.state['delay'] = stats_dict.get('delay', self.state.get('delay', 0.0))
             self.state['last_update'] = time.time()
 
 class DashMQTTSubscriber:
@@ -995,7 +1131,7 @@ class DashMQTTSubscriber:
         """Handle MQTT disconnection"""
         self.connected = False
         if rc != 0:
-            self.logger.warning("Unexpected MQTT disconnection")
+            self.logger.warning(f"Unexpected MQTT disconnection (rc={rc})")
 
     def _on_message(self, client, userdata, msg):
         """Handle incoming MQTT messages"""
@@ -1010,14 +1146,25 @@ class DashMQTTSubscriber:
             )
             return
 
+        # ANY valid message from OWL proves it's alive — update heartbeat
+        # (matches networked controller's last_seen pattern)
+        with self.state_lock:
+            self.last_heartbeat = time.time()
+
         # Dispatch based on topic
         if topic == self.topics['state']:
             with self.state_lock:
                 self.current_state = data
-                self.last_heartbeat = time.time()
+            self.logger.debug(f"State update received ({len(data)} fields)")
 
         elif topic == self.topics['status']:
             self.logger.info(f"OWL status: {data}")
+            # Update owl_running from status messages (these are confirmed arriving)
+            with self.state_lock:
+                if 'owl_running' in data:
+                    self.current_state['owl_running'] = data['owl_running']
+                if 'connected' in data:
+                    self.current_state['connected'] = data['connected']
 
         elif topic == self.topics['indicators']:
             self._handle_indicator(data)

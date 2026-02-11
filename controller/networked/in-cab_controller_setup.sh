@@ -740,6 +740,15 @@ enable = False
 nmea_port = 8500
 boom_width = 12.0
 track_save_directory = tracks
+
+[Actuation]
+# Relay timing — used as fallback when no GPS speed data
+actuation_duration = 0.15
+delay = 0.0
+# Speed-adaptive actuation geometry
+actuation_length_cm = 10
+offset_cm = 30
+speed_avg_window = 5.0
 EOF
 
     chown "${CURRENT_USER}:${CURRENT_USER}" "$CTRL_INI"

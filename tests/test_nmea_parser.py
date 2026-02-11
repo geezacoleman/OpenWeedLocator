@@ -193,3 +193,12 @@ class TestParseSentence:
 
     def test_non_nmea(self):
         assert parse_sentence('random garbage text') is None
+
+    def test_teltonika_imei_prefix(self):
+        # Teltonika routers prepend IMEI to NMEA: '6003197898_$GPGGA,...'
+        sentence = '1234567890_$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,47.0,M,,*4F'
+        result = parse_sentence(sentence)
+        assert result is not None
+        assert result['type'] == 'GGA'
+        assert result['satellites'] == 8
+        assert result['lat'] == pytest.approx(48.1173, abs=0.001)

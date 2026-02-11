@@ -77,8 +77,7 @@ function initControlButtons() {
         'start-recording': startRecording,
         'stop-recording': stopRecording,
         'start-detection': startDetection,
-        'stop-detection': stopDetection,
-        'refreshStreamBtn': refreshVideoStream
+        'stop-detection': stopDetection
     };
 
     Object.entries(buttons).forEach(([id, handler]) => {
@@ -467,6 +466,7 @@ function removeLockIcon(element) {
 
 let lastGoBAlgorithm = 'exhsv';
 let pendingMode = null;
+let pendingModeTimestamp = 0;
 
 function setPipelineMode(mode) {
     var btn = document.querySelector('.mode-btn[data-mode="' + mode + '"]');
@@ -484,6 +484,7 @@ function setPipelineMode(mode) {
     }
 
     pendingMode = mode;
+    pendingModeTimestamp = Date.now();
     btn.classList.add('loading');
 
     apiRequest('/api/algorithm/set', {
@@ -509,6 +510,10 @@ function setPipelineMode(mode) {
 }
 
 function updatePipelineModeUI(algorithm) {
+    // Don't overwrite UI while mode change is in-flight (max 10s cooldown)
+    if (pendingMode && (Date.now() - pendingModeTimestamp < 10000)) return;
+    pendingMode = null;
+
     var mode;
     if (algorithm === 'gog') {
         mode = 'gog';
@@ -525,7 +530,6 @@ function updatePipelineModeUI(algorithm) {
             btn.classList.add('active');
         }
     });
-    pendingMode = null;
 }
 
 function updateModeAvailability(modelAvailable) {
@@ -545,5 +549,172 @@ function updateModeAvailability(modelAvailable) {
         } else {
             hybridBtn.classList.add('disabled');
         }
+    }
+}
+
+/* --------------------------------------------------------------------------
+   Preview (Dashboard inline stream)
+   -------------------------------------------------------------------------- */
+
+let previewActive = false;
+
+function initPreview() {
+    const toggleBtn = document.getElementById('previewToggle');
+    if (toggleBtn) {
+        toggleBtn.addEventListener('click', togglePreview);
+    }
+
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
+    if (fullscreenBtn) {
+        fullscreenBtn.addEventListener('click', toggleFullscreen);
+    }
+
+    const downloadBtn = document.getElementById('downloadFrame');
+    if (downloadBtn) {
+        downloadBtn.addEventListener('click', downloadFrame);
+    }
+}
+
+function togglePreview() {
+    const container = document.getElementById('previewContainer');
+    const btn = document.getElementById('previewToggle');
+    const img = document.getElementById('stream-img');
+    if (!container) return;
+
+    previewActive = !previewActive;
+    container.classList.toggle('hidden', !previewActive);
+    if (btn) btn.classList.toggle('active', previewActive);
+
+    if (previewActive && img) {
+        img.src = '/video_feed?t=' + Date.now();
+        img.onerror = function() {
+            var overlay = document.getElementById('stream-status-overlay');
+            if (overlay) overlay.classList.remove('hidden');
+            img.style.display = 'none';
+        };
+        img.onload = function() {
+            var overlay = document.getElementById('stream-status-overlay');
+            if (overlay) overlay.classList.add('hidden');
+            img.style.display = 'block';
+        };
+    }
+}
+
+function toggleFullscreen() {
+    const container = document.getElementById('previewContainer');
+    if (!container) return;
+
+    if (!document.fullscreenElement) {
+        container.requestFullscreen().catch(function(err) {
+            console.error('Error entering fullscreen:', err);
+        });
+    } else {
+        document.exitFullscreen();
+    }
+}
+
+/* --------------------------------------------------------------------------
+   GPS Functions (browser geolocation for image tagging)
+   -------------------------------------------------------------------------- */
+
+function initGPS() {
+    const gpsToggle = document.getElementById('gpsToggle');
+    if (gpsToggle) {
+        gpsToggle.addEventListener('change', toggleGPS);
+        if (gpsToggle.checked) {
+            startGPS();
+        }
+    }
+}
+
+function toggleGPS() {
+    const gpsToggle = document.getElementById('gpsToggle');
+    if (gpsToggle && gpsToggle.checked) {
+        startGPS();
+    } else {
+        stopGPS();
+    }
+}
+
+function startGPS() {
+    if (!navigator.geolocation) {
+        showNotification('GPS Error', 'Geolocation not supported', 'error');
+        return;
+    }
+
+    isGpsEnabled = true;
+
+    gpsWatchId = navigator.geolocation.watchPosition(
+        handleGPSSuccess,
+        handleGPSError,
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+    );
+
+    updateGPSIndicator();
+}
+
+function stopGPS() {
+    isGpsEnabled = false;
+
+    if (gpsWatchId !== null) {
+        navigator.geolocation.clearWatch(gpsWatchId);
+        gpsWatchId = null;
+    }
+
+    gpsData = null;
+    updateGPSIndicator();
+}
+
+function handleGPSSuccess(position) {
+    gpsData = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy,
+        speed: position.coords.speed,
+        heading: position.coords.heading,
+        timestamp: position.timestamp
+    };
+
+    updateGPSIndicator();
+
+    // Send to server for image tagging
+    apiRequest('/api/update_gps', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(gpsData)
+    }).catch(function() {});
+}
+
+function handleGPSError(error) {
+    updateGPSIndicator();
+}
+
+function updateGPSIndicator() {
+    var indicator = document.getElementById('gpsIndicator');
+    var statusText = document.getElementById('gpsStatusText');
+    if (!indicator) return;
+
+    if (!isGpsEnabled || !gpsData) {
+        indicator.classList.remove('gps-active', 'gps-good', 'gps-medium', 'gps-poor');
+        indicator.classList.add('gps-off');
+        if (statusText) statusText.textContent = isGpsEnabled ? 'Acquiring...' : 'GPS Off';
+        return;
+    }
+
+    indicator.classList.remove('gps-off');
+    indicator.classList.add('gps-active');
+
+    // Accuracy class
+    indicator.classList.remove('gps-good', 'gps-medium', 'gps-poor');
+    if (gpsData.accuracy <= 10) {
+        indicator.classList.add('gps-good');
+    } else if (gpsData.accuracy <= 30) {
+        indicator.classList.add('gps-medium');
+    } else {
+        indicator.classList.add('gps-poor');
+    }
+
+    if (statusText) {
+        statusText.textContent = '\u00B1' + Math.round(gpsData.accuracy) + 'm';
     }
 }

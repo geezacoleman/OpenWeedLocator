@@ -35,6 +35,7 @@ class GreenOnGreen:
         self.hybrid_mode = hybrid_mode
         self.inference_resolution = inference_resolution
         self.crop_buffer_px = crop_buffer_px
+        self._model_filename = ''
         self.model = self._load_model()
         self.task = self.model.task  # 'detect' or 'segment'
         self.detection_mask = None  # Combined binary mask, set after inference (seg only)
@@ -62,6 +63,7 @@ class GreenOnGreen:
             # Check if this IS an NCNN model dir (has .param + .bin)
             if list(self.model_path.glob('*.param')):
                 logger.info(f'Using NCNN model: {self.model_path.name}')
+                self._model_filename = self.model_path.name
                 return YOLO(str(self.model_path))
 
             # Search for NCNN subdirs first, then .pt files
@@ -70,17 +72,20 @@ class GreenOnGreen:
             if ncnn_dirs:
                 selected = ncnn_dirs[0]
                 logger.info(f'Using NCNN model: {selected.name}')
+                self._model_filename = selected.name
                 return YOLO(str(selected))
 
             pt_files = list(self.model_path.glob('*.pt'))
             if pt_files:
                 logger.info(f'Using PyTorch model: {pt_files[0].name}')
+                self._model_filename = pt_files[0].name
                 return YOLO(str(pt_files[0]))
 
             raise FileNotFoundError(f'No YOLO models found in {self.model_path}')
 
         elif self.model_path.exists():
             logger.info(f'Using model: {self.model_path.name}')
+            self._model_filename = self.model_path.name
             return YOLO(str(self.model_path))
 
         raise FileNotFoundError(f'Model path does not exist: {self.model_path}')
@@ -116,6 +121,11 @@ class GreenOnGreen:
         self.crop_buffer_px = px
         self._dilate_kernel = self._build_dilate_kernel(px)
         logger.info(f'Crop buffer updated to {px}px')
+
+    def update_detect_classes(self, class_names):
+        """Hot-update detect_classes filter without reloading the model."""
+        self._detect_class_ids = self._resolve_classes(class_names)
+        logger.info(f'detect_classes updated: {class_names} -> IDs {self._detect_class_ids}')
 
     @property
     def class_names(self):

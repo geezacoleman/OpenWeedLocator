@@ -9,14 +9,14 @@ function toggleMainDetection() {
     if (btn.classList.contains('off')) {
         // Currently stopping, so start
         btn.classList.remove('off');
-        btn.textContent = 'START DETECTION';
+        btn.textContent = 'Start Detection';
         globalDetectionEnabled = false;
         sendCommand('all', 'toggle_detection', false);
         showToast('Detection stopped on all OWLs', 'info');
     } else {
         // Currently starting, so stop
         btn.classList.add('off');
-        btn.textContent = 'STOP DETECTION';
+        btn.textContent = 'Stop Detection';
         globalDetectionEnabled = true;
         sendCommand('all', 'toggle_detection', true);
         showToast('Detection started on all OWLs', 'success');
@@ -29,14 +29,14 @@ function toggleMainRecording() {
     if (btn.classList.contains('active')) {
         // Currently on, so turn off
         btn.classList.remove('active');
-        btn.textContent = 'RECORDING OFF';
+        btn.textContent = 'Start Recording';
         globalRecordingEnabled = false;
         sendCommand('all', 'toggle_recording', false);
         showToast('Recording stopped on all OWLs', 'info');
     } else {
         // Currently off, so turn on
         btn.classList.add('active');
-        btn.textContent = 'RECORDING ON';
+        btn.textContent = 'Stop Recording';
         globalRecordingEnabled = true;
         sendCommand('all', 'toggle_recording', true);
         showToast('Recording started on all OWLs', 'success');
@@ -50,7 +50,7 @@ function toggleMainRecording() {
 async function restartOWL(deviceId) {
     const btn = event.currentTarget;
     btn.disabled = true;
-    btn.textContent = 'RESTARTING...';
+    btn.textContent = 'Restarting...';
 
     try {
         const res = await fetch('/api/owl/' + deviceId + '/restart', { method: 'POST' });
@@ -68,7 +68,7 @@ async function restartOWL(deviceId) {
     // Re-enable after 10 seconds (OWL needs time to restart)
     setTimeout(() => {
         btn.disabled = false;
-        btn.textContent = 'RESTART';
+        btn.textContent = 'Restart';
     }, 10000);
 }
 

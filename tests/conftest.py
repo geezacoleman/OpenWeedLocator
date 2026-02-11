@@ -152,6 +152,18 @@ def mock_owl(tmp_config_dir):
     owl.invert_hue = False
     owl._gog_confidence = 0.5
 
+    # Actuation params
+    owl.actuation_duration = 0.15
+    owl.delay = 0.0
+    owl._avg_loop_time_ms = 0.0
+
+    # AI tab params
+    owl._pending_model = None
+    owl._pending_detect_classes = None
+    owl._gog_detector = None
+    owl._model_path = 'models'
+    owl._detect_classes_list = []
+
     return owl
 
 
@@ -289,9 +301,7 @@ def standalone_test_client(tmp_config_dir):
             import controller.standalone.standalone as sa_mod
             importlib.reload(sa_mod)
 
-            dashboard = sa_mod.OWLDashboard(
-                config_file=str(tmp_config_dir / 'DAY_SENSITIVITY_2.ini')
-            )
+            dashboard = sa_mod.OWLDashboard()
 
     # Redirect file operations to temp dir
     dashboard._get_config_dir = lambda: config_dir_str

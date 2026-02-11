@@ -23,7 +23,6 @@ import urllib.error
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from utils.mqtt_manager import DashMQTTSubscriber
-from utils.upload_manager import get_uploader
 from utils.input_manager import get_rpi_version
 
 try:
@@ -37,9 +36,8 @@ except ImportError as e:
 
 
 class OWLDashboard:
-    def __init__(self, config_file='../config/DAY_SENSITIVITY_2.ini'):
+    def __init__(self):
         self.config = None
-        self.config_file = config_file
 
         self.controller_type = None
 
@@ -62,7 +60,7 @@ class OWLDashboard:
         self.mqtt_client = DashMQTTSubscriber(
             broker_host='localhost',
             broker_port=1883,
-            client_id='owl_dashboard')
+            client_id=f'owl_dashboard_{os.getpid()}')
 
         try:
             self.mqtt_client.start()
@@ -114,37 +112,23 @@ class OWLDashboard:
             return False, f"An unexpected error occurred: {str(e)}"
 
     def load_config(self):
-        """Load configuration from config file"""
-        config_path = Path(self.config_file)
-        if not config_path.exists():
-            # Try relative to script directory
-            config_path = Path(__file__).parent / self.config_file
+        """Load CONTROLLER.ini for dashboard settings.
 
+        Detection parameters (thresholds, algorithm, etc.) come from owl.py
+        via MQTT — not from config files. The dashboard only needs its own
+        infrastructure config (MQTT broker, port, GPS source).
+        """
         self.config = configparser.ConfigParser()
-        if config_path.exists():
-            self.config.read(config_path)
-            self.config.read(Path(__file__).parent.parent.parent / 'config' / 'CONTROLLER.ini')
-            self.logger.info(f"Config loaded from {config_path}")
-            self.controller_type = self.config.get('Controller', 'controller_type', fallback='none').strip(
-                "'\" ").lower()
 
+        controller_ini = Path(__file__).parent.parent.parent / 'config' / 'CONTROLLER.ini'
+        if controller_ini.exists():
+            self.config.read(controller_ini)
+            self.logger.info(f"Config loaded from {controller_ini}")
         else:
-            self.logger.warning(f"Config file not found at {config_path}")
-            # Create minimal config sections
-            self.config.add_section('GreenOnBrown')
-            self.config.set('GreenOnBrown', 'exg_min', '25')
-            self.config.set('GreenOnBrown', 'exg_max', '200')
-            self.config.set('GreenOnBrown', 'hue_min', '39')
-            self.config.set('GreenOnBrown', 'hue_max', '83')
-            self.config.set('GreenOnBrown', 'saturation_min', '50')
-            self.config.set('GreenOnBrown', 'saturation_max', '220')
-            self.config.set('GreenOnBrown', 'brightness_min', '60')
-            self.config.set('GreenOnBrown', 'brightness_max', '190')
+            self.logger.warning(f"CONTROLLER.ini not found at {controller_ini}")
 
-            self.config.add_section('Dashboard')
-            self.config.set('Dashboard', 'dashboard_enable', 'True')
-            self.config.set('Dashboard', 'dashboard_port', '8000')
-            self.config.set('Dashboard', 'gps_source', 'none')
+        # controller_type is read on-demand via _get_controller_type()
+        self.controller_type = 'none'
 
     def setup_logging(self):
         """Setup logging"""
@@ -406,14 +390,32 @@ class OWLDashboard:
 
             stats = self.get_system_stats()
 
-            # Add fields only available via MQTT that aren't in get_system_stats()
-            # Note: owl_running is intentionally NOT overridden here — the systemd
-            # value from get_system_stats() is the ground truth. The MQTT heartbeat
-            # value can lag behind on startup/shutdown.
+            # If systemd can't see owl.py but MQTT heartbeat confirms it's running, trust MQTT.
+            # This handles manual launches (python owl.py) and non-Pi platforms.
+            if not stats['owl_running'] and mqtt_state.get('owl_running', False):
+                stats['owl_running'] = True
+
             stats.update({
                 'detection_mode': mqtt_state.get('detection_mode', 1),  # 0=spot, 1=off, 2=blanket
                 'algorithm': mqtt_state.get('algorithm', 'exhsv'),
-                'model_available': mqtt_state.get('model_available', False)
+                'model_available': mqtt_state.get('model_available', False),
+                # AI tab data
+                'available_models': mqtt_state.get('available_models', []),
+                'current_model': mqtt_state.get('current_model', ''),
+                'model_classes': mqtt_state.get('model_classes', {}),
+                'detect_classes': mqtt_state.get('detect_classes', []),
+                # Config slider params (GoB thresholds)
+                'exg_min': mqtt_state.get('exg_min'),
+                'exg_max': mqtt_state.get('exg_max'),
+                'hue_min': mqtt_state.get('hue_min'),
+                'hue_max': mqtt_state.get('hue_max'),
+                'saturation_min': mqtt_state.get('saturation_min'),
+                'saturation_max': mqtt_state.get('saturation_max'),
+                'brightness_min': mqtt_state.get('brightness_min'),
+                'brightness_max': mqtt_state.get('brightness_max'),
+                'min_detection_area': mqtt_state.get('min_detection_area', 10),
+                'confidence': mqtt_state.get('confidence', 0.5),
+                'crop_buffer_px': mqtt_state.get('crop_buffer_px', 20),
             })
 
             return jsonify(stats)
@@ -430,6 +432,7 @@ class OWLDashboard:
                 if algorithm not in valid:
                     return jsonify({'success': False, 'error': f'Invalid algorithm: {algorithm}'}), 400
                 result = self.mqtt_client._send_command('set_algorithm', value=algorithm)
+                self._persist_config_change('System', 'algorithm', algorithm)
                 return jsonify(result)
             except Exception as e:
                 self.logger.error(f"Error setting algorithm: {e}")
@@ -458,6 +461,26 @@ class OWLDashboard:
             except Exception as e:
                 self.logger.error(f"Unexpected error during frame download: {e}")
                 return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/video_feed')
+        def video_feed():
+            """Proxy MJPEG stream from owl.py's built-in server."""
+            stream_url = 'http://127.0.0.1:8001/stream.mjpg'
+
+            def generate():
+                try:
+                    resp = urllib.request.urlopen(stream_url, timeout=5)
+                    while True:
+                        chunk = resp.read(4096)
+                        if not chunk:
+                            break
+                        yield chunk
+                except (urllib.error.URLError, OSError):
+                    # Stream unavailable — send a single-frame "no signal" JPEG
+                    pass
+
+            return Response(generate(),
+                            mimetype='multipart/x-mixed-replace; boundary=frame')
 
         @self.app.route('/static/<path:filename>')
         def static_files(filename):
@@ -581,235 +604,6 @@ class OWLDashboard:
                 self.logger.error(f"Error creating log archive: {e}")
                 return jsonify({'error': str(e)}), 500
 
-        @self.app.route('/api/upload/check_ethernet', methods=['POST'])
-        def check_ethernet():
-            try:
-                uploader = get_uploader()
-                result = uploader.check_ethernet_connection()
-                return jsonify(result)
-            except Exception as e:
-                return jsonify({'connected': False, 'error': str(e)}), 500
-
-        @self.app.route('/api/upload/test_credentials', methods=['POST'])
-        def test_s3_credentials():
-            try:
-                data = request.get_json()
-                access_key = data.get('access_key', '')
-                secret_key = data.get('secret_key', '')
-                bucket_name = data.get('bucket_name', '')
-                region = data.get('region', 'us-east-1')
-                endpoint_url = data.get('endpoint_url', None)
-
-                if not all([access_key, secret_key, bucket_name]):
-                    return jsonify({'valid': False, 'error': 'Missing required credentials'}), 400
-
-                uploader = get_uploader()
-                result = uploader.test_s3_credentials(
-                    access_key, secret_key, bucket_name, region, endpoint_url
-                )
-                return jsonify(result)
-
-            except Exception as e:
-                return jsonify({'valid': False, 'error': str(e)}), 500
-
-        @self.app.route('/api/upload/scan_directory', methods=['POST'])
-        def scan_upload_directory():
-            try:
-                data = request.get_json()
-                directory_path = data.get('directory_path', '')
-
-                if not directory_path:
-                    return jsonify({'success': False, 'error': 'Directory path required'}), 400
-
-                if not directory_path.startswith('/media'):
-                    return jsonify({'success': False, 'error': 'Directory access denied'}), 403
-
-                uploader = get_uploader()
-                result = uploader.scan_directory(directory_path, preview_only=True)
-                if result['success']:
-                    self.logger.info(f"Directory scan: {result['file_count']} files found in {directory_path}")
-
-                return jsonify(result)
-
-            except Exception as e:
-                self.logger.error(f"Error scanning directory: {e}")
-                return jsonify({'success': False, 'error': str(e)}), 500
-
-        @self.app.route('/api/upload/start', methods=['POST'])
-        def start_upload():
-            try:
-                data = request.get_json()
-
-                # Extract parameters
-                directory_path = data.get('directory_path', '')
-                access_key = data.get('access_key', '')
-                secret_key = data.get('secret_key', '')
-                bucket_name = data.get('bucket_name', '')
-                s3_prefix = data.get('s3_prefix', '')
-                region = data.get('region', 'us-east-1')
-                endpoint_url = data.get('endpoint_url', None)
-                max_workers = data.get('max_workers', 4)
-
-                # Validate required fields
-                if not all([directory_path, access_key, secret_key, bucket_name]):
-                    return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
-
-                # Security check
-                if not directory_path.startswith('/media'):
-                    return jsonify({'success': False, 'error': 'Directory access denied'}), 403
-
-                uploader = get_uploader()
-
-                # Start upload
-                success = uploader.start_upload(
-                    directory_path, access_key, secret_key, bucket_name,
-                    s3_prefix, region, endpoint_url, max_workers
-                )
-
-                if success:
-                    return jsonify({'success': True, 'message': 'Upload started'})
-                else:
-                    return jsonify({'success': False, 'error': 'Upload already in progress'}), 409
-
-            except Exception as e:
-                self.logger.error(f"Error starting upload: {e}")
-                return jsonify({'success': False, 'error': str(e)}), 500
-
-        @self.app.route('/api/upload/progress', methods=['GET'])
-        def get_upload_progress():
-            try:
-                uploader = get_uploader()
-                progress = uploader.get_progress()
-                return jsonify(progress)
-            except Exception as e:
-                return jsonify({'status': 'error', 'error_message': str(e)}), 500
-
-        @self.app.route('/api/upload/stop', methods=['POST'])
-        def stop_upload():
-            try:
-                uploader = get_uploader()
-                uploader.stop_upload_process()
-                return jsonify({'success': True, 'message': 'Upload stopped'})
-            except Exception as e:
-                return jsonify({'success': False, 'error': str(e)}), 500
-
-        @self.app.route('/api/upload/browse_directories', methods=['POST'])
-        def browse_upload_directories():
-            """Browse directories for upload selection - only shows directories"""
-            try:
-                data = request.get_json() or {}
-                directory = data.get('directory', '/media')
-
-                # Security: only allow browsing under /media
-                if not directory.startswith('/media'):
-                    return jsonify({
-                        'directories': [],
-                        'directory': directory,
-                        'error': 'Directory access denied'
-                    }), 403
-
-                directories = []
-                try:
-                    directory_path = Path(directory)
-                    if not directory_path.exists() or not directory_path.is_dir():
-                        return jsonify({
-                            'directories': [],
-                            'directory': directory,
-                            'error': 'Directory not found'
-                        }), 404
-
-                    for entry in directory_path.iterdir():
-                        if entry.is_dir():
-                            try:
-                                stat = entry.stat()
-                                directories.append({
-                                    'name': entry.name,
-                                    'path': str(entry),
-                                    'modified': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-                                })
-                            except Exception:
-                                continue
-
-                    # Sort directories by name
-                    directories.sort(key=lambda x: x['name'].lower())
-
-                    # Add parent directory option (except for /media root)
-                    if directory != '/media' and directory.startswith('/media'):
-                        parent_dir = str(Path(directory).parent)
-                        if parent_dir.startswith('/media'):
-                            directories.insert(0, {
-                                'name': '.. (Parent Directory)',
-                                'path': parent_dir,
-                                'modified': '',
-                                'is_parent': True
-                            })
-
-                except Exception as e:
-                    return jsonify({
-                        'directories': [],
-                        'directory': directory,
-                        'error': str(e)
-                    }), 500
-
-                return jsonify({
-                    'directories': directories,
-                    'directory': directory,
-                    'total_items': len(directories)
-                })
-
-            except Exception as e:
-                return jsonify({
-                    'directories': [],
-                    'directory': '/media',
-                    'error': str(e)
-                }), 500
-
-        @self.app.route('/api/upload/find_key_files', methods=['GET'])
-        def find_key_files():
-            try:
-                uploader = get_uploader()
-                result = uploader.find_key_files()
-                return jsonify(result)
-            except Exception as e:
-                return jsonify({'success': False, 'error': str(e)}), 500
-
-        @self.app.route('/api/upload/load_credentials', methods=['POST'])
-        def load_credentials():
-            try:
-                data = request.get_json()
-                file_path = data.get('file_path', '')
-
-                if not file_path:
-                    return jsonify({'success': False, 'error': 'File path required'}), 400
-
-                uploader = get_uploader()
-                result = uploader.load_credentials_from_file(file_path)
-                return jsonify(result)
-
-            except Exception as e:
-                return jsonify({'success': False, 'error': str(e)}), 500
-
-        @self.app.route('/api/upload/create_metadata', methods=['POST'])
-        def create_metadata():
-            try:
-                data = request.get_json()
-                metadata = data.get('metadata', {})
-                upload_directory = data.get('upload_directory', '')
-
-                if not upload_directory:
-                    return jsonify({'success': False, 'error': 'Upload directory required'}), 400
-
-                # Security check
-                if not upload_directory.startswith('/media'):
-                    return jsonify({'success': False, 'error': 'Directory access denied'}), 403
-
-                uploader = get_uploader()
-                result = uploader.create_metadata_file(metadata, upload_directory)
-                return jsonify(result)
-
-            except Exception as e:
-                return jsonify({'success': False, 'error': str(e)}), 500
-
         @self.app.route('/api/controller_config', methods=['GET'])
         def get_controller_config():
             """Get controller config - reads fresh from active config file."""
@@ -872,6 +666,95 @@ class OWLDashboard:
 
             errors = self.mqtt_client.get_and_clear_errors()
             return jsonify(errors)
+
+        # =====================
+        # AI Routes
+        # =====================
+
+        @self.app.route('/api/ai/set_model', methods=['POST'])
+        def set_ai_model():
+            """Set AI model via MQTT command."""
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            try:
+                data = request.get_json() or {}
+                model = data.get('model', '')
+                if not model:
+                    return jsonify({'success': False, 'error': 'Model parameter required'}), 400
+                result = self.mqtt_client._send_command('set_model', value=model)
+                return jsonify(result)
+            except Exception as e:
+                self.logger.error(f"Error setting AI model: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/ai/set_detect_classes', methods=['POST'])
+        def set_detect_classes():
+            """Set detection classes via MQTT command."""
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            try:
+                data = request.get_json() or {}
+                classes = data.get('classes', [])
+                result = self.mqtt_client._send_command('set_detect_classes', value=classes)
+                return jsonify(result)
+            except Exception as e:
+                self.logger.error(f"Error setting detect classes: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        # =====================
+        # Config Slider Routes
+        # =====================
+
+        @self.app.route('/api/config/param', methods=['POST'])
+        def set_config_param():
+            """Set a GreenOnBrown parameter via MQTT command."""
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            try:
+                data = request.get_json() or {}
+                param = data.get('param', '')
+                value = data.get('value')
+                if not param or value is None:
+                    return jsonify({'success': False, 'error': 'param and value required'}), 400
+                result = self.mqtt_client._send_command('set_config', key=param, value=int(value))
+                self._persist_config_change('GreenOnBrown', param, str(int(value)))
+                return jsonify(result)
+            except Exception as e:
+                self.logger.error(f"Error setting config param: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/config/crop_buffer', methods=['POST'])
+        def set_crop_buffer():
+            """Set crop buffer via MQTT command."""
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            try:
+                data = request.get_json() or {}
+                value = data.get('value')
+                if value is None:
+                    return jsonify({'success': False, 'error': 'value required'}), 400
+                result = self.mqtt_client._send_command('set_crop_buffer', value=int(value))
+                return jsonify(result)
+            except Exception as e:
+                self.logger.error(f"Error setting crop buffer: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/config/confidence', methods=['POST'])
+        def set_confidence():
+            """Set AI confidence via MQTT command."""
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            try:
+                data = request.get_json() or {}
+                value = data.get('value')
+                if value is None:
+                    return jsonify({'success': False, 'error': 'value required'}), 400
+                result = self.mqtt_client._send_command('set_greenongreen_param', key='confidence', value=float(value))
+                self._persist_config_change('GreenOnGreen', 'confidence', str(float(value)))
+                return jsonify(result)
+            except Exception as e:
+                self.logger.error(f"Error setting confidence: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
 
         # =====================
         # Config Editor Routes
@@ -1258,6 +1141,49 @@ class OWLDashboard:
 
         return configs
 
+    def _persist_config_change(self, section, key, value):
+        """Persist a single config parameter change to the active config file.
+        If the active config is a protected default, saves as a new file and sets it active.
+        """
+        try:
+            active_config = self._get_active_config_path()
+            config_path = self._resolve_config_path(active_config)
+
+            if not os.path.exists(config_path):
+                self.logger.warning(f"Config file not found for persistence: {config_path}")
+                return
+
+            config = configparser.ConfigParser()
+            config.optionxform = str
+            config.read(config_path)
+
+            if not config.has_section(section):
+                config.add_section(section)
+            config.set(section, key, str(value))
+
+            basename = os.path.basename(config_path)
+            protected = ['DAY_SENSITIVITY_1.ini', 'DAY_SENSITIVITY_2.ini',
+                         'DAY_SENSITIVITY_3.ini', 'CONTROLLER.ini']
+
+            if basename in protected:
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                new_name = f'config_{timestamp}.ini'
+                config_dir = self._get_config_dir()
+                new_path = os.path.join(config_dir, new_name)
+
+                with open(new_path, 'w') as f:
+                    config.write(f)
+
+                self._set_active_config(f'config/{new_name}')
+                self.logger.info(f"Config saved to new file: {new_name} (was protected default)")
+            else:
+                with open(config_path, 'w') as f:
+                    config.write(f)
+                self.logger.info(f"Config updated: {basename} [{section}] {key}={value}")
+
+        except Exception as e:
+            self.logger.error(f"Error persisting config change [{section}].{key}: {e}")
+
     def _check_restart_required(self, changed_sections):
         """Check if changed sections require a service restart."""
         restart_sections = {'Controller'}
@@ -1412,8 +1338,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='OWL Dashboard Server')
     parser.add_argument('--port', type=int, default=8000, help='Port to run the server on')
     parser.add_argument('--debug', action='store_true', help='Run in debug mode')
-    parser.add_argument('--config', type=str, default='../config/DAY_SENSITIVITY_2.ini', help='Config file path')
-
     args = parser.parse_args()
 
     app.run(host='0.0.0.0', port=args.port, debug=args.debug)

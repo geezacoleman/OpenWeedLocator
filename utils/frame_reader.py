@@ -2,7 +2,6 @@ import time
 import os
 import cv2
 
-from imutils.video import FileVideoStream
 from utils.log_manager import LogManager
 
 class FrameReader:
@@ -36,7 +35,9 @@ class FrameReader:
                 self.single_image = True
 
             else:
-                self.cam = FileVideoStream(path).start()
+                self.cam = cv2.VideoCapture(path)
+                if not self.cam.isOpened():
+                    raise ValueError(f'[ERROR] Cannot open video file: {path}')
                 self.input_type = "video"
                 self.single_image = False
         else:
@@ -63,7 +64,9 @@ class FrameReader:
             return self.curr_image
 
         else:
-            frame = self.cam.read()
+            ret, frame = self.cam.read()
+            if not ret:
+                return None
             frame = cv2.resize(frame, self.resolution, interpolation=cv2.INTER_AREA)
 
             return frame
@@ -75,12 +78,11 @@ class FrameReader:
             self.curr_image = None
 
         elif self.input_type == "video":
-            # stop the current video stream and start a new one
-            self.cam.stop()
-            self.cam = FileVideoStream(self.path).start()
+            # reset video to beginning
+            self.cam.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
         self.loop_start_time = time.time()  # reset the loop timer
 
     def stop(self):
         if not self.single_image and self.cam:
-            self.cam.stop()
+            self.cam.release()

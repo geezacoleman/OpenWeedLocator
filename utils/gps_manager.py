@@ -178,8 +178,12 @@ def parse_sentence(line):
     Returns parsed dict or None if unrecognised/invalid.
     """
     line = line.strip()
-    if not line.startswith('$'):
+    # Strip any prefix before '$' (e.g. Teltonika IMEI: '6003197898_$GPGGA,...')
+    dollar_idx = line.find('$')
+    if dollar_idx < 0:
         return None
+    if dollar_idx > 0:
+        line = line[dollar_idx:]
 
     if not validate_checksum(line):
         return None

@@ -36,8 +36,8 @@
 @import 'components/_layout.css';
 @import 'components/_cards.css';
 @import 'components/_controls.css';
-@import 'components/_stream.css';
 @import 'components/_storage.css';
-@import 'components/_upload.css';
 @import 'components/_notifications.css';
 @import 'components/_config.css';
+@import 'components/_config_tab.css';
+@import 'components/_ai_tab.css';

@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=1280, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>OWL Central Controller</title>
+    <title>OWL Controller</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
 </head>
 <body>
@@ -11,8 +11,7 @@
 <header class="header">
     <div class="header-content">
         <div class="logo-section">
-            <img src="/shared/images/owl-logo-wht.png" alt="OWL" class="logo">
-            <h1>OpenWeedLocator Controller</h1>
+            <h1>OWL Controller</h1>
         </div>
         <div class="mqtt-status">
             <span class="status-dot" id="mqtt-status-dot"></span>
@@ -23,38 +22,154 @@
 
 <!-- Tab Bar -->
 <div class="view-toggle">
-    <button class="view-tab active" id="tab-owls" onclick="switchToOWLTab()">OWL STATUS</button>
+    <button class="view-tab active" id="tab-owls" onclick="switchToOWLTab()">Dashboard</button>
     <button class="view-tab" id="tab-gps" onclick="switchToGPSTab()">GPS</button>
-    <button class="view-tab" id="tab-config" onclick="switchToConfigTab()">CONFIG</button>
+    <button class="view-tab" id="tab-ai" onclick="switchToAITab()">AI</button>
+    <button class="view-tab" id="tab-config" onclick="switchToConfigTab()">Config</button>
 </div>
 
 <!-- Main Container -->
 <main class="main-container">
-    <!-- OWL Status View -->
+    <!-- OWL Status View — Three Column Layout -->
     <div id="view-owls" class="view-panel active">
-        <!-- Giant Action Buttons -->
-        <div class="action-buttons">
-            <button class="action-button btn-detection" id="main-detection-btn" onclick="toggleMainDetection()">
-                START DETECTION
-            </button>
+        <div class="owl-status-layout">
+            <!-- LEFT: OWL Devices panel -->
+            <div class="owls-column">
+                <div class="section-title">OWL Devices</div>
+                <div class="owls-card-list" id="owls-column">
+                    <div class="empty-state">
+                        <div class="empty-state-text">No OWLs Connected</div>
+                        <div class="empty-state-subtext">Waiting for MQTT...</div>
+                    </div>
+                </div>
+            </div>
 
-            <button class="action-button btn-recording" id="main-recording-btn" onclick="toggleMainRecording()">
-                RECORDING OFF
-            </button>
-        </div>
+            <!-- CENTRE: System Health + Sensitivity -->
+            <div class="gauges-column">
+                <div class="gauges-panel">
+                    <div class="section-title">System Health</div>
+                    <div class="gauges-body">
+                        <!-- Speed Gauge -->
+                        <div class="gauge-container">
+                            <svg class="gauge-svg" viewBox="0 0 140 90">
+                                <path class="gauge-arc-bg" d="" id="speed-gauge-bg"></path>
+                                <path class="gauge-arc-fill speed" d="" id="speed-gauge-fill"></path>
+                            </svg>
+                            <div class="gauge-value" id="speed-gauge-value">--</div>
+                            <div class="gauge-unit">km/h</div>
+                            <div class="gauge-label">Avg Speed</div>
+                            <div class="gps-badge no-gps" id="speed-gps-badge">NO GPS</div>
+                        </div>
 
-        <!-- Pipeline Mode Selector -->
-        <div class="mode-selector" id="pipeline-mode-selector">
-            <button class="mode-btn active" data-mode="gob" onclick="setPipelineMode('gob')">COLOUR</button>
-            <button class="mode-btn" data-mode="gog" onclick="setPipelineMode('gog')">AI</button>
-            <button class="mode-btn" data-mode="hybrid" onclick="setPipelineMode('hybrid')">HYBRID</button>
-        </div>
+                        <!-- Loop Time Gauge -->
+                        <div class="gauge-container">
+                            <svg class="gauge-svg" viewBox="0 0 140 90">
+                                <path class="gauge-arc-bg" d="" id="loop-gauge-bg"></path>
+                                <path class="gauge-arc-fill loop-good" d="" id="loop-gauge-fill"></path>
+                            </svg>
+                            <div class="gauge-value" id="loop-gauge-value">--</div>
+                            <div class="gauge-unit">ms</div>
+                            <div class="gauge-label">Avg Loop Time</div>
+                        </div>
 
-        <!-- OWL Units Grid -->
-        <div class="owls-container" id="owls-grid">
-            <div class="empty-state">
-                <div class="empty-state-text">No OWLs Connected</div>
-                <div class="empty-state-subtext">Waiting for MQTT...</div>
+                        <!-- Coverage Warning -->
+                        <div class="coverage-warning" id="coverage-warning"></div>
+                    </div>
+                </div>
+
+                <div class="sensitivity-panel" id="sensitivity-dial">
+                    <div class="section-title">Sensitivity</div>
+                    <div class="sensitivity-body">
+                        <svg class="sensitivity-svg" viewBox="0 0 140 90" id="sensitivity-svg"></svg>
+                        <div class="sensitivity-level-text" id="sensitivity-level-text">Medium</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT: Controls + Actuation -->
+            <div class="controls-column">
+                <div class="controls-panel">
+                    <div class="section-title">Controls</div>
+                    <div class="hero-buttons">
+                        <button class="action-button btn-detection" id="main-detection-btn" onclick="toggleMainDetection()">
+                            Start Detection
+                        </button>
+                        <button class="action-button btn-recording" id="main-recording-btn" onclick="toggleMainRecording()">
+                            Start Recording
+                        </button>
+                    </div>
+                    <div class="mode-panel">
+                        <div class="mode-panel-title">Detection Mode</div>
+                        <div class="mode-selector" id="pipeline-mode-selector">
+                            <button class="mode-btn active" data-mode="gob" onclick="setPipelineMode('gob')">Colour</button>
+                            <button class="mode-btn" data-mode="gog" onclick="setPipelineMode('gog')">AI</button>
+                            <button class="mode-btn" data-mode="hybrid" onclick="setPipelineMode('hybrid')">Hybrid</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Actuation Panel -->
+                <div class="actuation-panel" id="actuation-panel">
+                    <div class="actuation-panel-title">Actuation</div>
+
+                    <!-- Actuation Length Slider (GPS-dependent) -->
+                    <div class="actuation-slider-group actuation-gps-group no-gps">
+                        <span class="actuation-slider-label">Act. Length</span>
+                        <div class="actuation-slider-wrap">
+                            <div class="single-slider" data-param="actuation_length_cm">
+                                <div class="slider-rail">
+                                    <div class="slider-track"><div class="slider-fill"></div></div>
+                                    <div class="slider-knob active" data-param="actuation_length_cm" id="actuation_length_cm-act-knob"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <span class="actuation-slider-value" id="actuation_length_cm-act-value">10 cm</span>
+                    </div>
+
+                    <!-- Crop Buffer Slider -->
+                    <div class="actuation-slider-group">
+                        <span class="actuation-slider-label">Crop Buffer</span>
+                        <div class="actuation-slider-wrap">
+                            <div class="single-slider" data-param="crop_buffer_px">
+                                <div class="slider-rail">
+                                    <div class="slider-track"><div class="slider-fill"></div></div>
+                                    <div class="slider-knob active" data-param="crop_buffer_px" id="crop_buffer_px-act-knob"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <span class="actuation-slider-value" id="crop_buffer_px-act-value">20 px</span>
+                    </div>
+
+                    <!-- AI Confidence Slider (greyed when not AI mode) -->
+                    <div class="actuation-slider-group disabled" id="confidence-act-group">
+                        <span class="actuation-slider-label">AI Confidence</span>
+                        <div class="actuation-slider-wrap">
+                            <div class="single-slider" data-param="confidence">
+                                <div class="slider-rail">
+                                    <div class="slider-track"><div class="slider-fill"></div></div>
+                                    <div class="slider-knob active" data-param="confidence" id="confidence-act-knob"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <span class="actuation-slider-value" id="confidence-act-value">50%</span>
+                    </div>
+
+                    <!-- Computed values -->
+                    <div class="actuation-computed">
+                        <div class="actuation-computed-item">
+                            <span class="actuation-computed-label">Duration</span>
+                            <span class="actuation-computed-value" id="actuation-duration-value">--</span>
+                        </div>
+                        <div class="actuation-computed-item">
+                            <span class="actuation-computed-label">Delay</span>
+                            <span class="actuation-computed-value" id="actuation-delay-value">--</span>
+                        </div>
+                        <div class="actuation-computed-item">
+                            <span class="actuation-computed-label">Source</span>
+                            <span class="actuation-source config" id="actuation-source-value">Config</span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -65,7 +180,7 @@
             <!-- Status banner -->
             <div class="gps-status-banner disconnected" id="gps-status-banner">
                 <span class="gps-status-icon" id="gps-status-icon"></span>
-                <span id="gps-status-text">GPS DISCONNECTED</span>
+                <span id="gps-status-text">GPS Disconnected</span>
             </div>
 
             <!-- 3-column grid -->
@@ -91,25 +206,65 @@
                 <!-- RIGHT: Stats -->
                 <div class="gps-stats-col">
                     <div class="gps-stat-block">
-                        <div class="gps-stat-label">SATELLITES</div>
+                        <div class="gps-stat-label">Satellites</div>
                         <div class="gps-accuracy-bar">
                             <div class="gps-accuracy-fill" id="gps-accuracy-fill"></div>
                         </div>
                         <div class="gps-stat-value" id="gps-satellites">--</div>
                     </div>
                     <div class="gps-stat-block">
-                        <div class="gps-stat-label">DISTANCE</div>
+                        <div class="gps-stat-label">Distance</div>
                         <div class="gps-stat-value" id="gps-distance">0.00 km</div>
                     </div>
                     <div class="gps-stat-block">
-                        <div class="gps-stat-label">TIME</div>
+                        <div class="gps-stat-label">Time</div>
                         <div class="gps-stat-value" id="gps-time">0:00:00</div>
                     </div>
                     <div class="gps-stat-block">
-                        <div class="gps-stat-label">AREA</div>
+                        <div class="gps-stat-label">Area</div>
                         <div class="gps-stat-value" id="gps-area">0.00 ha</div>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI View -->
+    <div id="view-ai" class="view-panel" style="display:none;">
+        <div class="ai-panel">
+            <!-- Status banner -->
+            <div class="ai-status-banner disconnected" id="ai-status-banner">
+                <span id="ai-status-text">No OWLs Connected</span>
+            </div>
+
+            <!-- Model selector -->
+            <div class="ai-model-row">
+                <div class="ai-model-selector">
+                    <label for="ai-model-select">Model:</label>
+                    <div class="select-wrapper">
+                        <select class="ai-model-select" id="ai-model-select" onchange="onModelSelected()">
+                            <option value="">No models available</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="ai-model-info" id="ai-model-info"></div>
+            </div>
+
+            <!-- Class grid section -->
+            <div class="ai-classes-section">
+                <div class="ai-classes-header">
+                    <span class="ai-classes-title">Detection Classes</span>
+                    <span class="ai-classes-hint" id="ai-classes-hint">Select classes to detect (empty = all)</span>
+                </div>
+                <div class="ai-classes-grid" id="ai-classes-grid">
+                    <span style="color:var(--text-light);">Load a model to see classes</span>
+                </div>
+            </div>
+
+            <!-- Action bar -->
+            <div class="ai-action-bar">
+                <button class="config-action-btn secondary" onclick="clearAIClassSelection()">Clear Selection</button>
+                <button class="config-action-btn primary" onclick="applyAIClassSelection()">Apply to All OWLs</button>
             </div>
         </div>
     </div>
@@ -123,8 +278,8 @@
                     <select id="config-editor-device">
                         <option value="" disabled>No OWLs connected</option>
                     </select>
-                    <button class="config-action-btn primary" id="load-device-config-btn">LOAD</button>
-                    <button class="config-action-btn preview" id="config-preview-btn" onclick="toggleConfigPreview()">PREVIEW</button>
+                    <button class="config-action-btn primary" id="load-device-config-btn">Load</button>
+                    <button class="config-action-btn preview" id="config-preview-btn" onclick="toggleConfigPreview()">Preview</button>
                 </div>
                 <div class="config-toolbar-spacer"></div>
                 <span class="config-badge" id="config-active-badge">--</span>
@@ -301,7 +456,7 @@
                     <div class="config-advanced-body" id="config-advanced-body">
                         <div id="config-editor-sections" class="config-editor-content">
                             <div class="config-loading">
-                                <span>Select a device and click LOAD</span>
+                                <span>Select a device and click Load</span>
                             </div>
                         </div>
                     </div>
@@ -315,16 +470,16 @@
 
             <!-- Action bar -->
             <div class="config-action-bar">
-                <button class="config-action-btn primary" id="apply-config-btn">APPLY ALL</button>
-                <button class="config-action-btn secondary" id="reset-config-btn">RESET</button>
+                <button class="config-action-btn primary" id="apply-config-btn">Apply All</button>
+                <button class="config-action-btn secondary" id="reset-config-btn">Reset</button>
                 <div class="config-action-bar-spacer"></div>
                 <select id="config-library-selector">
                     <option value="">Config library...</option>
                 </select>
-                <button class="config-action-btn secondary" id="load-library-config-btn">OPEN</button>
-                <button class="config-action-btn danger" id="delete-library-config-btn">DEL</button>
-                <button class="config-action-btn save-as" id="save-as-config-btn">SAVE AS...</button>
-                <button class="config-action-btn primary" id="push-config-btn" disabled>PUSH TO DEVICE</button>
+                <button class="config-action-btn secondary" id="load-library-config-btn">Open</button>
+                <button class="config-action-btn danger" id="delete-library-config-btn">Del</button>
+                <button class="config-action-btn save-as" id="save-as-config-btn">Save As...</button>
+                <button class="config-action-btn primary" id="push-config-btn" disabled>Push to Device</button>
             </div>
         </div>
     </div>
@@ -336,7 +491,7 @@
         <div class="modal-header">
             <h3 id="video-modal-title">OWL Video Feed</h3>
             <div class="modal-header-actions">
-                <button class="modal-action-btn" onclick="downloadVideoFrame()">SAVE IMAGE</button>
+                <button class="modal-action-btn" onclick="downloadVideoFrame()">Save Image</button>
                 <button class="modal-close" onclick="closeVideoModal()">&times;</button>
             </div>
         </div>
@@ -366,8 +521,8 @@
             </div>
         </div>
         <div class="save-as-modal-actions">
-            <button class="config-action-btn secondary" onclick="closeSaveAsModal()">CANCEL</button>
-            <button class="config-action-btn primary" id="save-as-confirm-btn" onclick="confirmSaveAs()">SAVE</button>
+            <button class="config-action-btn secondary" onclick="closeSaveAsModal()">Cancel</button>
+            <button class="config-action-btn primary" id="save-as-confirm-btn" onclick="confirmSaveAs()">Save</button>
         </div>
     </div>
 </div>
@@ -399,6 +554,8 @@
 <script src="{{ url_for('static', filename='js/modules/_video.js') }}"></script>
 <script src="{{ url_for('static', filename='js/modules/_config_editor.js') }}"></script>
 <script src="{{ url_for('static', filename='js/modules/_gps.js') }}"></script>
+<script src="{{ url_for('static', filename='js/modules/_actuation.js') }}"></script>
+<script src="{{ url_for('static', filename='js/modules/_ai_tab.js') }}"></script>
 <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>

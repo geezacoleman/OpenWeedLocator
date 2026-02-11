@@ -14,6 +14,8 @@
 //   9. modules/_video.js        - openVideoFeed(), downloadVideoFrame()
 //  10. modules/_config_editor.js - config editor, save as modal
 //  11. modules/_gps.js          - GPS tab, polling, tab switching
+//  12. modules/_actuation.js    - Actuation sliders, speed-adaptive
+//  13. modules/_ai_tab.js       - AI tab, model selection, class filtering
 // ============================================
 
 // ============================================
@@ -26,9 +28,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateAllSliders();
     initConfigEditor();
     checkGPSAvailability();
+    initGaugeArcs();
+    initActuationSliders();
+    initSensitivityDial();
+    startActuationPolling();
     updateDashboard();
     updateInterval = setInterval(updateDashboard, UPDATE_INTERVAL);
 });
+
+/**
+ * Initialize the static background arcs for all SVG gauges.
+ */
+function initGaugeArcs() {
+    var bgIds = ['speed-gauge-bg', 'loop-gauge-bg'];
+    for (var i = 0; i < bgIds.length; i++) {
+        var el = document.getElementById(bgIds[i]);
+        if (el) {
+            el.setAttribute('d', describeArc(70, 80, 55, -90, 90));
+        }
+    }
+}
 
 function setupEventListeners() {
     // Range/single sliders (knob drag, track click, fine-tune)
@@ -55,6 +74,8 @@ window.addEventListener('beforeunload', () => {
     if (updateInterval) {
         clearInterval(updateInterval);
     }
+    aiTabActive = false;
     stopGPSPolling();
+    stopActuationPolling();
     stopConfigPreview();
 });

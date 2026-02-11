@@ -1,6 +1,5 @@
 ## OWL requirements file ##
 # OpenCV should be installed separately
-imutils
 gpiozero
 pandas
 RPi.GPIO
