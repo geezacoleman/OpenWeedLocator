@@ -278,13 +278,24 @@
                     <select id="config-editor-device">
                         <option value="" disabled>No OWLs connected</option>
                     </select>
-                    <button class="config-action-btn primary" id="load-device-config-btn">Load</button>
+                    <span class="config-device-count" id="config-device-count"></span>
+                    <button class="config-action-btn secondary" id="load-device-config-btn">Refresh</button>
                     <button class="config-action-btn preview" id="config-preview-btn" onclick="toggleConfigPreview()">Preview</button>
                 </div>
                 <div class="config-toolbar-spacer"></div>
                 <span class="config-badge" id="config-active-badge">--</span>
                 <div id="config-editor-unsaved" class="config-unsaved hidden">
                     <span>Unsaved changes</span>
+                </div>
+            </div>
+
+            <!-- Detection Mode (syncs with Dashboard mode buttons) -->
+            <div class="config-mode-bar">
+                <span class="config-mode-label">Detection Mode</span>
+                <div class="config-mode-buttons">
+                    <button class="mode-btn active" data-mode="gob" onclick="setPipelineMode('gob')">Colour</button>
+                    <button class="mode-btn" data-mode="gog" onclick="setPipelineMode('gog')">AI</button>
+                    <button class="mode-btn" data-mode="hybrid" onclick="setPipelineMode('hybrid')">Hybrid</button>
                 </div>
             </div>
 
@@ -456,7 +467,7 @@
                     <div class="config-advanced-body" id="config-advanced-body">
                         <div id="config-editor-sections" class="config-editor-content">
                             <div class="config-loading">
-                                <span>Select a device and click Load</span>
+                                <span>Select a device and click Refresh</span>
                             </div>
                         </div>
                     </div>
@@ -470,16 +481,13 @@
 
             <!-- Action bar -->
             <div class="config-action-bar">
-                <button class="config-action-btn primary" id="apply-config-btn">Apply All</button>
-                <button class="config-action-btn secondary" id="reset-config-btn">Reset</button>
+                <button class="config-action-btn send" id="send-to-device-btn">Send to Device</button>
+                <button class="config-action-btn save" id="save-to-device-btn">Save to Device</button>
                 <div class="config-action-bar-spacer"></div>
                 <select id="config-library-selector">
-                    <option value="">Config library...</option>
+                    <option value="">Presets...</option>
                 </select>
-                <button class="config-action-btn secondary" id="load-library-config-btn">Open</button>
-                <button class="config-action-btn danger" id="delete-library-config-btn">Del</button>
-                <button class="config-action-btn save-as" id="save-as-config-btn">Save As...</button>
-                <button class="config-action-btn primary" id="push-config-btn" disabled>Push to Device</button>
+                <button class="config-action-btn secondary" id="load-preset-btn">Load Preset</button>
             </div>
         </div>
     </div>
@@ -497,32 +505,6 @@
         </div>
         <div class="modal-body">
             <img id="video-feed-img" src="" alt="Video Feed" style="width:100%;height:auto;" />
-        </div>
-    </div>
-</div>
-
-<!-- Save As Modal -->
-<div id="save-as-modal" class="modal" style="display:none;">
-    <div class="modal-content save-as-modal-content">
-        <div class="modal-header">
-            <h3>Save Configuration</h3>
-            <button class="modal-close" onclick="closeSaveAsModal()">&times;</button>
-        </div>
-        <div class="modal-body save-as-modal-body">
-            <div class="save-as-form-group">
-                <label for="save-as-filename">Filename:</label>
-                <input type="text" id="save-as-filename" class="save-as-input" placeholder="config_20260207_220000.ini">
-            </div>
-            <div class="save-as-form-group checkbox-group">
-                <label>
-                    <input type="checkbox" id="save-as-set-active" checked>
-                    Set as active boot config on device
-                </label>
-            </div>
-        </div>
-        <div class="save-as-modal-actions">
-            <button class="config-action-btn secondary" onclick="closeSaveAsModal()">Cancel</button>
-            <button class="config-action-btn primary" id="save-as-confirm-btn" onclick="confirmSaveAs()">Save</button>
         </div>
     </div>
 </div>

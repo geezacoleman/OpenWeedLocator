@@ -3,11 +3,8 @@
    Uses shared CONFIG_FIELD_DEFS, createConfigSection, createConfigField
    from /shared/js/config.js
 
-   Networked-specific logic: load from device via MQTT, push changes,
-   config library (Save As + load + delete), active config management.
-
-   Mirrors standalone _config.js patterns: active_config.txt pointer,
-   timestamp filenames, protected defaults, set-active checkbox.
+   Networked-specific logic: load from device via MQTT, config library
+   management, active config badge, device selector.
    ========================================================================== */
 
 let deviceConfig = {};
@@ -32,11 +29,6 @@ function initConfigEditor() {
         const deviceId = getConfigEditorTarget();
         if (deviceId) loadDeviceConfig(deviceId);
     });
-
-    document.getElementById('push-config-btn')?.addEventListener('click', pushConfigChanges);
-    document.getElementById('save-as-config-btn')?.addEventListener('click', openSaveAsModal);
-    document.getElementById('load-library-config-btn')?.addEventListener('click', loadLibraryConfigIntoEditor);
-    document.getElementById('delete-library-config-btn')?.addEventListener('click', deleteLibraryConfig);
 
     loadConfigLibrary();
 }
@@ -65,6 +57,15 @@ function updateConfigEditorDevices() {
 
     if ([...sel.options].some(o => o.value === currentValue)) {
         sel.value = currentValue;
+    }
+
+    // Update device count badge
+    var countEl = document.getElementById('config-device-count');
+    if (countEl) {
+        var connectedCount = Object.keys(owlsData).filter(id =>
+            owlsData[id] && owlsData[id].connected === true
+        ).length;
+        countEl.textContent = connectedCount > 0 ? connectedCount + ' device' + (connectedCount > 1 ? 's' : '') : '';
     }
 }
 
@@ -132,52 +133,12 @@ function updateConfigEditorChangeState() {
 
     const unsavedEl = document.getElementById('config-editor-unsaved');
     if (unsavedEl) unsavedEl.classList.toggle('hidden', !configEditorHasChanges);
-
-    const pushBtn = document.getElementById('push-config-btn');
-    if (pushBtn) pushBtn.disabled = !configEditorHasChanges;
 }
 
 function updateActiveBadge(configName) {
     const badge = document.getElementById('config-active-badge');
     if (badge) {
         badge.textContent = 'Active: ' + configName;
-    }
-}
-
-// ============================================
-// PUSH TO DEVICE
-// ============================================
-
-async function pushConfigChanges() {
-    if (!configEditorDevice || !configEditorHasChanges) return;
-
-    const deviceId = configEditorDevice;
-    let sectionsPushed = 0;
-
-    try {
-        for (const section of Object.keys(deviceConfig)) {
-            if (JSON.stringify(deviceConfig[section]) !== JSON.stringify(originalDeviceConfig[section])) {
-                await apiRequest('/api/config/' + deviceId, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ section: section, params: deviceConfig[section] })
-                });
-                sectionsPushed++;
-            }
-        }
-
-        originalDeviceConfig = JSON.parse(JSON.stringify(deviceConfig));
-        configEditorHasChanges = false;
-        updateConfigEditorChangeState();
-
-        document.querySelectorAll('#config-editor-sections .modified').forEach(el => {
-            el.classList.remove('modified');
-        });
-
-        showToast('Pushed ' + sectionsPushed + ' section(s) to ' + deviceId, 'success');
-
-    } catch (err) {
-        showToast('Error pushing config: ' + err.message, 'error');
     }
 }
 
@@ -203,37 +164,36 @@ function renderConfigLibrarySelector() {
     const sel = document.getElementById('config-library-selector');
     if (!sel) return;
 
-    sel.innerHTML = '<option value="">Config library...</option>' +
-        configLibraryList.map(c =>
-            '<option value="' + c.name + '">' + c.name +
-            (c.is_default ? ' (default)' : '') + '</option>'
-        ).join('');
-}
+    var defaults = configLibraryList.filter(c => c.is_default);
+    var custom = configLibraryList.filter(c => !c.is_default);
 
-async function loadLibraryConfigIntoEditor() {
-    const sel = document.getElementById('config-library-selector');
-    const configName = sel ? sel.value : '';
-    if (!configName) {
-        showToast('Select a config first', 'warning');
-        return;
+    var html = '<option value="">Presets...</option>';
+    html += '<option value="__reset_defaults__">Reset to Defaults</option>';
+
+    if (defaults.length > 0) {
+        html += '<optgroup label="Defaults">';
+        defaults.forEach(c => {
+            html += '<option value="' + c.name + '">' + c.name + '</option>';
+        });
+        html += '</optgroup>';
     }
 
-    try {
-        const res = await apiRequest('/api/presets/' + configName);
-        const data = await res.json();
-
-        if (!data.success) throw new Error(data.error || 'Failed to load config');
-
-        deviceConfig = JSON.parse(JSON.stringify(data.config));
-        configEditorHasChanges = JSON.stringify(deviceConfig) !== JSON.stringify(originalDeviceConfig);
-
-        renderDeviceConfigSections();
-        updateConfigEditorChangeState();
-        showToast('Loaded: ' + configName, 'success');
-
-    } catch (err) {
-        showToast('Error loading config: ' + err.message, 'error');
+    if (custom.length > 0) {
+        html += '<optgroup label="Custom">';
+        custom.forEach(c => {
+            // Format timestamp filenames for readability
+            var label = c.name;
+            var match = label.match(/^config_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})\.ini$/);
+            if (match) {
+                label = match[1] + '-' + match[2] + '-' + match[3] + ' ' +
+                        match[4] + ':' + match[5] + ':' + match[6];
+            }
+            html += '<option value="' + c.name + '">' + label + '</option>';
+        });
+        html += '</optgroup>';
     }
+
+    sel.innerHTML = html;
 }
 
 async function deleteLibraryConfig() {
@@ -266,96 +226,3 @@ async function deleteLibraryConfig() {
     }
 }
 
-// ============================================
-// SAVE AS MODAL (mirrors standalone showSaveConfigModal)
-// ============================================
-
-function openSaveAsModal() {
-    if (Object.keys(deviceConfig).length === 0) {
-        showToast('Load a config first', 'warning');
-        return;
-    }
-
-    // Pre-fill with timestamp filename (same pattern as standalone)
-    var ts = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
-    var input = document.getElementById('save-as-filename');
-    if (input) {
-        input.value = 'config_' + ts + '.ini';
-    }
-
-    document.getElementById('save-as-modal').style.display = 'flex';
-
-    // Focus and select filename
-    if (input) {
-        input.focus();
-        input.select();
-    }
-}
-
-function closeSaveAsModal() {
-    document.getElementById('save-as-modal').style.display = 'none';
-}
-
-async function confirmSaveAs() {
-    var filenameInput = document.getElementById('save-as-filename');
-    var filename = filenameInput ? filenameInput.value.trim() : '';
-    if (!filename) {
-        showToast('Enter a filename', 'warning');
-        return;
-    }
-
-    if (!filename.endsWith('.ini')) {
-        filename += '.ini';
-    }
-
-    var setActive = document.getElementById('save-as-set-active')?.checked || false;
-    var deviceId = configEditorDevice;
-
-    closeSaveAsModal();
-
-    try {
-        // Step 1: Save locally to controller's config library
-        var libRes = await apiRequest('/api/config/library', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ config: deviceConfig, filename: filename })
-        });
-        var libData = await libRes.json();
-
-        if (!libData.success) {
-            showToast('Save failed: ' + (libData.error || 'Unknown'), 'error');
-            return;
-        }
-
-        // Step 2: Save on OWL device via MQTT (if device is selected)
-        if (deviceId) {
-            await apiRequest('/api/config/' + deviceId + '/save', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filename: filename })
-            });
-
-            // Step 3: Optionally set as active boot config on device
-            if (setActive) {
-                await apiRequest('/api/config/' + deviceId + '/set-active', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ config: 'config/' + filename })
-                });
-            }
-        }
-
-        showToast('Saved as ' + filename + (setActive ? ' (set as active)' : ''), 'success');
-
-        // Refresh the library selector
-        await loadConfigLibrary();
-
-        // Update badge if set active
-        if (setActive) {
-            updateActiveBadge(filename);
-        }
-
-    } catch (err) {
-        showToast('Error saving config: ' + err.message, 'error');
-    }
-}

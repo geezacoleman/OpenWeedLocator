@@ -10,9 +10,15 @@
 /**
  * Sync slider configParams from the OWL's published state.
  * Called on each dashboard poll so sliders always match the device.
+ * Skips sync for 5s after last slider send to prevent snap-back.
  */
 function syncConfigFromOWLState(owlState) {
     if (!owlState) return;
+
+    // Snap-back guard: skip sync if user recently sent slider values
+    if (typeof lastSliderSendTime !== 'undefined' && (Date.now() - lastSliderSendTime) < 5000) {
+        return;
+    }
 
     var synced = false;
     var params = ['exg_min', 'exg_max', 'hue_min', 'hue_max',

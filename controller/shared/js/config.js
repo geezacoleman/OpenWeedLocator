@@ -65,6 +65,24 @@ const CONFIG_FIELD_DEFS = {
         'port': { type: 'text' },
         'baudrate': { type: 'select', options: ['4800', '9600', '19200', '38400', '57600', '115200'] }
     },
+    'Actuation': {
+        'actuation_duration': { type: 'number', step: 0.01, min: 0.01, max: 5.0, help: 'Spray duration in seconds' },
+        'delay': { type: 'number', step: 0.01, min: 0, max: 5.0, help: 'Delay before actuation' },
+        'actuation_length_cm': { type: 'number', min: 1, max: 100, help: 'Spray zone length in cm' },
+        'offset_cm': { type: 'number', min: 0, max: 200, help: 'Nozzle offset from camera in cm' },
+        'speed_avg_window': { type: 'number', step: 0.5, min: 1, max: 30, help: 'GPS speed averaging window in seconds' }
+    },
+    'Visualisation': {
+        'image_loop_time': { type: 'number', step: 0.1, min: 0.1, max: 10.0, help: 'Display loop time in seconds' }
+    },
+    'Network': {
+        'mode': { type: 'select', options: ['dhcp', 'static'], help: 'Network mode' },
+        'static_ip': { type: 'text', help: 'Static IP address (if mode=static)' },
+        'controller_ip': { type: 'text', help: 'Central controller IP address' }
+    },
+    'WebDashboard': {
+        'port': { type: 'number', min: 1, max: 65535, help: 'Dashboard web server port' }
+    },
     'Relays': { _isRelaySection: true }
 };
 
@@ -76,7 +94,7 @@ const RESTART_SECTIONS = ['MQTT', 'Network', 'WebDashboard', 'Controller'];
 /**
  * Preferred display order for config sections.
  */
-const SECTION_ORDER = ['System', 'Camera', 'GreenOnBrown', 'GreenOnGreen', 'DataCollection', 'Controller', 'MQTT', 'GPS', 'Relays'];
+const SECTION_ORDER = ['System', 'Camera', 'GreenOnBrown', 'GreenOnGreen', 'Actuation', 'DataCollection', 'Visualisation', 'Controller', 'Network', 'WebDashboard', 'MQTT', 'GPS', 'Relays'];
 
 /**
  * Create a collapsible config section element.
@@ -103,6 +121,14 @@ function createConfigSection(sectionName, sectionData, onFieldChange) {
     // Body
     const body = document.createElement('div');
     body.className = 'config-section-body';
+
+    // MQTT protection: add warning banner and lock enable field
+    if (sectionName === 'MQTT') {
+        const warning = document.createElement('div');
+        warning.className = 'config-section-warning';
+        warning.textContent = 'Changing MQTT settings may disconnect this device from the controller.';
+        body.appendChild(warning);
+    }
 
     if (fieldDefs._isRelaySection) {
         body.innerHTML = '<div class="relay-mapping"></div>';
@@ -183,6 +209,19 @@ function createConfigField(section, key, value, fieldDef) {
         h.className = 'field-help';
         h.textContent = def.help;
         field.appendChild(h);
+    }
+
+    // Lock MQTT enable field to prevent accidental disconnection
+    if (section === 'MQTT' && key === 'enable') {
+        const input = field.querySelector('input');
+        if (input) {
+            input.disabled = true;
+            field.classList.add('config-field-locked');
+        }
+        const note = document.createElement('span');
+        note.className = 'field-help';
+        note.textContent = 'Locked — disabling MQTT will disconnect this device';
+        field.appendChild(note);
     }
 
     return field;

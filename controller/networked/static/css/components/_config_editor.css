@@ -1,6 +1,6 @@
 /* ==========================================================================
    OWL Controller (Networked) - Config Editor (Advanced Settings)
-   Styles for the full INI editor content and Save As modal
+   Styles for the full INI editor content
    ========================================================================== */
 
 .config-editor-content {
@@ -38,68 +38,24 @@
     letter-spacing: 0.5px;
 }
 
-/* Save As Modal */
-
-#save-as-modal {
-    z-index: 2000;
-}
-
-.save-as-modal-content {
-    max-width: 480px;
-    width: 90%;
-}
-
-.save-as-modal-body {
-    padding: 1.5rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-}
-
-.save-as-form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-}
-
-.save-as-form-group label {
-    font-weight: 600;
-    font-size: 0.9rem;
-    color: var(--text-dark);
-}
-
-.save-as-form-group.checkbox-group label {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-weight: 500;
-    cursor: pointer;
-}
-
-.save-as-form-group.checkbox-group input[type="checkbox"] {
-    width: 20px;
-    height: 20px;
-    cursor: pointer;
-}
-
-.save-as-input {
-    width: 100%;
-    padding: 0.7rem;
-    border: 2px solid #bdc3c7;
+/* MQTT section warning banner */
+.config-section-warning {
+    background: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffc107;
     border-radius: var(--radius-md);
-    font-size: 1rem;
-    font-family: monospace;
-    box-sizing: border-box;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
 }
 
-.save-as-input:focus {
-    outline: none;
-    border-color: var(--accent);
+/* Locked config field */
+.config-field-locked {
+    opacity: 0.6;
 }
 
-.save-as-modal-actions {
-    display: flex;
-    gap: 0.75rem;
-    padding: 1rem 1.5rem;
-    border-top: 2px solid var(--light);
+.config-field-locked input,
+.config-field-locked select {
+    cursor: not-allowed;
 }

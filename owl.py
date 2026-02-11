@@ -508,13 +508,12 @@ class Owl:
             if algorithm in ('gog', 'gog-hybrid'):
                 self._gog_detector = weed_detector
 
-        except (ModuleNotFoundError, IndexError, FileNotFoundError, ValueError) as e:
-            algo_error = errors.AlgorithmError(algorithm, e)
-            algo_error.handle(self)
-
         except Exception as e:
-            algo_error = errors.AlgorithmError(algorithm, e)
-            algo_error.handle(self)
+            self.logger.error(f"[ERROR] Failed to create detector for '{algorithm}': {e}")
+            self.logger.error("[ERROR] OWL will continue running without detection. Change algorithm via dashboard to recover.")
+            weed_detector = None
+            if self.dash:
+                self.dash.state['algorithm_error'] = str(e)
 
         if self.show_display:
             self.relay_vis = self.relay_controller.relay_vis
@@ -552,13 +551,15 @@ class Owl:
                 # pass image, thresholds to green_on_brown function
                 if self._detection_enable:
                     # Live algorithm switching
-                    if self._pending_algorithm and self._pending_algorithm != algorithm:
+                    if self._pending_algorithm and (weed_detector is None or self._pending_algorithm != algorithm):
                         try:
                             weed_detector = _create_detector(self._pending_algorithm)
                             algorithm = self._pending_algorithm
                             if algorithm in ('gog', 'gog-hybrid'):
                                 self._gog_detector = weed_detector
                             self.logger.info(f"Live algorithm switch to: {algorithm}")
+                            if self.dash:
+                                self.dash.state.pop('algorithm_error', None)
                         except Exception as e:
                             self.logger.error(f"Failed to load detector for {self._pending_algorithm}: {e}")
                             # Revert — keep using current weed_detector and algorithm
@@ -577,24 +578,30 @@ class Owl:
                             if algorithm in ('gog', 'gog-hybrid'):
                                 self._gog_detector = weed_detector
                             self.logger.info(f"Live model switch to: {new_model}")
+                            if self.dash:
+                                self.dash.state.pop('algorithm_error', None)
                         except Exception as e:
                             self.logger.error(f"Failed to switch model: {e}")
+                            if self.dash:
+                                self.dash.state['algorithm_error'] = str(e)
 
                     # Live detect_classes update
                     if self._pending_detect_classes is not None:
                         new_classes = self._pending_detect_classes
                         self._pending_detect_classes = None
                         self._detect_classes_list = new_classes
-                        if hasattr(weed_detector, 'update_detect_classes'):
+                        if weed_detector and hasattr(weed_detector, 'update_detect_classes'):
                             weed_detector.update_detect_classes(new_classes or None)
                         self.logger.info(f"detect_classes updated: {new_classes}")
 
                     # Live crop buffer update (hybrid mode only)
                     if (algorithm == 'gog-hybrid'
+                            and weed_detector
                             and hasattr(weed_detector, 'set_crop_buffer')
                             and weed_detector.crop_buffer_px != self.crop_buffer_px):
                         weed_detector.set_crop_buffer(self.crop_buffer_px)
 
+                if self._detection_enable and weed_detector is not None:
                     cropped_frame = frame[self.crop_slice]
 
                     return_image_out = self.show_display or bool(self.dash)

@@ -8,6 +8,7 @@
 // ============================================
 
 let dragState = null;
+let lastSliderSendTime = 0;  // snap-back guard: track when sliders last sent
 
 function initSliders() {
     // Knob drag via pointer events
@@ -257,31 +258,227 @@ function sendConfigUpdate(param, value) {
     var sel = document.getElementById('config-editor-device');
     var target = sel ? sel.value : 'all';
 
-    // Crop buffer uses dedicated MQTT command (not set_greenonbrown_param)
+    lastSliderSendTime = Date.now();
+
+    // Route each param to its correct config section via set_config_section
+    // This updates BOTH the live instance AND ConfigParser on the OWL,
+    // so Save to Device captures slider values correctly.
     if (param === 'crop_buffer_px') {
-        sendCommand(target, 'set_crop_buffer', value);
+        sendCommand(target, 'set_config_section', {
+            section: 'GreenOnGreen',
+            params: { crop_buffer_px: String(value) }
+        });
     } else if (param === 'confidence') {
         // Convert percentage (0-100) to float (0.0-1.0) for OWL
-        sendCommand(target, 'set_greenongreen_param', { key: 'confidence', value: value / 100 });
+        sendCommand(target, 'set_config_section', {
+            section: 'GreenOnGreen',
+            params: { confidence: String(value / 100) }
+        });
     } else {
-        sendCommand(target, 'set_config', { key: param, value: value });
+        // All GoB params go to GreenOnBrown section
+        var params = {};
+        params[param] = String(value);
+        sendCommand(target, 'set_config_section', {
+            section: 'GreenOnBrown',
+            params: params
+        });
     }
 }
 
-function applyConfigToAll() {
-    var count = 0;
-    for (var key in configParams) {
-        sendConfigUpdate(key, configParams[key].value);
-        count++;
+/**
+ * Send all slider + editor values to device(s) via set_config_section.
+ * Live-updates the device — does NOT persist to disk.
+ */
+function sendAllToDevice() {
+    var sel = document.getElementById('config-editor-device');
+    var target = sel ? sel.value : 'all';
+
+    lastSliderSendTime = Date.now();
+
+    // Send slider params as whole sections
+    var gobParams = {};
+    var gobKeys = ['exg_min', 'exg_max', 'hue_min', 'hue_max',
+                   'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
+                   'min_detection_area'];
+    for (var i = 0; i < gobKeys.length; i++) {
+        var k = gobKeys[i];
+        if (configParams[k]) gobParams[k] = String(configParams[k].value);
     }
-    showToast('Applied ' + count + ' settings', 'success');
+
+    var gogParams = {};
+    if (configParams.confidence) gogParams.confidence = String(configParams.confidence.value / 100);
+    if (configParams.crop_buffer_px) gogParams.crop_buffer_px = String(configParams.crop_buffer_px.value);
+
+    sendCommand(target, 'set_config_section', { section: 'GreenOnBrown', params: gobParams });
+    if (Object.keys(gogParams).length > 0) {
+        sendCommand(target, 'set_config_section', { section: 'GreenOnGreen', params: gogParams });
+    }
+
+    // Also send any editor changes if loaded
+    if (configEditorHasChanges && typeof deviceConfig !== 'undefined') {
+        for (var section in deviceConfig) {
+            if (JSON.stringify(deviceConfig[section]) !== JSON.stringify(originalDeviceConfig[section])) {
+                sendCommand(target, 'set_config_section', {
+                    section: section,
+                    params: deviceConfig[section]
+                });
+            }
+        }
+        originalDeviceConfig = JSON.parse(JSON.stringify(deviceConfig));
+        configEditorHasChanges = false;
+        if (typeof updateConfigEditorChangeState === 'function') updateConfigEditorChangeState();
+    }
+
+    showToast('Settings sent — live until reboot', 'success');
 }
 
-async function resetConfigDefaults() {
-    await loadConfigDefaults();
+/**
+ * Send all + save to device disk + set as active boot config.
+ * Auto-generates timestamp filename. Also saves to controller library.
+ */
+async function saveToDevice() {
+    var sel = document.getElementById('config-editor-device');
+    var target = sel ? sel.value : null;
+
+    if (!target || target === 'all') {
+        // If "all" or no device, just send without saving
+        sendAllToDevice();
+        showToast('Settings sent to all devices (save requires single device)', 'warning');
+        return;
+    }
+
+    // Step 1: Send all settings live
+    sendAllToDevice();
+
+    // Step 2: Generate timestamp filename
+    var ts = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+    var filename = 'config_' + ts + '.ini';
+
+    try {
+        // Step 3: Save to controller library (if we have editor data)
+        if (typeof deviceConfig !== 'undefined' && Object.keys(deviceConfig).length > 0) {
+            await apiRequest('/api/config/library', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config: deviceConfig, filename: filename })
+            });
+        }
+
+        // Step 4: Tell device to save its current config to disk
+        await apiRequest('/api/config/' + target + '/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: filename })
+        });
+
+        // Step 5: Set as active boot config
+        await apiRequest('/api/config/' + target + '/set-active', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config: 'config/' + filename })
+        });
+
+        updateActiveBadge(filename);
+        if (typeof loadConfigLibrary === 'function') await loadConfigLibrary();
+        showToast('Saved to ' + target + ' — persists after reboot', 'success');
+
+    } catch (err) {
+        showToast('Error saving: ' + err.message, 'error');
+    }
+}
+
+/**
+ * Load selected preset and push it to the device.
+ */
+async function loadPresetToDevice() {
+    var libSel = document.getElementById('config-library-selector');
+    var presetName = libSel ? libSel.value : '';
+    if (!presetName) {
+        showToast('Select a preset first', 'warning');
+        return;
+    }
+
+    // Check for "Reset to Defaults" pseudo-entry
+    if (presetName === '__reset_defaults__') {
+        await loadConfigDefaults();
+        updateAllSliders();
+        sendAllToDevice();
+        showToast('Reset to default values', 'info');
+        return;
+    }
+
+    var sel = document.getElementById('config-editor-device');
+    var target = sel ? sel.value : 'all';
+
+    try {
+        if (target && target !== 'all') {
+            // Push preset to specific device via API
+            await apiRequest('/api/presets/push/' + target, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ preset: presetName })
+            });
+        } else {
+            // Broadcast: load preset data and send sections to all
+            var res = await apiRequest('/api/presets/' + presetName);
+            var data = await res.json();
+            if (!data.success) throw new Error(data.error || 'Failed to load preset');
+
+            for (var section in data.config) {
+                sendCommand('all', 'set_config_section', {
+                    section: section,
+                    params: data.config[section]
+                });
+            }
+        }
+
+        // Also load into editor if available
+        var presetRes = await apiRequest('/api/presets/' + presetName);
+        var presetData = await presetRes.json();
+        if (presetData.success) {
+            deviceConfig = JSON.parse(JSON.stringify(presetData.config));
+            originalDeviceConfig = JSON.parse(JSON.stringify(presetData.config));
+            configEditorHasChanges = false;
+            if (typeof renderDeviceConfigSections === 'function') renderDeviceConfigSections();
+            if (typeof updateConfigEditorChangeState === 'function') updateConfigEditorChangeState();
+
+            // Sync slider values from preset
+            syncSlidersFromConfig(presetData.config);
+        }
+
+        lastSliderSendTime = Date.now();
+        showToast('Loaded: ' + presetName, 'success');
+
+    } catch (err) {
+        showToast('Error loading preset: ' + err.message, 'error');
+    }
+}
+
+/**
+ * Sync slider configParams from a loaded config object.
+ */
+function syncSlidersFromConfig(config) {
+    var gob = config.GreenOnBrown || {};
+    var gog = config.GreenOnGreen || {};
+
+    var gobKeys = ['exg_min', 'exg_max', 'hue_min', 'hue_max',
+                   'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
+                   'min_detection_area'];
+    for (var i = 0; i < gobKeys.length; i++) {
+        var k = gobKeys[i];
+        if (k in gob && k in configParams) {
+            configParams[k].value = Number(gob[k]);
+        }
+    }
+
+    if ('confidence' in gog && 'confidence' in configParams) {
+        configParams.confidence.value = Math.round(Number(gog.confidence) * 100);
+    }
+    if ('crop_buffer_px' in gog && 'crop_buffer_px' in configParams) {
+        configParams.crop_buffer_px.value = Number(gog.crop_buffer_px);
+    }
+
     updateAllSliders();
-    applyConfigToAll();
-    showToast('Reset to default values', 'info');
 }
 
 // ============================================

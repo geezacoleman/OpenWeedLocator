@@ -53,14 +53,10 @@ function setupEventListeners() {
     // Range/single sliders (knob drag, track click, fine-tune)
     initSliders();
 
-    // Config action buttons
-    document.getElementById('apply-config-btn')?.addEventListener('click', applyConfigToAll);
-    document.getElementById('reset-config-btn')?.addEventListener('click', resetConfigDefaults);
-
-    // Save As Enter key
-    document.getElementById('save-as-filename')?.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') confirmSaveAs();
-    });
+    // Config action buttons (new simplified bar)
+    document.getElementById('send-to-device-btn')?.addEventListener('click', sendAllToDevice);
+    document.getElementById('save-to-device-btn')?.addEventListener('click', saveToDevice);
+    document.getElementById('load-preset-btn')?.addEventListener('click', loadPresetToDevice);
 
     // Update preview when device changes
     document.getElementById('config-editor-device')?.addEventListener('change', updateConfigPreviewDevice);

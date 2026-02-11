@@ -49,6 +49,13 @@
     font-size: 0.85rem;
 }
 
+.config-device-count {
+    font-size: 0.75rem;
+    color: var(--text-light);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
 .config-toolbar .config-badge {
     font-size: 0.75rem;
     white-space: nowrap;
@@ -59,6 +66,34 @@
     color: var(--warning);
     font-weight: 700;
     white-space: nowrap;
+}
+
+/* Detection mode bar */
+.config-mode-bar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.4rem 1rem;
+    background: white;
+    border-bottom: 1px solid #dfe6e9;
+    flex-shrink: 0;
+}
+
+.config-mode-label {
+    font-weight: 700;
+    font-size: 0.85rem;
+    color: var(--text-light);
+    white-space: nowrap;
+}
+
+.config-mode-buttons {
+    display: flex;
+    gap: 0.4rem;
+}
+
+.config-mode-buttons .mode-btn {
+    padding: 0.4rem 1.2rem;
+    font-size: 0.85rem;
 }
 
 /* Split body - sliders left, preview right */
@@ -390,4 +425,16 @@
 
 .config-action-btn.preview.active {
     background: linear-gradient(135deg, #6c3483 0%, #4a235a 100%);
+}
+
+.config-action-btn.send {
+    background: linear-gradient(135deg, var(--success) 0%, var(--success-dark) 100%);
+    color: white;
+    box-shadow: 0 2px 8px rgba(46, 204, 113, 0.3);
+}
+
+.config-action-btn.save {
+    background: linear-gradient(135deg, var(--accent) 0%, #2980b9 100%);
+    color: white;
+    box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
 }
