@@ -16,7 +16,7 @@ class ConfigValidator:
     REQUIRED_CONFIG = {
         'System': {
             'required_keys': {'algorithm', 'relay_num'},
-            'optional_keys': {'input_file_or_directory', 'actuation_duration', 'delay'}
+            'optional_keys': {'input_file_or_directory', 'actuation_duration', 'delay', 'actuation_zone'}
         },
         'Controller': {
             # Base requirements for all controller types
@@ -104,6 +104,7 @@ class ConfigValidator:
         'min_detection_pixels': ('int', 1, None),
         'inference_resolution': ('int', 160, 1280),
         'crop_buffer_px': ('int', 0, 50),
+        'actuation_zone': ('int', 1, 100),
         # GPIO pins
         'switch_pin': ('pin', 1, 40),
         'detection_mode_pin_up': ('pin', 1, 40),

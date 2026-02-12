@@ -78,14 +78,15 @@ def compute_lane_coords(width, relay_num):
     return lane_coords_int, lane_width
 
 
-def run_actuation_logic(weed_centres, lane_coords_int, lane_width, relay_num):
+def run_actuation_logic(weed_centres, lane_coords_int, lane_width, relay_num, actuation_y_thresh=0):
     """Simulate the actuation logic from owl.py hoot() loop (set-deduplicated)."""
     if not weed_centres:
         return []
     fired = set()
     for centre in weed_centres:
-        relay_id = min(int(centre[0] / lane_width), relay_num - 1)
-        fired.add(relay_id)
+        if centre[1] >= actuation_y_thresh:
+            relay_id = min(int(centre[0] / lane_width), relay_num - 1)
+            fired.add(relay_id)
     return sorted(fired)
 
 
@@ -389,3 +390,297 @@ class TestMaxDetectionsCap:
         # Should detect some weeds but well under cap
         assert len(boxes) < MAX_DETECTIONS
         assert len(boxes) == len(weed_centres)
+
+
+class TestActuationZoneFilter:
+    """Verify Y-axis actuation zone filtering."""
+
+    def setup_method(self):
+        self.lane_coords_int, self.lane_width = compute_lane_coords(IMAGE_WIDTH, RELAY_NUM)
+        # Simulate actuation_zone = 25 on a 480px frame: thresh = int(480 * 0.75) = 360
+        self.cropped_height = IMAGE_HEIGHT  # 480
+        self.actuation_zone = 25
+        self.actuation_y_thresh = int(self.cropped_height * (1.0 - self.actuation_zone / 100.0))
+
+    def test_weed_in_zone_fires(self):
+        """Weed below Y threshold (in actuation zone) should fire relay."""
+        # Y=400 is below thresh=360, so it's in the bottom 25%
+        centres = [[IMAGE_WIDTH // 2, 400]]
+        fired = run_actuation_logic(centres, self.lane_coords_int, self.lane_width,
+                                    RELAY_NUM, self.actuation_y_thresh)
+        assert len(fired) == 1
+
+    def test_weed_out_of_zone_blocked(self):
+        """Weed above Y threshold (outside actuation zone) should NOT fire relay."""
+        # Y=100 is above thresh=360, so it's outside the zone
+        centres = [[IMAGE_WIDTH // 2, 100]]
+        fired = run_actuation_logic(centres, self.lane_coords_int, self.lane_width,
+                                    RELAY_NUM, self.actuation_y_thresh)
+        assert fired == []
+
+    def test_weed_on_boundary_fires(self):
+        """Weed exactly at Y threshold boundary should fire (>= comparison)."""
+        centres = [[IMAGE_WIDTH // 2, self.actuation_y_thresh]]
+        fired = run_actuation_logic(centres, self.lane_coords_int, self.lane_width,
+                                    RELAY_NUM, self.actuation_y_thresh)
+        assert len(fired) == 1
+
+    def test_full_zone_backward_compat(self):
+        """actuation_zone = 100 (thresh=0) should fire for all weeds in distinct lanes."""
+        thresh = int(self.cropped_height * (1.0 - 100 / 100.0))  # = 0
+        assert thresh == 0
+        # Place weeds in distinct lanes: x=80 (lane 0), x=240 (lane 1), x=400 (lane 2)
+        centres = [[80, 10], [240, 240], [400, 470]]
+        fired = run_actuation_logic(centres, self.lane_coords_int, self.lane_width,
+                                    RELAY_NUM, thresh)
+        assert fired == [0, 1, 2]
+
+    def test_mixed_in_and_out_of_zone(self):
+        """Only weeds in the actuation zone should fire relays."""
+        centres = [
+            [80, 100],   # out of zone (Y < 360)
+            [240, 400],  # in zone (Y >= 360)
+            [400, 50],   # out of zone
+            [560, 470],  # in zone
+        ]
+        fired = run_actuation_logic(centres, self.lane_coords_int, self.lane_width,
+                                    RELAY_NUM, self.actuation_y_thresh)
+        # Only the two in-zone weeds should fire (lanes 1 and 3)
+        assert len(fired) == 2
+
+
+class TestCCABenchmark:
+    """Benchmark CCA vs findContours blob extraction — full pipeline breakdown.
+
+    Isolates every step to show where time actually goes:
+    - findContours call alone
+    - contourArea loop
+    - boundingRect + centre loop
+    - Full contours pipeline (all three)
+    - connectedComponentsWithStats call alone
+    - Stats read loop (filter + boxes + centres)
+    - Full CCA pipeline (both)
+    """
+
+    RESOLUTIONS = [(640, 480), (1280, 720), (1920, 1080)]
+
+    def _make_threshold_image(self, width, height):
+        """Generate a realistic binary image via exhsv pipeline."""
+        from utils.algorithms import exg_standardised_hue
+
+        image = make_test_image(width, height)
+        output = exg_standardised_hue(image, hue_min=39, hue_max=83,
+                                      saturation_min=50, saturation_max=220,
+                                      brightness_min=60, brightness_max=190)
+        np.clip(output, 25, 200, out=output)
+        output = output.astype(np.uint8)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        threshold_out = cv2.adaptiveThreshold(output, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                              cv2.THRESH_BINARY_INV, 31, 2)
+        threshold_out = cv2.morphologyEx(threshold_out, cv2.MORPH_CLOSE, kernel, iterations=1)
+        return threshold_out
+
+    def _benchmark(self, func, iterations=ITERATIONS):
+        """Run a function N times and return timing stats in ms."""
+        for _ in range(10):
+            func()
+
+        times = []
+        for _ in range(iterations):
+            start = time.perf_counter()
+            func()
+            elapsed = (time.perf_counter() - start) * 1000
+            times.append(elapsed)
+
+        arr = np.array(times)
+        return {
+            'mean': round(float(np.mean(arr)), 3),
+            'min': round(float(np.min(arr)), 3),
+            'max': round(float(np.max(arr)), 3),
+            'std': round(float(np.std(arr)), 3),
+            'p95': round(float(np.percentile(arr, 95)), 3),
+        }
+
+    def test_cca_vs_contours_breakdown(self):
+        """Granular step-by-step benchmark: findContours pipeline vs CCA pipeline."""
+        from utils.greenonbrown import MAX_DETECTIONS
+
+        min_area = 10
+        max_det = MAX_DETECTIONS
+        results_by_res = {}
+
+        for width, height in self.RESOLUTIONS:
+            threshold_out = self._make_threshold_image(width, height)
+            label = f"{width}x{height}"
+
+            # ---- Step 1: findContours call only ----
+            def step_findcontours(t=threshold_out):
+                cv2.findContours(t, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            s_fc = self._benchmark(step_findcontours)
+
+            # Pre-compute contours for the loop benchmarks
+            contours, _ = cv2.findContours(threshold_out, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            # ---- Step 2: contourArea filter loop ----
+            def step_area_filter(cnts=contours):
+                valid = []
+                for c in cnts:
+                    area = cv2.contourArea(c)
+                    if area > min_area:
+                        valid.append((area, c))
+                if len(valid) > max_det:
+                    valid.sort(key=lambda x: x[0], reverse=True)
+                    valid = valid[:max_det]
+                return valid
+
+            s_area = self._benchmark(step_area_filter)
+
+            # Pre-compute valid list for bbox benchmark
+            valid = step_area_filter()
+
+            # ---- Step 3: boundingRect + centre loop ----
+            def step_bbox_centres(v=valid):
+                boxes = []
+                centres = []
+                for area, c in v:
+                    x, y, w, h = cv2.boundingRect(c)
+                    boxes.append([x, y, w, h])
+                    centres.append([x + w // 2, y + h // 2])
+                return boxes, centres
+
+            s_bbox = self._benchmark(step_bbox_centres)
+
+            # ---- Step 4: Full contours pipeline (all three) ----
+            def full_contours(t=threshold_out):
+                cnts, _ = cv2.findContours(t, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                valid = []
+                for c in cnts:
+                    area = cv2.contourArea(c)
+                    if area > min_area:
+                        valid.append((area, c))
+                if len(valid) > max_det:
+                    valid.sort(key=lambda x: x[0], reverse=True)
+                    valid = valid[:max_det]
+                boxes = []
+                centres = []
+                for area, c in valid:
+                    x, y, w, h = cv2.boundingRect(c)
+                    boxes.append([x, y, w, h])
+                    centres.append([x + w // 2, y + h // 2])
+                return boxes, centres
+
+            s_full_cnt = self._benchmark(full_contours)
+
+            # ---- Step 5: connectedComponentsWithStats call only ----
+            def step_cca_call(t=threshold_out):
+                cv2.connectedComponentsWithStats(t, connectivity=8)
+
+            s_cca = self._benchmark(step_cca_call)
+
+            # Pre-compute CCA output for stats-read benchmark
+            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+                threshold_out, connectivity=8
+            )
+
+            # ---- Step 6: Stats read loop (filter + boxes + centres) ----
+            def step_stats_read(nl=num_labels, st=stats):
+                valid = []
+                for i in range(1, nl):
+                    area = st[i, cv2.CC_STAT_AREA]
+                    if area > min_area:
+                        valid.append((area, i))
+                if len(valid) > max_det:
+                    valid.sort(key=lambda x: x[0], reverse=True)
+                    valid = valid[:max_det]
+                boxes = []
+                centres = []
+                for area, i in valid:
+                    x = st[i, cv2.CC_STAT_LEFT]
+                    y = st[i, cv2.CC_STAT_TOP]
+                    w = st[i, cv2.CC_STAT_WIDTH]
+                    h = st[i, cv2.CC_STAT_HEIGHT]
+                    boxes.append([x, y, w, h])
+                    centres.append([x + w // 2, y + h // 2])
+                return boxes, centres
+
+            s_stats = self._benchmark(step_stats_read)
+
+            # ---- Step 7: Full CCA pipeline (call + stats read) ----
+            def full_cca(t=threshold_out):
+                nl, lb, st, ct = cv2.connectedComponentsWithStats(t, connectivity=8)
+                valid = []
+                for i in range(1, nl):
+                    area = st[i, cv2.CC_STAT_AREA]
+                    if area > min_area:
+                        valid.append((area, i))
+                if len(valid) > max_det:
+                    valid.sort(key=lambda x: x[0], reverse=True)
+                    valid = valid[:max_det]
+                boxes = []
+                centres = []
+                for area, i in valid:
+                    x = st[i, cv2.CC_STAT_LEFT]
+                    y = st[i, cv2.CC_STAT_TOP]
+                    w = st[i, cv2.CC_STAT_WIDTH]
+                    h = st[i, cv2.CC_STAT_HEIGHT]
+                    boxes.append([x, y, w, h])
+                    centres.append([x + w // 2, y + h // 2])
+                return boxes, centres
+
+            s_full_cca = self._benchmark(full_cca)
+
+            n_contours = len(contours)
+            n_valid = len(valid)
+
+            results_by_res[label] = {
+                'contour_count': n_contours,
+                'valid_count': n_valid,
+                'findContours_only_ms': s_fc,
+                'contourArea_loop_ms': s_area,
+                'boundingRect_loop_ms': s_bbox,
+                'full_contours_pipeline_ms': s_full_cnt,
+                'cca_call_only_ms': s_cca,
+                'cca_stats_read_ms': s_stats,
+                'full_cca_pipeline_ms': s_full_cca,
+                'speedup_full': round(s_full_cnt['mean'] / s_full_cca['mean'], 2) if s_full_cca['mean'] > 0 else 0,
+            }
+
+            # Print breakdown
+            cnt_overhead = s_area['mean'] + s_bbox['mean']
+            print(f"\n  === {label} ({n_contours} contours, {n_valid} valid) ===")
+            print(f"  CONTOURS PIPELINE:")
+            print(f"    findContours():      {s_fc['mean']:.3f}ms")
+            print(f"    contourArea loop:    {s_area['mean']:.3f}ms")
+            print(f"    boundingRect loop:   {s_bbox['mean']:.3f}ms")
+            print(f"    Loop overhead:       {cnt_overhead:.3f}ms ({cnt_overhead / s_full_cnt['mean'] * 100:.0f}% of total)")
+            print(f"    TOTAL:               {s_full_cnt['mean']:.3f}ms")
+            print(f"  CCA PIPELINE:")
+            print(f"    CCA call:            {s_cca['mean']:.3f}ms")
+            print(f"    Stats read loop:     {s_stats['mean']:.3f}ms")
+            print(f"    TOTAL:               {s_full_cca['mean']:.3f}ms")
+            print(f"  SPEEDUP (contours/CCA): {results_by_res[label]['speedup_full']:.2f}x")
+
+        # Save results
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        filename = f'{date_str}_cca_vs_contours.json'
+        results = {
+            'date': date_str,
+            'description': 'CCA vs findContours full pipeline breakdown benchmark',
+            'git_commit': get_git_commit(),
+            'platform': f'{platform.system()}/{platform.machine()}',
+            'python_version': platform.python_version(),
+            'opencv_version': cv2.__version__,
+            'test_params': {
+                'iterations': ITERATIONS,
+                'min_detection_area': min_area,
+                'max_detections': max_det,
+            },
+            'results': results_by_res,
+        }
+
+        filepath = BENCHMARK_DIR / filename
+        with open(filepath, 'w') as f:
+            json.dump(results, f, indent=2)
+
+        print(f"\n  Benchmark saved to: {filepath}")

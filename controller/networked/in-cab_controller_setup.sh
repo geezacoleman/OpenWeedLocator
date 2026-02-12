@@ -620,6 +620,11 @@ configure_kiosk_mode() {
     sudo -u "$CURRENT_USER" mkdir -p /home/"$CURRENT_USER"/.config/labwc
 
     tee /home/"$CURRENT_USER"/.config/labwc/autostart > /dev/null <<'EOF'
+# Wait for owl-controller service before launching browser
+while ! curl -sk https://localhost/ > /dev/null 2>&1; do
+    sleep 2
+done
+
 chromium https://localhost/ \
   --kiosk \
   --noerrdialogs \

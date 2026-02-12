@@ -406,6 +406,7 @@ class Owl:
         # add the total number of relays being controlled. This can be changed easily, but the relay_dict and physical relays would need
         # to be updated too. Fairly straightforward, so an opportunity for more precise application
         self.relay_num = self.config.getint('System', 'relay_num')
+        self.actuation_zone = self.config.getint('System', 'actuation_zone', fallback=100)
 
         # GreenOnGreen / hybrid config
         self.inference_resolution = self.config.getint('GreenOnGreen', 'inference_resolution', fallback=320)
@@ -435,6 +436,9 @@ class Owl:
 
             # Calculate lane width based on cropped width
             self.lane_width = self.cropped_width / self.relay_num
+
+            # Calculate actuation zone Y threshold
+            self.actuation_y_thresh = int(self.cropped_height * (1.0 - self.actuation_zone / 100.0))
 
             # Calculate lane coords relative to cropped frame
             for i in range(self.relay_num):
@@ -658,7 +662,7 @@ class Owl:
                             lane_start = self.lane_coords_int[i]
                             lane_end = int(lane_start + self.lane_width)
                             lane_pixels = np.count_nonzero(
-                                weed_detector.detection_mask[:, lane_start:lane_end]
+                                weed_detector.detection_mask[self.actuation_y_thresh:, lane_start:lane_end]
                             )
                             if lane_pixels >= min_detection_pixels:
                                 self.relay_controller.receive(
@@ -673,8 +677,9 @@ class Owl:
                             actuation_time = time.time()
                             fired = set()
                             for centre in weed_centres:
-                                relay_id = min(int(centre[0] / self.lane_width), self.relay_num - 1)
-                                fired.add(relay_id)
+                                if centre[1] >= self.actuation_y_thresh:
+                                    relay_id = min(int(centre[0] / self.lane_width), self.relay_num - 1)
+                                    fired.add(relay_id)
                             for relay_id in fired:
                                 self.relay_controller.receive(
                                     relay=relay_id,
@@ -697,6 +702,12 @@ class Owl:
                             final_frame_to_stream = image_out
                         else:
                             final_frame_to_stream = frame
+
+                        if self.actuation_zone < 100:
+                            cv2.line(final_frame_to_stream,
+                                     (0, self.actuation_y_thresh),
+                                     (final_frame_to_stream.shape[1], self.actuation_y_thresh),
+                                     (0, 255, 255), 1)
 
                         self.set_latest_stream_frame(final_frame_to_stream)
                     except Exception as e:

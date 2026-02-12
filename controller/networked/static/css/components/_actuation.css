@@ -21,9 +21,9 @@
 
 /* Shared panel section title */
 .section-title {
-    font-size: 0.7rem;
+    font-size: 0.85rem;
     font-weight: 700;
-
+    text-transform: uppercase;
     letter-spacing: 0.5px;
     color: var(--text-light);
     margin-bottom: 0.5rem;
@@ -165,7 +165,6 @@
     padding: 0.75rem;
     display: flex;
     flex-direction: column;
-    flex: 1;
 }
 
 .gauges-body {
@@ -321,9 +320,9 @@
 }
 
 .mode-panel-title {
-    font-size: 0.6rem;
+    font-size: 0.85rem;
     font-weight: 700;
-
+    text-transform: uppercase;
     letter-spacing: 0.5px;
     color: var(--text-light);
 }
@@ -349,9 +348,9 @@
 }
 
 .actuation-panel-title {
-    font-size: 0.7rem;
+    font-size: 0.85rem;
     font-weight: 700;
-
+    text-transform: uppercase;
     letter-spacing: 0.5px;
     color: var(--text-light);
     margin-bottom: 0.5rem;
