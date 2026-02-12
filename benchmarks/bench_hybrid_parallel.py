@@ -206,8 +206,10 @@ def main():
 
     # Setup
     model_path = find_model()
-    print(f'Model: {os.path.basename(model_path)}')
-    model = YOLO(model_path)
+    model_name = os.path.basename(model_path)
+    print(f'Model: {model_name}')
+    task = 'segment' if '-seg' in model_name.lower() or '_seg' in model_name.lower() else None
+    model = YOLO(model_path, task=task)
     gob = GreenOnBrown(algorithm='exhsv')
     executor = ThreadPoolExecutor(max_workers=1)
 

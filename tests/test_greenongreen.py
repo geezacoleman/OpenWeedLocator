@@ -62,7 +62,7 @@ class TestModelDiscovery:
         from utils.greenongreen import GreenOnGreen
         gog = GreenOnGreen(model_path=str(tmp_path))
 
-        mock_yolo_cls.assert_called_once_with(str(tmp_path))
+        mock_yolo_cls.assert_called_once_with(str(tmp_path), task=None)
 
     @patch('utils.greenongreen.YOLO')
     def test_load_ncnn_subdir(self, mock_yolo_cls, tmp_path):
@@ -77,7 +77,7 @@ class TestModelDiscovery:
         from utils.greenongreen import GreenOnGreen
         gog = GreenOnGreen(model_path=str(tmp_path))
 
-        mock_yolo_cls.assert_called_once_with(str(ncnn_dir))
+        mock_yolo_cls.assert_called_once_with(str(ncnn_dir), task=None)
 
     @patch('utils.greenongreen.YOLO')
     def test_load_pt_file_in_dir(self, mock_yolo_cls, tmp_path):
@@ -90,7 +90,7 @@ class TestModelDiscovery:
         from utils.greenongreen import GreenOnGreen
         gog = GreenOnGreen(model_path=str(tmp_path))
 
-        mock_yolo_cls.assert_called_once_with(str(pt_file))
+        mock_yolo_cls.assert_called_once_with(str(pt_file), task=None)
 
     @patch('utils.greenongreen.YOLO')
     def test_load_exact_pt_path(self, mock_yolo_cls, tmp_path):
@@ -103,7 +103,20 @@ class TestModelDiscovery:
         from utils.greenongreen import GreenOnGreen
         gog = GreenOnGreen(model_path=str(pt_file))
 
-        mock_yolo_cls.assert_called_once_with(str(pt_file))
+        mock_yolo_cls.assert_called_once_with(str(pt_file), task=None)
+
+    @patch('utils.greenongreen.YOLO')
+    def test_load_seg_model_infers_task(self, mock_yolo_cls, tmp_path):
+        """Model with '-seg' in name passes task='segment' to YOLO."""
+        pt_file = tmp_path / 'yolo11n-seg_best.pt'
+        pt_file.touch()
+
+        mock_yolo_cls.return_value = make_mock_yolo(task='segment')
+
+        from utils.greenongreen import GreenOnGreen
+        gog = GreenOnGreen(model_path=str(pt_file))
+
+        mock_yolo_cls.assert_called_once_with(str(pt_file), task='segment')
 
     @patch('utils.greenongreen.YOLO')
     def test_ncnn_preferred_over_pt(self, mock_yolo_cls, tmp_path):
@@ -119,7 +132,7 @@ class TestModelDiscovery:
         gog = GreenOnGreen(model_path=str(tmp_path))
 
         # Should have loaded the NCNN dir, not the .pt
-        mock_yolo_cls.assert_called_once_with(str(ncnn_dir))
+        mock_yolo_cls.assert_called_once_with(str(ncnn_dir), task=None)
 
     def test_no_models_raises(self, tmp_path):
         """Empty directory raises FileNotFoundError."""

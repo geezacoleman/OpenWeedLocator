@@ -60,6 +60,11 @@ class GreenOnGreen:
                      f'classes={list(self.model.names.values())}, '
                      f'filtering={detect_classes or "all"}')
 
+    @staticmethod
+    def _infer_task(name):
+        """Infer YOLO task from filename: '-seg' or '_seg' means segment."""
+        return 'segment' if '-seg' in name.lower() or '_seg' in name.lower() else None
+
     def _load_model(self):
         """Load YOLO model -- supports NCNN dirs and .pt files."""
         if self.model_path.is_dir():
@@ -67,7 +72,8 @@ class GreenOnGreen:
             if list(self.model_path.glob('*.param')):
                 logger.info(f'Using NCNN model: {self.model_path.name}')
                 self._model_filename = self.model_path.name
-                return YOLO(str(self.model_path))
+                task = self._infer_task(self.model_path.name)
+                return YOLO(str(self.model_path), task=task)
 
             # Search for NCNN subdirs first, then .pt files
             ncnn_dirs = [d for d in self.model_path.iterdir()
@@ -76,20 +82,23 @@ class GreenOnGreen:
                 selected = ncnn_dirs[0]
                 logger.info(f'Using NCNN model: {selected.name}')
                 self._model_filename = selected.name
-                return YOLO(str(selected))
+                task = self._infer_task(selected.name)
+                return YOLO(str(selected), task=task)
 
             pt_files = list(self.model_path.glob('*.pt'))
             if pt_files:
                 logger.info(f'Using PyTorch model: {pt_files[0].name}')
                 self._model_filename = pt_files[0].name
-                return YOLO(str(pt_files[0]))
+                task = self._infer_task(pt_files[0].name)
+                return YOLO(str(pt_files[0]), task=task)
 
             raise FileNotFoundError(f'No YOLO models found in {self.model_path}')
 
         elif self.model_path.exists():
             logger.info(f'Using model: {self.model_path.name}')
             self._model_filename = self.model_path.name
-            return YOLO(str(self.model_path))
+            task = self._infer_task(self.model_path.name)
+            return YOLO(str(self.model_path), task=task)
 
         raise FileNotFoundError(f'Model path does not exist: {self.model_path}')
 
