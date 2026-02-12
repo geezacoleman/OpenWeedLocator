@@ -305,7 +305,7 @@ class PiCamera2Stream:
             while not self.frame_available:
                 self.condition.wait()
 
-            while self.lock:
+            with self.lock:
                 self.frame_available = False
                 return self.frame
 

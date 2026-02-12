@@ -1,0 +1,40 @@
+{
+  "date": "2026-02-09",
+  "description": "GreenOnBrown loop benchmark (post_gog_rewrite)",
+  "git_commit": "221cd7b",
+  "platform": "Windows/AMD64",
+  "python_version": "3.13.12",
+  "test_params": {
+    "image_size": [
+      640,
+      480
+    ],
+    "iterations": 500,
+    "algorithm": "exhsv",
+    "relay_num": 4,
+    "num_weed_centres": 4
+  },
+  "results": {
+    "inference_ms": {
+      "mean": 10.501,
+      "min": 6.486,
+      "max": 32.082,
+      "std": 2.283,
+      "p95": 13.902
+    },
+    "actuation_logic_ms": {
+      "mean": 0.002,
+      "min": 0.002,
+      "max": 0.064,
+      "std": 0.002,
+      "p95": 0.003
+    },
+    "total_loop_ms": {
+      "mean": 11.462,
+      "min": 7.162,
+      "max": 27.804,
+      "std": 2.168,
+      "p95": 15.153
+    }
+  }
+}

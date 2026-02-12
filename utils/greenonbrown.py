@@ -55,8 +55,8 @@ class GreenOnBrown:
         boxes = []
 
         if not threshed_already:
-            output = np.clip(output, exg_min, exg_max)
-            output = np.uint8(np.abs(output))
+            np.clip(output, exg_min, exg_max, out=output)
+            output = output.astype(np.uint8)
             threshold_out = cv2.adaptiveThreshold(output, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV,
                                                   31, 2)
             threshold_out = cv2.morphologyEx(threshold_out, cv2.MORPH_CLOSE, self.kernel, iterations=1)

@@ -57,23 +57,22 @@ def exg_standardised(image):
     :param image: image as a BGR array (i.e. opened with opencv not PIL)
     :return: returns a grayscale image
     '''
-    # OPTIMIZED: cv2.split for channel extraction
     blue, green, red = cv2.split(image)
     blue = blue.astype(np.float32)
     green = green.astype(np.float32)
     red = red.astype(np.float32)
 
     channel_sum = red + green + blue
-    channel_sum[channel_sum == 0] = 1  # OPTIMIZED: direct indexing vs np.where
+    np.maximum(channel_sum, 1.0, out=channel_sum)
 
-    b = blue / channel_sum
-    g = green / channel_sum
-    r = red / channel_sum
-
-    image_out = 255 * (2 * g - r - b)
-    # Clip to 0-255 (can't use convertScaleAbs as it takes absolute value)
-    np.clip(image_out, 0, 255, out=image_out)
-    image_out = image_out.astype('uint8')
+    # Single division: (2g - r - b) / sum (reuse green buffer in-place)
+    np.multiply(green, 2.0, out=green)
+    np.subtract(green, red, out=green)
+    np.subtract(green, blue, out=green)
+    np.divide(green, channel_sum, out=green)
+    np.multiply(green, 255.0, out=green)
+    np.clip(green, 0, 255, out=green)
+    image_out = green.astype('uint8')
 
     return image_out
 
@@ -98,20 +97,22 @@ def exg_standardised_hue(image,
     :param invert_hue: inverts the hue threshold to exclude anything within the thresholds
     :return: returns a grayscale image
     '''
-    # OPTIMIZED: cv2.split for channel extraction
     blue, green, red = cv2.split(image)
     blue = blue.astype(np.float32)
     green = green.astype(np.float32)
     red = red.astype(np.float32)
 
     channel_sum = red + green + blue
-    channel_sum[channel_sum == 0] = 1  # OPTIMIZED: direct indexing vs np.where
+    np.maximum(channel_sum, 1.0, out=channel_sum)
 
-    # Compute normalized ExG
-    image_out = 255 * (2 * green / channel_sum - red / channel_sum - blue / channel_sum)
-    # Clip to 0-255 (can't use convertScaleAbs as it takes absolute value)
-    np.clip(image_out, 0, 255, out=image_out)
-    image_out = image_out.astype('uint8')
+    # Single division: (2g - r - b) / sum (reuse green buffer in-place)
+    np.multiply(green, 2.0, out=green)
+    np.subtract(green, red, out=green)
+    np.subtract(green, blue, out=green)
+    np.divide(green, channel_sum, out=green)
+    np.multiply(green, 255.0, out=green)
+    np.clip(green, 0, 255, out=green)
+    image_out = green.astype('uint8')
 
     # OPTIMIZED: single inRange on 3-channel HSV (biggest speedup ~1.5x)
     hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
