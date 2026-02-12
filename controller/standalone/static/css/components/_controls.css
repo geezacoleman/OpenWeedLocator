@@ -699,6 +699,17 @@
     to { transform: rotate(360deg); }
 }
 
+.algorithm-error-banner {
+    background: #fff3cd;
+    color: #664d03;
+    border: 1px solid #ffecb5;
+    border-radius: var(--radius-sm, 6px);
+    padding: 8px 12px;
+    font-size: 13px;
+    line-height: 1.4;
+    margin-top: 8px;
+}
+
 /* --------------------------------------------------------------------------
    Controls - Responsive
    -------------------------------------------------------------------------- */

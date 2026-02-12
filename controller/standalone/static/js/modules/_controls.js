@@ -553,6 +553,33 @@ function updateModeAvailability(modelAvailable) {
 }
 
 /* --------------------------------------------------------------------------
+   Algorithm Error State
+   -------------------------------------------------------------------------- */
+
+let lastAlgorithmError = null;
+
+function updateAlgorithmError(error) {
+    // Only act on state changes
+    if (error === lastAlgorithmError) return;
+    lastAlgorithmError = error;
+
+    var banner = document.getElementById('algorithmErrorBanner');
+    if (error) {
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'algorithmErrorBanner';
+            banner.className = 'algorithm-error-banner';
+            var modeRow = document.querySelector('.pipeline-mode');
+            if (modeRow) modeRow.parentNode.insertBefore(banner, modeRow.nextSibling);
+        }
+        banner.textContent = 'Detection unavailable: ' + error + '. Switch algorithm to recover.';
+        banner.style.display = '';
+    } else {
+        if (banner) banner.style.display = 'none';
+    }
+}
+
+/* --------------------------------------------------------------------------
    Preview (Dashboard inline stream)
    -------------------------------------------------------------------------- */
 

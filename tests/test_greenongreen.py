@@ -487,6 +487,44 @@ class TestHybridMode:
         assert gog._dilate_kernel.shape == (51, 51)
 
     @patch('utils.greenongreen.YOLO')
+    def test_hybrid_executor_created(self, mock_yolo_cls, tmp_path):
+        """hybrid_mode=True creates thread pool executor; False does not."""
+        (tmp_path / 'model.pt').touch()
+        mock_yolo_cls.return_value = make_mock_yolo()
+
+        from utils.greenongreen import GreenOnGreen
+
+        gog_hybrid = GreenOnGreen(model_path=str(tmp_path), hybrid_mode=True)
+        assert gog_hybrid._executor is not None
+
+        gog_normal = GreenOnGreen(model_path=str(tmp_path), hybrid_mode=False)
+        assert gog_normal._executor is None
+
+    @patch('utils.greenongreen.YOLO')
+    @patch('utils.greenonbrown.GreenOnBrown')
+    def test_hybrid_exhsv_receives_full_image(self, mock_gob_cls, mock_yolo_cls, tmp_path):
+        """ExHSV receives the original full image, not a masked copy."""
+        (tmp_path / 'model.pt').touch()
+        mock_yolo_cls.return_value = make_mock_yolo(task='detect')
+
+        mock_gob = MagicMock()
+        mock_gob.inference.return_value = (
+            None, [], [], np.zeros((480, 640, 3), dtype=np.uint8)
+        )
+        mock_gob_cls.return_value = mock_gob
+
+        from utils.greenongreen import GreenOnGreen
+        gog = GreenOnGreen(model_path=str(tmp_path), hybrid_mode=True)
+
+        image = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        gog.inference(image)
+
+        # Verify GreenOnBrown.inference received the original image (not masked)
+        call_args = mock_gob.inference.call_args
+        received_image = call_args[0][0]
+        np.testing.assert_array_equal(received_image, image)
+
+    @patch('utils.greenongreen.YOLO')
     @patch('utils.greenonbrown.GreenOnBrown')
     def test_hybrid_show_display_overlay(self, mock_gob_cls, mock_yolo_cls, tmp_path):
         """show_display in hybrid mode returns annotated copy."""

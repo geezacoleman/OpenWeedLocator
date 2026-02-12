@@ -9,6 +9,7 @@ runs ExHSV at full resolution on non-crop areas to find weeds.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import cv2
@@ -43,13 +44,15 @@ class GreenOnGreen:
         # Map class names to IDs after model is loaded
         self._detect_class_ids = self._resolve_classes(detect_classes)
 
-        # Hybrid mode: create internal GreenOnBrown and dilation kernel
+        # Hybrid mode: create internal GreenOnBrown, dilation kernel, thread pool
         self._gob = None
         self._dilate_kernel = None
+        self._executor = None
         if self.hybrid_mode:
             from utils.greenonbrown import GreenOnBrown
             self._gob = GreenOnBrown(algorithm='exhsv')
             self._dilate_kernel = self._build_dilate_kernel(crop_buffer_px)
+            self._executor = ThreadPoolExecutor(max_workers=1)
             logger.info(f'Hybrid mode enabled: YOLO crop mask + ExHSV weed detection, '
                         f'buffer={crop_buffer_px}px, imgsz={inference_resolution}')
 
@@ -236,64 +239,26 @@ class GreenOnGreen:
                           brightness_min=5, brightness_max=200,
                           min_detection_area=1, invert_hue=False):
         """
-        Hybrid pipeline: YOLO crop mask + ExHSV weed detection.
+        Hybrid pipeline: YOLO crop mask + ExHSV weed detection (parallel).
 
-        Step 1: YOLO predict at inference_resolution (YOLO handles resize internally)
-        Step 2: Build crop_mask at full resolution from masks.xy or boxes.xyxy
-        Step 3: Dilate crop_mask by buffer
-        Step 4: Invert to get weed_zone
-        Step 5: Mask image to weed_zone only
-        Step 6: Run GreenOnBrown ExHSV on masked image
-        Step 7: Filter out any detections whose centre falls in crop mask
-        Step 8: Visualization (if show_display)
+        ExHSV runs on the full (unmasked) image in a background thread while
+        YOLO runs on the main thread. Both YOLO (NCNN) and ExHSV (OpenCV/NumPy)
+        release the GIL, so they achieve true parallelism on separate cores.
+
+        Step 1: Submit ExHSV on full image to thread pool
+        Step 2: YOLO predict on main thread (the bottleneck)
+        Step 3: Build crop_mask at full resolution from masks.xy or boxes.xyxy
+        Step 4: Dilate crop_mask by buffer
+        Step 5: Wait for ExHSV result
+        Step 6: Filter out any detections whose centre falls in crop mask
+        Step 7: Visualization (if show_display)
         """
         h_full, w_full = image.shape[:2]
 
-        # Step 1: YOLO inference (imgsz handles resize, coords come back in original space)
-        results = self.model.predict(
-            source=image,
-            conf=confidence,
-            classes=self._detect_class_ids,
-            imgsz=self.inference_resolution,
-            verbose=False,
-            device='cpu'
-        )
-
-        # Step 2: Build crop mask at full resolution
-        crop_mask = np.zeros((h_full, w_full), dtype=np.uint8)
-        crop_boxes = []  # For visualization
-
-        for result in results:
-            if result.masks is not None:
-                # Segmentation model: draw filled contours (precise)
-                contours_full = [c.astype(np.int32).reshape(-1, 1, 2)
-                                 for c in result.masks.xy]
-                cv2.drawContours(crop_mask, contours_full, -1, 255, -1)
-            elif len(result.boxes):
-                # Detection model: fill bounding boxes (coarser but functional)
-                for box in result.boxes:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    cv2.rectangle(crop_mask, (x1, y1), (x2, y2), 255, -1)
-
-            # Collect crop boxes for visualization
-            for box in result.boxes:
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                crop_boxes.append([x1, y1, x2 - x1, y2 - y1])
-
-        # Step 3: Dilate crop mask by buffer
-        crop_mask_undilated = crop_mask.copy() if show_display else None
-        if self._dilate_kernel is not None and np.any(crop_mask):
-            crop_mask = cv2.dilate(crop_mask, self._dilate_kernel)
-
-        # Step 4: Invert to get weed zone
-        weed_zone = cv2.bitwise_not(crop_mask)
-
-        # Step 5: Mask image to weed zone only
-        masked_image = cv2.bitwise_and(image, image, mask=weed_zone)
-
-        # Step 6: Run GreenOnBrown ExHSV on masked image
-        cnts, boxes, weed_centres, gob_image = self._gob.inference(
-            masked_image,
+        # Step 1: Submit ExHSV on full image to background thread
+        exhsv_future = self._executor.submit(
+            self._gob.inference,
+            image,
             exg_min=exg_min, exg_max=exg_max,
             hue_min=hue_min, hue_max=hue_max,
             saturation_min=saturation_min, saturation_max=saturation_max,
@@ -304,7 +269,38 @@ class GreenOnGreen:
             invert_hue=invert_hue
         )
 
-        # Step 7: Safety filter — drop detections whose centre falls in crop mask
+        # Step 2: YOLO inference on main thread (imgsz handles resize)
+        results = self.model.predict(
+            source=image,
+            conf=confidence,
+            classes=self._detect_class_ids,
+            imgsz=self.inference_resolution,
+            verbose=False,
+            device='cpu'
+        )
+
+        # Step 3: Build crop mask at full resolution
+        crop_mask = np.zeros((h_full, w_full), dtype=np.uint8)
+
+        for result in results:
+            if result.masks is not None:
+                contours_full = [c.astype(np.int32).reshape(-1, 1, 2)
+                                 for c in result.masks.xy]
+                cv2.drawContours(crop_mask, contours_full, -1, 255, -1)
+            elif len(result.boxes):
+                for box in result.boxes:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    cv2.rectangle(crop_mask, (x1, y1), (x2, y2), 255, -1)
+
+        # Step 4: Dilate crop mask by buffer
+        crop_mask_undilated = crop_mask.copy() if show_display else None
+        if self._dilate_kernel is not None and np.any(crop_mask):
+            crop_mask = cv2.dilate(crop_mask, self._dilate_kernel)
+
+        # Step 5: Wait for ExHSV result
+        cnts, boxes, weed_centres, _ = exhsv_future.result()
+
+        # Step 6: Safety filter — drop detections whose centre falls in crop mask
         filtered_boxes = []
         filtered_centres = []
         for i, centre in enumerate(weed_centres):
@@ -314,13 +310,13 @@ class GreenOnGreen:
                     filtered_boxes.append(boxes[i])
                     filtered_centres.append(centre)
 
-        # Step 8: Visualization
+        # Step 7: Visualization
         if show_display:
             image_out = image.copy()
 
             # Blue overlay on crop mask
             crop_overlay = image_out.copy()
-            crop_overlay[crop_mask_undilated > 0] = (200, 150, 50)  # Blue-ish for crop
+            crop_overlay[crop_mask_undilated > 0] = (200, 150, 50)
             cv2.addWeighted(crop_overlay, 0.5, image_out, 0.5, 0, image_out)
 
             # Lighter blue on buffer zone (dilated - original)
@@ -328,7 +324,7 @@ class GreenOnGreen:
                 buffer_zone = cv2.subtract(crop_mask, crop_mask_undilated)
                 if np.any(buffer_zone):
                     buffer_overlay = image_out.copy()
-                    buffer_overlay[buffer_zone > 0] = (200, 180, 100)  # Lighter blue for buffer
+                    buffer_overlay[buffer_zone > 0] = (200, 180, 100)
                     cv2.addWeighted(buffer_overlay, 0.35, image_out, 0.65, 0, image_out)
 
             # Red boxes on weed detections

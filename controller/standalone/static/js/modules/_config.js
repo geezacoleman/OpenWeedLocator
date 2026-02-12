@@ -37,6 +37,8 @@ async function loadConfig() {
         renderConfigSections();
         renderConfigSelector();
         updateChangeIndicators();
+        // Clear slider cooldown so stats polling can push new values immediately
+        lastSliderSendTime = 0;
     } catch (error) {
         container.innerHTML = '<p style="color:red">Error: ' + error.message + '</p>';
     }

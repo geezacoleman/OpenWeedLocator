@@ -416,6 +416,7 @@ class OWLDashboard:
                 'min_detection_area': mqtt_state.get('min_detection_area', 10),
                 'confidence': mqtt_state.get('confidence', 0.5),
                 'crop_buffer_px': mqtt_state.get('crop_buffer_px', 20),
+                'algorithm_error': mqtt_state.get('algorithm_error'),
             })
 
             return jsonify(stats)
@@ -863,6 +864,7 @@ class OWLDashboard:
 
                 if set_active:
                     self._set_active_config(relative_path)
+                    self._apply_config_to_owl()
                     self.logger.info(f"Set as active config: {relative_path}")
 
                 return jsonify({
@@ -872,7 +874,7 @@ class OWLDashboard:
                     'config_path': new_config_path,
                     'relative_path': relative_path,
                     'is_active': set_active,
-                    'restart_required': set_active
+                    'restart_required': False
                 })
 
             except Exception as e:
@@ -900,12 +902,13 @@ class OWLDashboard:
                     return jsonify({'success': False, 'error': f'Config file not found: {config_name}'}), 404
 
                 self._set_active_config(config_name)
+                self._apply_config_to_owl()
 
                 return jsonify({
                     'success': True,
                     'message': f'Active config set to {config_name}',
                     'active_config': config_name,
-                    'restart_required': True
+                    'restart_required': False
                 })
 
             except Exception as e:
@@ -924,11 +927,13 @@ class OWLDashboard:
                     os.remove(pointer_path)
                     self.logger.info("Removed active config pointer - reverting to default")
 
+                self._apply_config_to_owl()
+
                 return jsonify({
                     'success': True,
                     'message': f'Reset to default config: {DEFAULT_CONFIG}',
                     'active_config': DEFAULT_CONFIG,
-                    'restart_required': True
+                    'restart_required': False
                 })
 
             except Exception as e:
@@ -1183,6 +1188,59 @@ class OWLDashboard:
 
         except Exception as e:
             self.logger.error(f"Error persisting config change [{section}].{key}: {e}")
+
+    def _apply_config_to_owl(self):
+        """Read the active config file and push detection parameters to owl.py via MQTT.
+
+        Called after config switch, reset, or save-as-active so that owl.py's runtime
+        state matches the new config without requiring a restart.
+        """
+        if not self.mqtt_client:
+            return
+
+        try:
+            active_config = self._get_active_config_path()
+            config_path = self._resolve_config_path(active_config)
+            if not os.path.exists(config_path):
+                self.logger.warning(f"Cannot apply config — file not found: {config_path}")
+                return
+
+            config = configparser.ConfigParser()
+            config.read(config_path)
+
+            # Push algorithm
+            algorithm = config.get('System', 'algorithm', fallback=None)
+            if algorithm:
+                self.mqtt_client._send_command('set_algorithm', value=algorithm)
+
+            # Push GreenOnBrown params
+            gob_params = [
+                'exg_min', 'exg_max', 'hue_min', 'hue_max',
+                'saturation_min', 'saturation_max',
+                'brightness_min', 'brightness_max',
+                'min_detection_area'
+            ]
+            for param in gob_params:
+                val = config.get('GreenOnBrown', param, fallback=None)
+                if val is not None:
+                    try:
+                        self.mqtt_client._send_command('set_config', key=param, value=int(val))
+                    except (ValueError, TypeError):
+                        pass
+
+            # Push GreenOnGreen confidence
+            confidence = config.get('GreenOnGreen', 'confidence', fallback=None)
+            if confidence is not None:
+                try:
+                    self.mqtt_client._send_command(
+                        'set_greenongreen_param', key='confidence', value=float(confidence))
+                except (ValueError, TypeError):
+                    pass
+
+            self.logger.info(f"Applied config to OWL: {os.path.basename(config_path)}")
+
+        except Exception as e:
+            self.logger.error(f"Error applying config to OWL: {e}")
 
     def _check_restart_required(self, changed_sections):
         """Check if changed sections require a service restart."""

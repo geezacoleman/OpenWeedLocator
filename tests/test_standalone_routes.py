@@ -112,7 +112,7 @@ class TestSaveConfig:
         assert resp.status_code == 200
         assert data['success'] is True
         assert data['is_active'] is True
-        assert data['restart_required'] is True
+        assert data['restart_required'] is False  # Config pushed live via MQTT
 
         # Verify active_config.txt was updated
         pointer = os.path.join(str(tmp_dir), 'active_config.txt')
@@ -134,7 +134,7 @@ class TestSetActiveConfig:
 
         assert resp.status_code == 200
         assert data['success'] is True
-        assert data['restart_required'] is True
+        assert data['restart_required'] is False  # Config pushed live via MQTT
 
     def test_returns_400_on_missing_config_name(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client

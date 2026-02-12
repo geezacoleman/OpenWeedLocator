@@ -94,6 +94,11 @@ function updateSystemStats() {
             if (typeof updateModeAvailability === 'function') {
                 updateModeAvailability(!!data.model_available);
             }
+
+            // Algorithm error banner
+            if (typeof updateAlgorithmError === 'function') {
+                updateAlgorithmError(data.algorithm_error);
+            }
         })
         .catch(err => {
             // Silent fail for stats polling
