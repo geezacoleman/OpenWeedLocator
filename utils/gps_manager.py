@@ -652,7 +652,7 @@ class GPSManager:
         while self._running:
             try:
                 conn, addr = self._server_socket.accept()
-                logger.info(f"GPS client connected from {addr}")
+                logger.debug(f"GPS client connected from {addr}")
                 self.state.connected = True
                 self._handle_client(conn)
             except socket.timeout:
@@ -684,7 +684,9 @@ class GPSManager:
                 if not data:
                     break
 
-                buffer += data.decode('ascii', errors='replace')
+                raw = data.decode('ascii', errors='replace')
+                logger.debug(f"GPS raw data ({len(data)} bytes): {raw[:120]!r}")
+                buffer += raw
 
                 # Process complete lines (NMEA uses \r\n)
                 while '\n' in buffer:
@@ -701,7 +703,7 @@ class GPSManager:
                 conn.close()
             except Exception:
                 pass
-            logger.info("GPS client disconnected")
+            logger.debug("GPS client disconnected")
 
     def _process_sentence(self, line):
         """Parse a single NMEA sentence and update all state."""
