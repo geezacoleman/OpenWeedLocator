@@ -668,19 +668,19 @@ class Owl:
                                     duration=self.actuation_duration)
                     else:
                         # Centre-based actuation (default, works for all model types)
-                        for centre in weed_centres:
+                        # One timestamp per frame, deduplicated relay calls (at most relay_num)
+                        if weed_centres:
                             actuation_time = time.time()
-                            centre_x = centre[0]
-
-                            for i in range(self.relay_num):
-                                lane_start = self.lane_coords_int[i]
-                                lane_end = lane_start + self.lane_width
-                                if lane_start <= centre_x < lane_end:
-                                    self.relay_controller.receive(
-                                        relay=i,
-                                        delay=self.delay,
-                                        time_stamp=actuation_time,
-                                        duration=self.actuation_duration)
+                            fired = set()
+                            for centre in weed_centres:
+                                relay_id = min(int(centre[0] / self.lane_width), self.relay_num - 1)
+                                fired.add(relay_id)
+                            for relay_id in fired:
+                                self.relay_controller.receive(
+                                    relay=relay_id,
+                                    delay=self.delay,
+                                    time_stamp=actuation_time,
+                                    duration=self.actuation_duration)
 
                 ##### Update Dashboard Stream #####
                 if frame_count % 90 == 0:  # Every 90 frames (~3 seconds at 30fps)

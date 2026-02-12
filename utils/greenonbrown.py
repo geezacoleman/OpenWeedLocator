@@ -4,6 +4,8 @@ import numpy as np
 import cv2
 
 
+MAX_DETECTIONS = 50
+
 class GreenOnBrown:
     def __init__(self, algorithm='exg', label_file='models/labels.txt'):
         self.algorithm = algorithm
@@ -65,11 +67,21 @@ class GreenOnBrown:
 
         contours, _ = cv2.findContours(threshold_out, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+        # Filter by min area, then keep largest MAX_DETECTIONS
+        valid = []
         for c in contours:
-            if cv2.contourArea(c) > min_detection_area:
-                x, y, w, h = cv2.boundingRect(c)
-                boxes.append([x, y, w, h])
-                weed_centres.append([x + w // 2, y + h // 2])
+            area = cv2.contourArea(c)
+            if area > min_detection_area:
+                valid.append((area, c))
+
+        if len(valid) > MAX_DETECTIONS:
+            valid.sort(key=lambda x: x[0], reverse=True)
+            valid = valid[:MAX_DETECTIONS]
+
+        for area, c in valid:
+            x, y, w, h = cv2.boundingRect(c)
+            boxes.append([x, y, w, h])
+            weed_centres.append([x + w // 2, y + h // 2])
 
         if show_display:
             image_out = image.copy()

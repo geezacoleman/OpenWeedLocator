@@ -310,6 +310,7 @@ class GreenOnGreen:
         cnts, boxes, weed_centres, _ = exhsv_future.result()
 
         # Step 6: Safety filter — drop detections whose centre falls in crop mask
+        from utils.greenonbrown import MAX_DETECTIONS
         filtered_boxes = []
         filtered_centres = []
         for i, centre in enumerate(weed_centres):
@@ -318,6 +319,10 @@ class GreenOnGreen:
                 if crop_mask[cy, cx] == 0:  # Not in crop zone
                     filtered_boxes.append(boxes[i])
                     filtered_centres.append(centre)
+
+        # Cap after safety filter to limit downstream processing
+        filtered_boxes = filtered_boxes[:MAX_DETECTIONS]
+        filtered_centres = filtered_centres[:MAX_DETECTIONS]
 
         # Step 7: Visualization
         if show_display:
