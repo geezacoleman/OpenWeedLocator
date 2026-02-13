@@ -596,7 +596,7 @@ Environment="PATH=${VENV_PATH}/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PYTHONUNBUFFERED=1"
 # Uncomment to allow dashboard access from any device (default: localhost/kiosk only)
 #Environment="DASHBOARD_OPEN=1"
-ExecStart=${VENV_PATH}/bin/gunicorn --bind 127.0.0.1:8000 --workers 1 --timeout 300 networked:app
+ExecStart=${VENV_PATH}/bin/gunicorn --bind 127.0.0.1:8000 --workers 1 --threads 8 --timeout 300 networked:app
 Restart=always
 RestartSec=5
 KillMode=mixed

@@ -795,6 +795,14 @@ server {
         chunked_transfer_encoding off;
     }
 
+    # Single JPEG snapshot from owl.py (Port 8001)
+    location /latest_frame.jpg {
+        proxy_pass http://127.0.0.1:8001/latest_frame.jpg;
+        proxy_set_header Host \$host;
+        proxy_buffering off;
+        proxy_cache off;
+    }
+
     # MQTT status endpoint for debugging
     location /mqtt-status {
         return 200 "<html><body><h1>MQTT Status</h1><p>MQTT Broker: localhost:1883</p><p>Status: Running</p></body></html>";
@@ -834,6 +842,14 @@ server {
         proxy_cache off;
         proxy_read_timeout 300s;
         chunked_transfer_encoding off;
+    }
+
+    # Single JPEG snapshot from owl.py (Port 8001)
+    location /latest_frame.jpg {
+        proxy_pass http://127.0.0.1:8001/latest_frame.jpg;
+        proxy_set_header Host \$host;
+        proxy_buffering off;
+        proxy_cache off;
     }
 }
 EOF
@@ -931,7 +947,7 @@ User=${CURRENT_USER}
 Group=$(id -g -n ${CURRENT_USER})
 WorkingDirectory=${STANDALONE_DIR}
 Environment="PATH=${VENV_BIN}:/usr/local/bin:/usr/bin:/bin"
-ExecStart=${VENV_BIN}/gunicorn --bind 127.0.0.1:8000 --workers 1 --timeout 300 standalone:app
+ExecStart=${VENV_BIN}/gunicorn --bind 127.0.0.1:8000 --workers 1 --threads 8 --timeout 300 standalone:app
 Restart=always
 RestartSec=3
 KillMode=mixed

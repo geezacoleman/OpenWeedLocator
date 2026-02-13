@@ -1157,7 +1157,7 @@ def restart_owl(device_id):
 def snapshot_proxy(device_id):
     """Proxy single JPEG frame from OWL device (95% quality)."""
     device_id = device_id.replace('_', '-')
-    snapshot_url = f"http://{device_id}.local:8001/latest_frame.jpg"
+    snapshot_url = f"https://{device_id}.local/latest_frame.jpg"
     try:
         r = requests.get(snapshot_url, timeout=5, verify=False)
         if r.status_code != 200:
