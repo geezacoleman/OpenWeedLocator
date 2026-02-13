@@ -805,7 +805,8 @@ controller = CentralController()
 DASHBOARD_OPEN = os.environ.get('DASHBOARD_OPEN', '').strip() in ('1', 'true', 'yes')
 
 DEMO_PUBLIC_PREFIXES = (
-    '/demo', '/api/owls', '/api/actuation', '/api/snapshot/',
+    '/demo', '/models', '/api/models',
+    '/api/owls', '/api/actuation', '/api/snapshot/',
     '/shared/', '/static/',
 )
 

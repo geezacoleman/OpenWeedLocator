@@ -11,6 +11,7 @@ import logging
 import os
 import sys
 import configparser
+from pathlib import Path
 import socket
 
 from collections import deque
@@ -727,24 +728,7 @@ class OWLMQTTPublisher:
                             self.state['model_download']['progress'] = progress
                         self._publish_state()
 
-            # Verify SHA256
-            if expected_sha256:
-                h = hashlib.sha256()
-                with open(tmp_path, 'rb') as f:
-                    while True:
-                        chunk = f.read(65536)
-                        if not chunk:
-                            break
-                        h.update(chunk)
-                actual_sha256 = h.hexdigest()
-
-                if actual_sha256 != expected_sha256:
-                    raise ValueError(
-                        f'SHA256 mismatch: expected {expected_sha256[:12]}..., '
-                        f'got {actual_sha256[:12]}...'
-                    )
-
-            # Place the file
+            # Place the file, then verify SHA256
             if is_archive:
                 # Extract zip to a directory
                 import zipfile
@@ -760,8 +744,45 @@ class OWLMQTTPublisher:
 
                 os.unlink(tmp_path)
                 tmp_path = None
+
+                # Verify SHA256 of extracted directory contents (matches
+                # how the controller computed it at upload time)
+                if expected_sha256:
+                    h = hashlib.sha256()
+                    for fp in sorted(Path(extract_dir).rglob('*')):
+                        if fp.is_file():
+                            with open(fp, 'rb') as hf:
+                                while True:
+                                    chunk = hf.read(65536)
+                                    if not chunk:
+                                        break
+                                    h.update(chunk)
+                    actual_sha256 = h.hexdigest()
+                    if actual_sha256 != expected_sha256:
+                        import shutil
+                        shutil.rmtree(extract_dir)
+                        raise ValueError(
+                            f'SHA256 mismatch: expected {expected_sha256[:12]}..., '
+                            f'got {actual_sha256[:12]}...'
+                        )
                 self.logger.info(f"Model extracted to {extract_dir}")
             else:
+                # Verify SHA256 of the file directly
+                if expected_sha256:
+                    h = hashlib.sha256()
+                    with open(tmp_path, 'rb') as f:
+                        while True:
+                            chunk = f.read(65536)
+                            if not chunk:
+                                break
+                            h.update(chunk)
+                    actual_sha256 = h.hexdigest()
+                    if actual_sha256 != expected_sha256:
+                        raise ValueError(
+                            f'SHA256 mismatch: expected {expected_sha256[:12]}..., '
+                            f'got {actual_sha256[:12]}...'
+                        )
+
                 # Atomic rename
                 final_path = os.path.join(models_dir, filename)
                 if os.path.exists(final_path):
