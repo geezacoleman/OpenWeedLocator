@@ -336,32 +336,61 @@ collect_user_input() {
         echo ""
 
     else
-        # NETWORKED MODE - WiFi Client Configuration
-        echo -e "${GREEN}[INFO] Configuring WiFi Client (Networked Mode)${NC}"
+        # NETWORKED MODE - Connection Type Selection
+        echo -e "${GREEN}[INFO] Select network connection type:${NC}"
+        echo "  1) WiFi     - Connect to an existing WiFi network"
+        echo "  2) Ethernet - Use a wired LAN connection (eth0)"
+        echo ""
 
-        # Get WiFi network to join
-        read -p "Enter WiFi network name (SSID) to join: " SSID
-        while [ -z "$SSID" ]; do
-            echo -e "${RED}[ERROR] SSID cannot be empty.${NC}"
-            read -p "Enter WiFi network name (SSID) to join: " SSID
-        done
-
-        # Get WiFi password
         while true; do
-            read_password_masked "Enter WiFi network password: "
-            WIFI_PASSWORD="$REPLY"
-            if [ -z "$WIFI_PASSWORD" ]; then
-                echo -e "${RED}[ERROR] Password cannot be empty.${NC}"
-                continue
+            read -p "Select connection type (1 or 2, default: 1): " conn_choice
+            conn_choice=${conn_choice:-1}
+            if [[ "$conn_choice" == "1" ]]; then
+                NET_INTERFACE="wifi"
+                echo -e "${GREEN}[INFO] WiFi connection selected${NC}"
+                break
+            elif [[ "$conn_choice" == "2" ]]; then
+                NET_INTERFACE="ethernet"
+                echo -e "${GREEN}[INFO] Ethernet connection selected${NC}"
+                break
+            else
+                echo -e "${RED}[ERROR] Invalid selection. Please enter 1 or 2.${NC}"
             fi
-            read_password_masked "Re-enter WiFi password to confirm: "
-            WIFI_PASSWORD_CONFIRM="$REPLY"
-            if [ "$WIFI_PASSWORD" != "$WIFI_PASSWORD_CONFIRM" ]; then
-                echo -e "${RED}[ERROR] Passwords do not match. Please try again.${NC}"
-                continue
-            fi
-            break
         done
+        echo ""
+
+        if [[ "$NET_INTERFACE" == "wifi" ]]; then
+            echo -e "${GREEN}[INFO] Configuring WiFi Client (Networked Mode)${NC}"
+
+            # Get WiFi network to join
+            read -p "Enter WiFi network name (SSID) to join: " SSID
+            while [ -z "$SSID" ]; do
+                echo -e "${RED}[ERROR] SSID cannot be empty.${NC}"
+                read -p "Enter WiFi network name (SSID) to join: " SSID
+            done
+
+            # Get WiFi password
+            while true; do
+                read_password_masked "Enter WiFi network password: "
+                WIFI_PASSWORD="$REPLY"
+                if [ -z "$WIFI_PASSWORD" ]; then
+                    echo -e "${RED}[ERROR] Password cannot be empty.${NC}"
+                    continue
+                fi
+                read_password_masked "Re-enter WiFi password to confirm: "
+                WIFI_PASSWORD_CONFIRM="$REPLY"
+                if [ "$WIFI_PASSWORD" != "$WIFI_PASSWORD_CONFIRM" ]; then
+                    echo -e "${RED}[ERROR] Passwords do not match. Please try again.${NC}"
+                    continue
+                fi
+                break
+            done
+        else
+            echo -e "${GREEN}[INFO] Configuring Ethernet (Networked Mode)${NC}"
+            echo -e "${GREEN}[INFO] Make sure the Ethernet cable is connected.${NC}"
+            SSID=""
+            WIFI_PASSWORD=""
+        fi
 
         # Get network configuration
         while :; do
@@ -421,7 +450,11 @@ collect_user_input() {
         echo -e "${GREEN}[INFO] Networked Configuration Summary:${NC}"
         echo -e "  Mode: Networked"
         echo -e "  Hostname: ${HOSTNAME}"
-        echo -e "  WiFi Network: ${SSID}"
+        if [[ "$NET_INTERFACE" == "wifi" ]]; then
+            echo -e "  Connection: WiFi (${SSID})"
+        else
+            echo -e "  Connection: Ethernet (eth0)"
+        fi
         echo -e "  Static IP: ${STATIC_IP}"
         echo -e "  Gateway: ${GATEWAY_IP}"
         echo -e "  Controller IP: ${CONTROLLER_IP}"
@@ -539,6 +572,15 @@ enable = False
 nmea_port = 8500
 boom_width = 12.0
 track_save_directory = tracks
+
+[Actuation]
+# Relay timing — used as fallback when no GPS speed data
+actuation_duration = 0.15
+delay = 0.0
+# Speed-adaptive actuation geometry
+actuation_length_cm = 10
+offset_cm = 30
+speed_avg_window = 5.0
 EOF
 
     chown "${CURRENT_USER}:${CURRENT_USER}" "$CTRL_INI"
@@ -661,7 +703,7 @@ if [[ "$OWL_MODE" == "standalone" ]]; then
     # activate the connection
     nmcli connection up "${SSID}"
     check_status "WiFi hotspot configuration" "WIFI_CONFIG"
-else
+elif [[ "$NET_INTERFACE" == "wifi" ]]; then
     echo -e "${GREEN}[INFO] Configuring WiFi client connection: ${SSID}...${NC}"
 
     # Delete any existing connection with the same name
@@ -687,6 +729,31 @@ else
     nmcli con up "${SSID}" || true
 
     check_status "WiFi configuration" "WIFI_CONFIG"
+else
+    # ETHERNET MODE - Static IP on eth0
+    echo -e "${GREEN}[INFO] Configuring Ethernet with static IP on eth0...${NC}"
+
+    CON_NAME="owl-ethernet"
+
+    # Delete any existing OWL ethernet connection
+    nmcli con delete "${CON_NAME}" 2>/dev/null || true
+
+    # Add new ethernet connection
+    nmcli con add type ethernet con-name "${CON_NAME}" ifname eth0
+
+    # Configure static IP
+    nmcli con modify "${CON_NAME}" ipv4.addresses ${STATIC_IP}/24
+    nmcli con modify "${CON_NAME}" ipv4.gateway ${GATEWAY_IP}
+    nmcli con modify "${CON_NAME}" ipv4.dns "8.8.8.8 8.8.4.4"
+    nmcli con modify "${CON_NAME}" ipv4.method manual
+
+    # Set as default connection
+    nmcli con modify "${CON_NAME}" connection.autoconnect yes
+    nmcli con modify "${CON_NAME}" connection.autoconnect-priority 100
+
+    nmcli con up "${CON_NAME}" || true
+
+    check_status "Ethernet configuration" "WIFI_CONFIG"
 fi
 
 # Step 5: Configure UFW firewall
@@ -1030,7 +1097,7 @@ OWL Configuration
 Mode: Networked
 OWL ID: ${OWL_ID}
 Hostname: ${HOSTNAME}
-WiFi Network: ${SSID}
+Connection: ${NET_INTERFACE:-wifi} ${SSID:+(${SSID})}
 Static IP: ${STATIC_IP}
 Gateway: ${GATEWAY_IP}
 
@@ -1117,7 +1184,11 @@ else
     echo -e "\n${GREEN}[INFO] Networked Mode - Access Information:${NC}"
     echo -e "  Hostname: ${HOSTNAME}"
     echo -e "  Static IP: ${STATIC_IP}"
-    echo -e "  WiFi Network: ${SSID}"
+    if [[ "$NET_INTERFACE" == "wifi" ]]; then
+        echo -e "  WiFi Network: ${SSID}"
+    else
+        echo -e "  Connection: Ethernet (eth0)"
+    fi
     echo -e "  Controller: ${CONTROLLER_IP}"
     echo -e "  Video Feed: https://${HOSTNAME}.local/video_feed"
     echo -e "  Configuration: /opt/owl-dash-config.txt"
@@ -1167,7 +1238,11 @@ if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "
         echo -e "  • owl.py and dashboard will launch if enabled"
     else
         echo -e "After reboot:"
-        echo -e "  • OWL will connect to WiFi '${SSID}'"
+        if [[ "$NET_INTERFACE" == "wifi" ]]; then
+            echo -e "  • OWL will connect to WiFi '${SSID}'"
+        else
+            echo -e "  • OWL will use Ethernet (eth0) with static IP ${STATIC_IP}"
+        fi
         echo -e "  • Video feed will be at https://${HOSTNAME}.local/video_feed"
         echo -e "  • MQTT will connect to ${CONTROLLER_IP}:1883"
         echo -e "  • owl.py will launch if enabled"

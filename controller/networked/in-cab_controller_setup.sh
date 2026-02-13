@@ -325,6 +325,23 @@ collect_user_input() {
         echo -e "${GREEN}[INFO] Screen resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}${NC}"
     fi
 
+    # GPS Configuration (Teltonika router)
+    echo ""
+    echo -e "${GREEN}[INFO] GPS Configuration${NC}"
+    echo -e "  The controller can receive GPS data from a Teltonika router"
+    echo -e "  via NMEA-over-TCP on port 8500. This enables speed-adaptive"
+    echo -e "  actuation and track recording."
+    echo ""
+    read -p "Enable GPS from Teltonika router? (y/n, default: n): " GPS_ENABLE
+    GPS_ENABLE=${GPS_ENABLE:-n}
+
+    GPS_BOOM_WIDTH="12.0"
+    if [[ "$GPS_ENABLE" =~ ^[Yy]$ ]]; then
+        read -p "Enter boom width in metres (default: 12.0): " GPS_BOOM_WIDTH
+        GPS_BOOM_WIDTH=${GPS_BOOM_WIDTH:-12.0}
+        echo -e "${GREEN}[INFO] GPS enabled: Teltonika NMEA on port 8500, boom ${GPS_BOOM_WIDTH}m${NC}"
+    fi
+
     # Display Summary
     echo -e ""
     echo -e "${GREEN}[INFO] Configuration Summary:${NC}"
@@ -337,6 +354,11 @@ collect_user_input() {
     echo -e "Kiosk Mode: ${KIOSK_MODE}"
     if [[ "$KIOSK_MODE" =~ ^[Yy]$ ]]; then
         echo -e "Screen Resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}"
+    fi
+    if [[ "$GPS_ENABLE" =~ ^[Yy]$ ]]; then
+        echo -e "GPS: Enabled (Teltonika, boom ${GPS_BOOM_WIDTH}m)"
+    else
+        echo -e "GPS: Disabled"
     fi
     echo -e ""
     echo -e "Access Information:"
@@ -746,9 +768,9 @@ port = /dev/ttyUSB0
 baudrate = 9600
 
 # Networked controller GPS server (Teltonika NMEA-over-TCP)
-enable = False
+enable = $(if [[ "$GPS_ENABLE" =~ ^[Yy]$ ]]; then echo "True"; else echo "False"; fi)
 nmea_port = 8500
-boom_width = 12.0
+boom_width = ${GPS_BOOM_WIDTH}
 track_save_directory = tracks
 
 [Actuation]
@@ -766,7 +788,11 @@ EOF
     echo -e "${TICK} CONTROLLER.ini written to ${CTRL_INI}"
     echo -e "${GREEN}[INFO]   MQTT: broker=localhost:1883 (this controller IS the broker)${NC}"
     echo -e "${GREEN}[INFO]   Network: mode=networked, static_ip=${STATIC_IP}${NC}"
-    echo -e "${GREEN}[INFO]   GPS: disabled by default — edit enable=True to activate${NC}"
+    if [[ "$GPS_ENABLE" =~ ^[Yy]$ ]]; then
+        echo -e "${GREEN}[INFO]   GPS: enabled (Teltonika NMEA on port 8500, boom ${GPS_BOOM_WIDTH}m)${NC}"
+    else
+        echo -e "${GREEN}[INFO]   GPS: disabled — edit enable=True in CONTROLLER.ini to activate${NC}"
+    fi
     check_status "CONTROLLER.ini creation" "CONTROLLER_INI"
 }
 
@@ -952,10 +978,16 @@ main() {
     echo -e "3. Enter this controller's IP: ${STATIC_IP}"
     echo -e "4. OWLs will automatically connect to this controller"
     echo -e ""
-    echo -e "${GREEN}[INFO] GPS Setup (optional):${NC}"
-    echo -e "  Edit config/CONTROLLER.ini and set [GPS] enable = True"
-    echo -e "  Configure your Teltonika router to forward NMEA to ${STATIC_IP}:8500"
-    echo -e "  See config/README.md for full GPS setup instructions"
+    if [[ "$GPS_ENABLE" =~ ^[Yy]$ ]]; then
+        echo -e "${GREEN}[INFO] GPS Configuration:${NC}"
+        echo -e "  GPS enabled in CONTROLLER.ini (Teltonika NMEA on port 8500)"
+        echo -e "  Boom width: ${GPS_BOOM_WIDTH}m"
+        echo -e "  Configure your Teltonika router to forward NMEA to ${STATIC_IP}:8500"
+    else
+        echo -e "${GREEN}[INFO] GPS Setup (optional):${NC}"
+        echo -e "  Edit config/CONTROLLER.ini and set [GPS] enable = True"
+        echo -e "  Configure your Teltonika router to forward NMEA to ${STATIC_IP}:8500"
+    fi
 
     # Check overall success
     if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_PYTHON_VENV" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "$STATUS_NGINX_CONFIG" == "${TICK}" && "$STATUS_SSL_CERT" == "${TICK}" && "$STATUS_AVAHI_CONFIG" == "${TICK}" && "$STATUS_UFW_CONFIG" == "${TICK}" && "$STATUS_DASHBOARD_SERVICE" == "${TICK}" && "$STATUS_CONTROLLER_INI" == "${TICK}" && "$STATUS_SERVICES" == "${TICK}" ]]; then
@@ -968,6 +1000,10 @@ main() {
         echo -e "  • Controller will connect to WiFi '${WIFI_SSID}'"
         echo -e "  • Dashboard will be available at https://${STATIC_IP}/"
         echo -e "  • MQTT broker will be running on port 1883"
+
+        if [[ "$GPS_ENABLE" =~ ^[Yy]$ ]]; then
+            echo -e "  • GPS listener will accept Teltonika NMEA on port 8500"
+        fi
 
         if [[ "$STATUS_KIOSK_MODE" == "${TICK}" ]]; then
             echo -e "  • Kiosk mode will launch automatically on boot"
