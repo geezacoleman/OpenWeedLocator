@@ -8,3 +8,4 @@ blessed
 matplotlib==3.10.3
 Pillow>=11.2.1,<11.3.0
 ultralytics>=8.0.0
+ncnn

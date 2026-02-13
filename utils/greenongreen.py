@@ -61,9 +61,25 @@ class GreenOnGreen:
                      f'filtering={detect_classes or "all"}')
 
     @staticmethod
-    def _infer_task(name):
-        """Infer YOLO task from filename: '-seg' or '_seg' means segment."""
-        return 'segment' if '-seg' in name.lower() or '_seg' in name.lower() else None
+    def _infer_task(name, model_path=None):
+        """Infer YOLO task from filename or metadata.yaml."""
+        if '-seg' in name.lower() or '_seg' in name.lower():
+            return 'segment'
+        # Fall back to metadata.yaml inside NCNN model directories
+        if model_path is not None:
+            meta = Path(model_path) / 'metadata.yaml'
+            if meta.exists():
+                try:
+                    with open(meta) as f:
+                        for line in f:
+                            if line.startswith('task:'):
+                                task = line.split(':', 1)[1].strip()
+                                if task:
+                                    logger.info(f'Task "{task}" read from metadata.yaml')
+                                    return task
+                except Exception:
+                    pass
+        return None
 
     def _load_model(self):
         """Load YOLO model -- supports NCNN dirs and .pt files."""
@@ -72,7 +88,7 @@ class GreenOnGreen:
             if list(self.model_path.glob('*.param')):
                 logger.info(f'Using NCNN model: {self.model_path.name}')
                 self._model_filename = self.model_path.name
-                task = self._infer_task(self.model_path.name)
+                task = self._infer_task(self.model_path.name, self.model_path)
                 return YOLO(str(self.model_path), task=task)
 
             # Search for NCNN subdirs first, then .pt files
@@ -82,7 +98,7 @@ class GreenOnGreen:
                 selected = ncnn_dirs[0]
                 logger.info(f'Using NCNN model: {selected.name}')
                 self._model_filename = selected.name
-                task = self._infer_task(selected.name)
+                task = self._infer_task(selected.name, selected)
                 return YOLO(str(selected), task=task)
 
             pt_files = list(self.model_path.glob('*.pt'))
