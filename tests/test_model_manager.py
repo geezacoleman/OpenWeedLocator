@@ -18,8 +18,8 @@ import pytest
 
 @pytest.fixture
 def models_dir(tmp_path):
-    """Create a temp models/ directory with a sample .pt file."""
-    d = tmp_path / 'models'
+    """Create a temp uploads/ directory with a sample .pt file."""
+    d = tmp_path / 'uploads'
     d.mkdir()
     # Create a sample .pt file
     pt_file = d / 'test_model.pt'
@@ -27,9 +27,6 @@ def models_dir(tmp_path):
     # Compute and write sha256
     sha = hashlib.sha256(b'\x00' * 1024).hexdigest()
     (d / 'test_model.pt.sha256').write_text(sha)
-    # Create protected files
-    (d / 'README.md').write_text('Models directory')
-    (d / 'labels.txt').write_text('weed\ncrop')
     return d
 
 
@@ -74,8 +71,8 @@ def model_test_client(tmp_path, models_dir):
         importlib.reload(net_mod)
         net_mod.controller = mock_ctrl
 
-        # Point MODELS_DIR to our temp dir
-        net_mod.MODELS_DIR = models_dir
+        # Point UPLOADS_DIR to our temp dir
+        net_mod.UPLOADS_DIR = models_dir
 
         app = net_mod.app
         app.config['TESTING'] = True
@@ -177,9 +174,6 @@ class TestListModels:
         assert resp.status_code == 200
         names = [m['name'] for m in data['models']]
         assert 'test_model.pt' in names
-        # Protected files should NOT appear
-        assert 'README.md' not in names
-        assert 'labels.txt' not in names
 
     def test_list_includes_ncnn(self, model_test_client, ncnn_models_dir):
         client, _, models_dir = model_test_client
@@ -209,14 +203,14 @@ class TestDeleteModel:
         assert not (models_dir / 'test_model.pt').exists()
         assert not (models_dir / 'test_model.pt.sha256').exists()
 
-    def test_delete_protected(self, model_test_client):
-        client, _, _ = model_test_client
-        resp = client.delete('/api/models/README.md')
-        result = resp.get_json()
+    def test_delete_dotfile_unreachable(self, model_test_client):
+        """Dotfiles like .gitignore can't be deleted — secure_filename strips the dot."""
+        client, _, models_dir = model_test_client
+        (models_dir / '.gitignore').write_text('*')
+        resp = client.delete('/api/models/.gitignore')
 
-        assert resp.status_code == 400
-        assert result['success'] is False
-        assert 'protected' in result['error'].lower()
+        # secure_filename('.gitignore') -> 'gitignore' which doesn't exist
+        assert resp.status_code == 404
 
     def test_delete_nonexistent(self, model_test_client):
         client, _, _ = model_test_client
@@ -375,53 +369,63 @@ class TestOWLDownloadHandler:
 
     def test_download_handler_saves_file(self, mqtt_publisher, tmp_path):
         """Test that _download_model saves a file correctly."""
-        # Create a mock HTTP response
         test_data = b'fake model data for testing'
         expected_sha = hashlib.sha256(test_data).hexdigest()
 
-        models_dir = tmp_path / 'models'
-        models_dir.mkdir()
-
-        # Patch the models dir path
+        # Redirect models_dir by temporarily changing the module's __file__
         import utils.mqtt_manager as mm_mod
-        original_dirname = os.path.dirname
+        original_file = mm_mod.__file__
+        fake_utils = os.path.join(str(tmp_path), 'utils')
+        os.makedirs(fake_utils, exist_ok=True)
+        mm_mod.__file__ = os.path.join(fake_utils, 'mqtt_manager.py')
 
-        with patch('urllib.request.urlopen') as mock_urlopen:
-            mock_resp = MagicMock()
-            mock_resp.read.side_effect = [test_data, b'']
-            mock_resp.headers = {'Content-Length': str(len(test_data))}
-            mock_urlopen.return_value = mock_resp
+        try:
+            with patch('urllib.request.urlopen') as mock_urlopen, \
+                 patch.object(mqtt_publisher, '_list_available_models', return_value=[]):
+                mock_resp = MagicMock()
+                mock_resp.read.side_effect = [test_data, b'']
+                mock_resp.headers = {'Content-Length': str(len(test_data))}
+                mock_urlopen.return_value = mock_resp
 
-            # Override models dir by patching os.path operations
-            with patch.object(mqtt_publisher, '_list_available_models', return_value=[]):
-                # Run the download in current thread (not bg thread)
                 mqtt_publisher._download_model(
                     url='https://controller/api/models/download/test.pt',
                     filename='test.pt',
                     expected_sha256=expected_sha,
                     is_archive=False
                 )
+        finally:
+            mm_mod.__file__ = original_file
 
-        # Check state was updated
         assert mqtt_publisher.state['model_download']['status'] in ('complete', 'error')
+        # Verify file was written to tmp_path, not project models/
+        assert os.path.exists(os.path.join(str(tmp_path), 'models', 'test.pt'))
 
     def test_download_handler_checksum_fail(self, mqtt_publisher, tmp_path):
         """Test that bad SHA256 results in error state."""
         test_data = b'fake model data'
 
-        with patch('urllib.request.urlopen') as mock_urlopen:
-            mock_resp = MagicMock()
-            mock_resp.read.side_effect = [test_data, b'']
-            mock_resp.headers = {'Content-Length': str(len(test_data))}
-            mock_urlopen.return_value = mock_resp
+        import utils.mqtt_manager as mm_mod
+        original_file = mm_mod.__file__
+        fake_utils = os.path.join(str(tmp_path), 'utils')
+        os.makedirs(fake_utils, exist_ok=True)
+        mm_mod.__file__ = os.path.join(fake_utils, 'mqtt_manager.py')
 
-            with patch.object(mqtt_publisher, '_list_available_models', return_value=[]):
+        try:
+            with patch('urllib.request.urlopen') as mock_urlopen, \
+                 patch.object(mqtt_publisher, '_list_available_models', return_value=[]):
+                mock_resp = MagicMock()
+                mock_resp.read.side_effect = [test_data, b'']
+                mock_resp.headers = {'Content-Length': str(len(test_data))}
+                mock_urlopen.return_value = mock_resp
+
                 mqtt_publisher._download_model(
                     url='https://controller/api/models/download/test.pt',
                     filename='test.pt',
                     expected_sha256='wrong_hash_value',
                     is_archive=False
                 )
+        finally:
+            mm_mod.__file__ = original_file
 
         assert mqtt_publisher.state['model_download']['status'] == 'error'
         assert 'mismatch' in mqtt_publisher.state['model_download']['error'].lower()

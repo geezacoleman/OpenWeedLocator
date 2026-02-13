@@ -662,11 +662,15 @@ class OWLMQTTPublisher:
                 self.owl_instance.actuation_duration = duration
                 self.owl_instance.delay = delay
 
+            prev_duration = self.state.get('actuation_duration')
+            prev_delay = self.state.get('delay')
+
             self.state['actuation_duration'] = duration
             self.state['delay'] = delay
             self.state['actuation_source'] = source
 
-            self.logger.info(f"Actuation params updated: duration={duration:.4f}s, delay={delay:.4f}s, source={source}")
+            if duration != prev_duration or delay != prev_delay:
+                self.logger.info(f"Actuation params updated: duration={duration:.4f}s, delay={delay:.4f}s, source={source}")
 
         except (ValueError, TypeError) as e:
             self.logger.error(f"Invalid actuation params: {e}")

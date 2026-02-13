@@ -360,29 +360,39 @@ class AdvancedController:
         }
 
 
+_rpi_version_cache = None
+
+
 def get_rpi_version():
     """
     Determines the Raspberry Pi model by reading the device-tree model file.
     This method is more reliable as it reads the file directly instead of
     relying on the 'cat' command, avoiding PATH issues.
+    Result is cached to avoid repeated log warnings on non-Pi platforms.
     """
+    global _rpi_version_cache
+    if _rpi_version_cache is not None:
+        return _rpi_version_cache
+
     model_file = "/proc/device-tree/model"
     try:
         with open(model_file, 'r') as f:
             model = f.read().strip().rstrip('\x00')  # Read and clean the string
 
         if 'Pi 5' in model:
-            return 'rpi-5'
+            _rpi_version_cache = 'rpi-5'
         elif 'Pi 4' in model:
-            return 'rpi-4'
+            _rpi_version_cache = 'rpi-4'
         elif 'Pi 3' in model:
-            return 'rpi-3'
+            _rpi_version_cache = 'rpi-3'
         else:
-            return 'rpi-other'
+            _rpi_version_cache = 'rpi-other'
 
     except FileNotFoundError:
         logging.warning(errors.RPVersionError(original_error="The model file '/proc/device-tree/model' was not found."))
-        return 'non-rpi'
+        _rpi_version_cache = 'non-rpi'
     except Exception as e:
         logging.error(errors.RPVersionError(original_error=str(e)))
-        return 'non-rpi'
+        _rpi_version_cache = 'non-rpi'
+
+    return _rpi_version_cache

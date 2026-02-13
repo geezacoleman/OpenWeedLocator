@@ -594,6 +594,8 @@ Group=$(id -g -n ${CURRENT_USER})
 WorkingDirectory=${SCRIPT_DIR}
 Environment="PATH=${VENV_PATH}/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PYTHONUNBUFFERED=1"
+# Uncomment to allow dashboard access from any device (default: localhost/kiosk only)
+#Environment="DASHBOARD_OPEN=1"
 ExecStart=${VENV_PATH}/bin/gunicorn --bind 127.0.0.1:8000 --workers 1 --timeout 300 networked:app
 Restart=always
 RestartSec=5
@@ -784,7 +786,8 @@ Kiosk Mode: ${KIOSK_MODE}
 Screen Resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}
 
 Access URLs:
-- Dashboard: https://${HOSTNAME}.local/ or https://${STATIC_IP}/
+- Dashboard: https://${HOSTNAME}.local/ or https://${STATIC_IP}/ (kiosk only)
+- Demo page: https://${STATIC_IP}/demo (any device on network)
 - MQTT Broker: ${STATIC_IP}:1883
 
 Service Configuration:
@@ -929,9 +932,13 @@ main() {
     echo -e "======================================="
     echo -e "  Controller IP: ${STATIC_IP}"
     echo -e "  Dashboard URL: https://${HOSTNAME}.local/ or https://${STATIC_IP}/"
+    echo -e "  Demo page:    https://${STATIC_IP}/demo  (public, read-only)"
     echo -e "  MQTT Broker: ${STATIC_IP}:1883"
     echo -e "  Hostname: ${HOSTNAME}"
     echo -e "  Configuration: /opt/owl-controller-config.txt"
+    echo -e ""
+    echo -e "  Note: Dashboard is restricted to the kiosk (localhost)."
+    echo -e "  The /demo page is accessible from any device on the network."
 
     echo -e "\n${GREEN}[INFO] Testing Commands:${NC}"
     echo -e "  mosquitto_pub -h ${STATIC_IP} -t 'owl/test' -m 'hello'"

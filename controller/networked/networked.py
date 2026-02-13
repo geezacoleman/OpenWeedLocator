@@ -43,9 +43,9 @@ logger = logging.getLogger(__name__)
 SHARED_DIR = os.path.join(os.path.dirname(__file__), '..', 'shared')
 
 # Model management constants
-MODELS_DIR = Path(__file__).parent.parent.parent / 'models'
+UPLOADS_DIR = Path(__file__).parent.parent.parent / 'uploads'
 ALLOWED_MODEL_EXTENSIONS = {'pt', 'zip'}
-PROTECTED_MODEL_FILES = {'README.md', 'labels.txt', '.gitignore'}
+PROTECTED_MODEL_FILES = set()  # .gitignore protected by secure_filename stripping dots
 MAX_ZIP_UNCOMPRESSED_SIZE = 500 * 1024 * 1024  # 500MB zip bomb guard
 
 
@@ -797,6 +797,32 @@ app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB upload limit
 # Initialize controller
 controller = CentralController()
 
+# ---------------------------------------------------------------------------
+# Access control — localhost (kiosk) gets everything, everyone else gets /demo
+# only. Nginx sets X-Real-IP so we see the real client, not 127.0.0.1.
+# Disable with DASHBOARD_OPEN=1 env var if you need laptop access.
+# ---------------------------------------------------------------------------
+DASHBOARD_OPEN = os.environ.get('DASHBOARD_OPEN', '').strip() in ('1', 'true', 'yes')
+
+DEMO_PUBLIC_PREFIXES = (
+    '/demo', '/api/owls', '/api/actuation', '/api/snapshot/',
+    '/shared/', '/static/',
+)
+
+@app.before_request
+def demo_access_guard():
+    if DASHBOARD_OPEN:
+        return None
+    path = request.path
+    if any(path.startswith(p) for p in DEMO_PUBLIC_PREFIXES):
+        return None
+    # X-Real-IP from nginx; falls back to remote_addr for direct connections
+    client_ip = request.headers.get('X-Real-IP', request.remote_addr)
+    if client_ip in ('127.0.0.1', '::1'):
+        return None
+    return Response('Restricted — visit /demo', status=403, content_type='text/plain')
+
+
 @app.route('/shared/<path:filename>')
 def shared_static(filename):
     return send_from_directory(SHARED_DIR, filename)
@@ -1224,15 +1250,20 @@ def models_page():
     return render_template('models.html')
 
 
+@app.route('/demo')
+def demo_page():
+    return render_template('demo.html')
+
+
 @app.route('/api/models')
 def list_models():
     """List models in the library."""
     try:
         models = []
-        if not MODELS_DIR.exists():
+        if not UPLOADS_DIR.exists():
             return jsonify({'models': []})
 
-        for item in sorted(MODELS_DIR.iterdir()):
+        for item in sorted(UPLOADS_DIR.iterdir()):
             if item.name in PROTECTED_MODEL_FILES or item.name.startswith('.'):
                 continue
             if item.name.endswith('.sha256'):
@@ -1292,16 +1323,16 @@ def upload_model():
         if ext not in ALLOWED_MODEL_EXTENSIONS:
             return jsonify({'success': False, 'error': f'Invalid file type .{ext}. Allowed: .pt, .zip'}), 400
 
+        UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
         # Check disk space
-        disk = shutil.disk_usage(MODELS_DIR)
+        disk = shutil.disk_usage(UPLOADS_DIR)
         if disk.free < 500 * 1024 * 1024:
             return jsonify({'success': False, 'error': 'Insufficient disk space (<500MB free)'}), 507
-
-        MODELS_DIR.mkdir(parents=True, exist_ok=True)
-        save_path = MODELS_DIR / filename
+        save_path = UPLOADS_DIR / filename
 
         # Path traversal check
-        if not save_path.resolve().parent == MODELS_DIR.resolve():
+        if not save_path.resolve().parent == UPLOADS_DIR.resolve():
             return jsonify({'success': False, 'error': 'Invalid filename'}), 400
 
         f.save(str(save_path))
@@ -1318,7 +1349,7 @@ def upload_model():
 
             # Extract to directory named after zip (without .zip)
             dir_name = filename.rsplit('.', 1)[0]
-            extract_dir = MODELS_DIR / dir_name
+            extract_dir = UPLOADS_DIR / dir_name
             if extract_dir.exists():
                 shutil.rmtree(extract_dir)
             extract_dir.mkdir()
@@ -1367,16 +1398,16 @@ def upload_model():
                                 break
                             h.update(chunk)
             sha256 = h.hexdigest()
-            sha_path = MODELS_DIR / f'{dir_name}.sha256'
+            sha_path = UPLOADS_DIR / f'{dir_name}.sha256'
             sha_path.write_text(sha256)
         else:
             # .pt file — compute SHA256
             sha256 = _compute_sha256(str(save_path))
-            sha_path = MODELS_DIR / f'{filename}.sha256'
+            sha_path = UPLOADS_DIR / f'{filename}.sha256'
             sha_path.write_text(sha256)
 
         size = save_path.stat().st_size if save_path.exists() else sum(
-            fp.stat().st_size for fp in (MODELS_DIR / result_name).rglob('*') if fp.is_file()
+            fp.stat().st_size for fp in (UPLOADS_DIR / result_name).rglob('*') if fp.is_file()
         )
 
         logger.info(f"Model uploaded: {result_name} ({result_type}, {size} bytes, sha256={sha256[:12]}...)")
@@ -1403,12 +1434,12 @@ def download_model(name):
         if not safe_name:
             return jsonify({'error': 'Invalid name'}), 400
 
-        target = MODELS_DIR / safe_name
-        if not target.resolve().parent == MODELS_DIR.resolve():
+        target = UPLOADS_DIR / safe_name
+        if not target.resolve().parent == UPLOADS_DIR.resolve():
             return jsonify({'error': 'Invalid path'}), 400
 
         if target.is_file() and target.suffix == '.pt':
-            return send_from_directory(str(MODELS_DIR), safe_name)
+            return send_from_directory(str(UPLOADS_DIR), safe_name)
 
         elif target.is_dir():
             # Zip NCNN directory on-the-fly
@@ -1444,13 +1475,13 @@ def deploy_model():
             return jsonify({'success': False, 'error': 'Missing model_name or device_ids'}), 400
 
         safe_name = secure_filename(model_name)
-        target = MODELS_DIR / safe_name
+        target = UPLOADS_DIR / safe_name
 
         if not (target.is_file() or target.is_dir()):
             return jsonify({'success': False, 'error': f'Model not found: {model_name}'}), 404
 
         # Read SHA256 from sidecar
-        sha_path = MODELS_DIR / f'{safe_name}.sha256'
+        sha_path = UPLOADS_DIR / f'{safe_name}.sha256'
         sha256 = sha_path.read_text().strip() if sha_path.exists() else ''
 
         # Build download URL
@@ -1505,8 +1536,8 @@ def delete_model(name):
         if safe_name in PROTECTED_MODEL_FILES:
             return jsonify({'success': False, 'error': 'Cannot delete protected file'}), 400
 
-        target = MODELS_DIR / safe_name
-        if not target.resolve().parent == MODELS_DIR.resolve():
+        target = UPLOADS_DIR / safe_name
+        if not target.resolve().parent == UPLOADS_DIR.resolve():
             return jsonify({'success': False, 'error': 'Invalid path'}), 400
 
         if target.is_file():
@@ -1517,7 +1548,7 @@ def delete_model(name):
             return jsonify({'success': False, 'error': 'Model not found'}), 404
 
         # Remove SHA256 sidecar
-        sha_path = MODELS_DIR / f'{safe_name}.sha256'
+        sha_path = UPLOADS_DIR / f'{safe_name}.sha256'
         if sha_path.exists():
             sha_path.unlink()
 
