@@ -132,7 +132,14 @@ class OWLMQTTPublisher:
             'avg_loop_time_ms': 0.0,
             'actuation_duration': 0.15,
             'delay': 0.0,
-            'actuation_source': 'config'
+            'actuation_source': 'config',
+            # Model download state
+            'model_download': {
+                'status': 'idle',
+                'model_name': '',
+                'progress': 0,
+                'error': ''
+            }
         }
 
         # Thread safety
@@ -449,8 +456,45 @@ class OWLMQTTPublisher:
                 if config_path:
                     self._handle_set_active_config(config_path)
 
+            elif action == 'set_detection_mode':
+                mode = int(command.get('value', 1))
+                valid_modes = {0, 1, 2}
+                if mode not in valid_modes:
+                    self.logger.error(f"Invalid detection mode: {mode}")
+                    return
+                self.state['detection_mode'] = mode
+                if mode == 2:  # Blanket — all nozzles on
+                    self.state['detection_enable'] = False
+                    if self.owl_instance and hasattr(self.owl_instance, 'relay_controller'):
+                        self.owl_instance.relay_controller.relay.all_on()
+                    self.logger.info("Blanket spray: all nozzles ON, detection disabled")
+                elif mode == 0:  # Spot spray — detection on
+                    self.state['detection_enable'] = True
+                    if self.owl_instance and hasattr(self.owl_instance, 'relay_controller'):
+                        self.owl_instance.relay_controller.relay.all_off()
+                    self.logger.info("Spot spray: detection enabled, nozzles auto")
+                else:  # Off
+                    self.state['detection_enable'] = False
+                    if self.owl_instance and hasattr(self.owl_instance, 'relay_controller'):
+                        self.owl_instance.relay_controller.relay.all_off()
+                    self.logger.info("Off: detection disabled, all nozzles OFF")
+
             elif action == 'set_actuation_params':
                 self._handle_set_actuation_params(command)
+
+            elif action == 'download_model':
+                url = command.get('url')
+                filename = command.get('filename')
+                sha256 = command.get('sha256', '')
+                is_archive = command.get('is_archive', False)
+                if url and filename:
+                    threading.Thread(
+                        target=self._download_model,
+                        args=(url, filename, sha256, is_archive),
+                        daemon=True
+                    ).start()
+                else:
+                    self.logger.error("download_model missing url or filename")
 
             elif action == 'reboot':
                 self.logger.warning("Reboot command received - this requires system privileges")
@@ -626,6 +670,131 @@ class OWLMQTTPublisher:
 
         except (ValueError, TypeError) as e:
             self.logger.error(f"Invalid actuation params: {e}")
+
+    def _download_model(self, url, filename, expected_sha256, is_archive):
+        """Download a model file from the controller. Runs in background thread."""
+        import urllib.request
+        import ssl
+        import hashlib
+        import tempfile
+
+        models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')
+        os.makedirs(models_dir, exist_ok=True)
+
+        tmp_path = None
+        try:
+            # Update state: downloading
+            with self.state_lock:
+                self.state['model_download'] = {
+                    'status': 'downloading',
+                    'model_name': filename,
+                    'progress': 0,
+                    'error': ''
+                }
+            self._publish_state()
+
+            # SSL context for self-signed certs
+            ssl_ctx = ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+
+            req = urllib.request.Request(url)
+            response = urllib.request.urlopen(req, context=ssl_ctx)
+            total_size = int(response.headers.get('Content-Length', 0))
+
+            # Download to temp file
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=models_dir, suffix='.tmp')
+            downloaded = 0
+            last_progress_update = 0
+
+            with os.fdopen(tmp_fd, 'wb') as f:
+                while True:
+                    chunk = response.read(65536)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+
+                    # Update progress every 100KB
+                    if downloaded - last_progress_update >= 102400:
+                        last_progress_update = downloaded
+                        progress = int((downloaded / total_size * 100)) if total_size > 0 else 0
+                        with self.state_lock:
+                            self.state['model_download']['progress'] = progress
+                        self._publish_state()
+
+            # Verify SHA256
+            if expected_sha256:
+                h = hashlib.sha256()
+                with open(tmp_path, 'rb') as f:
+                    while True:
+                        chunk = f.read(65536)
+                        if not chunk:
+                            break
+                        h.update(chunk)
+                actual_sha256 = h.hexdigest()
+
+                if actual_sha256 != expected_sha256:
+                    raise ValueError(
+                        f'SHA256 mismatch: expected {expected_sha256[:12]}..., '
+                        f'got {actual_sha256[:12]}...'
+                    )
+
+            # Place the file
+            if is_archive:
+                # Extract zip to a directory
+                import zipfile
+                dir_name = filename.rsplit('.', 1)[0] if '.' in filename else filename
+                extract_dir = os.path.join(models_dir, dir_name)
+                if os.path.isdir(extract_dir):
+                    import shutil
+                    shutil.rmtree(extract_dir)
+                os.makedirs(extract_dir)
+
+                with zipfile.ZipFile(tmp_path, 'r') as zf:
+                    zf.extractall(extract_dir)
+
+                os.unlink(tmp_path)
+                tmp_path = None
+                self.logger.info(f"Model extracted to {extract_dir}")
+            else:
+                # Atomic rename
+                final_path = os.path.join(models_dir, filename)
+                if os.path.exists(final_path):
+                    os.unlink(final_path)
+                os.rename(tmp_path, final_path)
+                tmp_path = None
+                self.logger.info(f"Model saved to {final_path}")
+
+            # Update state: complete
+            with self.state_lock:
+                self.state['model_download'] = {
+                    'status': 'complete',
+                    'model_name': filename,
+                    'progress': 100,
+                    'error': ''
+                }
+                # Refresh available models list
+                self.state['available_models'] = self._list_available_models()
+            self._publish_state()
+
+        except Exception as e:
+            self.logger.error(f"Model download failed: {e}")
+            # Cleanup temp file
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+            with self.state_lock:
+                self.state['model_download'] = {
+                    'status': 'error',
+                    'model_name': filename,
+                    'progress': 0,
+                    'error': str(e)
+                }
+            self._publish_state()
 
     def _resolve_config_path(self):
         """Resolve the current config file path"""
@@ -1265,6 +1434,10 @@ class DashMQTTSubscriber:
             return {'success': False, 'error': f'Invalid parameter name. Valid options: {valid_params}'}
 
         return self._send_command('set_greenonbrown_param', param=param_name, value=param_value)
+
+    def set_detection_mode(self, mode):
+        """Set detection mode: 0=spot spray, 1=off, 2=blanket"""
+        return self._send_command('set_detection_mode', value=int(mode))
 
     def update_gps(self, lat, lon, accuracy, timestamp=None):
         """Update GPS data"""

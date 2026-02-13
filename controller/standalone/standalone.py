@@ -333,6 +333,34 @@ class OWLDashboard:
             self.logger.info("Recording disabled via dashboard")
             return jsonify(result)
 
+        @self.app.route('/api/nozzles/all-on', methods=['POST'])
+        def nozzles_all_on():
+            controller_type = self._get_controller_type()
+            if controller_type not in ('none', ''):
+                return jsonify({
+                    'success': False,
+                    'message': f'{controller_type.upper()} controller active - use physical switches'
+                }), 423
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            result = self.mqtt_client.set_detection_mode(2)
+            self.logger.info("All nozzles ON via dashboard (blanket mode)")
+            return jsonify(result)
+
+        @self.app.route('/api/nozzles/all-off', methods=['POST'])
+        def nozzles_all_off():
+            controller_type = self._get_controller_type()
+            if controller_type not in ('none', ''):
+                return jsonify({
+                    'success': False,
+                    'message': f'{controller_type.upper()} controller active - use physical switches'
+                }), 423
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            result = self.mqtt_client.set_detection_mode(1)
+            self.logger.info("All nozzles OFF via dashboard")
+            return jsonify(result)
+
         @self.app.route('/api/sensitivity/set', methods=['POST'])
         def set_sensitivity():
             """Set sensitivity to specific level"""

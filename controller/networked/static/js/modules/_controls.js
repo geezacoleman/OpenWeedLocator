@@ -5,6 +5,7 @@
 
 function toggleMainDetection() {
     const btn = document.getElementById('main-detection-btn');
+    const nozzleBtn = document.getElementById('main-nozzles-btn');
 
     if (btn.classList.contains('off')) {
         // Currently stopping, so start
@@ -14,7 +15,13 @@ function toggleMainDetection() {
         sendCommand('all', 'toggle_detection', false);
         showToast('Detection stopped on all OWLs', 'info');
     } else {
-        // Currently starting, so stop
+        // Starting detection — turn off nozzles if active
+        if (globalNozzlesActive && nozzleBtn) {
+            nozzleBtn.classList.remove('active');
+            nozzleBtn.textContent = 'All Nozzles';
+            globalNozzlesActive = false;
+            sendCommand('all', 'toggle_all_nozzles', false);
+        }
         btn.classList.add('off');
         btn.textContent = 'Stop Detection';
         globalDetectionEnabled = true;
@@ -40,6 +47,37 @@ function toggleMainRecording() {
         globalRecordingEnabled = true;
         sendCommand('all', 'toggle_recording', true);
         showToast('Recording started on all OWLs', 'success');
+    }
+}
+
+// ============================================
+// ALL NOZZLES TOGGLE
+// ============================================
+
+function toggleAllNozzles() {
+    const btn = document.getElementById('main-nozzles-btn');
+    const detBtn = document.getElementById('main-detection-btn');
+
+    if (btn.classList.contains('active')) {
+        // Turn off
+        btn.classList.remove('active');
+        btn.textContent = 'All Nozzles';
+        globalNozzlesActive = false;
+        sendCommand('all', 'toggle_all_nozzles', false);
+        showToast('All nozzles OFF', 'info');
+    } else {
+        // Turn on — also disable detection
+        btn.classList.add('active');
+        btn.textContent = 'Nozzles ON';
+        globalNozzlesActive = true;
+        sendCommand('all', 'toggle_all_nozzles', true);
+        // Visual: show detection as off
+        if (detBtn) {
+            detBtn.classList.remove('off');
+            detBtn.textContent = 'Start Detection';
+        }
+        globalDetectionEnabled = false;
+        showToast('All nozzles ON — detection disabled', 'warning');
     }
 }
 

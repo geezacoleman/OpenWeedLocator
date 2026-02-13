@@ -43,6 +43,18 @@ function initDashboardControls() {
         });
     }
 
+    // All Nozzles
+    const nozzleBtn = document.getElementById('nozzleSwitch');
+    if (nozzleBtn) {
+        nozzleBtn.addEventListener('click', () => {
+            const isOn = nozzleBtn.getAttribute('aria-pressed') === 'true';
+            const fn = isOn ? stopAllNozzles : startAllNozzles;
+            fn()
+                .then(() => updateSystemStats())
+                .catch(err => showNotification('Error', err.message || 'Nozzle action failed', 'error'));
+        });
+    }
+
     // Sensitivity (Low / High)
     const sensBtns = document.querySelectorAll('.seg-btn[data-sens]');
     sensBtns.forEach(btn => {
@@ -185,6 +197,12 @@ function startDetection() {
         return Promise.resolve();
     }
 
+    // Turn off nozzles if active (starting detection overrides blanket mode)
+    const nozzleBtn = document.getElementById('nozzleSwitch');
+    if (nozzleBtn && nozzleBtn.getAttribute('aria-pressed') === 'true') {
+        stopAllNozzles();
+    }
+
     showNotification('Info', 'Starting detection...', 'info');
 
     return apiRequest('/api/detection/start', { method: 'POST' })
@@ -284,6 +302,64 @@ function stopRecording() {
         })
         .catch(error => {
             showNotification('Error', error.message || 'Failed to stop recording', 'error');
+        });
+}
+
+/* --------------------------------------------------------------------------
+   All Nozzles Controls
+   -------------------------------------------------------------------------- */
+
+function startAllNozzles() {
+    if (hardwareControllerActive) {
+        showNotification(
+            'Hardware Priority',
+            `Use the physical switch on your ${controllerType.toUpperCase()} controller`,
+            'warning'
+        );
+        return Promise.resolve();
+    }
+
+    showNotification('Info', 'Turning all nozzles ON...', 'info');
+
+    return apiRequest('/api/nozzles/all-on', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Warning', 'All nozzles ON — detection disabled', 'warning');
+                updateSystemStats();
+            } else {
+                throw new Error(data.message || 'Failed to turn on nozzles');
+            }
+        })
+        .catch(error => {
+            showNotification('Error', error.message || 'Failed to turn on nozzles', 'error');
+        });
+}
+
+function stopAllNozzles() {
+    if (hardwareControllerActive) {
+        showNotification(
+            'Hardware Priority',
+            `Use the physical switch on your ${controllerType.toUpperCase()} controller`,
+            'warning'
+        );
+        return Promise.resolve();
+    }
+
+    showNotification('Info', 'Turning all nozzles OFF...', 'info');
+
+    return apiRequest('/api/nozzles/all-off', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Success', 'All nozzles OFF', 'success');
+                updateSystemStats();
+            } else {
+                throw new Error(data.message || 'Failed to turn off nozzles');
+            }
+        })
+        .catch(error => {
+            showNotification('Error', error.message || 'Failed to turn off nozzles', 'error');
         });
 }
 

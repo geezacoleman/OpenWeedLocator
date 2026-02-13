@@ -141,6 +141,14 @@ async function updateDashboard() {
             if (typeof updateSensitivityDial === 'function' && firstOwl.sensitivity_level) {
                 updateSensitivityDial(firstOwl.sensitivity_level);
             }
+            // Sync nozzle button state from OWL
+            const nozzleBtn = document.getElementById('main-nozzles-btn');
+            if (nozzleBtn) {
+                const nozzlesOn = firstOwl.detection_mode === 2;
+                nozzleBtn.classList.toggle('active', nozzlesOn);
+                nozzleBtn.textContent = nozzlesOn ? 'Nozzles ON' : 'All Nozzles';
+                globalNozzlesActive = nozzlesOn;
+            }
         }
         // Sync AI tab if it's active
         if (typeof syncAITabFromDashboard === 'function') syncAITabFromDashboard();

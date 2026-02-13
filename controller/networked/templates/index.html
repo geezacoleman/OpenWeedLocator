@@ -72,6 +72,17 @@
                             <div class="gauge-label">Avg Loop Time</div>
                         </div>
 
+                        <!-- Duration Gauge -->
+                        <div class="gauge-container">
+                            <svg class="gauge-svg" viewBox="0 0 140 90">
+                                <path class="gauge-arc-bg" d="" id="duration-gauge-bg"></path>
+                                <path class="gauge-arc-fill duration-normal" d="" id="duration-gauge-fill"></path>
+                            </svg>
+                            <div class="gauge-value" id="duration-gauge-value">--</div>
+                            <div class="gauge-unit">ms</div>
+                            <div class="gauge-label">Duration</div>
+                        </div>
+
                         <!-- Coverage Warning -->
                         <div class="coverage-warning" id="coverage-warning"></div>
                     </div>
@@ -94,9 +105,14 @@
                         <button class="action-button btn-detection" id="main-detection-btn" onclick="toggleMainDetection()">
                             Start Detection
                         </button>
-                        <button class="action-button btn-recording" id="main-recording-btn" onclick="toggleMainRecording()">
-                            Start Recording
-                        </button>
+                        <div class="hero-split-row">
+                            <button class="action-button btn-recording" id="main-recording-btn" onclick="toggleMainRecording()">
+                                Start Recording
+                            </button>
+                            <button class="action-button btn-nozzles" id="main-nozzles-btn" onclick="toggleAllNozzles()">
+                                All Nozzles
+                            </button>
+                        </div>
                     </div>
                     <div class="mode-panel">
                         <div class="mode-panel-title">Detection Mode</div>

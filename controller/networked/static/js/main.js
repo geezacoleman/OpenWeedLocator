@@ -40,7 +40,7 @@ document.addEventListener('DOMContentLoaded', async () => {
  * Initialize the static background arcs for all SVG gauges.
  */
 function initGaugeArcs() {
-    var bgIds = ['speed-gauge-bg', 'loop-gauge-bg'];
+    var bgIds = ['speed-gauge-bg', 'loop-gauge-bg', 'duration-gauge-bg'];
     for (var i = 0; i < bgIds.length; i++) {
         var el = document.getElementById(bgIds[i]);
         if (el) {

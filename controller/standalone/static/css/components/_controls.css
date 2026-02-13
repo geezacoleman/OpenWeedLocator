@@ -248,6 +248,24 @@
     color: var(--danger);
 }
 
+/* Nozzle Switch Variant (orange when active) */
+.owl-switch.owl-switch--nozzles[aria-pressed="true"] .switch-track {
+    background: #e67e22;
+}
+
+.owl-switch.owl-switch--nozzles .switch-state {
+    color: #e67e22;
+}
+
+/* --------------------------------------------------------------------------
+   Split Row (side-by-side switches)
+   -------------------------------------------------------------------------- */
+.split-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+}
+
 /* --------------------------------------------------------------------------
    Two-Up Layout (Side by side controls)
    -------------------------------------------------------------------------- */

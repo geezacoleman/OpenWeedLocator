@@ -31,8 +31,10 @@ function updateSystemStats() {
             const detectionOn = !!(data.detection_running ?? data.detection_enable);
             const recordingOn = !!(data.recording ?? data.image_sample_enable);
 
-            syncSwitch('detectSwitch', detectionOn);
+            const nozzlesOn = data.detection_mode === 2;
+            syncSwitch('detectSwitch', nozzlesOn ? false : detectionOn);
             syncSwitch('recordSwitch', recordingOn);
+            syncSwitch('nozzleSwitch', nozzlesOn);
 
             // OWL service status chip
             const owlChip = document.getElementById('owlStatusChip');

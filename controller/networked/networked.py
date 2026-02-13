@@ -14,7 +14,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from collections import deque
-from flask import Flask, render_template, jsonify, request, Response, stream_with_context, send_from_directory
+from flask import Flask, render_template, jsonify, request, Response, stream_with_context, send_from_directory, send_file
 import urllib3
 import paho.mqtt.client as mqtt
 import json
@@ -22,9 +22,14 @@ import threading
 import time
 import logging
 import configparser
+import hashlib
+import shutil
+import io
+import zipfile
 from datetime import datetime
 from pathlib import Path
 import requests
+from werkzeug.utils import secure_filename
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -36,6 +41,54 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 SHARED_DIR = os.path.join(os.path.dirname(__file__), '..', 'shared')
+
+# Model management constants
+MODELS_DIR = Path(__file__).parent.parent.parent / 'models'
+ALLOWED_MODEL_EXTENSIONS = {'pt', 'zip'}
+PROTECTED_MODEL_FILES = {'README.md', 'labels.txt', '.gitignore'}
+MAX_ZIP_UNCOMPRESSED_SIZE = 500 * 1024 * 1024  # 500MB zip bomb guard
+
+
+def _compute_sha256(filepath):
+    """Streaming SHA256 hash for large files."""
+    h = hashlib.sha256()
+    with open(filepath, 'rb') as f:
+        while True:
+            chunk = f.read(65536)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _validate_ncnn_zip(zip_path):
+    """Validate a zip contains valid NCNN model files (.param + .bin)."""
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        names = zf.namelist()
+
+        # Check total uncompressed size (zip bomb guard)
+        total_size = sum(info.file_size for info in zf.infolist())
+        if total_size > MAX_ZIP_UNCOMPRESSED_SIZE:
+            return False, f'Uncompressed size {total_size} exceeds limit'
+
+        # Check for path traversal
+        for name in names:
+            if name.startswith('/') or '..' in name:
+                return False, f'Unsafe path in zip: {name}'
+
+        # Check for symlinks
+        for info in zf.infolist():
+            if info.external_attr >> 16 & 0o120000 == 0o120000:
+                return False, f'Symlink in zip: {info.filename}'
+
+        # Check NCNN structure: need at least one .param and one .bin
+        has_param = any(n.endswith('.param') for n in names)
+        has_bin = any(n.endswith('.bin') for n in names)
+
+        if not (has_param and has_bin):
+            return False, 'Zip must contain .param and .bin files for NCNN model'
+
+    return True, 'ok'
 
 
 class SpeedAverager:
@@ -641,6 +694,22 @@ class CentralController:
                     for oid in self.owls_state:
                         self.desired_state.setdefault(oid, {})['image_sample_enable'] = value
 
+        elif action == 'toggle_all_nozzles':
+            mode = 2 if value else 1
+            payload = {'action': 'set_detection_mode', 'value': mode}
+            self.desired_state.setdefault('all', {})['detection_mode'] = mode
+            if value:
+                # Turning on nozzles disables detection
+                self.desired_state.setdefault('all', {})['detection_enable'] = False
+                with self.mqtt_lock:
+                    for oid in self.owls_state:
+                        self.desired_state.setdefault(oid, {})['detection_mode'] = mode
+                        self.desired_state.setdefault(oid, {})['detection_enable'] = False
+            else:
+                with self.mqtt_lock:
+                    for oid in self.owls_state:
+                        self.desired_state.setdefault(oid, {})['detection_mode'] = mode
+
         elif action == 'set_detect_classes':
             payload = {'action': 'set_detect_classes', 'value': value}
             # Store so reconnecting OWLs get the class filter
@@ -722,6 +791,8 @@ app = Flask(__name__,
     static_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static'),
     template_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates')
 )
+
+app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB upload limit
 
 # Initialize controller
 controller = CentralController()
@@ -1142,6 +1213,320 @@ def api_actuation_config():
         'actuation_length_cm': calc.actuation_length_cm,
         'offset_cm': calc.offset_cm
     })
+
+
+# ---------------------------------------------------------------------------
+# Model Management routes
+# ---------------------------------------------------------------------------
+
+@app.route('/models')
+def models_page():
+    return render_template('models.html')
+
+
+@app.route('/api/models')
+def list_models():
+    """List models in the library."""
+    try:
+        models = []
+        if not MODELS_DIR.exists():
+            return jsonify({'models': []})
+
+        for item in sorted(MODELS_DIR.iterdir()):
+            if item.name in PROTECTED_MODEL_FILES or item.name.startswith('.'):
+                continue
+            if item.name.endswith('.sha256'):
+                continue
+
+            entry = None
+            if item.suffix == '.pt' and item.is_file():
+                entry = {
+                    'name': item.name,
+                    'type': 'pytorch',
+                    'size': item.stat().st_size,
+                    'modified': datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
+                }
+            elif item.is_dir():
+                # Check for NCNN dir (has .param file)
+                has_param = any(f.suffix == '.param' for f in item.iterdir() if f.is_file())
+                if has_param:
+                    dir_size = sum(f.stat().st_size for f in item.rglob('*') if f.is_file())
+                    entry = {
+                        'name': item.name,
+                        'type': 'ncnn',
+                        'size': dir_size,
+                        'modified': datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
+                    }
+
+            if entry:
+                # Cross-reference deployment status from OWL states
+                deployed_to = []
+                with controller.mqtt_lock:
+                    for owl_id, state in controller.owls_state.items():
+                        owl_models = state.get('available_models', [])
+                        if entry['name'] in owl_models:
+                            deployed_to.append(owl_id)
+                entry['deployed_to'] = deployed_to
+                models.append(entry)
+
+        return jsonify({'models': models})
+    except Exception as e:
+        logger.error(f"Error listing models: {e}")
+        return jsonify({'models': [], 'error': str(e)}), 500
+
+
+@app.route('/api/models/upload', methods=['POST'])
+def upload_model():
+    """Receive a .pt or .zip model file."""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'error': 'No file provided'}), 400
+
+        f = request.files['file']
+        if not f.filename:
+            return jsonify({'success': False, 'error': 'No file selected'}), 400
+
+        filename = secure_filename(f.filename)
+        ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+
+        if ext not in ALLOWED_MODEL_EXTENSIONS:
+            return jsonify({'success': False, 'error': f'Invalid file type .{ext}. Allowed: .pt, .zip'}), 400
+
+        # Check disk space
+        disk = shutil.disk_usage(MODELS_DIR)
+        if disk.free < 500 * 1024 * 1024:
+            return jsonify({'success': False, 'error': 'Insufficient disk space (<500MB free)'}), 507
+
+        MODELS_DIR.mkdir(parents=True, exist_ok=True)
+        save_path = MODELS_DIR / filename
+
+        # Path traversal check
+        if not save_path.resolve().parent == MODELS_DIR.resolve():
+            return jsonify({'success': False, 'error': 'Invalid filename'}), 400
+
+        f.save(str(save_path))
+
+        result_name = filename
+        result_type = 'pytorch'
+
+        if ext == 'zip':
+            # Validate NCNN zip
+            valid, msg = _validate_ncnn_zip(str(save_path))
+            if not valid:
+                save_path.unlink()
+                return jsonify({'success': False, 'error': msg}), 400
+
+            # Extract to directory named after zip (without .zip)
+            dir_name = filename.rsplit('.', 1)[0]
+            extract_dir = MODELS_DIR / dir_name
+            if extract_dir.exists():
+                shutil.rmtree(extract_dir)
+            extract_dir.mkdir()
+
+            with zipfile.ZipFile(str(save_path), 'r') as zf:
+                # Extract files, flattening if all in a single subdirectory
+                members = zf.namelist()
+                # Check if all members share a common directory prefix
+                top_dirs = set()
+                for m in members:
+                    parts = m.split('/')
+                    if len(parts) > 1:
+                        top_dirs.add(parts[0])
+                    else:
+                        top_dirs.add('')
+
+                if len(top_dirs) == 1 and '' not in top_dirs:
+                    # All files in a single subdir — flatten
+                    prefix = top_dirs.pop() + '/'
+                    for member in zf.infolist():
+                        if member.is_dir():
+                            continue
+                        member_name = member.filename[len(prefix):]
+                        if not member_name:
+                            continue
+                        target = extract_dir / member_name
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        with zf.open(member) as src, open(target, 'wb') as dst:
+                            shutil.copyfileobj(src, dst)
+                else:
+                    zf.extractall(str(extract_dir))
+
+            # Remove the zip after extraction
+            save_path.unlink()
+            result_name = dir_name
+            result_type = 'ncnn'
+
+            # Compute SHA256 of the whole directory (hash all files sorted)
+            h = hashlib.sha256()
+            for fp in sorted(extract_dir.rglob('*')):
+                if fp.is_file():
+                    with open(fp, 'rb') as hf:
+                        while True:
+                            chunk = hf.read(65536)
+                            if not chunk:
+                                break
+                            h.update(chunk)
+            sha256 = h.hexdigest()
+            sha_path = MODELS_DIR / f'{dir_name}.sha256'
+            sha_path.write_text(sha256)
+        else:
+            # .pt file — compute SHA256
+            sha256 = _compute_sha256(str(save_path))
+            sha_path = MODELS_DIR / f'{filename}.sha256'
+            sha_path.write_text(sha256)
+
+        size = save_path.stat().st_size if save_path.exists() else sum(
+            fp.stat().st_size for fp in (MODELS_DIR / result_name).rglob('*') if fp.is_file()
+        )
+
+        logger.info(f"Model uploaded: {result_name} ({result_type}, {size} bytes, sha256={sha256[:12]}...)")
+
+        return jsonify({
+            'success': True,
+            'filename': result_name,
+            'type': result_type,
+            'size': size,
+            'sha256': sha256,
+        })
+
+    except Exception as e:
+        logger.error(f"Error uploading model: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/models/download/<name>')
+def download_model(name):
+    """Serve a model file to an OWL unit for download."""
+    try:
+        # Security: prevent path traversal
+        safe_name = secure_filename(name)
+        if not safe_name:
+            return jsonify({'error': 'Invalid name'}), 400
+
+        target = MODELS_DIR / safe_name
+        if not target.resolve().parent == MODELS_DIR.resolve():
+            return jsonify({'error': 'Invalid path'}), 400
+
+        if target.is_file() and target.suffix == '.pt':
+            return send_from_directory(str(MODELS_DIR), safe_name)
+
+        elif target.is_dir():
+            # Zip NCNN directory on-the-fly
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for fp in sorted(target.rglob('*')):
+                    if fp.is_file():
+                        zf.write(fp, fp.relative_to(target))
+            buf.seek(0)
+            return send_file(buf, mimetype='application/zip',
+                             as_attachment=True, download_name=f'{safe_name}.zip')
+
+        else:
+            return jsonify({'error': 'Model not found'}), 404
+
+    except Exception as e:
+        logger.error(f"Error downloading model {name}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/models/deploy', methods=['POST'])
+def deploy_model():
+    """Send download_model commands to selected OWLs via MQTT."""
+    try:
+        data = request.json
+        if not data:
+            return jsonify({'success': False, 'error': 'No data'}), 400
+
+        model_name = data.get('model_name')
+        device_ids = data.get('device_ids', [])
+
+        if not model_name or not device_ids:
+            return jsonify({'success': False, 'error': 'Missing model_name or device_ids'}), 400
+
+        safe_name = secure_filename(model_name)
+        target = MODELS_DIR / safe_name
+
+        if not (target.is_file() or target.is_dir()):
+            return jsonify({'success': False, 'error': f'Model not found: {model_name}'}), 404
+
+        # Read SHA256 from sidecar
+        sha_path = MODELS_DIR / f'{safe_name}.sha256'
+        sha256 = sha_path.read_text().strip() if sha_path.exists() else ''
+
+        # Build download URL
+        static_ip = controller.config.get('Network', 'static_ip', fallback='localhost')
+        is_archive = target.is_dir()
+        download_url = f'https://{static_ip}/api/models/download/{safe_name}'
+
+        # Determine the filename OWL should save as
+        if is_archive:
+            dl_filename = f'{safe_name}.zip'
+        else:
+            dl_filename = safe_name
+
+        if not controller.mqtt_connected or not controller.mqtt_client:
+            return jsonify({'success': False, 'error': 'MQTT not connected'}), 503
+
+        sent_to = []
+        for device_id in device_ids:
+            topic = f'owl/{device_id}/commands'
+            payload = json.dumps({
+                'action': 'download_model',
+                'url': download_url,
+                'filename': dl_filename,
+                'sha256': sha256,
+                'is_archive': is_archive,
+            })
+            result = controller.mqtt_client.publish(topic, payload)
+            if result.rc == 0:
+                sent_to.append(device_id)
+
+        logger.info(f"Deploy {model_name} sent to {len(sent_to)} OWLs: {sent_to}")
+
+        return jsonify({
+            'success': True,
+            'message': f'Deploy command sent to {len(sent_to)} OWLs',
+            'sent_to': sent_to,
+        })
+
+    except Exception as e:
+        logger.error(f"Error deploying model: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/models/<name>', methods=['DELETE'])
+def delete_model(name):
+    """Delete a model from the library."""
+    try:
+        safe_name = secure_filename(name)
+        if not safe_name:
+            return jsonify({'success': False, 'error': 'Invalid name'}), 400
+
+        if safe_name in PROTECTED_MODEL_FILES:
+            return jsonify({'success': False, 'error': 'Cannot delete protected file'}), 400
+
+        target = MODELS_DIR / safe_name
+        if not target.resolve().parent == MODELS_DIR.resolve():
+            return jsonify({'success': False, 'error': 'Invalid path'}), 400
+
+        if target.is_file():
+            target.unlink()
+        elif target.is_dir():
+            shutil.rmtree(target)
+        else:
+            return jsonify({'success': False, 'error': 'Model not found'}), 404
+
+        # Remove SHA256 sidecar
+        sha_path = MODELS_DIR / f'{safe_name}.sha256'
+        if sha_path.exists():
+            sha_path.unlink()
+
+        logger.info(f"Model deleted: {safe_name}")
+        return jsonify({'success': True, 'message': f'Deleted {safe_name}'})
+
+    except Exception as e:
+        logger.error(f"Error deleting model: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # ---------------------------------------------------------------------------

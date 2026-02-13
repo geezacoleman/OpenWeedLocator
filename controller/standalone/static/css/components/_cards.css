@@ -58,8 +58,6 @@
     margin: 0 0 0.5rem 0;
     font-size: 0.9rem;
     color: var(--primary);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
 }
 
 .status-value {

@@ -109,6 +109,24 @@ function updateLoopTimeGauge(avgMs) {
     else fillEl.classList.add('loop-good');
 }
 
+function updateDurationGauge(durationSec) {
+    var valueEl = document.getElementById('duration-gauge-value');
+    var fillEl = document.getElementById('duration-gauge-fill');
+    if (!valueEl || !fillEl) return;
+
+    var ms = durationSec * 1000;
+    var maxMs = 500;
+    var fraction = Math.min(ms / maxMs, 1);
+
+    valueEl.textContent = ms > 0 ? ms.toFixed(0) : '--';
+    updateGaugeArc(fillEl, fraction);
+
+    fillEl.classList.remove('duration-normal', 'duration-medium', 'duration-long');
+    if (ms > 300) fillEl.classList.add('duration-long');
+    else if (ms > 150) fillEl.classList.add('duration-medium');
+    else fillEl.classList.add('duration-normal');
+}
+
 // ============================================
 // ACTUATION POLLING
 // ============================================
@@ -123,6 +141,7 @@ async function pollActuation() {
         // Update gauges
         updateSpeedGauge(data.speed_kmh || 0, data.gps_status || 'no_gps');
         updateLoopTimeGauge(data.avg_loop_time_ms || 0);
+        updateDurationGauge(data.actuation_duration || 0);
 
         // Update computed values
         var durEl = document.getElementById('actuation-duration-value');

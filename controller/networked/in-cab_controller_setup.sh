@@ -472,6 +472,9 @@ server {
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_ciphers         HIGH:!aNULL:!MD5;
 
+    # Allow large model uploads (up to 250MB)
+    client_max_body_size 250m;
+
     # OWL Controller Dashboard (Port 8000)
     location / {
         proxy_pass         http://127.0.0.1:8000;
