@@ -403,14 +403,19 @@ class RelayControl:
         self.field_data_recording = False
 
         if not self.testing:
-            try:
-                self.buzzer = Buzzer(pin='BOARD7')
-
-            except Exception as e:
-                if isinstance(e, lgpioERROR) and 'GPIO busy' in str(e):
-                    raise OWLAlreadyRunningError("OWL instance may already be running.") from e
-                else:
-                    raise
+            # Skip buzzer if BOARD7 (GPIO4) is needed by a relay
+            buzzer_pin_used = 7 in self.relay_dict.values()
+            if buzzer_pin_used:
+                logger.warning("Buzzer pin (BOARD7/GPIO4) allocated to relay — buzzer disabled")
+                self.buzzer = TestBuzzer()
+            else:
+                try:
+                    self.buzzer = Buzzer(pin='BOARD7')
+                except Exception as e:
+                    if isinstance(e, lgpioERROR) and 'GPIO busy' in str(e):
+                        raise OWLAlreadyRunningError("OWL instance may already be running.") from e
+                    else:
+                        raise
 
             for relay, board_pin in self.relay_dict.items():
                 self.relay_dict[relay] = OutputDevice(pin=f'BOARD{board_pin}')
