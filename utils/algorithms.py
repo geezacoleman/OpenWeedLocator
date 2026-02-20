@@ -210,6 +210,7 @@ def gndvi(image):
     image_out = (NIR - green) / (NIR + green)
     image_out = cv2.normalize(image_out, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
     image_out = image_out.astype('uint8')
+    cv2.imshow('gndvi', image_out)
     return image_out
 
 

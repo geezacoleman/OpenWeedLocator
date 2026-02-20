@@ -32,23 +32,19 @@ except ModuleNotFoundError:
 
 
 class RelayVis:
-    def __init__(self, relays=4, silent=False):
+    def __init__(self, relays=4):
+        self.term = Terminal()
         self.relays = relays
-        self.silent = silent
+        self.width = self.term.width
+        self.height = self.term.height
         self.box_width = 10
         self.active_color = [50, 255, 50]
         self.inactive_color = [100, 100, 100]
-        self.status_list = [False for i in range(relays)]
 
-        if not self.silent:
-            self.term = Terminal()
-            self.width = self.term.width
-            self.height = self.term.height
-            self.x_positions = [(relay * self.box_width + relay * 2) for relay in range(relays)]
+        self.status_list = [False for i in range(relays)]
+        self.x_positions = [(relay * self.box_width + relay * 2) for relay in range(relays)]
 
     def setup(self):
-        if self.silent:
-            return
         for id, pos in enumerate(self.x_positions):
             print(self.term.move_x(pos), f'Nozzle {id + 1}', end=' ')
         print('\r')
@@ -60,9 +56,6 @@ class RelayVis:
     def update(self, relay=1, status=True):
         self.status_list[relay] = status
 
-        if self.silent:
-            return
-
         if self.status_list[relay]:
             r, g, b = self.active_color
             box_str = self.term.on_color_rgb(r, g, b) + " " * (self.box_width) + self.term.normal
@@ -73,8 +66,7 @@ class RelayVis:
             print(self.term.move_x(self.x_positions[relay]) + f"{box_str}", end="", flush=True)
 
     def close(self):
-        if not self.silent:
-            print("\n", end='\n')
+        print("\n", end='\n')
 
 if __name__ == "__main__":
     box_drawer = RelayVis(relays=4)

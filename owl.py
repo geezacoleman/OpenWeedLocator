@@ -140,9 +140,9 @@ class Owl:
 
         # setup the track bars if show_display is True
         if self.show_display:
-            self.window_name = "OWL"
-            self.display_width = 600
-            cv2.namedWindow(self.window_name, cv2.WINDOW_AUTOSIZE)
+            # create trackbars for the threshold calculation
+            self.window_name = "Adjust Detection Thresholds"
+            cv2.namedWindow("Adjust Detection Thresholds", cv2.WINDOW_AUTOSIZE)
             cv2.createTrackbar("ExG-Min", self.window_name, self.exg_min, 255, nothing)
             cv2.createTrackbar("ExG-Max", self.window_name, self.exg_max, 255, nothing)
             cv2.createTrackbar("Hue-Min", self.window_name, self.hue_min, 179, nothing)
@@ -521,7 +521,7 @@ class Owl:
 
         if self.show_display:
             self.relay_vis = self.relay_controller.relay_vis
-            self.relay_vis.silent = True
+            self.relay_vis.setup()
             self.relay_controller.vis = True
 
         try:
@@ -775,23 +775,23 @@ class Owl:
 
                     if self.record_video:
                         if self.video_writer is None:
+                            # Initialize video writer
                             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
                             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                             video_filename = f"owl_recording_{timestamp}.mp4"
                             self.video_writer = cv2.VideoWriter(video_filename, fourcc, 30.0,
                                                                 (frame.shape[1], frame.shape[0]))
+
+                        # Write the frame with detections
                         self.video_writer.write(image_out)
 
+                    cv2.putText(image_out, f'OWL-gorithm: {algorithm}', (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
+                                (80, 80, 255), 1)
+                    cv2.putText(image_out, f'Press "S" to save {algorithm} thresholds to file.',
+                                (20, int(image_out.shape[1] * 0.72)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 80, 255), 1)
                     h, w = image_out.shape[:2]
-                    display_frame = cv2.resize(image_out, (self.display_width, int(h * self.display_width / w))) if w != self.display_width else image_out
-                    nozzle_states = self.relay_vis.status_list if self.relay_vis else [False] * self.relay_num
-                    avg_fps = 1000.0 / self._avg_loop_time_ms if self._avg_loop_time_ms > 0 else 0
-                    status_bar = self._build_status_bar(
-                        self.display_width, algorithm, nozzle_states,
-                        self.record_video, avg_fps, self._detection_enable,
-                        self._image_sample_enable)
-                    composite = np.vstack([display_frame, status_bar])
-                    cv2.imshow(self.window_name, composite)
+                    display_frame = cv2.resize(image_out, (600, int(h * 600 / w))) if w != 600 else image_out
+                    cv2.imshow("Detection Output", display_frame)
 
                 k = cv2.waitKey(1) & 0xFF
                 if k == ord('s'):
@@ -799,6 +799,7 @@ class Owl:
                     self.logger.info("[INFO] Parameters saved.")
 
                 elif k == ord('r'):
+                    # Toggle video recording
                     self.record_video = not self.record_video
                     if self.record_video:
                         self.logger.info("[INFO] Started video recording.")
@@ -809,11 +810,16 @@ class Owl:
                         self.logger.info("[INFO] Stopped video recording.")
 
                 elif k == 27:
+                    if self.show_display:
+                        self.relay_controller.relay_vis.close()
+
                     self.logger.info("[INFO] Stopped.")
                     self.stop()
                     break
 
         except KeyboardInterrupt:
+            if self.show_display:
+                self.relay_controller.relay_vis.close()
             self.logger.info("[INFO] Stopped.")
             self.stop()
 
@@ -1203,63 +1209,6 @@ class Owl:
                 self.logger.info("Git information not available.")
         except Exception as e:
             self.logger.warning(f"Failed to retrieve Git information: {e}")
-
-    def _build_status_bar(self, width, algorithm, nozzle_states, recording, avg_fps,
-                          detection_on, sampling_on):
-        """Build a composite status bar as a numpy array for the display window.
-
-        Uses only cv2 drawing primitives (putText, circle, rectangle) which are
-        sub-millisecond on Pi 4/5. The bar is vstack'd below the detection frame.
-        """
-        bar = np.zeros((40, width, 3), dtype=np.uint8)
-        bar[:] = (40, 40, 40)
-        cv2.line(bar, (0, 0), (width, 0), (80, 80, 80), 1)
-
-        y_text = 26
-        font = cv2.FONT_HERSHEY_SIMPLEX
-
-        # Algorithm name
-        cv2.putText(bar, algorithm.upper(), (10, y_text), font, 0.45, (180, 180, 255), 1)
-
-        # FPS
-        fps_text = f"{avg_fps:.0f} FPS"
-        cv2.putText(bar, fps_text, (100, y_text), font, 0.45, (200, 200, 200), 1)
-
-        # Detection / Recording status indicators
-        det_x = 180
-        det_color = (50, 255, 50) if detection_on else (100, 100, 100)
-        cv2.circle(bar, (det_x, 20), 5, det_color, -1)
-        cv2.putText(bar, "DET", (det_x + 10, y_text), font, 0.35, det_color, 1)
-
-        rec_x = 240
-        if recording:
-            rec_color = (0, 0, 255)
-        elif sampling_on:
-            rec_color = (50, 200, 255)
-        else:
-            rec_color = (100, 100, 100)
-        cv2.circle(bar, (rec_x, 20), 5, rec_color, -1)
-        rec_label = "REC" if recording else ("SAV" if sampling_on else "SAV")
-        cv2.putText(bar, rec_label, (rec_x + 10, y_text), font, 0.35, rec_color, 1)
-
-        # Nozzle indicators
-        nozzle_start = 300
-        nozzle_spacing = 30
-        for i, active in enumerate(nozzle_states):
-            cx = nozzle_start + i * nozzle_spacing
-            if cx + 20 > width:
-                break
-            color = (50, 255, 50) if active else (100, 100, 100)
-            cv2.circle(bar, (cx, 20), 8, color, -1)
-            cv2.putText(bar, str(i + 1), (cx - 4, 24), font, 0.3, (0, 0, 0), 1)
-
-        # Key bindings
-        keys_text = "[S]ave [R]ec [ESC]Quit"
-        keys_w = cv2.getTextSize(keys_text, font, 0.33, 1)[0][0]
-        cv2.putText(bar, keys_text, (width - keys_w - 8, y_text), font, 0.33,
-                    (130, 130, 130), 1)
-
-        return bar
 
 
 # business end of things
