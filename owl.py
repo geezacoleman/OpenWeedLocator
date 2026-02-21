@@ -491,6 +491,7 @@ class Owl:
                 self.show_display = False
             else:
                 self.relay_vis = self.relay_controller.relay_vis
+                self.relay_vis.silent = True  # no terminal output in display mode
                 self.relay_controller.vis = True
 
                 initial_values = {
@@ -589,6 +590,8 @@ class Owl:
         last_fps_time = time.time()
         fps_frame_count = 0
         image_out = None
+        boxes = None
+        weed_centres = None
 
         try:
             while self._running:
@@ -601,15 +604,17 @@ class Owl:
                     self.stop()
                     break
 
-                # When display is active, read slider values and drain pending
-                # MQTT updates.  The display object lives on the main thread,
-                # but IntVar.get()/set() is safe from bg threads in CPython
-                # (GIL protects the reference swap).
+                # Push raw frame to display for focus tab + Smart Set
+                if self.show_display and self.display:
+                    self.display.push_raw_frame(frame)
+
+                # When display is active, read cached slider values and drain
+                # pending MQTT updates via plain Python attrs (no Tcl calls).
                 if self.show_display and self.display:
                     if self._pending_slider_updates:
                         pending = self._pending_slider_updates
                         self._pending_slider_updates = {}
-                        self.display.apply_pending_slider_updates(pending)
+                        self.display.request_slider_update(pending)
 
                     vals = self.display.get_slider_values()
                     self.exg_min = vals['exg_min']
@@ -634,7 +639,7 @@ class Owl:
                             if self.dash:
                                 self.dash.state.pop('algorithm_error', None)
                             if self.display:
-                                self.display.set_algorithm_label(algorithm)
+                                self.display.request_algorithm_label(algorithm)
                         except Exception as e:
                             self.logger.error(f"Failed to load detector for {self._pending_algorithm}: {e}")
                             if self.dash:
