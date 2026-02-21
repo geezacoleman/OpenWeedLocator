@@ -846,7 +846,7 @@ class Owl:
 
                 # Push frame to display window
                 if self.show_display and self.display:
-                    if not self._detection_enable:
+                    if image_out is None:
                         image_out = frame.copy()
 
                     if self.record_video:
