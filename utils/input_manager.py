@@ -1,7 +1,6 @@
 import time
 import platform
 import configparser
-import cv2
 import logging
 
 import utils.error_manager as errors
@@ -237,16 +236,18 @@ class AdvancedController:
         self.owl.brightness_min = settings['brightness_min']
         self.owl.brightness_max = settings['brightness_max']
 
-        # Update trackbars if show_display is True
+        # Queue slider updates for the main thread display
         if self.owl.show_display:
-            cv2.setTrackbarPos("ExG-Min", self.owl.window_name, self.owl.exg_min)
-            cv2.setTrackbarPos("ExG-Max", self.owl.window_name, self.owl.exg_max)
-            cv2.setTrackbarPos("Hue-Min", self.owl.window_name, self.owl.hue_min)
-            cv2.setTrackbarPos("Hue-Max", self.owl.window_name, self.owl.hue_max)
-            cv2.setTrackbarPos("Sat-Min", self.owl.window_name, self.owl.saturation_min)
-            cv2.setTrackbarPos("Sat-Max", self.owl.window_name, self.owl.saturation_max)
-            cv2.setTrackbarPos("Bright-Min", self.owl.window_name, self.owl.brightness_min)
-            cv2.setTrackbarPos("Bright-Max", self.owl.window_name, self.owl.brightness_max)
+            self.owl._pending_slider_updates.update({
+                'ExG-Min': self.owl.exg_min,
+                'ExG-Max': self.owl.exg_max,
+                'Hue-Min': self.owl.hue_min,
+                'Hue-Max': self.owl.hue_max,
+                'Sat-Min': self.owl.saturation_min,
+                'Sat-Max': self.owl.saturation_max,
+                'Bright-Min': self.owl.brightness_min,
+                'Bright-Max': self.owl.brightness_max,
+            })
 
     def set_detection_mode(self, mode):
         try:

@@ -222,43 +222,43 @@ class TestConcurrency:
 
 
 @pytest.mark.unit
-class TestTrackbarQueue:
-    """Tests for the trackbar queue (cv2 thread-safety fix)."""
+class TestSliderQueue:
+    """Tests for the slider update queue (display thread-safety)."""
 
-    def test_trackbar_queued_when_display_active(self, mqtt_publisher, mock_owl):
-        """When show_display=True, trackbar updates are queued, not called directly."""
+    def test_slider_queued_when_display_active(self, mqtt_publisher, mock_owl):
+        """When show_display=True, slider updates are queued."""
         mock_owl.show_display = True
-        mock_owl._pending_trackbar_updates = {}
+        mock_owl._pending_slider_updates = {}
 
         mqtt_publisher._update_greenonbrown_param('exg_min', 42)
 
-        assert mock_owl._pending_trackbar_updates.get('ExG-Min') == 42
+        assert mock_owl._pending_slider_updates.get('ExG-Min') == 42
         assert mock_owl.exg_min == 42
 
-    def test_trackbar_not_queued_when_display_off(self, mqtt_publisher, mock_owl):
-        """When show_display=False, no trackbar updates are queued."""
+    def test_slider_not_queued_when_display_off(self, mqtt_publisher, mock_owl):
+        """When show_display=False, no slider updates are queued."""
         mock_owl.show_display = False
-        mock_owl._pending_trackbar_updates = {}
+        mock_owl._pending_slider_updates = {}
 
         mqtt_publisher._update_greenonbrown_param('hue_max', 100)
 
-        assert len(mock_owl._pending_trackbar_updates) == 0
+        assert len(mock_owl._pending_slider_updates) == 0
         assert mock_owl.hue_max == 100
 
-    def test_sensitivity_preset_queues_all_trackbars(self, mqtt_publisher, mock_owl, tmp_config_dir):
-        """Applying a sensitivity preset queues all 8 trackbar updates."""
+    def test_sensitivity_preset_queues_all_sliders(self, mqtt_publisher, mock_owl, tmp_config_dir):
+        """Applying a sensitivity preset queues all 8 slider updates."""
         mock_owl.show_display = True
-        mock_owl._pending_trackbar_updates = {}
+        mock_owl._pending_slider_updates = {}
 
         # The preset file must exist for this to work
         mqtt_publisher._apply_sensitivity_preset('low')
 
         # If the config file doesn't exist the method logs and returns,
-        # so only assert when trackbar updates were actually queued
-        if mock_owl._pending_trackbar_updates:
-            assert 'ExG-Min' in mock_owl._pending_trackbar_updates
-            assert 'Bright-Max' in mock_owl._pending_trackbar_updates
-            assert len(mock_owl._pending_trackbar_updates) == 8
+        # so only assert when slider updates were actually queued
+        if mock_owl._pending_slider_updates:
+            assert 'ExG-Min' in mock_owl._pending_slider_updates
+            assert 'Bright-Max' in mock_owl._pending_slider_updates
+            assert len(mock_owl._pending_slider_updates) == 8
 
 
 @pytest.mark.unit

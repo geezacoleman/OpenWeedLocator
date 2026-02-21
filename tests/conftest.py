@@ -143,9 +143,9 @@ def mock_owl(tmp_config_dir):
     owl.crop_buffer_px = 20
     owl.inference_resolution = 320
 
-    # Display and trackbar queue
+    # Display and slider queue
     owl.show_display = False
-    owl._pending_trackbar_updates = {}
+    owl._pending_slider_updates = {}
 
     # Additional detection params
     owl.min_detection_area = 10

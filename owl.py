@@ -90,10 +90,6 @@ except ImportError as e:
 logger.info("All required modules imported successfully")
 
 
-def nothing(x):
-    pass
-
-
 class Owl:
     def __init__(self, show_display=False,
                  input_file_or_directory=None,
@@ -138,19 +134,9 @@ class Owl:
         # time spent on each image when looping over a directory
         self.image_loop_time = self.config.getint('Visualisation', 'image_loop_time')
 
-        # setup the track bars if show_display is True
-        if self.show_display:
-            # create trackbars for the threshold calculation
-            self.window_name = "Adjust Detection Thresholds"
-            cv2.namedWindow("Adjust Detection Thresholds", cv2.WINDOW_AUTOSIZE)
-            cv2.createTrackbar("ExG-Min", self.window_name, self.exg_min, 255, nothing)
-            cv2.createTrackbar("ExG-Max", self.window_name, self.exg_max, 255, nothing)
-            cv2.createTrackbar("Hue-Min", self.window_name, self.hue_min, 179, nothing)
-            cv2.createTrackbar("Hue-Max", self.window_name, self.hue_max, 179, nothing)
-            cv2.createTrackbar("Sat-Min", self.window_name, self.saturation_min, 255, nothing)
-            cv2.createTrackbar("Sat-Max", self.window_name, self.saturation_max, 255, nothing)
-            cv2.createTrackbar("Bright-Min", self.window_name, self.brightness_min, 255, nothing)
-            cv2.createTrackbar("Bright-Max", self.window_name, self.brightness_max, 255, nothing)
+        # Display window is created lazily inside hoot() so tkinter
+        # initialisation happens on the main thread.
+        self.display = None
 
         self.resolution = (self.config.getint('Camera', 'resolution_width'),
                            self.config.getint('Camera', 'resolution_height'))
@@ -412,7 +398,7 @@ class Owl:
         self.inference_resolution = self.config.getint('GreenOnGreen', 'inference_resolution', fallback=320)
         self.crop_buffer_px = self.config.getint('GreenOnGreen', 'crop_buffer_px', fallback=20)
         self._pending_algorithm = None
-        self._pending_trackbar_updates = {}
+        self._pending_slider_updates = {}
         self._pending_model = None
         self._pending_detect_classes = None
         self._gog_detector = None
@@ -458,24 +444,18 @@ class Owl:
     def hoot(self):
         self.record_video = False  # Flag to control video recording
         self.video_writer = None
-        image_out = None
+        self._running = True
 
         algorithm = self.config.get('System', 'algorithm')
         log_fps = self.config.getboolean('DataCollection', 'log_fps')
         if self.controller:
             self.controller.update_state()
 
-        # track framecount
-        frame_count = 0
-        last_fps_time = time.time()
-        fps_frame_count = 0
-
         # GoG shared config (used by both gog and gog-hybrid)
         self._model_path = self.config.get('GreenOnGreen', 'model_path')
         self._gog_confidence = self.config.getfloat('GreenOnGreen', 'confidence')
         detect_classes_str = self.config.get('GreenOnGreen', 'detect_classes', fallback='')
         self._detect_classes_list = [c.strip() for c in detect_classes_str.split(',') if c.strip()]
-        detect_classes = self._detect_classes_list or None
         actuation_mode = self.config.get('GreenOnGreen', 'actuation_mode', fallback='centre')
         min_detection_pixels = self.config.getint('GreenOnGreen', 'min_detection_pixels', fallback=50)
 
@@ -484,89 +464,179 @@ class Owl:
         self.min_detection_area = self.config.getint('GreenOnBrown', 'min_detection_area')
         self.invert_hue = self.config.getboolean('GreenOnBrown', 'invert_hue')
 
-        def _create_detector(algo):
-            """Three-way detector factory."""
-            current_classes = self._detect_classes_list or None
-            if algo == 'gog':
-                from utils.greenongreen import GreenOnGreen
-                return GreenOnGreen(
-                    model_path=self._model_path,
-                    confidence=self._gog_confidence,
-                    detect_classes=current_classes
-                )
-            elif algo == 'gog-hybrid':
-                from utils.greenongreen import GreenOnGreen
-                return GreenOnGreen(
-                    model_path=self._model_path,
-                    confidence=self._gog_confidence,
-                    detect_classes=current_classes,
-                    hybrid_mode=True,
-                    inference_resolution=self.inference_resolution,
-                    crop_buffer_px=self.crop_buffer_px
-                )
-            else:
-                return GreenOnBrown(algorithm=algo)
+        self._algorithm = algorithm
+        self._log_fps = log_fps
+        self._actuation_mode = actuation_mode
+        self._min_detection_pixels = min_detection_pixels
 
         try:
-            weed_detector = _create_detector(algorithm)
+            self._weed_detector = self._create_detector(algorithm)
             if algorithm in ('gog', 'gog-hybrid'):
-                self._gog_detector = weed_detector
+                self._gog_detector = self._weed_detector
 
         except Exception as e:
             self.logger.error(f"[ERROR] Failed to create detector for '{algorithm}': {e}")
             self.logger.error("[ERROR] OWL will continue running without detection. Change algorithm via dashboard to recover.")
-            weed_detector = None
+            self._weed_detector = None
             if self.dash:
                 self.dash.state['algorithm_error'] = str(e)
 
         if self.show_display:
+            from utils.display_manager import OWLDisplay, is_display_available
+
+            if not is_display_available():
+                self.logger.warning(
+                    "show_display=True but no display available. "
+                    "Falling back to headless mode.")
+                self.show_display = False
+            else:
+                self.relay_vis = self.relay_controller.relay_vis
+                self.relay_controller.vis = True
+
+                initial_values = {
+                    'exg_min': self.exg_min, 'exg_max': self.exg_max,
+                    'hue_min': self.hue_min, 'hue_max': self.hue_max,
+                    'saturation_min': self.saturation_min,
+                    'saturation_max': self.saturation_max,
+                    'brightness_min': self.brightness_min,
+                    'brightness_max': self.brightness_max,
+                }
+
+                self.display = OWLDisplay(
+                    initial_values=initial_values,
+                    algorithm=algorithm,
+                    on_save=self._on_display_save,
+                    on_record=self._on_display_record,
+                    on_quit=self._on_display_quit,
+                )
+
+                # Run the detection loop in a background thread;
+                # the main thread stays in root.mainloop().
+                worker = threading.Thread(target=self._detection_loop, daemon=True)
+                worker.start()
+                self.display.start_update_loop(interval_ms=33)
+                self.display.mainloop()
+                return
+
+        # Headless path — run detection on the current (main) thread
+        if not self.show_display:
             self.relay_vis = self.relay_controller.relay_vis
             self.relay_vis.setup()
             self.relay_controller.vis = True
 
+        self._detection_loop()
+
+    # ---- display callbacks ----
+
+    def _on_display_save(self):
+        self.save_parameters()
+        self.logger.info("[INFO] Parameters saved.")
+
+    def _on_display_record(self):
+        self.record_video = not self.record_video
+        if self.record_video:
+            self.logger.info("[INFO] Started video recording.")
+        else:
+            if self.video_writer:
+                self.video_writer.release()
+                self.video_writer = None
+            self.logger.info("[INFO] Stopped video recording.")
+
+    def _on_display_quit(self):
+        self._running = False
+        if self.relay_vis:
+            self.relay_vis.close()
+        self.logger.info("[INFO] Stopped.")
+        if self.display:
+            self.display.destroy()
+        self.stop()
+
+    # ---- detector factory ----
+
+    def _create_detector(self, algo):
+        """Three-way detector factory."""
+        current_classes = self._detect_classes_list or None
+        if algo == 'gog':
+            from utils.greenongreen import GreenOnGreen
+            return GreenOnGreen(
+                model_path=self._model_path,
+                confidence=self._gog_confidence,
+                detect_classes=current_classes
+            )
+        elif algo == 'gog-hybrid':
+            from utils.greenongreen import GreenOnGreen
+            return GreenOnGreen(
+                model_path=self._model_path,
+                confidence=self._gog_confidence,
+                detect_classes=current_classes,
+                hybrid_mode=True,
+                inference_resolution=self.inference_resolution,
+                crop_buffer_px=self.crop_buffer_px
+            )
+        else:
+            return GreenOnBrown(algorithm=algo)
+
+    # ---- main detection loop (runs headless OR on a bg thread) ----
+
+    def _detection_loop(self):
+        algorithm = self._algorithm
+        weed_detector = self._weed_detector
+        log_fps = self._log_fps
+        actuation_mode = self._actuation_mode
+        min_detection_pixels = self._min_detection_pixels
+
+        frame_count = 0
+        last_fps_time = time.time()
+        fps_frame_count = 0
+        image_out = None
+
         try:
-            while True:
+            while self._running:
                 loop_start = time.time()
                 frame = self.cam.read()
 
                 if frame is None:
                     self.logger.info("[INFO] Frame is None. Stopped.")
+                    self._running = False
                     self.stop()
                     break
 
-                # Drain queued trackbar updates from MQTT thread (thread-safe)
-                if self.show_display and self._pending_trackbar_updates:
-                    pending = self._pending_trackbar_updates
-                    self._pending_trackbar_updates = {}
-                    for tb_name, tb_val in pending.items():
-                        cv2.setTrackbarPos(tb_name, self.window_name, tb_val)
+                # When display is active, read slider values and drain pending
+                # MQTT updates.  The display object lives on the main thread,
+                # but IntVar.get()/set() is safe from bg threads in CPython
+                # (GIL protects the reference swap).
+                if self.show_display and self.display:
+                    if self._pending_slider_updates:
+                        pending = self._pending_slider_updates
+                        self._pending_slider_updates = {}
+                        self.display.apply_pending_slider_updates(pending)
 
-                # retrieve the trackbar positions for thresholds
-                if self.show_display:
-                    self.exg_min = cv2.getTrackbarPos("ExG-Min", self.window_name)
-                    self.exg_max = cv2.getTrackbarPos("ExG-Max", self.window_name)
-                    self.hue_min = cv2.getTrackbarPos("Hue-Min", self.window_name)
-                    self.hue_max = cv2.getTrackbarPos("Hue-Max", self.window_name)
-                    self.saturation_min = cv2.getTrackbarPos("Sat-Min", self.window_name)
-                    self.saturation_max = cv2.getTrackbarPos("Sat-Max", self.window_name)
-                    self.brightness_min = cv2.getTrackbarPos("Bright-Min", self.window_name)
-                    self.brightness_max = cv2.getTrackbarPos("Bright-Max", self.window_name)
+                    vals = self.display.get_slider_values()
+                    self.exg_min = vals['exg_min']
+                    self.exg_max = vals['exg_max']
+                    self.hue_min = vals['hue_min']
+                    self.hue_max = vals['hue_max']
+                    self.saturation_min = vals['saturation_min']
+                    self.saturation_max = vals['saturation_max']
+                    self.brightness_min = vals['brightness_min']
+                    self.brightness_max = vals['brightness_max']
 
                 # pass image, thresholds to green_on_brown function
                 if self._detection_enable:
                     # Live algorithm switching
                     if self._pending_algorithm and (weed_detector is None or self._pending_algorithm != algorithm):
                         try:
-                            weed_detector = _create_detector(self._pending_algorithm)
+                            weed_detector = self._create_detector(self._pending_algorithm)
                             algorithm = self._pending_algorithm
                             if algorithm in ('gog', 'gog-hybrid'):
                                 self._gog_detector = weed_detector
                             self.logger.info(f"Live algorithm switch to: {algorithm}")
                             if self.dash:
                                 self.dash.state.pop('algorithm_error', None)
+                            if self.display:
+                                self.display.set_algorithm_label(algorithm)
                         except Exception as e:
                             self.logger.error(f"Failed to load detector for {self._pending_algorithm}: {e}")
-                            # Revert — keep using current weed_detector and algorithm
                             if self.dash:
                                 self.dash.state['algorithm'] = algorithm
                                 self.dash.state['algorithm_error'] = str(e)
@@ -578,7 +648,7 @@ class Owl:
                         self._pending_model = None
                         try:
                             self._model_path = new_model
-                            weed_detector = _create_detector(algorithm)
+                            weed_detector = self._create_detector(algorithm)
                             if algorithm in ('gog', 'gog-hybrid'):
                                 self._gog_detector = weed_detector
                             self.logger.info(f"Live model switch to: {new_model}")
@@ -769,57 +839,29 @@ class Owl:
                         fps_frame_count = 0
                         last_fps_time = time.time()
 
-                if self.show_display:
+                # Push frame to display window
+                if self.show_display and self.display:
                     if not self._detection_enable:
                         image_out = frame.copy()
 
                     if self.record_video:
                         if self.video_writer is None:
-                            # Initialize video writer
                             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
                             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                             video_filename = f"owl_recording_{timestamp}.mp4"
                             self.video_writer = cv2.VideoWriter(video_filename, fourcc, 30.0,
                                                                 (frame.shape[1], frame.shape[0]))
-
-                        # Write the frame with detections
                         self.video_writer.write(image_out)
 
                     cv2.putText(image_out, f'OWL-gorithm: {algorithm}', (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
                                 (80, 80, 255), 1)
                     cv2.putText(image_out, f'Press "S" to save {algorithm} thresholds to file.',
                                 (20, int(image_out.shape[1] * 0.72)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 80, 255), 1)
-                    h, w = image_out.shape[:2]
-                    display_frame = cv2.resize(image_out, (600, int(h * 600 / w))) if w != 600 else image_out
-                    cv2.imshow("Detection Output", display_frame)
-
-                k = cv2.waitKey(1) & 0xFF
-                if k == ord('s'):
-                    self.save_parameters()
-                    self.logger.info("[INFO] Parameters saved.")
-
-                elif k == ord('r'):
-                    # Toggle video recording
-                    self.record_video = not self.record_video
-                    if self.record_video:
-                        self.logger.info("[INFO] Started video recording.")
-                    else:
-                        if self.video_writer:
-                            self.video_writer.release()
-                            self.video_writer = None
-                        self.logger.info("[INFO] Stopped video recording.")
-
-                elif k == 27:
-                    if self.show_display:
-                        self.relay_controller.relay_vis.close()
-
-                    self.logger.info("[INFO] Stopped.")
-                    self.stop()
-                    break
+                    self.display.push_frame(image_out)
 
         except KeyboardInterrupt:
-            if self.show_display:
-                self.relay_controller.relay_vis.close()
+            if self.relay_vis:
+                self.relay_vis.close()
             self.logger.info("[INFO] Stopped.")
             self.stop()
 
@@ -886,6 +928,13 @@ class Owl:
             # Stop camera
             if hasattr(self, 'cam') and self.cam:
                 safe_stop(self.cam, 'camera', fallback_to_terminate=False)
+
+            # Destroy display window
+            if hasattr(self, 'display') and self.display:
+                try:
+                    self.display.destroy()
+                except Exception:
+                    pass
 
         except Exception as e:
             self.logger.error(f"Critical error during shutdown: {e}", exc_info=True)

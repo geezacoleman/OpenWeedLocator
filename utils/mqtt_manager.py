@@ -874,9 +874,9 @@ class OWLMQTTPublisher:
             self.owl_instance.brightness_min = config.getint('GreenOnBrown', 'brightness_min')
             self.owl_instance.brightness_max = config.getint('GreenOnBrown', 'brightness_max')
 
-            # Queue trackbar updates for main thread (cv2 HighGUI is not thread-safe)
+            # Queue slider updates for the display (main thread)
             if self.owl_instance.show_display:
-                self.owl_instance._pending_trackbar_updates.update({
+                self.owl_instance._pending_slider_updates.update({
                     'ExG-Min': self.owl_instance.exg_min,
                     'ExG-Max': self.owl_instance.exg_max,
                     'Hue-Min': self.owl_instance.hue_min,
@@ -926,9 +926,9 @@ class OWLMQTTPublisher:
             # Update the Owl instance attribute directly
             setattr(self.owl_instance, param_name, param_value)
 
-            # Queue trackbar update for main thread (cv2 HighGUI is not thread-safe)
+            # Queue slider update for the display (main thread)
             if self.owl_instance.show_display:
-                trackbar_map = {
+                slider_map = {
                     'exg_min': 'ExG-Min',
                     'exg_max': 'ExG-Max',
                     'hue_min': 'Hue-Min',
@@ -938,9 +938,9 @@ class OWLMQTTPublisher:
                     'brightness_min': 'Bright-Min',
                     'brightness_max': 'Bright-Max'
                 }
-                trackbar_name = trackbar_map.get(param_name)
-                if trackbar_name:
-                    self.owl_instance._pending_trackbar_updates[trackbar_name] = param_value
+                slider_name = slider_map.get(param_name)
+                if slider_name:
+                    self.owl_instance._pending_slider_updates[slider_name] = param_value
 
             self.logger.info(f"Updated {param_name} = {param_value}")
 
