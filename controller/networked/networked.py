@@ -230,8 +230,8 @@ class CentralController:
         self.mqtt_connected = False
         self.mqtt_lock = threading.Lock()
 
-        # REDUCED TIMEOUT: Mark offline after 5 seconds instead of 10
-        self.offline_timeout = 5.0  # seconds
+        # Allow 7 missed 2s heartbeats before marking offline
+        self.offline_timeout = 15.0  # seconds
 
         # MQTT client
         self.mqtt_client = None
@@ -293,7 +293,11 @@ class CentralController:
         return config
 
     def setup_mqtt(self):
-        """Initialize and start MQTT client"""
+        """Initialize and start MQTT client.
+
+        If the broker is unreachable, starts a background reconnect thread
+        with exponential backoff instead of giving up.
+        """
         logger.info(f"Setting up MQTT (ID: {self.client_id})")
 
         self.mqtt_client = mqtt.Client(client_id=self.client_id)
@@ -301,17 +305,40 @@ class CentralController:
         self.mqtt_client.on_disconnect = self._on_disconnect
         self.mqtt_client.on_message = self._on_message
 
-        # Set reconnect behavior
+        # Enable paho's built-in auto-reconnect after initial connection is lost
         self.mqtt_client.reconnect_delay_set(min_delay=1, max_delay=60)
 
+        if not self._try_mqtt_connect():
+            # Start background reconnect instead of giving up
+            thread = threading.Thread(target=self._mqtt_background_reconnect, daemon=True)
+            thread.start()
+
+    def _try_mqtt_connect(self):
+        """Attempt a single MQTT connection. Returns True on success."""
         try:
             logger.info(f"Connecting to MQTT broker at {self.broker_host}:{self.broker_port}")
             self.mqtt_client.connect(self.broker_host, self.broker_port, 60)
             self.mqtt_client.loop_start()
             logger.info("MQTT client loop started")
+            return True
         except Exception as e:
-            logger.error(f"Failed to connect to MQTT broker: {e}")
-            self.mqtt_client = None
+            logger.warning(f"Failed to connect to MQTT broker: {e}")
+            return False
+
+    def _mqtt_background_reconnect(self):
+        """Retry broker connection with exponential backoff (2s -> 60s cap)."""
+        delay = 2
+        max_delay = 60
+
+        while not self.mqtt_connected:
+            logger.info(f"MQTT reconnect: retrying in {delay}s...")
+            time.sleep(delay)
+
+            if self._try_mqtt_connect():
+                logger.info("MQTT reconnect: connection attempt sent")
+                break
+
+            delay = min(delay * 2, max_delay)
 
     def _on_connect(self, client, userdata, flags, rc):
         """MQTT connection callback"""
@@ -393,6 +420,13 @@ class CentralController:
                 else:
                     self.owls_state[device_id][topic_type] = payload
 
+                # LWT handling: if status message says disconnected, mark offline immediately
+                if topic_type == 'status':
+                    if not payload.get('connected', True) or not payload.get('owl_running', True):
+                        self.owls_state[device_id]['connected'] = False
+                        logger.info(f"{device_id} marked offline via LWT/status message")
+                        return
+
                 self.owls_state[device_id]['last_seen'] = current_time
                 self.owls_state[device_id]['connected'] = True
 
@@ -421,7 +455,7 @@ class CentralController:
                                 state['connected'] = False
                                 logger.warning(f"{device_id} marked offline ({time_since:.1f}s since last seen)")
 
-                        if time_since > (self.offline_timeout * 2):
+                        if time_since > (self.offline_timeout * 4):
                             logger.info(f"Removing stale OWL: {device_id} ({time_since:.1f}s since last seen)")
                             del self.owls_state[device_id]
 
@@ -476,6 +510,11 @@ class CentralController:
             payload = json.dumps({'action': 'set_model', 'value': merged['model']})
             self.mqtt_client.publish(topic, payload)
             logger.info(f"Pushed model={merged['model']} to {device_id}")
+
+        if 'tracking_enabled' in merged:
+            payload = json.dumps({'action': 'set_tracking', 'value': merged['tracking_enabled']})
+            self.mqtt_client.publish(topic, payload)
+            logger.info(f"Pushed tracking_enabled={merged['tracking_enabled']} to {device_id}")
 
     def _actuation_broadcast_loop(self):
         """Broadcast computed actuation params to all connected OWLs every 1s."""
@@ -631,7 +670,7 @@ class CentralController:
                     'name': ini_file.stem,
                     'filename': ini_file.name,
                     'path': str(ini_file),
-                    'is_default': ini_file.name.startswith('DAY_SENSITIVITY_')
+                    'is_default': ini_file.name in ('GENERAL_CONFIG.ini', 'CONTROLLER.ini')
                 })
         return presets
 
@@ -718,6 +757,13 @@ class CentralController:
         elif action == 'set_model':
             payload = {'action': 'set_model', 'value': value}
             self.desired_state.setdefault('all', {})['model'] = value
+
+        elif action == 'set_tracking':
+            payload = {'action': 'set_tracking', 'value': value}
+            self.desired_state.setdefault('all', {})['tracking_enabled'] = value
+            with self.mqtt_lock:
+                for oid in self.owls_state:
+                    self.desired_state.setdefault(oid, {})['tracking_enabled'] = value
 
         elif action == 'set_sensitivity':
             payload = {'action': 'set_sensitivity_level', 'level': value}
@@ -1014,13 +1060,38 @@ def push_preset_to_device(device_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/sensitivity/presets', methods=['GET'])
+def get_sensitivity_presets():
+    """Get sensitivity presets from connected OWL state."""
+    try:
+        if not controller:
+            return jsonify({'success': False, 'error': 'Controller not initialized'}), 500
+
+        # Get presets from the first connected OWL's state
+        presets = []
+        active = 'medium'
+        for device_id, state in controller.owls_state.items():
+            presets = state.get('sensitivity_presets', [])
+            active = state.get('sensitivity_level', 'medium')
+            break  # Use first OWL
+
+        return jsonify({
+            'success': True,
+            'presets': presets,
+            'active': active
+        })
+    except Exception as e:
+        logger.error(f"Error getting sensitivity presets: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/config/library', methods=['GET'])
 def list_config_library():
     """List all config files (presets + custom saved) — mirrors standalone /api/config/list"""
     try:
         config_dir = Path(__file__).parent.parent.parent / 'config'
         configs = []
-        protected = ['DAY_SENSITIVITY_1.ini', 'DAY_SENSITIVITY_2.ini', 'DAY_SENSITIVITY_3.ini', 'CONTROLLER.ini']
+        protected = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini']
 
         if config_dir.exists():
             for f in sorted(config_dir.glob('*.ini')):
@@ -1066,7 +1137,7 @@ def save_to_config_library():
         new_config_path = config_dir / safe_name
 
         # Don't allow overwriting protected configs (same as standalone)
-        protected = ['DAY_SENSITIVITY_1.ini', 'DAY_SENSITIVITY_2.ini', 'DAY_SENSITIVITY_3.ini', 'CONTROLLER.ini']
+        protected = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini']
         if safe_name in protected:
             return jsonify({
                 'success': False,
@@ -1104,7 +1175,7 @@ def save_to_config_library():
 def delete_from_config_library(name):
     """Delete a custom config from library — mirrors standalone /api/config/delete"""
     try:
-        protected = ['DAY_SENSITIVITY_1.ini', 'DAY_SENSITIVITY_2.ini', 'DAY_SENSITIVITY_3.ini', 'CONTROLLER.ini']
+        protected = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini']
         if name in protected:
             return jsonify({'success': False, 'error': 'Cannot delete default configs'}), 400
 
@@ -1154,19 +1225,30 @@ def restart_owl(device_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+def _resolve_owl_host(device_id):
+    """Get the best host for an OWL: static IP from MQTT state, fallback to .local mDNS."""
+    with controller.mqtt_lock:
+        state = controller.owls_state.get(device_id, {})
+    ip = state.get('static_ip', '')
+    if ip:
+        return ip
+    return f"{device_id}.local"
+
+
 @app.route('/api/snapshot/<device_id>')
 def snapshot_proxy(device_id):
     """Proxy single JPEG frame from OWL device (95% quality)."""
     device_id = device_id.replace('_', '-')
-    snapshot_url = f"https://{device_id}.local/latest_frame.jpg"
+    host = _resolve_owl_host(device_id)
+    snapshot_url = f"https://{host}/latest_frame.jpg"
     try:
         r = requests.get(snapshot_url, timeout=5, verify=False)
         if r.status_code != 200:
-            logger.error(f"Failed to get snapshot from {device_id} (Status: {r.status_code})")
+            logger.error(f"Failed to get snapshot from {device_id} at {host} (Status: {r.status_code})")
             return f"Error: Could not get snapshot from {device_id}.", 502
         return Response(r.content, mimetype='image/jpeg')
     except requests.exceptions.ConnectionError as e:
-        logger.error(f"Connection error getting snapshot from {device_id}: {e}")
+        logger.error(f"Connection error getting snapshot from {device_id} at {host}: {e}")
         return f"Error: {device_id} is offline or unreachable.", 502
     except Exception as e:
         logger.error(f"Error getting snapshot from {device_id}: {e}")
@@ -1178,7 +1260,8 @@ def video_feed_proxy(device_id):
     """Proxies the MJPEG stream from an OWL, ignoring SSL errors."""
 
     device_id = device_id.replace('_', '-')
-    video_url = f"https://{device_id}.local/video_feed"
+    host = _resolve_owl_host(device_id)
+    video_url = f"https://{host}/video_feed"
     logger.info(f"Proxying video feed for {device_id} from {video_url}")
 
     try:
@@ -1190,8 +1273,15 @@ def video_feed_proxy(device_id):
 
         ct = r.headers.get("Content-Type", "multipart/x-mixed-replace; boundary=frame")
 
+        def generate():
+            try:
+                for chunk in r.iter_content(chunk_size=1024):
+                    yield chunk
+            finally:
+                r.close()
+
         return Response(
-            stream_with_context(r.iter_content(chunk_size=1024)),
+            stream_with_context(generate()),
             content_type=ct,
             status=r.status_code,
             direct_passthrough=True,

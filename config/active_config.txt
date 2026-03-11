@@ -1,1 +1,1 @@
-config/config_20260211154229.ini
+config/GENERAL_CONFIG.ini

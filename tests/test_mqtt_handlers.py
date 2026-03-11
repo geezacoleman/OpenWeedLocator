@@ -99,8 +99,8 @@ class TestSaveConfig:
         assert saved.get('GreenOnBrown', 'exg_min') == '25'
 
     def test_save_blocks_overwrite_of_presets(self, mqtt_publisher):
-        """save_config should refuse to overwrite DAY_SENSITIVITY_*.ini presets."""
-        mqtt_publisher._handle_save_config(filename='DAY_SENSITIVITY_1.ini')
+        """save_config should refuse to overwrite GENERAL_CONFIG.ini preset."""
+        mqtt_publisher._handle_save_config(filename='GENERAL_CONFIG.ini')
 
         # The file should NOT have been written — check that no open() was called
         # by verifying the logger got the error
@@ -181,7 +181,7 @@ class TestSetActiveConfig:
                    side_effect=lambda *a: os.path.join(*a)):
             with patch('utils.mqtt_manager.os.path.dirname',
                        return_value=str(tmp_config_dir)):
-                mqtt_publisher._handle_set_active_config('config/DAY_SENSITIVITY_2.ini')
+                mqtt_publisher._handle_set_active_config('config/GENERAL_CONFIG.ini')
 
         # The active_config.txt should exist (may have been written to a real path)
         # At minimum, verify no exception was raised
@@ -305,3 +305,39 @@ class TestGoGConfidence:
         mock_owl._gog_confidence = 0.85
         mqtt_publisher._sync_parameters_to_state()
         assert mqtt_publisher.state['confidence'] == 0.85
+
+
+# ---------------------------------------------------------------------------
+# Resolution in MQTT state
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestResolutionState:
+    """Tests for resolution_width/resolution_height in MQTT state."""
+
+    def test_resolution_in_initial_state(self, mqtt_publisher):
+        """resolution_width and resolution_height should be in the state dict."""
+        assert 'resolution_width' in mqtt_publisher.state
+        assert 'resolution_height' in mqtt_publisher.state
+
+    def test_resolution_synced_from_owl(self, mqtt_publisher, mock_owl):
+        """_sync_parameters_to_state should pick up owl.resolution tuple."""
+        mock_owl.resolution = (1456, 1088)
+        mqtt_publisher._sync_parameters_to_state()
+        assert mqtt_publisher.state['resolution_width'] == 1456
+        assert mqtt_publisher.state['resolution_height'] == 1088
+
+    def test_resolution_lower_values(self, mqtt_publisher, mock_owl):
+        """Should correctly report non-max resolution."""
+        mock_owl.resolution = (640, 480)
+        mqtt_publisher._sync_parameters_to_state()
+        assert mqtt_publisher.state['resolution_width'] == 640
+        assert mqtt_publisher.state['resolution_height'] == 480
+
+    def test_resolution_defaults_in_state_dict(self, mqtt_publisher):
+        """Resolution fields should default to 0 in the state dict before sync."""
+        # Create a fresh publisher without set_owl_instance
+        from utils.mqtt_manager import OWLMQTTPublisher
+        fresh = OWLMQTTPublisher(broker_host='localhost', client_id='fresh_test')
+        assert fresh.state['resolution_width'] == 0
+        assert fresh.state['resolution_height'] == 0

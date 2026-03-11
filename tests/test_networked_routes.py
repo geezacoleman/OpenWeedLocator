@@ -1,7 +1,8 @@
 """Tests for networked controller Flask API routes (config editor endpoints)."""
 
 import json
-from unittest.mock import MagicMock
+import time
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -103,7 +104,7 @@ class TestListPresets:
 
         # Check is_default flags
         names = {p['name']: p['is_default'] for p in data['presets']}
-        assert names['DAY_SENSITIVITY_1'] is True
+        assert names['GENERAL_CONFIG'] is True
         assert names['CUSTOM'] is False
 
 
@@ -114,7 +115,7 @@ class TestGetPreset:
     def test_returns_preset_config(self, networked_test_client):
         client, _ = networked_test_client
 
-        resp = client.get('/api/presets/DAY_SENSITIVITY_1')
+        resp = client.get('/api/presets/GENERAL_CONFIG')
         data = resp.get_json()
 
         assert resp.status_code == 200
@@ -140,7 +141,7 @@ class TestPushPreset:
         client, mock_ctrl = networked_test_client
 
         resp = client.post('/api/presets/push/test-owl',
-                           json={'preset': 'DAY_SENSITIVITY_1'})
+                           json={'preset': 'GENERAL_CONFIG'})
         data = resp.get_json()
 
         assert resp.status_code == 200
@@ -168,3 +169,216 @@ class TestPushPreset:
 
         assert resp.status_code == 400
         assert data['success'] is False
+
+
+# ===========================================================================
+# Multi-OWL operational routes — field-critical for 2+ OWL deployments
+# ===========================================================================
+
+@pytest.mark.unit
+class TestCommandRoute:
+    """Tests for POST /api/command — send commands to individual or all OWLs."""
+
+    def test_broadcast_to_all(self, networked_test_client):
+        client, ctrl = networked_test_client
+        ctrl.send_command.return_value = {
+            'success': True, 'targets': ['owl-1', 'owl-2']
+        }
+        resp = client.post('/api/command', json={
+            'device_id': 'all',
+            'action': 'toggle_detection',
+            'value': True
+        })
+        data = resp.get_json()
+        assert resp.status_code == 200
+        assert data['success'] is True
+        ctrl.send_command.assert_called_once_with('all', 'toggle_detection', True)
+
+    def test_command_to_specific_owl(self, networked_test_client):
+        client, ctrl = networked_test_client
+        resp = client.post('/api/command', json={
+            'device_id': 'owl-1',
+            'action': 'set_algorithm',
+            'value': 'exhsv'
+        })
+        data = resp.get_json()
+        assert resp.status_code == 200
+        ctrl.send_command.assert_called_once_with('owl-1', 'set_algorithm', 'exhsv')
+
+    def test_missing_device_id_returns_400(self, networked_test_client):
+        client, ctrl = networked_test_client
+        resp = client.post('/api/command', json={
+            'action': 'toggle_detection'
+        })
+        assert resp.status_code == 400
+
+    def test_missing_action_returns_400(self, networked_test_client):
+        client, ctrl = networked_test_client
+        resp = client.post('/api/command', json={
+            'device_id': 'owl-1'
+        })
+        assert resp.status_code == 400
+
+    def test_command_failure_propagates(self, networked_test_client):
+        client, ctrl = networked_test_client
+        ctrl.send_command.return_value = {
+            'success': False, 'error': 'MQTT not connected'
+        }
+        resp = client.post('/api/command', json={
+            'device_id': 'owl-1',
+            'action': 'toggle_detection',
+            'value': True
+        })
+        data = resp.get_json()
+        assert data['success'] is False
+
+
+@pytest.mark.unit
+class TestRestartRoute:
+    """Tests for POST /api/owl/<device_id>/restart."""
+
+    def test_restart_specific_owl(self, networked_test_client):
+        client, ctrl = networked_test_client
+        resp = client.post('/api/owl/owl-1/restart')
+        data = resp.get_json()
+        assert resp.status_code == 200
+        ctrl.send_command.assert_called_once_with('owl-1', 'restart_service')
+
+    def test_restart_second_owl(self, networked_test_client):
+        client, ctrl = networked_test_client
+        resp = client.post('/api/owl/owl-2/restart')
+        data = resp.get_json()
+        assert resp.status_code == 200
+        ctrl.send_command.assert_called_once_with('owl-2', 'restart_service')
+
+
+@pytest.mark.unit
+class TestSetActiveConfigRoute:
+    """Tests for POST /api/config/<device_id>/set-active."""
+
+    def test_set_active_config(self, networked_test_client):
+        client, ctrl = networked_test_client
+        resp = client.post('/api/config/owl-1/set-active', json={
+            'config': 'config/GENERAL_CONFIG.ini'
+        })
+        data = resp.get_json()
+        assert resp.status_code == 200
+        ctrl.send_command.assert_called_once_with(
+            'owl-1', 'set_active_config', 'config/GENERAL_CONFIG.ini'
+        )
+
+    def test_set_active_missing_path_returns_400(self, networked_test_client):
+        client, ctrl = networked_test_client
+        resp = client.post('/api/config/owl-1/set-active', json={})
+        assert resp.status_code == 400
+
+
+@pytest.mark.unit
+class TestVideoProxyRoutes:
+    """Tests for snapshot and video feed proxy routes."""
+
+    def test_snapshot_converts_underscores_to_hyphens(self, networked_test_client):
+        """Device IDs with underscores should be converted to hyphens."""
+        client, ctrl = networked_test_client
+        with patch('controller.networked.networked.requests') as mock_requests:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.content = b'\xff\xd8\xff\xe0'  # JPEG header bytes
+            mock_requests.get.return_value = mock_response
+
+            resp = client.get('/api/snapshot/owl_1')
+            call_url = mock_requests.get.call_args[0][0]
+            assert 'owl-1' in call_url
+            assert 'owl_1' not in call_url
+
+    def test_snapshot_offline_owl_returns_502(self, networked_test_client):
+        client, ctrl = networked_test_client
+        import requests as real_requests
+        with patch('controller.networked.networked.requests') as mock_requests:
+            mock_requests.exceptions = real_requests.exceptions
+            mock_requests.get.side_effect = real_requests.exceptions.ConnectionError("offline")
+
+            resp = client.get('/api/snapshot/owl-1')
+            assert resp.status_code == 502
+
+    def test_snapshot_non_200_returns_502(self, networked_test_client):
+        client, ctrl = networked_test_client
+        with patch('controller.networked.networked.requests') as mock_requests:
+            mock_response = MagicMock()
+            mock_response.status_code = 500
+            mock_requests.get.return_value = mock_response
+
+            resp = client.get('/api/snapshot/owl-1')
+            assert resp.status_code == 502
+
+    def test_snapshot_uses_static_ip_when_available(self, networked_test_client):
+        """Proxy should use OWL's static IP instead of .local when known from MQTT state."""
+        client, ctrl = networked_test_client
+        ctrl.owls_state['owl-1'] = {'static_ip': '192.168.1.11'}
+
+        with patch('controller.networked.networked.requests') as mock_requests:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.content = b'\xff\xd8\xff\xe0'
+            mock_requests.get.return_value = mock_response
+
+            resp = client.get('/api/snapshot/owl-1')
+            call_url = mock_requests.get.call_args[0][0]
+            assert '192.168.1.11' in call_url
+            assert '.local' not in call_url
+
+    def test_snapshot_falls_back_to_mdns_without_ip(self, networked_test_client):
+        """Proxy should fall back to .local hostname when static_ip is not in MQTT state."""
+        client, ctrl = networked_test_client
+        ctrl.owls_state['owl-2'] = {'device_id': 'owl-2'}  # No static_ip
+
+        with patch('controller.networked.networked.requests') as mock_requests:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.content = b'\xff\xd8\xff\xe0'
+            mock_requests.get.return_value = mock_response
+
+            resp = client.get('/api/snapshot/owl-2')
+            call_url = mock_requests.get.call_args[0][0]
+            assert 'owl-2.local' in call_url
+
+    def test_video_proxy_uses_static_ip(self, networked_test_client):
+        """Video feed proxy should use IP address for reliable multi-OWL streaming."""
+        client, ctrl = networked_test_client
+        ctrl.owls_state['owl-1'] = {'static_ip': '192.168.1.11'}
+
+        with patch('controller.networked.networked.requests') as mock_requests:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.headers = {'Content-Type': 'multipart/x-mixed-replace; boundary=FRAME'}
+            mock_response.iter_content.return_value = iter([b'data'])
+            mock_requests.get.return_value = mock_response
+
+            resp = client.get('/api/video_feed/owl-1')
+            call_url = mock_requests.get.call_args[0][0]
+            assert '192.168.1.11' in call_url
+            assert '.local' not in call_url
+
+
+@pytest.mark.unit
+class TestModelDeployRoute:
+    """Tests for POST /api/models/deploy — deploy model to multiple OWLs."""
+
+    def test_deploy_missing_model_name_returns_400(self, networked_test_client):
+        client, ctrl = networked_test_client
+        resp = client.post('/api/models/deploy', json={
+            'device_ids': ['owl-1']
+        })
+        assert resp.status_code == 400
+
+    def test_deploy_missing_device_ids_returns_400(self, networked_test_client):
+        client, ctrl = networked_test_client
+        resp = client.post('/api/models/deploy', json={
+            'model_name': 'test.pt'
+        })
+        assert resp.status_code == 400
+
+    def test_deploy_empty_data_returns_400(self, networked_test_client):
+        client, ctrl = networked_test_client
+        resp = client.post('/api/models/deploy', json={})
+        assert resp.status_code == 400

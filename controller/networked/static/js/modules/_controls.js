@@ -41,13 +41,62 @@ function toggleMainRecording() {
         sendCommand('all', 'toggle_recording', false);
         showToast('Recording stopped on all OWLs', 'info');
     } else {
-        // Currently off, so turn on
-        btn.classList.add('active');
-        btn.textContent = 'Stop Recording';
-        globalRecordingEnabled = true;
-        sendCommand('all', 'toggle_recording', true);
-        showToast('Recording started on all OWLs', 'success');
+        // Check if any connected OWL has resolution below max
+        var lowResOwl = _findLowResolutionOWL();
+        if (lowResOwl && typeof showResolutionWarningModal === 'function') {
+            showResolutionWarningModal(lowResOwl.w, lowResOwl.h,
+                function onAccept() {
+                    // Change resolution on all OWLs, save (copy-on-write), then restart
+                    sendCommand('all', 'set_config_section', {
+                        section: 'Camera',
+                        params: {resolution_width: String(OWL_MAX_RES_WIDTH), resolution_height: String(OWL_MAX_RES_HEIGHT)}
+                    })
+                    .then(function() { return sendCommand('all', 'save_config', {}); })
+                    .then(function() {
+                        for (var id in owlsData) {
+                            if (owlsData[id] && owlsData[id].connected) {
+                                restartOWL(id);
+                            }
+                        }
+                        showToast('Resolution changed — restarting all OWLs. Start recording when they are back online.', 'info');
+                    });
+                },
+                function onContinue() {
+                    _doToggleRecordingOn(btn);
+                }
+            );
+            return;
+        }
+
+        _doToggleRecordingOn(btn);
     }
+}
+
+function _doToggleRecordingOn(btn) {
+    btn.classList.add('active');
+    btn.textContent = 'Stop Recording';
+    globalRecordingEnabled = true;
+    sendCommand('all', 'toggle_recording', true);
+    showToast('Recording started on all OWLs', 'success');
+}
+
+/**
+ * Find the first connected OWL with resolution below maximum.
+ * Returns {w, h} or null if all are at max (or resolution unknown).
+ */
+function _findLowResolutionOWL() {
+    if (typeof isResolutionBelowMax !== 'function') return null;
+    for (var id in owlsData) {
+        var owl = owlsData[id];
+        if (owl && owl.connected) {
+            var w = owl.resolution_width || 0;
+            var h = owl.resolution_height || 0;
+            if (isResolutionBelowMax(w, h)) {
+                return {w: w, h: h};
+            }
+        }
+    }
+    return null;
 }
 
 // ============================================
@@ -82,13 +131,38 @@ function toggleAllNozzles() {
 }
 
 // ============================================
+// TRACKING TOGGLE
+// ============================================
+
+function toggleTracking() {
+    const btn = document.getElementById('main-tracking-btn');
+    if (!btn) return;
+
+    if (btn.classList.contains('active')) {
+        btn.classList.remove('active');
+        btn.textContent = 'Tracking';
+        sendCommand('all', 'set_tracking', false);
+        showToast('Tracking disabled', 'info');
+    } else {
+        btn.classList.add('active');
+        btn.textContent = 'Tracking ON';
+        sendCommand('all', 'set_tracking', true);
+        showToast('Tracking enabled', 'success');
+    }
+}
+
+// ============================================
 // OWL RESTART
 // ============================================
 
 async function restartOWL(deviceId) {
-    const btn = event.currentTarget;
-    btn.disabled = true;
-    btn.textContent = 'Restarting...';
+    // btn may be null when called programmatically (e.g. resolution change)
+    const btn = (typeof event !== 'undefined' && event && event.currentTarget)
+        ? event.currentTarget : null;
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Restarting...';
+    }
 
     try {
         const res = await fetch('/api/owl/' + deviceId + '/restart', { method: 'POST' });
@@ -104,10 +178,12 @@ async function restartOWL(deviceId) {
     }
 
     // Re-enable after 10 seconds (OWL needs time to restart)
-    setTimeout(() => {
-        btn.disabled = false;
-        btn.textContent = 'Restart';
-    }, 10000);
+    if (btn) {
+        setTimeout(() => {
+            btn.disabled = false;
+            btn.textContent = 'Restart';
+        }, 10000);
+    }
 }
 
 // ============================================

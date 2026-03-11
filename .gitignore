@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Test output (tracking visualization images)
+tests/tracking_output/
+
 # C extensions
 *.so
 
@@ -155,3 +158,4 @@ claude_docs/
 PROJECT_NOTES.md
 CLAUDE.md
 tmpclaude-*
+/PLAN.md

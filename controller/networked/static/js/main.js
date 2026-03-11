@@ -32,6 +32,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initActuationSliders();
     initSensitivityDial();
     startActuationPolling();
+    if (typeof Numpad !== 'undefined') Numpad.init();
     updateDashboard();
     updateInterval = setInterval(updateDashboard, UPDATE_INTERVAL);
 });
@@ -53,13 +54,19 @@ function setupEventListeners() {
     // Range/single sliders (knob drag, track click, fine-tune)
     initSliders();
 
-    // Config action buttons (new simplified bar)
-    document.getElementById('send-to-device-btn')?.addEventListener('click', sendAllToDevice);
-    document.getElementById('save-to-device-btn')?.addEventListener('click', saveToDevice);
+    // Config action buttons — broadcast to all OWLs
+    document.getElementById('apply-all-btn')?.addEventListener('click', sendAllToDevice);
+    document.getElementById('save-all-btn')?.addEventListener('click', saveToAll);
     document.getElementById('load-preset-btn')?.addEventListener('click', loadPresetToDevice);
 
-    // Update preview when device changes
-    document.getElementById('config-editor-device')?.addEventListener('change', updateConfigPreviewDevice);
+    // Advanced Settings — send to single device
+    document.getElementById('send-to-single-device-btn')?.addEventListener('click', sendToSingleDevice);
+
+    // Delete preset from library
+    document.getElementById('delete-preset-btn')?.addEventListener('click', deleteLibraryConfig);
+
+    // Preview device selector — swap feed live
+    document.getElementById('config-preview-device')?.addEventListener('change', onPreviewDeviceChanged);
 }
 
 // ============================================

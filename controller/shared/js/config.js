@@ -14,9 +14,10 @@ const CONFIG_FIELD_DEFS = {
     'System': {
         'algorithm': { type: 'select', options: ['exhsv', 'exg', 'hsv', 'gog', 'gog-hybrid'], help: 'Detection algorithm' },
         'input_file_or_directory': { type: 'text', help: 'Leave empty for camera input' },
-        'relay_num': { type: 'number', min: 1, max: 8, help: 'Number of relays (1-8)' },
+        'relay_num': { type: 'select', options: ['1', '2', '4', '8', '12', '16'], help: 'Number of relays' },
         'actuation_duration': { type: 'number', step: 0.01, min: 0.01, max: 2.0, help: 'Spray duration in seconds' },
-        'delay': { type: 'number', step: 0.01, min: 0, max: 5.0, help: 'Delay before actuation' }
+        'delay': { type: 'number', step: 0.01, min: 0, max: 5.0, help: 'Delay before actuation' },
+        'actuation_zone': { type: 'number', min: 1, max: 100, help: 'Actuation zone (% of frame from bottom)' }
     },
     'MQTT': {
         'enable': { type: 'boolean', help: 'Enable MQTT communication' },
@@ -25,9 +26,15 @@ const CONFIG_FIELD_DEFS = {
         'device_id': { type: 'text', help: 'Device identifier' }
     },
     'Camera': {
-        'resolution_width': { type: 'select', options: ['320', '640', '800', '1024', '1280', '1920'], help: 'Width' },
-        'resolution_height': { type: 'select', options: ['240', '480', '600', '768', '720', '1080'], help: 'Height' },
-        'exp_compensation': { type: 'number', min: -10, max: 10, help: 'Exposure compensation' }
+        '_resolution': {
+            type: 'resolution',
+            options: ['1456x1088', '1280x960', '1280x720', '1024x768', '800x600', '640x480', '416x320', '320x240'],
+            help: 'Camera resolution (width x height)',
+            keys: { width: 'resolution_width', height: 'resolution_height' }
+        },
+        'exp_compensation': { type: 'select', options: ['-4', '-3', '-2', '-1', '0', '1', '2', '3', '4'], help: 'Exposure compensation' },
+        'crop_factor_horizontal': { type: 'number', step: 0.01, min: 0, max: 0.5, help: 'Horizontal crop factor' },
+        'crop_factor_vertical': { type: 'number', step: 0.01, min: 0, max: 0.5, help: 'Vertical crop factor' }
     },
     'GreenOnBrown': {
         'exg_min': { type: 'number', min: 0, max: 255 },
@@ -55,15 +62,27 @@ const CONFIG_FIELD_DEFS = {
         'sample_method': { type: 'select', options: ['whole', 'bbox', 'square'] },
         'sample_frequency': { type: 'number', min: 1, max: 1000 },
         'save_directory': { type: 'text', help: 'Save directory path' },
-        'detection_enable': { type: 'boolean' }
+        'detection_enable': { type: 'boolean' },
+        'log_fps': { type: 'boolean', help: 'Log FPS to console' },
+        'camera_name': { type: 'text', help: 'Camera identifier for saved images' }
     },
     'Controller': {
-        'controller_type': { type: 'select', options: ['none', 'ute', 'advanced', 'networked'] }
+        'controller_type': { type: 'select', options: ['none', 'ute', 'advanced', 'networked'] },
+        'switch_purpose': { type: 'select', options: ['recording', 'detection'], help: 'Physical switch function' },
+        'switch_pin': { type: 'number', min: 1, max: 40, help: 'GPIO BCM pin for switch' },
+        'detection_mode_pin_up': { type: 'number', min: 1, max: 40, help: 'GPIO BCM pin for detection mode up' },
+        'detection_mode_pin_down': { type: 'number', min: 1, max: 40, help: 'GPIO BCM pin for detection mode down' },
+        'recording_pin': { type: 'number', min: 1, max: 40, help: 'GPIO BCM pin for recording switch' },
+        'sensitivity_pin': { type: 'number', min: 1, max: 40, help: 'GPIO BCM pin for sensitivity switch' }
     },
     'GPS': {
-        'source': { type: 'select', options: ['none', 'dashboard', 'hat'] },
-        'port': { type: 'text' },
-        'baudrate': { type: 'select', options: ['4800', '9600', '19200', '38400', '57600', '115200'] }
+        'source': { type: 'select', options: ['none', 'dashboard', 'hat'], help: 'GPS data source for owl.py' },
+        'port': { type: 'text', help: 'Serial GPS device path' },
+        'baudrate': { type: 'select', options: ['4800', '9600', '19200', '38400', '57600', '115200'] },
+        'enable': { type: 'boolean', help: 'Enable GPS server (networked controller)' },
+        'nmea_port': { type: 'number', min: 1, max: 65535, help: 'TCP port for NMEA GPS data' },
+        'boom_width': { type: 'number', step: 0.5, min: 1, max: 50, help: 'Boom width in metres' },
+        'track_save_directory': { type: 'text', help: 'Directory for GPS track files' }
     },
     'Actuation': {
         'actuation_duration': { type: 'number', step: 0.01, min: 0.01, max: 5.0, help: 'Spray duration in seconds' },
@@ -76,12 +95,17 @@ const CONFIG_FIELD_DEFS = {
         'image_loop_time': { type: 'number', step: 0.1, min: 0.1, max: 10.0, help: 'Display loop time in seconds' }
     },
     'Network': {
-        'mode': { type: 'select', options: ['dhcp', 'static'], help: 'Network mode' },
+        'mode': { type: 'select', options: ['dhcp', 'static', 'networked'], help: 'Network mode' },
         'static_ip': { type: 'text', help: 'Static IP address (if mode=static)' },
         'controller_ip': { type: 'text', help: 'Central controller IP address' }
     },
     'WebDashboard': {
         'port': { type: 'number', min: 1, max: 65535, help: 'Dashboard web server port' }
+    },
+    'Tracking': {
+        'tracking_enabled': { type: 'boolean', help: 'Enable weed tracking (class smoothing + crop mask persistence)' },
+        'track_class_window': { type: 'number', min: 1, max: 20, help: 'Frames of class history for majority vote' },
+        'track_crop_persist': { type: 'number', min: 1, max: 10, help: 'Frames to persist crop mask after detection drops' }
     },
     'Relays': { _isRelaySection: true }
 };
@@ -94,7 +118,7 @@ const RESTART_SECTIONS = ['MQTT', 'Network', 'WebDashboard', 'Controller'];
 /**
  * Preferred display order for config sections.
  */
-const SECTION_ORDER = ['System', 'Camera', 'GreenOnBrown', 'GreenOnGreen', 'Actuation', 'DataCollection', 'Visualisation', 'Controller', 'Network', 'WebDashboard', 'MQTT', 'GPS', 'Relays'];
+const SECTION_ORDER = ['System', 'Camera', 'GreenOnBrown', 'GreenOnGreen', 'Tracking', 'Actuation', 'DataCollection', 'Visualisation', 'Controller', 'Network', 'WebDashboard', 'MQTT', 'GPS', 'Relays', 'Sensitivity'];
 
 /**
  * Create a collapsible config section element.
@@ -142,7 +166,19 @@ function createConfigSection(sectionName, sectionData, onFieldChange) {
             rc.appendChild(item);
         });
     } else {
+        // Check for virtual fields (like _resolution) that combine multiple data keys
+        const renderedKeys = new Set();
+        Object.entries(fieldDefs).forEach(([defKey, def]) => {
+            if (def && def.type === 'resolution' && def.keys) {
+                const w = sectionData[def.keys.width] || '';
+                const h = sectionData[def.keys.height] || '';
+                body.appendChild(createConfigField(sectionName, defKey, w + 'x' + h, def));
+                renderedKeys.add(def.keys.width);
+                renderedKeys.add(def.keys.height);
+            }
+        });
         Object.entries(sectionData).forEach(([key, value]) => {
+            if (renderedKeys.has(key)) return; // Already rendered as combined
             body.appendChild(createConfigField(sectionName, key, value, fieldDefs[key]));
         });
     }
@@ -153,8 +189,19 @@ function createConfigSection(sectionName, sectionData, onFieldChange) {
     // Attach change listeners
     if (onFieldChange) {
         section.querySelectorAll('input, select').forEach(input => {
-            input.addEventListener('change', onFieldChange);
-            input.addEventListener('input', onFieldChange);
+            // Resolution dropdown: split value and fire events for both keys
+            if (input.dataset.resolutionWidth) {
+                input.addEventListener('change', (e) => {
+                    const parts = e.target.value.split('x');
+                    if (parts.length === 2) {
+                        _fireConfigChange(onFieldChange, sectionName, input.dataset.resolutionWidth, parts[0]);
+                        _fireConfigChange(onFieldChange, sectionName, input.dataset.resolutionHeight, parts[1]);
+                    }
+                });
+            } else {
+                input.addEventListener('change', onFieldChange);
+                input.addEventListener('input', onFieldChange);
+            }
         });
     }
 
@@ -173,12 +220,31 @@ function createConfigField(section, key, value, fieldDef) {
     const field = document.createElement('div');
     field.className = 'config-field';
 
-    const def = fieldDef || { type: 'text' };
+    // Infer type from value when no field definition exists (safety net)
+    var def;
+    if (fieldDef) {
+        def = fieldDef;
+    } else if (String(value).toLowerCase() === 'true' || String(value).toLowerCase() === 'false') {
+        def = { type: 'boolean' };
+    } else if (value !== '' && !isNaN(Number(value))) {
+        def = { type: 'number' };
+    } else {
+        def = { type: 'text' };
+    }
     const id = 'config-' + section + '-' + key;
     const strValue = String(value);
     let html = '';
 
-    if (def.type === 'boolean' || strValue.toLowerCase() === 'true' || strValue.toLowerCase() === 'false') {
+    if (def.type === 'resolution' && def.options && def.keys) {
+        // Combined resolution dropdown — sets two underlying keys
+        const opts = def.options.map(o =>
+            '<option value="' + o + '"' + (o === strValue ? ' selected' : '') + '>' + o + '</option>'
+        ).join('');
+        html = '<label for="' + id + '">Resolution</label>' +
+            '<select id="' + id + '" data-section="' + section +
+            '" data-key="' + key + '" data-resolution-width="' + def.keys.width +
+            '" data-resolution-height="' + def.keys.height + '">' + opts + '</select>';
+    } else if (def.type === 'boolean' || strValue.toLowerCase() === 'true' || strValue.toLowerCase() === 'false') {
         html = '<div class="checkbox-wrapper">' +
             '<input type="checkbox" id="' + id + '" data-section="' + section +
             '" data-key="' + key + '"' + (strValue.toLowerCase() === 'true' ? ' checked' : '') + '>' +
@@ -232,8 +298,26 @@ function createConfigField(section, key, value, fieldDef) {
  * @param {Object} configData - Full config object with section keys
  * @returns {string[]} - Ordered section names
  */
+/**
+ * Fire a synthetic config change event for a specific section/key/value.
+ * Used by resolution dropdown to split into two underlying keys.
+ */
+function _fireConfigChange(callback, section, key, value) {
+    const fakeEvent = {
+        target: {
+            dataset: { section: section, key: key },
+            value: value,
+            type: 'select-one',
+            checked: false,
+            tagName: 'SELECT'
+        }
+    };
+    callback(fakeEvent);
+}
+
 function getOrderedSections(configData) {
     const order = [...SECTION_ORDER];
+    // Append Sensitivity_* sections at end
     Object.keys(configData).forEach(s => {
         if (!order.includes(s)) order.push(s);
     });

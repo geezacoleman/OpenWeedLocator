@@ -255,8 +255,7 @@ function updateAllSliders() {
 // ============================================
 
 function sendConfigUpdate(param, value) {
-    var sel = document.getElementById('config-editor-device');
-    var target = sel ? sel.value : 'all';
+    var target = 'all';
 
     lastSliderSendTime = Date.now();
 
@@ -290,8 +289,7 @@ function sendConfigUpdate(param, value) {
  * Live-updates the device — does NOT persist to disk.
  */
 function sendAllToDevice() {
-    var sel = document.getElementById('config-editor-device');
-    var target = sel ? sel.value : 'all';
+    var target = 'all';
 
     lastSliderSendTime = Date.now();
 
@@ -329,23 +327,15 @@ function sendAllToDevice() {
         if (typeof updateConfigEditorChangeState === 'function') updateConfigEditorChangeState();
     }
 
-    showToast('Settings sent — live until reboot', 'success');
+    showToast('Applied to all OWLs — live until reboot', 'success');
 }
 
 /**
- * Send all + save to device disk + set as active boot config.
+ * Send all + save to all OWL disks + set as active boot config.
  * Auto-generates timestamp filename. Also saves to controller library.
  */
-async function saveToDevice() {
-    var sel = document.getElementById('config-editor-device');
-    var target = sel ? sel.value : null;
-
-    if (!target || target === 'all') {
-        // If "all" or no device, just send without saving
-        sendAllToDevice();
-        showToast('Settings sent to all devices (save requires single device)', 'warning');
-        return;
-    }
+async function saveToAll() {
+    var target = 'all';
 
     // Step 1: Send all settings live
     sendAllToDevice();
@@ -364,14 +354,14 @@ async function saveToDevice() {
             });
         }
 
-        // Step 4: Tell device to save its current config to disk
+        // Step 4: Tell all OWLs to save current config to disk
         await apiRequest('/api/config/' + target + '/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ filename: filename })
         });
 
-        // Step 5: Set as active boot config
+        // Step 5: Set as active boot config on all OWLs
         await apiRequest('/api/config/' + target + '/set-active', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -380,7 +370,7 @@ async function saveToDevice() {
 
         updateActiveBadge(filename);
         if (typeof loadConfigLibrary === 'function') await loadConfigLibrary();
-        showToast('Saved to ' + target + ' — persists after reboot', 'success');
+        showToast('Saved to all OWLs — persists after reboot', 'success');
 
     } catch (err) {
         showToast('Error saving: ' + err.message, 'error');
@@ -407,29 +397,17 @@ async function loadPresetToDevice() {
         return;
     }
 
-    var sel = document.getElementById('config-editor-device');
-    var target = sel ? sel.value : 'all';
-
     try {
-        if (target && target !== 'all') {
-            // Push preset to specific device via API
-            await apiRequest('/api/presets/push/' + target, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ preset: presetName })
-            });
-        } else {
-            // Broadcast: load preset data and send sections to all
-            var res = await apiRequest('/api/presets/' + presetName);
-            var data = await res.json();
-            if (!data.success) throw new Error(data.error || 'Failed to load preset');
+        // Broadcast: load preset data and send sections to all OWLs
+        var res = await apiRequest('/api/presets/' + presetName);
+        var data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Failed to load preset');
 
-            for (var section in data.config) {
-                sendCommand('all', 'set_config_section', {
-                    section: section,
-                    params: data.config[section]
-                });
-            }
+        for (var section in data.config) {
+            sendCommand('all', 'set_config_section', {
+                section: section,
+                params: data.config[section]
+            });
         }
 
         // Also load into editor if available
@@ -447,7 +425,7 @@ async function loadPresetToDevice() {
         }
 
         lastSliderSendTime = Date.now();
-        showToast('Loaded: ' + presetName, 'success');
+        showToast('Applied ' + presetName + ' to all OWLs (not saved)', 'success');
 
     } catch (err) {
         showToast('Error loading preset: ' + err.message, 'error');
@@ -487,15 +465,28 @@ function syncSlidersFromConfig(config) {
 
 let configPreviewActive = false;
 
+function getFirstConnectedOwl() {
+    for (var id in owlsData) {
+        if (owlsData[id] && owlsData[id].connected) return id;
+    }
+    return null;
+}
+
+function getSelectedPreviewDevice() {
+    var sel = document.getElementById('config-preview-device');
+    return (sel && sel.value) ? sel.value : getFirstConnectedOwl();
+}
+
 function toggleConfigPreview() {
     var split = document.getElementById('config-split');
     var img = document.getElementById('config-preview-img');
     var btn = document.getElementById('config-preview-btn');
-    var deviceSel = document.getElementById('config-editor-device');
 
     if (!split || !img) return;
 
     configPreviewActive = !configPreviewActive;
+
+    var label = document.getElementById('config-preview-label');
 
     if (configPreviewActive) {
         split.classList.add('preview-active');
@@ -503,9 +494,10 @@ function toggleConfigPreview() {
             btn.textContent = 'Hide Preview';
             btn.classList.add('active');
         }
-        var deviceId = deviceSel ? deviceSel.value : null;
+        var deviceId = getSelectedPreviewDevice();
         if (deviceId) {
             img.src = '/api/video_feed/' + deviceId;
+            if (label) label.textContent = deviceId;
         }
     } else {
         split.classList.remove('preview-active');
@@ -514,6 +506,7 @@ function toggleConfigPreview() {
             btn.classList.remove('active');
         }
         img.src = '';
+        if (label) label.textContent = '';
     }
 }
 
@@ -521,11 +514,29 @@ function updateConfigPreviewDevice() {
     if (!configPreviewActive) return;
 
     var img = document.getElementById('config-preview-img');
-    var deviceSel = document.getElementById('config-editor-device');
-    if (!img || !deviceSel) return;
+    var label = document.getElementById('config-preview-label');
+    if (!img) return;
 
-    var deviceId = deviceSel.value;
+    var deviceId = getSelectedPreviewDevice();
     img.src = deviceId ? '/api/video_feed/' + deviceId : '';
+    if (label) label.textContent = deviceId || '';
+}
+
+function onPreviewDeviceChanged() {
+    if (!configPreviewActive) return;
+
+    var img = document.getElementById('config-preview-img');
+    var label = document.getElementById('config-preview-label');
+    if (!img) return;
+
+    var deviceId = getSelectedPreviewDevice();
+    if (deviceId) {
+        img.src = '/api/video_feed/' + deviceId;
+        if (label) label.textContent = deviceId;
+    } else {
+        img.src = '';
+        if (label) label.textContent = '';
+    }
 }
 
 function stopConfigPreview() {
@@ -556,6 +567,58 @@ function toggleAdvancedSettings() {
 
     var isOpen = toggle.classList.toggle('open');
     body.classList.toggle('open', isOpen);
+}
+
+// ============================================
+// SEND TO SINGLE DEVICE (Advanced Settings)
+// ============================================
+
+/**
+ * Send all slider + editor values to a single device selected in Advanced Settings.
+ */
+function sendToSingleDevice() {
+    var sel = document.getElementById('config-editor-device');
+    var target = sel ? sel.value : null;
+
+    if (!target) {
+        showToast('Select a device first', 'warning');
+        return;
+    }
+
+    lastSliderSendTime = Date.now();
+
+    // Send slider params as whole sections
+    var gobParams = {};
+    var gobKeys = ['exg_min', 'exg_max', 'hue_min', 'hue_max',
+                   'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
+                   'min_detection_area'];
+    for (var i = 0; i < gobKeys.length; i++) {
+        var k = gobKeys[i];
+        if (configParams[k]) gobParams[k] = String(configParams[k].value);
+    }
+
+    var gogParams = {};
+    if (configParams.confidence) gogParams.confidence = String(configParams.confidence.value / 100);
+    if (configParams.crop_buffer_px) gogParams.crop_buffer_px = String(configParams.crop_buffer_px.value);
+
+    sendCommand(target, 'set_config_section', { section: 'GreenOnBrown', params: gobParams });
+    if (Object.keys(gogParams).length > 0) {
+        sendCommand(target, 'set_config_section', { section: 'GreenOnGreen', params: gogParams });
+    }
+
+    // Also send any editor changes if loaded
+    if (configEditorHasChanges && typeof deviceConfig !== 'undefined') {
+        for (var section in deviceConfig) {
+            if (JSON.stringify(deviceConfig[section]) !== JSON.stringify(originalDeviceConfig[section])) {
+                sendCommand(target, 'set_config_section', {
+                    section: section,
+                    params: deviceConfig[section]
+                });
+            }
+        }
+    }
+
+    showToast('Settings sent to ' + target, 'success');
 }
 
 // ============================================

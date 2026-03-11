@@ -97,7 +97,7 @@ def nothing(x):
 class Owl:
     def __init__(self, show_display=False,
                  input_file_or_directory=None,
-                 config_file='config/DAY_SENSITIVITY_2.ini'):
+                 config_file='config/GENERAL_CONFIG.ini'):
         # set up the logger
         log_dir = Path(os.path.join(os.path.dirname(__file__), 'logs'))
         LogManager.setup(log_dir=log_dir, log_level='INFO')
@@ -134,6 +134,15 @@ class Owl:
         self.saturation_max = self.config.getint('GreenOnBrown', 'saturation_max')
         self.brightness_min = self.config.getint('GreenOnBrown', 'brightness_min')
         self.brightness_max = self.config.getint('GreenOnBrown', 'brightness_max')
+        self.min_detection_area = self.config.getint('GreenOnBrown', 'min_detection_area')
+        self.invert_hue = self.config.getboolean('GreenOnBrown', 'invert_hue')
+
+        # Sensitivity preset manager
+        from utils.sensitivity_manager import SensitivityManager
+        self.sensitivity_manager = SensitivityManager(self.config, self._config_path)
+        active_preset = self.sensitivity_manager.get_active_preset()
+        self.sensitivity_manager.apply_preset(active_preset, self)
+        self.logger.info(f"Sensitivity preset '{active_preset}' applied")
 
         # time spent on each image when looping over a directory
         self.image_loop_time = self.config.getint('Visualisation', 'image_loop_time')
@@ -193,6 +202,7 @@ class Owl:
         broker_port = self.config.getint('MQTT', 'broker_port', fallback=1883)
         device_id = self.config.get('MQTT', 'device_id', fallback='auto')
         network_mode = self.config.get('Network', 'mode', fallback=None)
+        static_ip = self.config.get('Network', 'static_ip', fallback=None)
         client_id = f"client_{device_id}"
 
         if mqtt_enable:
@@ -204,16 +214,10 @@ class Owl:
                     broker_port=broker_port,
                     client_id=client_id,
                     device_id=device_id,
-                    network_mode=network_mode)
+                    network_mode=network_mode,
+                    static_ip=static_ip)
 
-                low_config = self.config.get('Controller', 'low_sensitivity_config',
-                                             fallback='config/SENSITIVITY_LOW.ini')
-                medium_config = self.config.get('Controller', 'medium_sensitivity_config',
-                                                fallback='config/SENSITIVITY_MEDIUM.ini')
-                high_config = self.config.get('Controller', 'high_sensitivity_config',
-                                              fallback='config/SENSITIVITY_HIGH.ini')
-
-                self.dash.set_owl_instance(self, low_config, medium_config, high_config)
+                self.dash.set_owl_instance(self)
 
                 self.dash.start()
 
@@ -224,15 +228,16 @@ class Owl:
                 self.logger.info(f"Device ID: {device_id}")
                 self.logger.info(f"Client ID: {client_id}")
 
-                LogManager.add_mqtt_handler(
-                    mqtt_client=self.dash.client,
-                    mqtt_error_topic=self.dash.topics['errors']
-                )
+                # Only attach log handler if broker is already reachable
+                if self.dash.connected:
+                    LogManager.add_mqtt_handler(
+                        mqtt_client=self.dash.client,
+                        mqtt_error_topic=self.dash.topics['errors']
+                    )
 
             except Exception as e:
                 self.dash = None
-                self.logger.critical("Failed to initialize MQTT server. Dashboard disabled.")
-                raise errors.MQTTConnectionError(host=broker_ip, port=broker_port, original_error=e)
+                self.logger.warning(f"Failed to initialize MQTT: {e}. Dashboard disabled, OWL continues.")
 
             try:
                 self.stream_lock = threading.Lock()
@@ -325,8 +330,7 @@ class Owl:
                 stop_flag=Value('b', False),
                 owl_instance=self,
                 status_indicator=self.status_indicator,
-                low_sensitivity_config=self.config.get('Controller', 'low_sensitivity_config', fallback='').strip("'\" "),
-                high_sensitivity_config=self.config.get('Controller', 'high_sensitivity_config', fallback='').strip("'\" "),
+                sensitivity_manager=self.sensitivity_manager,
                 recording_bpin=f"BOARD{self.config.getint('Controller', 'recording_pin', fallback=38)}",
                 sensitivity_bpin=f"BOARD{self.config.getint('Controller', 'sensitivity_pin', fallback=40)}",
                 detection_mode_bpin_up=f"BOARD{self.config.getint('Controller', 'detection_mode_pin_up', fallback=36)}",
@@ -417,6 +421,19 @@ class Owl:
         self._pending_detect_classes = None
         self._gog_detector = None
 
+        # Tracking config (ByteTrack + class smoothing + crop mask persistence)
+        self.tracking_enabled = self.config.getboolean('Tracking', 'tracking_enabled', fallback=False)
+        self._track_class_window = self.config.getint('Tracking', 'track_class_window', fallback=5)
+        self._track_crop_persist = self.config.getint('Tracking', 'track_crop_persist', fallback=3)
+        self._class_smoother = None
+        self._crop_stabilizer = None
+        if self.tracking_enabled:
+            from utils.tracker import ClassSmoother, CropMaskStabilizer
+            self._class_smoother = ClassSmoother(window=self._track_class_window)
+            self._crop_stabilizer = CropMaskStabilizer(max_age=self._track_crop_persist)
+            self.logger.info(f'Tracking enabled: class_window={self._track_class_window}, '
+                             f'crop_persist={self._track_crop_persist}')
+
         # Crop factors to reduce edge artifacts (0.1 = 10% crop from each side)
         self.crop_factor_horizontal = self.config.getfloat('Camera', 'crop_factor_horizontal', fallback=0.1)
         self.crop_factor_vertical = self.config.getfloat('Camera', 'crop_factor_vertical', fallback=0.1)
@@ -479,10 +496,8 @@ class Owl:
         actuation_mode = self.config.get('GreenOnGreen', 'actuation_mode', fallback='centre')
         min_detection_pixels = self.config.getint('GreenOnGreen', 'min_detection_pixels', fallback=50)
 
-        # GoB shared config (used by both colour and gog-hybrid)
-        # Instance attributes so MQTT can update them live
-        self.min_detection_area = self.config.getint('GreenOnBrown', 'min_detection_area')
-        self.invert_hue = self.config.getboolean('GreenOnBrown', 'invert_hue')
+        # GoB shared config — already initialised in __init__() and may have been
+        # updated by SensitivityManager.apply_preset(), so do NOT re-read from config.
 
         def _create_detector(algo):
             """Three-way detector factory."""
@@ -492,7 +507,8 @@ class Owl:
                 return GreenOnGreen(
                     model_path=self._model_path,
                     confidence=self._gog_confidence,
-                    detect_classes=current_classes
+                    detect_classes=current_classes,
+                    tracking_enabled=self.tracking_enabled,
                 )
             elif algo == 'gog-hybrid':
                 from utils.greenongreen import GreenOnGreen
@@ -502,7 +518,9 @@ class Owl:
                     detect_classes=current_classes,
                     hybrid_mode=True,
                     inference_resolution=self.inference_resolution,
-                    crop_buffer_px=self.crop_buffer_px
+                    crop_buffer_px=self.crop_buffer_px,
+                    tracking_enabled=self.tracking_enabled,
+                    crop_stabilizer=self._crop_stabilizer,
                 )
             else:
                 return GreenOnBrown(algorithm=algo)
@@ -524,6 +542,8 @@ class Owl:
             self.relay_vis.setup()
             self.relay_controller.vis = True
 
+        prev_detection_enable = False
+
         try:
             while True:
                 loop_start = time.time()
@@ -533,6 +553,16 @@ class Owl:
                     self.logger.info("[INFO] Frame is None. Stopped.")
                     self.stop()
                     break
+
+                # Reset tracker when detection toggled off
+                if prev_detection_enable and not self._detection_enable:
+                    if (self.tracking_enabled and weed_detector
+                            and hasattr(weed_detector, 'reset_tracker')):
+                        weed_detector.reset_tracker()
+                        if self._class_smoother:
+                            self._class_smoother.reset()
+                        self.logger.info("Tracker state reset (detection disabled)")
+                prev_detection_enable = self._detection_enable
 
                 # Drain queued trackbar updates from MQTT thread (thread-safe)
                 if self.show_display and self._pending_trackbar_updates:
@@ -615,8 +645,33 @@ class Owl:
                             cropped_frame,
                             confidence=self._gog_confidence,
                             show_display=return_image_out,
-                            build_mask=(actuation_mode == 'zone')
+                            build_mask=(actuation_mode == 'zone' and not self.tracking_enabled)
                         )
+
+                        # Apply class smoothing: filter to target classes using majority-vote
+                        if (self.tracking_enabled
+                                and self._class_smoother
+                                and weed_detector.last_track_ids):
+                            smoothed = self._class_smoother.update(
+                                weed_detector.last_track_ids,
+                                weed_detector.last_class_ids,
+                                weed_detector.last_confidences,
+                                frame_count=frame_count
+                            )
+                            target_ids = set(weed_detector._detect_class_ids or [])
+                            if target_ids:
+                                filtered_boxes = []
+                                filtered_centres = []
+                                for tid, raw_box in zip(
+                                        weed_detector.last_track_ids,
+                                        weed_detector.last_raw_boxes):
+                                    if smoothed.get(tid, -1) in target_ids:
+                                        x, y, w, h = raw_box
+                                        filtered_centres.append([x + w // 2, y + h // 2])
+                                        filtered_boxes.append(raw_box)
+                                boxes = filtered_boxes
+                                weed_centres = filtered_centres
+
                     elif algorithm == 'gog-hybrid':
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
                             cropped_frame,
@@ -752,7 +807,7 @@ class Owl:
                             self.status_indicator.error(5)
                             self.logger.info("Drive full: Image sampling disabled permanently due to storage full")
 
-                frame_count = frame_count + 1 if frame_count < 900 else 1
+                frame_count += 1
 
                 # Loop time tracking
                 loop_time_ms = (time.time() - loop_start) * 1000
@@ -1234,7 +1289,7 @@ if __name__ == "__main__":
 
     # Determine which config file to use
     # Priority: 1) --config argument, 2) active_config.txt pointer, 3) default
-    DEFAULT_CONFIG = 'config/DAY_SENSITIVITY_2.ini'
+    DEFAULT_CONFIG = 'config/GENERAL_CONFIG.ini'
     ACTIVE_CONFIG_POINTER = Path(__file__).parent / 'config/active_config.txt'
 
     config_file = DEFAULT_CONFIG

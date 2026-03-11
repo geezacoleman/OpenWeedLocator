@@ -1,6 +1,5 @@
 import time
 import platform
-import configparser
 import cv2
 import logging
 
@@ -136,8 +135,7 @@ class AdvancedController:
                  stop_flag,
                  owl_instance,
                  status_indicator,
-                 low_sensitivity_config,
-                 high_sensitivity_config,
+                 sensitivity_manager,
                  detection_mode_bpin_down='BOARD35',
                  detection_mode_bpin_up='BOARD36',
                  recording_bpin='BOARD38',
@@ -163,8 +161,7 @@ class AdvancedController:
         self.status_indicator = status_indicator
         self.status_indicator.start_storage_indicator()
 
-        self.low_sensitivity_settings = self._read_config(low_sensitivity_config)
-        self.high_sensitivity_settings = self._read_config(high_sensitivity_config)
+        self.sensitivity_manager = sensitivity_manager
 
         if self.recording_switch:
             self.recording_switch.when_pressed = self.update_recording_state
@@ -224,29 +221,9 @@ class AdvancedController:
         with self.sensitivity_level.get_lock():
             current_level = Sensitivity(self.sensitivity_level.value)
 
-        # Choose settings based on level
-        settings = self.low_sensitivity_settings if current_level == Sensitivity.LOW else self.high_sensitivity_settings
-
-        # Update Owl instance settings
-        self.owl.exg_min = settings['exg_min']
-        self.owl.exg_max = settings['exg_max']
-        self.owl.hue_min = settings['hue_min']
-        self.owl.hue_max = settings['hue_max']
-        self.owl.saturation_min = settings['saturation_min']
-        self.owl.saturation_max = settings['saturation_max']
-        self.owl.brightness_min = settings['brightness_min']
-        self.owl.brightness_max = settings['brightness_max']
-
-        # Update trackbars if show_display is True
-        if self.owl.show_display:
-            cv2.setTrackbarPos("ExG-Min", self.owl.window_name, self.owl.exg_min)
-            cv2.setTrackbarPos("ExG-Max", self.owl.window_name, self.owl.exg_max)
-            cv2.setTrackbarPos("Hue-Min", self.owl.window_name, self.owl.hue_min)
-            cv2.setTrackbarPos("Hue-Max", self.owl.window_name, self.owl.hue_max)
-            cv2.setTrackbarPos("Sat-Min", self.owl.window_name, self.owl.saturation_min)
-            cv2.setTrackbarPos("Sat-Max", self.owl.window_name, self.owl.saturation_max)
-            cv2.setTrackbarPos("Bright-Min", self.owl.window_name, self.owl.brightness_min)
-            cv2.setTrackbarPos("Bright-Max", self.owl.window_name, self.owl.brightness_max)
+        # GPIO switch is two-position: LOW or HIGH
+        preset_name = 'low' if current_level == Sensitivity.LOW else 'high'
+        self.sensitivity_manager.apply_preset(preset_name, self.owl)
 
     def set_detection_mode(self, mode):
         try:
@@ -345,19 +322,6 @@ class AdvancedController:
 
         self.logger.info("[INFO] AdvancedController stopped")
 
-    def _read_config(self, config_file):
-        config = configparser.ConfigParser()
-        config.read(config_file)
-        return {
-            'exg_min': config.getint('GreenOnBrown', 'exg_min'),
-            'exg_max': config.getint('GreenOnBrown', 'exg_max'),
-            'hue_min': config.getint('GreenOnBrown', 'hue_min'),
-            'hue_max': config.getint('GreenOnBrown', 'hue_max'),
-            'saturation_min': config.getint('GreenOnBrown', 'saturation_min'),
-            'saturation_max': config.getint('GreenOnBrown', 'saturation_max'),
-            'brightness_min': config.getint('GreenOnBrown', 'brightness_min'),
-            'brightness_max': config.getint('GreenOnBrown', 'brightness_max')
-        }
 
 
 _rpi_version_cache = None

@@ -9,6 +9,7 @@ var aiAvailableModels = [];
 var aiCurrentModel = '';
 var aiClassesDirty = false;  // true when user has toggled buttons but not yet applied
 var aiLastModelKey = '';      // tracks model changes to force grid rebuild
+var aiModelPendingUntil = 0; // timestamp: skip dropdown rebuild until model swap settles
 
 /* --------------------------------------------------------------------------
    Refresh from system stats
@@ -22,7 +23,12 @@ function syncAITabFromStats(data) {
     if (!data) return;
 
     aiAvailableModels = data.available_models || [];
-    aiCurrentModel = data.current_model || '';
+    // Don't overwrite model selection during pending swap (model load takes seconds)
+    if (Date.now() < aiModelPendingUntil) {
+        // Keep aiCurrentModel as set by onModelSelected
+    } else {
+        aiCurrentModel = data.current_model || '';
+    }
     aiModelClasses = data.model_classes || {};
     var existingSelection = data.detect_classes || [];
 
@@ -196,6 +202,10 @@ function updateClassHint() {
 function onModelSelected() {
     var select = document.getElementById('ai-model-select');
     if (!select || !select.value) return;
+
+    // Guard: don't let polling overwrite the dropdown for 10s while model loads
+    aiCurrentModel = select.value;
+    aiModelPendingUntil = Date.now() + 10000;
 
     apiRequest('/api/ai/set_model', {
         method: 'POST',

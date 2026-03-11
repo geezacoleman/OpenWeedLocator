@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=1280, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>OWL Controller</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+    <link rel="stylesheet" href="/shared/css/numpad.css" />
 </head>
 <body>
 <!-- Header -->
@@ -113,6 +114,9 @@
                                 All Nozzles
                             </button>
                         </div>
+                        <button class="action-button btn-tracking" id="main-tracking-btn" onclick="toggleTracking()">
+                            Tracking
+                        </button>
                     </div>
                     <div class="mode-panel">
                         <div class="mode-panel-title">Detection Mode</div>
@@ -291,11 +295,11 @@
             <!-- Toolbar -->
             <div class="config-toolbar">
                 <div class="config-toolbar-group">
-                    <select id="config-editor-device">
+                    <span class="config-target-badge" id="config-target-badge">All OWLs</span>
+                    <span class="config-mismatch-badge hidden" id="config-mismatch-badge">Config mismatch</span>
+                    <select id="config-preview-device">
                         <option value="" disabled>No OWLs connected</option>
                     </select>
-                    <span class="config-device-count" id="config-device-count"></span>
-                    <button class="config-action-btn secondary" id="load-device-config-btn">Refresh</button>
                     <button class="config-action-btn preview" id="config-preview-btn" onclick="toggleConfigPreview()">Preview</button>
                 </div>
                 <div class="config-toolbar-spacer"></div>
@@ -481,9 +485,17 @@
                         Advanced Settings
                     </div>
                     <div class="config-advanced-body" id="config-advanced-body">
+                        <div class="config-advanced-device-bar">
+                            <span class="config-advanced-hint">Per-device: load or push full configuration</span>
+                            <select id="config-editor-device">
+                                <option value="" disabled>No OWLs connected</option>
+                            </select>
+                            <button class="config-action-btn secondary" id="load-device-config-btn">Load from device</button>
+                            <button class="config-action-btn send" id="send-to-single-device-btn">Push to device</button>
+                        </div>
                         <div id="config-editor-sections" class="config-editor-content">
                             <div class="config-loading">
-                                <span>Select a device and click Refresh</span>
+                                <span>Select a device and click Load</span>
                             </div>
                         </div>
                     </div>
@@ -491,19 +503,21 @@
 
                 <!-- Preview column -->
                 <div class="config-preview-col">
+                    <span class="config-preview-label" id="config-preview-label"></span>
                     <img id="config-preview-img" class="config-preview-img" src="" alt="Live Preview" />
                 </div>
             </div>
 
             <!-- Action bar -->
             <div class="config-action-bar">
-                <button class="config-action-btn send" id="send-to-device-btn">Send to Device</button>
-                <button class="config-action-btn save" id="save-to-device-btn">Save to Device</button>
+                <button class="config-action-btn send" id="apply-all-btn">Apply to All</button>
+                <button class="config-action-btn save" id="save-all-btn">Save to All</button>
                 <div class="config-action-bar-spacer"></div>
                 <select id="config-library-selector">
                     <option value="">Presets...</option>
                 </select>
                 <button class="config-action-btn secondary" id="load-preset-btn">Load Preset</button>
+                <button class="config-action-btn danger" id="delete-preset-btn">Delete</button>
             </div>
         </div>
     </div>
@@ -543,6 +557,8 @@
 <script src="/shared/js/utils.js"></script>
 <script src="/shared/js/toast.js"></script>
 <script src="/shared/js/config.js"></script>
+<script src="/shared/js/numpad.js"></script>
+<script src="/shared/js/resolution_warning.js"></script>
 
 <!-- App-specific JS modules -->
 <script src="{{ url_for('static', filename='js/modules/_core.js') }}"></script>

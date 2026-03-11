@@ -5,12 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OWL Controller</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="/shared/css/numpad.css">
 
     <!-- Shared JS utilities (load first) -->
     <script src="/shared/js/api.js" defer></script>
     <script src="/shared/js/utils.js" defer></script>
     <script src="/shared/js/toast.js" defer></script>
     <script src="/shared/js/config.js" defer></script>
+    <script src="/shared/js/numpad.js" defer></script>
+    <script src="/shared/js/resolution_warning.js" defer></script>
 
     <!-- App-specific JS modules -->
     <script src="{{ url_for('static', filename='js/modules/_core.js') }}" defer></script>
@@ -104,6 +107,19 @@
                         <span class="switch-state" id="detectSwitchState">OFF</span>
                     </button>
 
+                    <!-- Tracking switch -->
+                    <button class="owl-switch owl-switch--tracking" id="trackingSwitch" aria-pressed="false">
+              <span class="switch-label">
+                <svg aria-hidden viewBox="0 0 24 24" class="switch-icon">
+                  <path fill="currentColor"
+                        d="M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8M3.05,13H1V11H3.05C3.5,6.83 6.83,3.5 11,3.05V1H13V3.05C17.17,3.5 20.5,6.83 20.95,11H23V13H20.95C20.5,17.17 17.17,20.5 13,20.95V23H11V20.95C6.83,20.5 3.5,17.17 3.05,13M12,5A7,7 0 0,0 5,12A7,7 0 0,0 12,19A7,7 0 0,0 19,12A7,7 0 0,0 12,5Z"/>
+                </svg>
+                <strong>Tracking</strong>
+              </span>
+                        <span class="switch-track"><span class="switch-thumb"></span></span>
+                        <span class="switch-state" id="trackingSwitchState">OFF</span>
+                    </button>
+
                     <!-- Recording + Nozzles split row -->
                     <div class="split-row">
                         <button class="owl-switch owl-switch--record" id="recordSwitch" aria-pressed="false">
@@ -138,12 +154,13 @@
 
                 <!-- Same-row -->
                 <div class="two-up">
-                    <!-- Sensitivity (Low / High) -->
+                    <!-- Sensitivity presets -->
                     <div class="control-tile">
                         <div class="tile-label">Sensitivity</div>
-                        <div class="segmented segmented--two">
-                            <button class="seg-btn active" data-sens="Low">Low</button>
-                            <button class="seg-btn" data-sens="High">High</button>
+                        <div id="sensitivity-buttons" class="segmented segmented--three">
+                            <button class="seg-btn" data-sens="low">Low</button>
+                            <button class="seg-btn active" data-sens="medium">Med</button>
+                            <button class="seg-btn" data-sens="high">High</button>
                         </div>
                     </div>
 

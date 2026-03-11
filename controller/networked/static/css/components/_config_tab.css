@@ -33,27 +33,22 @@
     flex: 1;
 }
 
-.config-toolbar select {
-    padding: 0.5rem 0.75rem;
-    border: 2px solid #bdc3c7;
-    border-radius: var(--radius-md);
-    font-size: 0.9rem;
-    font-weight: 600;
-    background: white;
-    min-width: 140px;
-}
-
 .config-toolbar .config-action-btn {
     flex: 0 0 auto;
     padding: 0.5rem 1rem;
     font-size: 0.85rem;
 }
 
-.config-device-count {
-    font-size: 0.75rem;
-    color: var(--text-light);
+/* Preview device selector in toolbar */
+#config-preview-device {
+    padding: 0.4rem 0.6rem;
+    border: 2px solid #bdc3c7;
+    border-radius: var(--radius-md);
+    font-size: 0.85rem;
     font-weight: 600;
-    white-space: nowrap;
+    background: white;
+    min-width: 120px;
+    max-width: 180px;
 }
 
 .config-toolbar .config-badge {
@@ -321,10 +316,21 @@
     border-left: 2px solid #2c3e50;
     align-items: center;
     justify-content: center;
+    position: relative;
 }
 
 .config-split.preview-active .config-preview-col {
     display: flex;
+}
+
+.config-preview-label {
+    position: absolute;
+    top: 0.5rem;
+    left: 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.7);
+    z-index: 1;
 }
 
 .config-preview-img {
@@ -437,4 +443,71 @@
     background: linear-gradient(135deg, var(--accent) 0%, #2980b9 100%);
     color: white;
     box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
+}
+
+/* Target badge — replaces device selector in toolbar */
+.config-target-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.4rem 0.9rem;
+    background: #eafaf1;
+    border: 2px solid var(--success);
+    border-radius: var(--radius-md);
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--success-dark);
+    white-space: nowrap;
+}
+
+/* Config mismatch warning badge */
+.config-mismatch-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.35rem 0.75rem;
+    background: #fef5e7;
+    border: 2px solid var(--warning);
+    border-radius: var(--radius-md);
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #b7791f;
+    white-space: nowrap;
+}
+
+.config-mismatch-badge.hidden {
+    display: none;
+}
+
+/* Device bar inside Advanced Settings */
+.config-advanced-device-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    background: var(--light);
+    border: 2px solid #dfe6e9;
+    border-radius: var(--radius-md);
+}
+
+.config-advanced-hint {
+    font-size: 0.8rem;
+    color: var(--text-light);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.config-advanced-device-bar select {
+    padding: 0.5rem 0.75rem;
+    border: 2px solid #bdc3c7;
+    border-radius: var(--radius-md);
+    font-size: 0.9rem;
+    font-weight: 600;
+    background: white;
+    min-width: 140px;
+}
+
+.config-advanced-device-bar .config-action-btn {
+    flex: 0 0 auto;
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
 }

@@ -48,10 +48,11 @@ class ConfigValidator:
                         'detection_mode_pin_down',
                         'recording_pin',
                         'sensitivity_pin',
-                        'low_sensitivity_config',
-                        'high_sensitivity_config'
                     },
-                    'optional_keys': set()
+                    'optional_keys': {
+                        'low_sensitivity_config',
+                        'high_sensitivity_config',
+                    }
                 }
             }
         },
@@ -111,12 +112,35 @@ class ConfigValidator:
         'detection_mode_pin_down': ('pin', 1, 40),
         'recording_pin': ('pin', 1, 40),
         'sensitivity_pin': ('pin', 1, 40),
+        # Tracking
+        'track_class_window': ('int', 1, 20),
+        'track_crop_persist': ('int', 1, 10),
     }
 
     VALID_ALGORITHMS = {'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'gog', 'gog-hybrid'}
     VALID_CONTROLLER_TYPES = {'none', 'ute', 'advanced'}
     VALID_SWITCH_PURPOSES = {'recording', 'detection'}
     VALID_ACTUATION_MODES = {'centre', 'zone'}
+
+    # Sensitivity preset section keys
+    SENSITIVITY_SECTION_KEYS = {
+        'exg_min', 'exg_max', 'hue_min', 'hue_max',
+        'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
+        'min_detection_area',
+    }
+
+    # Optional top-level sections (not in REQUIRED_CONFIG)
+    OPTIONAL_SECTIONS = {
+        'Visualisation': {
+            'optional_keys': {'image_loop_time'}
+        },
+        'Sensitivity': {
+            'optional_keys': {'active'}
+        },
+        'Tracking': {
+            'optional_keys': {'tracking_enabled', 'track_class_window', 'track_crop_persist'}
+        },
+    }
 
     # to check for valid ranges
     THRESHOLD_PAIRS = [
@@ -149,16 +173,6 @@ class ConfigValidator:
                     controller_errors['Controller'] = {}
                 controller_errors['Controller'][
                     'switch_purpose'] = f'Must be one of: {", ".join(sorted(cls.VALID_SWITCH_PURPOSES))}'
-
-        # For advanced controller, validate config files exist
-        if controller_type == 'advanced':
-            for config_key in ['low_sensitivity_config', 'high_sensitivity_config']:
-                if config.has_option('Controller', config_key):
-                    config_path = Path(config.get('Controller', config_key))
-                    if not config_path.exists():
-                        if 'Controller' not in controller_errors:
-                            controller_errors['Controller'] = {}
-                        controller_errors['Controller'][config_key] = f'Config file does not exist: {config_path}'
 
         return not bool(controller_errors), controller_errors
 
@@ -354,6 +368,32 @@ class ConfigValidator:
         return True, {}, warnings
 
     @classmethod
+    def validate_sensitivity_sections(cls, config: ConfigParser) -> Dict[str, Dict[str, str]]:
+        """Validate [Sensitivity_*] preset sections have the required 9 keys with valid values."""
+        errors = {}
+        for section in config.sections():
+            if not section.startswith('Sensitivity_'):
+                continue
+            section_errors = {}
+            config_keys = set(config[section].keys())
+            missing = cls.SENSITIVITY_SECTION_KEYS - config_keys
+            if missing:
+                section_errors['missing_keys'] = f"Missing required keys: {', '.join(sorted(missing))}"
+            extra = config_keys - cls.SENSITIVITY_SECTION_KEYS
+            if extra:
+                section_errors['extra_keys'] = f"Unexpected keys: {', '.join(sorted(extra))}"
+            # Validate values are valid integers in range
+            for key in cls.SENSITIVITY_SECTION_KEYS & config_keys:
+                value = config.get(section, key)
+                used_pins = set()  # not relevant for sensitivity keys
+                is_valid, error_msg = cls.validate_value(key, value, used_pins)
+                if not is_valid:
+                    section_errors[key] = value + f" - {error_msg}"
+            if section_errors:
+                errors[section] = section_errors
+        return errors
+
+    @classmethod
     def validate_controller_ini(cls, config_path: Path) -> None:
         """Verify CONTROLLER.ini exists alongside the detection config and has required sections."""
         controller_ini = config_path.parent / 'CONTROLLER.ini'
@@ -442,6 +482,9 @@ class ConfigValidator:
 
         # Validate sections and values
         for section in config.sections():
+            # Skip Sensitivity_* preset sections — validated separately below
+            if section.startswith('Sensitivity_'):
+                continue
             section_errors = {}
             for key, value in config[section].items():
                 is_valid, error_msg = cls.validate_value(key, value, used_pins)
@@ -449,6 +492,11 @@ class ConfigValidator:
                     section_errors[key] = value + f" - {error_msg}"
             if section_errors:
                 validation_errors[section] = section_errors
+
+        # Validate Sensitivity_* preset sections
+        sensitivity_errors = cls.validate_sensitivity_sections(config)
+        if sensitivity_errors:
+            validation_errors.update(sensitivity_errors)
 
         # Validate relay configuration
         is_valid, relay_errors, relay_warnings = cls.validate_relays(config)
@@ -460,13 +508,28 @@ class ConfigValidator:
             logger.warning(warning)
 
         # Check required keys in each section
-        for section, requirements in working_config.items():
-            if section not in config.sections():
-                continue  # Skip if section is missing - we've already recorded this error
+        # Merge REQUIRED_CONFIG with OPTIONAL_SECTIONS for key checking
+        all_section_defs = dict(working_config)
+        for sec_name, sec_def in cls.OPTIONAL_SECTIONS.items():
+            if sec_name not in all_section_defs:
+                all_section_defs[sec_name] = {
+                    'required_keys': set(),
+                    'optional_keys': sec_def.get('optional_keys', set()),
+                }
 
+        for section in config.sections():
+            # Skip Sensitivity_* — validated separately
+            if section.startswith('Sensitivity_'):
+                continue
+
+            if section not in all_section_defs:
+                # Skip sections not defined in our schema (e.g. MQTT, GPS — from CONTROLLER.ini)
+                continue
+
+            requirements = all_section_defs[section]
             config_keys = set(config[section].keys())
             required_keys = {k.lower() for k in requirements['required_keys']}
-            optional_keys = {k.lower() for k in requirements['optional_keys']}
+            optional_keys = {k.lower() for k in requirements.get('optional_keys', set())}
 
             missing_keys = required_keys - config_keys
             if missing_keys:

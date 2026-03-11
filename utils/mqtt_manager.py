@@ -29,7 +29,7 @@ class OWLMQTTPublisher:
     Supports both standalone (localhost) and networked (central controller) modes
     """
 
-    def __init__(self, broker_host='localhost', broker_port=1883, client_id='owl_main', device_id=None, network_mode=None):
+    def __init__(self, broker_host='localhost', broker_port=1883, client_id='owl_main', device_id=None, network_mode=None, static_ip=None):
         self.broker_host = broker_host
         self.broker_port = broker_port
         self.client_id = client_id
@@ -108,6 +108,7 @@ class OWLMQTTPublisher:
             'last_update': time.time(),
             'networked_mode': self.networked_mode,
             'broker_host': broker_host,
+            'static_ip': static_ip or '',
             # Algorithm state
             'algorithm': 'exhsv',
             'model_available': False,
@@ -134,6 +135,9 @@ class OWLMQTTPublisher:
             'actuation_duration': 0.15,
             'delay': 0.0,
             'actuation_source': 'config',
+            # Camera resolution
+            'resolution_width': 0,
+            'resolution_height': 0,
             # Model download state
             'model_download': {
                 'status': 'idle',
@@ -152,9 +156,7 @@ class OWLMQTTPublisher:
 
         # OWL instance reference
         self.owl_instance = None
-        self.low_sensitivity_config = None
-        self.medium_sensitivity_config = None
-        self.high_sensitivity_config = None
+        self.sensitivity_manager = None
 
         self.last_sensitivity_level = 'medium'
         self.monitoring_thread = None
@@ -166,27 +168,38 @@ class OWLMQTTPublisher:
         self.client.on_message = self._on_message
         self.client.on_disconnect = self._on_disconnect
 
+        # Enable paho's built-in auto-reconnect after initial connection is lost
+        self.client.reconnect_delay_set(min_delay=1, max_delay=30)
+
+        # Last Will & Testament — broker publishes this if OWL disconnects ungracefully
+        lwt_payload = json.dumps({
+            'device_id': self.device_id,
+            'owl_running': False,
+            'connected': False,
+            'timestamp': time.time()
+        })
+        self.client.will_set(self.topics['status'], lwt_payload, qos=1, retain=True)
+
         # Connection state
         self.connected = False
         self.running = False
         self.connection_attempts = 0
         self.max_connection_attempts = 5
+        self._reconnect_thread = None
 
-    def set_owl_instance(self, owl_instance, low_config, medium_config, high_config):
-        """Set reference to owl instance and sensitivity config files"""
+    def set_owl_instance(self, owl_instance):
+        """Set reference to owl instance and sensitivity manager"""
         self.owl_instance = owl_instance
-        self.low_sensitivity_config = low_config
-        self.medium_sensitivity_config = medium_config
-        self.high_sensitivity_config = high_config
+        self.sensitivity_manager = getattr(owl_instance, 'sensitivity_manager', None)
 
         # Capture the config file path from the owl instance
         if hasattr(owl_instance, 'config_path'):
             self.config_file = owl_instance.config_path
 
-        self.logger.info(f"OWL instance configured with sensitivity configs:")
-        self.logger.info(f"  Low: {low_config}")
-        self.logger.info(f"  Medium: {medium_config}")
-        self.logger.info(f"  High: {high_config}")
+        self.logger.info("OWL instance configured")
+        if self.sensitivity_manager:
+            active = self.sensitivity_manager.get_active_preset()
+            self.logger.info(f"  Active sensitivity preset: {active}")
 
         # Initialize state with current OWL parameters
         self._sync_parameters_to_state()
@@ -219,6 +232,11 @@ class OWLMQTTPublisher:
             self.state['inference_resolution'] = getattr(
                 self.owl_instance, 'inference_resolution', 320)
 
+            # Camera resolution
+            res = getattr(self.owl_instance, 'resolution', (0, 0))
+            self.state['resolution_width'] = res[0]
+            self.state['resolution_height'] = res[1]
+
             # Check model availability (any NCNN dirs or .pt files in models/)
             self.state['model_available'] = self._check_model_available()
 
@@ -226,31 +244,51 @@ class OWLMQTTPublisher:
             self.state['available_models'] = self._list_available_models()
             self.state['detect_classes'] = getattr(self.owl_instance, '_detect_classes_list', [])
             gog = getattr(self.owl_instance, '_gog_detector', None)
-            if gog and hasattr(gog, 'model'):
+            # Use pending model name if OWL hasn't processed the swap yet,
+            # so the dashboard dropdown doesn't snap back to the old model.
+            pending_model = getattr(self.owl_instance, '_pending_model', None)
+            if pending_model is not None:
+                pass  # keep current_model as set by the set_model handler
+            elif gog and hasattr(gog, 'model'):
                 self.state['current_model'] = getattr(gog, '_model_filename', '')
                 self.state['model_classes'] = {str(k): v for k, v in gog.model.names.items()}
             else:
                 self.state['current_model'] = ''
                 self.state['model_classes'] = {}
 
-    def start(self):
-        """Start the MQTT IPC server"""
-        try:
-            self.running = True
+            # Tracking state
+            self.state['tracking_enabled'] = getattr(
+                self.owl_instance, 'tracking_enabled', False)
 
-            # Try to connect to broker
+            # Sensitivity presets
+            if self.sensitivity_manager:
+                self.state['sensitivity_level'] = self.sensitivity_manager.get_active_preset()
+                self.state['sensitivity_presets'] = self.sensitivity_manager.list_presets()
+
+    def start(self):
+        """Start the MQTT IPC server.
+
+        Starts heartbeat and monitoring threads immediately (they guard on
+        self.connected). If the broker is unreachable, a background reconnect
+        thread retries with exponential backoff instead of giving up.
+        """
+        self.running = True
+
+        with self.state_lock:
+            self.state['owl_running'] = True
+
+        # Start threads first — they already guard on self.connected
+        self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+        self.heartbeat_thread.start()
+
+        self.monitoring_thread = threading.Thread(target=self._monitor_states, daemon=True)
+        self.monitoring_thread.start()
+
+        # Try to connect to broker
+        try:
             self.logger.info(f"Attempting to connect to MQTT broker at {self.broker_host}:{self.broker_port}")
             self.client.connect(self.broker_host, self.broker_port, 60)
             self.client.loop_start()
-
-            with self.state_lock:
-                self.state['owl_running'] = True
-
-            self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
-            self.heartbeat_thread.start()
-
-            self.monitoring_thread = threading.Thread(target=self._monitor_states, daemon=True)
-            self.monitoring_thread.start()
 
             # Publish initial state
             self._publish_state()
@@ -260,16 +298,38 @@ class OWLMQTTPublisher:
             self.logger.info(f"Publishing to topics: {list(self.topics.values())}")
 
         except Exception as e:
-            self.logger.error(f"Failed to start MQTT server: {e}")
-
             if self.networked_mode:
-                self.logger.warning(f"Could not connect to network broker at {self.broker_host}:{self.broker_port}")
-                self.logger.warning("OWL will continue to operate locally without remote control")
+                self.logger.warning(f"Could not connect to network broker at {self.broker_host}:{self.broker_port}: {e}")
+                self.logger.warning("OWL will continue to operate locally — reconnecting in background")
             else:
-                self.logger.error("Could not connect to local MQTT broker - dashboard features disabled")
+                self.logger.warning(f"Could not connect to local MQTT broker: {e}")
+                self.logger.warning("Dashboard features disabled — reconnecting in background")
 
-            # Don't raise - allow OWL to continue operating
-            self.running = False
+            # Start background reconnect instead of giving up
+            self._reconnect_thread = threading.Thread(target=self._background_reconnect, daemon=True)
+            self._reconnect_thread.start()
+
+    def _background_reconnect(self):
+        """Retry broker connection with exponential backoff (2s → 30s cap)."""
+        delay = 2
+        max_delay = 30
+
+        while self.running and not self.connected:
+            self.logger.info(f"MQTT reconnect: trying {self.broker_host}:{self.broker_port} in {delay}s...")
+            time.sleep(delay)
+
+            if not self.running:
+                break
+
+            try:
+                self.client.connect(self.broker_host, self.broker_port, 60)
+                self.client.loop_start()
+                # _on_connect callback sets self.connected = True
+                self.logger.info("MQTT reconnect: connection attempt sent, waiting for callback")
+                break
+            except Exception as e:
+                self.logger.warning(f"MQTT reconnect failed: {e}")
+                delay = min(delay * 2, max_delay)
 
     def stop(self):
         """Stop the MQTT server"""
@@ -280,17 +340,28 @@ class OWLMQTTPublisher:
             self.state['owl_running'] = False
 
         if self.connected:
-            self.client.publish(self.topics['status'], json.dumps({
-                'device_id': self.device_id,
-                'owl_running': False,
-                'timestamp': time.time()
-            }), retain=True)
+            try:
+                self.client.publish(self.topics['status'], json.dumps({
+                    'device_id': self.device_id,
+                    'owl_running': False,
+                    'timestamp': time.time()
+                }), retain=True)
 
-            # Also update main state
-            self._publish_state()
+                # Also update main state
+                self._publish_state()
+            except Exception:
+                pass  # Best-effort during shutdown
 
-        self.client.loop_stop()
-        self.client.disconnect()
+        try:
+            self.client.loop_stop()
+        except Exception:
+            pass  # Client may never have started the loop
+
+        try:
+            self.client.disconnect()
+        except Exception:
+            pass  # Client may never have connected
+
         self.logger.info("MQTT IPC Server stopped")
 
     def _on_connect(self, client, userdata, flags, rc):
@@ -313,6 +384,10 @@ class OWLMQTTPublisher:
                 'connected': True,
                 'timestamp': time.time()
             }), retain=True)
+
+            # Publish full state immediately so controller sees everything
+            # (don't wait for next 2s heartbeat cycle)
+            self._publish_state()
 
         else:
             self.connected = False
@@ -361,13 +436,17 @@ class OWLMQTTPublisher:
                 self.logger.info(f"Image sample enable set to: {self.state['image_sample_enable']}")
 
             elif action == 'set_sensitivity_level':
-                # Legacy command - maps to preset system
                 level = command.get('level', '').lower()
-                valid_levels = ['low', 'medium', 'high']
 
-                if level not in valid_levels:
-                    self.logger.error(f"Invalid sensitivity level: {level}")
-                    return
+                if self.sensitivity_manager:
+                    valid_names = {p['name'] for p in self.sensitivity_manager.list_presets()}
+                    if level not in valid_names:
+                        self.logger.error(f"Invalid sensitivity preset: {level}")
+                        return
+                else:
+                    if level not in ('low', 'medium', 'high'):
+                        self.logger.error(f"Invalid sensitivity level: {level}")
+                        return
 
                 self.state['sensitivity_level'] = level
                 self.logger.info(f"Sensitivity level set to: {level}")
@@ -437,6 +516,8 @@ class OWLMQTTPublisher:
                     # Resolve to models/ directory path so GreenOnGreen can find it
                     model_path = os.path.join('models', str(model_name))
                     self.owl_instance._pending_model = model_path
+                    # Immediately report new model so dashboard doesn't snap back
+                    self.state['current_model'] = str(model_name)
                     self.logger.info(f"Model switch queued: {model_path}")
 
             elif action == 'get_config':
@@ -496,6 +577,58 @@ class OWLMQTTPublisher:
                     ).start()
                 else:
                     self.logger.error("download_model missing url or filename")
+
+            elif action == 'save_sensitivity_preset':
+                name = command.get('name', '').strip()
+                if name and self.sensitivity_manager and self.owl_instance:
+                    success = self.sensitivity_manager.save_custom_preset(
+                        name, owl_instance=self.owl_instance)
+                    if success:
+                        self.logger.info(f"Saved sensitivity preset: {name}")
+                    else:
+                        self.logger.error(f"Failed to save preset: {name}")
+                    self._sync_parameters_to_state()
+
+            elif action == 'delete_sensitivity_preset':
+                name = command.get('name', '').strip()
+                if name and self.sensitivity_manager:
+                    success = self.sensitivity_manager.delete_custom_preset(name)
+                    if success:
+                        self.logger.info(f"Deleted sensitivity preset: {name}")
+                    else:
+                        self.logger.error(f"Failed to delete preset: {name}")
+                    self._sync_parameters_to_state()
+
+            elif action == 'list_sensitivity_presets':
+                # Just sync — presets are published as part of state
+                self._sync_parameters_to_state()
+
+            elif action == 'set_tracking':
+                value = bool(command.get('value', False))
+                self.state['tracking_enabled'] = value
+                if self.owl_instance:
+                    self.owl_instance.tracking_enabled = value
+                    # Create or clear smoother/stabilizer
+                    if value and not getattr(self.owl_instance, '_class_smoother', None):
+                        from utils.tracker import ClassSmoother, CropMaskStabilizer
+                        window = getattr(self.owl_instance, '_track_class_window', 5)
+                        persist = getattr(self.owl_instance, '_track_crop_persist', 3)
+                        self.owl_instance._class_smoother = ClassSmoother(window=window)
+                        self.owl_instance._crop_stabilizer = CropMaskStabilizer(max_age=persist)
+                    elif not value:
+                        if getattr(self.owl_instance, '_class_smoother', None):
+                            self.owl_instance._class_smoother.reset()
+                        if getattr(self.owl_instance, '_crop_stabilizer', None):
+                            self.owl_instance._crop_stabilizer.reset()
+                    # Update detector's tracking_enabled flag
+                    gog = getattr(self.owl_instance, '_gog_detector', None)
+                    if gog and hasattr(gog, 'tracking_enabled'):
+                        gog.tracking_enabled = value
+                        if not value:
+                            gog.reset_tracker()
+                        elif value and self.owl_instance._crop_stabilizer:
+                            gog._crop_stabilizer = self.owl_instance._crop_stabilizer
+                self.logger.info(f"Tracking {'enabled' if value else 'disabled'}")
 
             elif action == 'reboot':
                 self.logger.warning("Reboot command received - this requires system privileges")
@@ -586,20 +719,27 @@ class OWLMQTTPublisher:
             self.logger.error(f"Error setting config section [{section}]: {e}")
 
     def _handle_save_config(self, filename=None):
-        """Write current config to disk"""
+        """Write current config to disk.
+
+        Copy-on-write: if the resolved path is a protected default
+        (GENERAL_CONFIG.ini, CONTROLLER.ini), creates a timestamped copy
+        and updates active_config.txt so the default is never overwritten.
+        """
         try:
             if not hasattr(self.owl_instance, 'config'):
                 self.logger.error("Cannot save config - OWL has no config object")
                 return
 
+            config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
+            protected = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini']
+
             if filename:
                 # Save to a new file in the config directory
-                config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
                 save_path = os.path.join(config_dir, filename)
 
                 # Safety: don't overwrite default presets
                 basename = os.path.basename(save_path)
-                if basename.startswith('DAY_SENSITIVITY_'):
+                if basename in protected:
                     self.logger.error(f"Cannot overwrite default preset: {basename}")
                     return
             else:
@@ -607,6 +747,19 @@ class OWLMQTTPublisher:
                 if not save_path:
                     self.logger.error("Cannot save config - no config file path")
                     return
+
+                # Copy-on-write: protected defaults get a timestamped copy
+                basename = os.path.basename(save_path)
+                if basename in protected:
+                    from datetime import datetime
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    new_name = f'config_{timestamp}.ini'
+                    save_path = os.path.join(config_dir, new_name)
+                    self.logger.info(
+                        f"Protected default {basename} — saving as {new_name}")
+
+                    # Update active_config.txt to point to the new file
+                    self._handle_set_active_config(f'config/{new_name}')
 
             with self.config_lock:
                 with open(save_path, 'w') as f:
@@ -839,61 +992,19 @@ class OWLMQTTPublisher:
         return None
 
     def _apply_sensitivity_preset(self, preset):
-        """
-        Apply a sensitivity preset by loading config and updating Owl attributes.
-        This follows the same pattern as AdvancedController.update_sensitivity_settings()
-        """
+        """Apply a sensitivity preset via SensitivityManager."""
         if self.owl_instance is None:
             self.logger.warning("Cannot apply preset - OWL instance not set")
             return
 
-        # Map preset names to config files
-        config_map = {
-            'low': self.low_sensitivity_config,
-            'medium': self.medium_sensitivity_config,
-            'high': self.high_sensitivity_config
-        }
-
-        config_file = config_map.get(preset)
-        if not config_file:
-            self.logger.error(f"Unknown preset: {preset}")
-            return
-
-        try:
-            # Load the config file
-            config = configparser.ConfigParser()
-            config.read(config_file)
-
-            # Update Owl instance attributes DIRECTLY (same as AdvancedController does)
-            self.owl_instance.exg_min = config.getint('GreenOnBrown', 'exg_min')
-            self.owl_instance.exg_max = config.getint('GreenOnBrown', 'exg_max')
-            self.owl_instance.hue_min = config.getint('GreenOnBrown', 'hue_min')
-            self.owl_instance.hue_max = config.getint('GreenOnBrown', 'hue_max')
-            self.owl_instance.saturation_min = config.getint('GreenOnBrown', 'saturation_min')
-            self.owl_instance.saturation_max = config.getint('GreenOnBrown', 'saturation_max')
-            self.owl_instance.brightness_min = config.getint('GreenOnBrown', 'brightness_min')
-            self.owl_instance.brightness_max = config.getint('GreenOnBrown', 'brightness_max')
-
-            # Queue trackbar updates for main thread (cv2 HighGUI is not thread-safe)
-            if self.owl_instance.show_display:
-                self.owl_instance._pending_trackbar_updates.update({
-                    'ExG-Min': self.owl_instance.exg_min,
-                    'ExG-Max': self.owl_instance.exg_max,
-                    'Hue-Min': self.owl_instance.hue_min,
-                    'Hue-Max': self.owl_instance.hue_max,
-                    'Sat-Min': self.owl_instance.saturation_min,
-                    'Sat-Max': self.owl_instance.saturation_max,
-                    'Bright-Min': self.owl_instance.brightness_min,
-                    'Bright-Max': self.owl_instance.brightness_max,
-                })
-
-            self.logger.info(f"Applied {preset} sensitivity preset from {config_file}")
-
-            # Sync updated parameters to state
-            self._sync_parameters_to_state()
-
-        except Exception as e:
-            self.logger.error(f"Error applying preset {preset}: {e}")
+        if self.sensitivity_manager:
+            success = self.sensitivity_manager.apply_preset(preset, self.owl_instance)
+            if success:
+                self._sync_parameters_to_state()
+            else:
+                self.logger.error(f"Failed to apply preset: {preset}")
+        else:
+            self.logger.warning("No SensitivityManager available")
 
     def _update_greenonbrown_param(self, param_name, param_value):
         """
@@ -1069,7 +1180,13 @@ class OWLMQTTPublisher:
                 'System', 'algorithm', fallback=self.state.get('algorithm', 'exhsv'))
 
             gog = getattr(self.owl_instance, '_gog_detector', None)
-            if gog and hasattr(gog, 'model'):
+            # Use pending model name if OWL hasn't processed the swap yet,
+            # so the dashboard dropdown doesn't snap back to the old model.
+            pending_model = getattr(self.owl_instance, '_pending_model', None)
+            if pending_model is not None:
+                # Model swap queued — keep current_model as set by the handler
+                pass
+            elif gog and hasattr(gog, 'model'):
                 self.state['current_model'] = getattr(gog, '_model_filename', '')
                 self.state['model_classes'] = {str(k): v for k, v in gog.model.names.items()}
             else:
@@ -1439,13 +1556,8 @@ class DashMQTTSubscriber:
         return self._send_command('set_image_sample_enable', value=value)
 
     def set_sensitivity_level(self, level):
-        """Set sensitivity level"""
-        valid_levels = ['low', 'medium', 'high']
+        """Set sensitivity level (accepts builtin and custom preset names)"""
         level = level.lower()
-
-        if level not in valid_levels:
-            return {'success': False, 'error': f'Invalid sensitivity level. Valid options: {valid_levels}'}
-
         return self._send_command('set_sensitivity_level', level=level)
 
     def set_greenonbrown_param(self, param_name, param_value):

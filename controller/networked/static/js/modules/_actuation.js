@@ -453,8 +453,6 @@ function initSensitivityDial() {
 }
 
 function setSensitivityLevel(level) {
-    if (sensitivityLevels.indexOf(level) === -1) return;
-
     currentSensitivity = level;
     updateSensitivityDial(level);
 
@@ -463,7 +461,7 @@ function setSensitivityLevel(level) {
 }
 
 function updateSensitivityDial(level) {
-    if (!level || sensitivityLevels.indexOf(level) === -1) return;
+    if (!level) return;
 
     currentSensitivity = level;
 
@@ -490,8 +488,8 @@ function updateSensitivityDial(level) {
     // Update label
     var label = document.getElementById('sensitivity-level-text');
     if (label) {
-        label.textContent = sensitivityLabels[level] || 'Medium';
-        label.style.color = sensitivityColors[level] || sensitivityColors.medium;
+        label.textContent = sensitivityLabels[level] || level.charAt(0).toUpperCase() + level.slice(1);
+        label.style.color = sensitivityColors[level] || '#555';
     }
 }
 

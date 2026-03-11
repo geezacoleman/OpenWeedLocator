@@ -1005,7 +1005,8 @@ if [[ "$OWL_MODE" == "standalone" ]]; then
     sudo tee /etc/systemd/system/owl-dash.service > /dev/null <<EOF
 [Unit]
 Description=OWL Dashboard Service
-After=network.target mosquitto.service
+After=network-online.target mosquitto.service
+Wants=network-online.target
 Requires=mosquitto.service
 
 [Service]

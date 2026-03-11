@@ -361,6 +361,20 @@ class OWLDashboard:
             self.logger.info("All nozzles OFF via dashboard")
             return jsonify(result)
 
+        @self.app.route('/api/tracking/set', methods=['POST'])
+        def set_tracking():
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            try:
+                data = request.get_json() or {}
+                value = bool(data.get('value', False))
+                result = self.mqtt_client._send_command('set_tracking', value=value)
+                self._persist_config_change('Tracking', 'tracking_enabled', str(value))
+                self.logger.info(f"Tracking {'enabled' if value else 'disabled'} via dashboard")
+                return jsonify({'success': True, 'tracking_enabled': value})
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)}), 500
+
         @self.app.route('/api/sensitivity/set', methods=['POST'])
         def set_sensitivity():
             """Set sensitivity to specific level"""
@@ -393,6 +407,64 @@ class OWLDashboard:
 
             except Exception as e:
                 self.logger.error(f"Error setting sensitivity: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/sensitivity/presets', methods=['GET'])
+        def get_sensitivity_presets():
+            """Get available sensitivity presets from OWL state."""
+            try:
+                if not self.mqtt_client:
+                    return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+
+                state = self.mqtt_client.get_state()
+                presets = state.get('sensitivity_presets', [])
+                active = state.get('sensitivity_level', 'medium')
+
+                return jsonify({
+                    'success': True,
+                    'presets': presets,
+                    'active': active
+                })
+            except Exception as e:
+                self.logger.error(f"Error getting sensitivity presets: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/sensitivity/save', methods=['POST'])
+        def save_sensitivity_preset():
+            """Save current slider values as a custom preset."""
+            try:
+                if not self.mqtt_client:
+                    return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+
+                data = request.get_json() or {}
+                name = data.get('name', '').strip()
+                if not name:
+                    return jsonify({'success': False, 'error': 'Preset name required'}), 400
+
+                result = self.mqtt_client._send_command('save_sensitivity_preset', name=name)
+                return jsonify(result)
+
+            except Exception as e:
+                self.logger.error(f"Error saving sensitivity preset: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/sensitivity/delete', methods=['POST'])
+        def delete_sensitivity_preset():
+            """Delete a custom sensitivity preset."""
+            try:
+                if not self.mqtt_client:
+                    return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+
+                data = request.get_json() or {}
+                name = data.get('name', '').strip()
+                if not name:
+                    return jsonify({'success': False, 'error': 'Preset name required'}), 400
+
+                result = self.mqtt_client._send_command('delete_sensitivity_preset', name=name)
+                return jsonify(result)
+
+            except Exception as e:
+                self.logger.error(f"Error deleting sensitivity preset: {e}")
                 return jsonify({'success': False, 'error': str(e)}), 500
 
         @self.app.route('/api/update_gps', methods=['POST'])
@@ -445,6 +517,11 @@ class OWLDashboard:
                 'confidence': mqtt_state.get('confidence', 0.5),
                 'crop_buffer_px': mqtt_state.get('crop_buffer_px', 20),
                 'algorithm_error': mqtt_state.get('algorithm_error'),
+                # Tracking
+                'tracking_enabled': mqtt_state.get('tracking_enabled', False),
+                # Camera resolution
+                'resolution_width': mqtt_state.get('resolution_width', 0),
+                'resolution_height': mqtt_state.get('resolution_height', 0),
             })
 
             return jsonify(stats)
@@ -465,6 +542,25 @@ class OWLDashboard:
                 return jsonify(result)
             except Exception as e:
                 self.logger.error(f"Error setting algorithm: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/camera/set_max_resolution', methods=['POST'])
+        def set_max_resolution():
+            """Persist max camera resolution to config (copy-on-write safe).
+
+            Used by the recording resolution warning to change resolution
+            before restarting OWL. Does NOT update runtime state — caller
+            must restart OWL for the change to take effect.
+            """
+            try:
+                self._persist_config_change('Camera', 'resolution_width', '1456')
+                self._persist_config_change('Camera', 'resolution_height', '1088')
+                return jsonify({
+                    'success': True,
+                    'message': 'Resolution set to 1456x1088. Restart OWL to apply.'
+                })
+            except Exception as e:
+                self.logger.error(f"Error setting max resolution: {e}")
                 return jsonify({'success': False, 'error': str(e)}), 500
 
         @self.app.route('/api/download_frame', methods=['POST'])
@@ -790,7 +886,7 @@ class OWLDashboard:
         # =====================
 
         # Default config and active config pointer
-        DEFAULT_CONFIG = 'config/DAY_SENSITIVITY_2.ini'
+        DEFAULT_CONFIG = 'config/GENERAL_CONFIG.ini'
         ACTIVE_CONFIG_POINTER = 'config/active_config.txt'
 
         @self.app.route('/api/config', methods=['GET'])
@@ -862,7 +958,7 @@ class OWLDashboard:
                 new_config_path = os.path.join(config_dir, safe_name)
 
                 # Don't allow overwriting default configs
-                protected_configs = ['DAY_SENSITIVITY_1.ini', 'DAY_SENSITIVITY_2.ini', 'DAY_SENSITIVITY_3.ini']
+                protected_configs = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini']
                 if safe_name in protected_configs:
                     return jsonify({
                         'success': False,
@@ -979,7 +1075,7 @@ class OWLDashboard:
                     return jsonify({'success': False, 'error': 'No config specified'}), 400
 
                 # Don't allow deleting default configs
-                protected_configs = ['DAY_SENSITIVITY_1.ini', 'DAY_SENSITIVITY_2.ini', 'DAY_SENSITIVITY_3.ini']
+                protected_configs = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini']
                 basename = os.path.basename(config_name)
 
                 if basename in protected_configs:
@@ -1082,7 +1178,7 @@ class OWLDashboard:
                     self.logger.warning(f"Could not read active config pointer: {e}")
 
         # Return default - will be resolved by _resolve_config_path
-        return 'config/DAY_SENSITIVITY_2.ini'
+        return 'config/GENERAL_CONFIG.ini'
 
     def _get_controller_type(self):
         """Read controller_type fresh from the active config file."""
@@ -1158,7 +1254,7 @@ class OWLDashboard:
                     stat = os.stat(full_path)
 
                     # Determine if it's a default config
-                    is_default = f in ['DAY_SENSITIVITY_1.ini', 'DAY_SENSITIVITY_2.ini', 'DAY_SENSITIVITY_3.ini']
+                    is_default = f in ['GENERAL_CONFIG.ini', 'CONTROLLER.ini']
 
                     configs.append({
                         'name': f,
@@ -1195,8 +1291,7 @@ class OWLDashboard:
             config.set(section, key, str(value))
 
             basename = os.path.basename(config_path)
-            protected = ['DAY_SENSITIVITY_1.ini', 'DAY_SENSITIVITY_2.ini',
-                         'DAY_SENSITIVITY_3.ini', 'CONTROLLER.ini']
+            protected = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini']
 
             if basename in protected:
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')

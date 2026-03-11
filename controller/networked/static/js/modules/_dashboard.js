@@ -49,6 +49,49 @@ function syncConfigFromOWLState(owlState) {
 }
 
 // ============================================
+// CONFIG MISMATCH DETECTION
+// ============================================
+
+/**
+ * Compare 9 GreenOnBrown keys across all connected OWLs.
+ * Shows/hides the config-mismatch-badge in the config tab toolbar.
+ */
+function checkConfigMismatch() {
+    var badge = document.getElementById('config-mismatch-badge');
+    if (!badge) return;
+
+    var keys = ['exg_min', 'exg_max', 'hue_min', 'hue_max',
+                'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
+                'min_detection_area'];
+
+    var connectedOwls = [];
+    for (var id in owlsData) {
+        if (owlsData[id] && owlsData[id].connected) {
+            connectedOwls.push(owlsData[id]);
+        }
+    }
+
+    if (connectedOwls.length < 2) {
+        badge.classList.add('hidden');
+        return;
+    }
+
+    var mismatch = false;
+    var ref = connectedOwls[0];
+    for (var i = 1; i < connectedOwls.length; i++) {
+        for (var k = 0; k < keys.length; k++) {
+            if (String(connectedOwls[i][keys[k]]) !== String(ref[keys[k]])) {
+                mismatch = true;
+                break;
+            }
+        }
+        if (mismatch) break;
+    }
+
+    badge.classList.toggle('hidden', !mismatch);
+}
+
+// ============================================
 // CONFIG DEFAULTS LOADING
 // ============================================
 
@@ -137,6 +180,8 @@ async function updateDashboard() {
             }
             // Sync slider values from OWL state so dashboard matches device
             syncConfigFromOWLState(firstOwl);
+            // Check for config mismatch across OWLs
+            checkConfigMismatch();
             // Sync sensitivity dial from OWL state
             if (typeof updateSensitivityDial === 'function' && firstOwl.sensitivity_level) {
                 updateSensitivityDial(firstOwl.sensitivity_level);
@@ -148,6 +193,13 @@ async function updateDashboard() {
                 nozzleBtn.classList.toggle('active', nozzlesOn);
                 nozzleBtn.textContent = nozzlesOn ? 'Nozzles ON' : 'All Nozzles';
                 globalNozzlesActive = nozzlesOn;
+            }
+            // Sync tracking button state from OWL
+            const trackingBtn = document.getElementById('main-tracking-btn');
+            if (trackingBtn) {
+                const trackingOn = !!firstOwl.tracking_enabled;
+                trackingBtn.classList.toggle('active', trackingOn);
+                trackingBtn.textContent = trackingOn ? 'Tracking ON' : 'Tracking';
             }
         }
         // Sync AI tab if it's active

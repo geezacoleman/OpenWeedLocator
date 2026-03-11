@@ -19,6 +19,10 @@ function updateSystemStats() {
     apiRequest('/api/system_stats')
         .then(r => r.json())
         .then(data => {
+            // Cache resolution for recording warning check
+            lastResWidth = data.resolution_width || 0;
+            lastResHeight = data.resolution_height || 0;
+
             // Gradient chips
             setText('cpuChipVal', `${data.cpu_percent}%`);
             setText('memChipVal', `${data.memory_percent}%`);
@@ -35,6 +39,7 @@ function updateSystemStats() {
             syncSwitch('detectSwitch', nozzlesOn ? false : detectionOn);
             syncSwitch('recordSwitch', recordingOn);
             syncSwitch('nozzleSwitch', nozzlesOn);
+            syncSwitch('trackingSwitch', !!data.tracking_enabled);
 
             // OWL service status chip
             const owlChip = document.getElementById('owlStatusChip');

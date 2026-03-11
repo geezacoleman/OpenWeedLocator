@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 
 class GreenOnGreen:
     def __init__(self, model_path='models', confidence=0.5, detect_classes=None,
-                 hybrid_mode=False, inference_resolution=320, crop_buffer_px=20):
+                 hybrid_mode=False, inference_resolution=320, crop_buffer_px=20,
+                 tracking_enabled=False, crop_stabilizer=None):
         """
         Args:
             model_path: Path to NCNN model dir, .pt file, or parent dir containing models.
@@ -43,6 +44,15 @@ class GreenOnGreen:
 
         # Map class names to IDs after model is loaded
         self._detect_class_ids = self._resolve_classes(detect_classes)
+
+        # Tracking state (ByteTrack via model.track())
+        self.tracking_enabled = tracking_enabled
+        self._crop_stabilizer = crop_stabilizer
+        # Raw detection attributes (populated each frame when tracking enabled)
+        self.last_track_ids = []
+        self.last_raw_boxes = []
+        self.last_class_ids = []
+        self.last_confidences = []
 
         # Hybrid mode: create internal GreenOnBrown, dilation kernel, thread pool
         self._gob = None
@@ -150,6 +160,34 @@ class GreenOnGreen:
         self._dilate_kernel = self._build_dilate_kernel(px)
         logger.info(f'Crop buffer updated to {px}px')
 
+    @staticmethod
+    def _build_crop_mask(results, h, w):
+        """Build crop mask from a single frame's YOLO results (no stabilization)."""
+        mask = np.zeros((h, w), dtype=np.uint8)
+        for result in results:
+            if result.masks is not None:
+                contours_full = [c.astype(np.int32).reshape(-1, 1, 2)
+                                 for c in result.masks.xy]
+                cv2.drawContours(mask, contours_full, -1, 255, -1)
+            elif len(result.boxes):
+                for box in result.boxes:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
+        return mask
+
+    def reset_tracker(self):
+        """Reset ByteTrack state and tracking layers. Call when detection toggled off."""
+        self.last_track_ids = []
+        self.last_raw_boxes = []
+        self.last_class_ids = []
+        self.last_confidences = []
+        if self._crop_stabilizer:
+            self._crop_stabilizer.reset()
+        # Reset ByteTrack internal state
+        if hasattr(self.model, 'predictor') and self.model.predictor is not None:
+            for tracker in getattr(self.model.predictor, 'trackers', []):
+                tracker.reset()
+
     def update_detect_classes(self, class_names):
         """Hot-update detect_classes filter without reloading the model."""
         self._detect_class_ids = self._resolve_classes(class_names)
@@ -200,28 +238,51 @@ class GreenOnGreen:
                 min_detection_area=min_detection_area, invert_hue=invert_hue
             )
 
-        # --- Pure GoG mode (unchanged) ---
+        # --- Pure GoG mode ---
         self.detection_mask = None  # Reset each frame
 
-        results = self.model.predict(
-            source=image,
-            conf=confidence,
-            classes=self._detect_class_ids,
-            verbose=False,
-            device='cpu'
-        )
+        if self.tracking_enabled:
+            # Track ALL classes — ClassSmoother in owl.py does class filtering
+            results = self.model.track(
+                source=image,
+                conf=confidence,
+                persist=True,
+                tracker='bytetrack.yaml',
+                verbose=False,
+                device='cpu'
+            )
+        else:
+            results = self.model.predict(
+                source=image,
+                conf=confidence,
+                classes=self._detect_class_ids,
+                verbose=False,
+                device='cpu'
+            )
 
         boxes = []
         weed_centres = []
         contours = None
+        track_ids = []
+        raw_class_ids = []
+        raw_confidences = []
 
         for result in results:
+            has_ids = (self.tracking_enabled
+                       and result.boxes.id is not None
+                       and len(result.boxes.id) > 0)
+
             # Process bounding boxes (works for both detect and segment)
-            for box in result.boxes:
+            for i, box in enumerate(result.boxes):
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 w, h = x2 - x1, y2 - y1
                 boxes.append([x1, y1, w, h])
                 weed_centres.append([x1 + w // 2, y1 + h // 2])
+
+                if has_ids:
+                    track_ids.append(int(result.boxes.id[i]))
+                    raw_class_ids.append(int(box.cls[0]))
+                    raw_confidences.append(float(box.conf[0]))
 
             # Extract mask contours for segmentation models
             if result.masks is not None:
@@ -232,6 +293,12 @@ class GreenOnGreen:
                 if build_mask:
                     self.detection_mask = np.zeros(image.shape[:2], dtype=np.uint8)
                     cv2.drawContours(self.detection_mask, contours, -1, 255, -1)
+
+        # Store raw tracking data for owl.py's ClassSmoother
+        self.last_track_ids = track_ids
+        self.last_raw_boxes = list(boxes)
+        self.last_class_ids = raw_class_ids
+        self.last_confidences = raw_confidences
 
         if show_display:
             image_out = image.copy()
@@ -295,27 +362,61 @@ class GreenOnGreen:
         )
 
         # Step 2: YOLO inference on main thread (imgsz handles resize)
-        results = self.model.predict(
-            source=image,
-            conf=confidence,
-            classes=self._detect_class_ids,
-            imgsz=self.inference_resolution,
-            verbose=False,
-            device='cpu'
-        )
+        if self.tracking_enabled:
+            results = self.model.track(
+                source=image,
+                conf=confidence,
+                classes=self._detect_class_ids,
+                persist=True,
+                tracker='bytetrack.yaml',
+                imgsz=self.inference_resolution,
+                verbose=False,
+                device='cpu'
+            )
+        else:
+            results = self.model.predict(
+                source=image,
+                conf=confidence,
+                classes=self._detect_class_ids,
+                imgsz=self.inference_resolution,
+                verbose=False,
+                device='cpu'
+            )
 
         # Step 3: Build crop mask at full resolution
-        crop_mask = np.zeros((h_full, w_full), dtype=np.uint8)
+        if self.tracking_enabled and self._crop_stabilizer:
+            # Feed tracked crop detections to stabilizer for temporal persistence
+            crop_track_ids = []
+            crop_boxes_xyxy = []
+            crop_contours = []
 
-        for result in results:
-            if result.masks is not None:
-                contours_full = [c.astype(np.int32).reshape(-1, 1, 2)
-                                 for c in result.masks.xy]
-                cv2.drawContours(crop_mask, contours_full, -1, 255, -1)
-            elif len(result.boxes):
-                for box in result.boxes:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    cv2.rectangle(crop_mask, (x1, y1), (x2, y2), 255, -1)
+            for result in results:
+                has_ids = (result.boxes.id is not None
+                           and len(result.boxes.id) > 0)
+
+                if result.masks is not None:
+                    crop_contours.extend(
+                        c.astype(np.int32).reshape(-1, 1, 2)
+                        for c in result.masks.xy)
+
+                for i, box in enumerate(result.boxes):
+                    if has_ids:
+                        crop_track_ids.append(int(result.boxes.id[i]))
+                        crop_boxes_xyxy.append(list(map(int, box.xyxy[0])))
+
+            if crop_track_ids:
+                self._crop_stabilizer.update(
+                    crop_track_ids,
+                    crop_boxes_xyxy,
+                    contours=crop_contours if crop_contours else None
+                )
+                crop_mask = self._crop_stabilizer.build_stabilized_mask(
+                    (h_full, w_full))
+            else:
+                # No track IDs available — fall back to per-frame mask
+                crop_mask = self._build_crop_mask(results, h_full, w_full)
+        else:
+            crop_mask = self._build_crop_mask(results, h_full, w_full)
 
         # Step 4: Dilate crop mask by buffer
         crop_mask_undilated = crop_mask.copy() if show_display else None

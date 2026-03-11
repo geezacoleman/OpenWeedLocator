@@ -70,6 +70,18 @@
     box-shadow: 0 3px 0 #c0670a, 0 4px 12px rgba(230, 126, 34, 0.25);
 }
 
+.action-button.btn-tracking {
+    background: #7f8fa6;
+    box-shadow: 0 3px 0 #6b7a8d, 0 4px 12px rgba(127, 143, 166, 0.25);
+    font-size: 1.2rem;
+    height: 56px;
+}
+
+.action-button.btn-tracking.active {
+    background: #2980b9;
+    box-shadow: 0 3px 0 #1f6fa0, 0 4px 12px rgba(41, 128, 185, 0.25);
+}
+
 /* ==========================================================================
    Pipeline Mode Selector
    Three-way: COLOUR / AI / HYBRID

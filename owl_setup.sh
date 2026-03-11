@@ -125,8 +125,8 @@ setup_owl_systemd_service() {
   sudo tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
 Description=OpenWeedLocator (OWL) Main Application
-After=network-online.target mosquitto.service
-Wants=network-online.target mosquitto.service
+After=network-online.target mosquitto.service NetworkManager-wait-online.service
+Wants=network-online.target mosquitto.service NetworkManager-wait-online.service
 
 [Service]
 Type=simple

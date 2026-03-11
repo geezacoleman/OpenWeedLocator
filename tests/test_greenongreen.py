@@ -19,6 +19,31 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def make_mock_boxes(box_mocks, track_ids=None):
+    """Create a mock YOLO Boxes object that supports attribute access and iteration.
+
+    The real YOLO ``result.boxes`` is a ``Boxes`` object, not a plain list.
+    It has a ``.id`` attribute (numpy array or None) AND is iterable over
+    individual box objects.  Using a plain Python list for ``result.boxes``
+    prevents setting ``.id`` because lists don't allow arbitrary attributes.
+
+    Args:
+        box_mocks: list of individual box MagicMock objects (iterable items).
+        track_ids: numpy array of track IDs, or None.
+
+    Returns:
+        A MagicMock that behaves like a YOLO Boxes object.
+    """
+    mock_boxes = MagicMock()
+    mock_boxes.id = track_ids
+    # Make iteration over mock_boxes yield the individual box mocks
+    mock_boxes.__iter__ = MagicMock(return_value=iter(box_mocks))
+    mock_boxes.__len__ = MagicMock(return_value=len(box_mocks))
+    # Support indexed access (result.boxes[i]) used in show_display path
+    mock_boxes.__getitem__ = MagicMock(side_effect=lambda i: box_mocks[i])
+    return mock_boxes
+
+
 def make_mock_yolo(task='detect', names=None):
     """Create a mock YOLO model with configurable task and class names."""
     mock_model = MagicMock()
@@ -564,33 +589,322 @@ class TestConfigIntegration:
     """Test that updated config files are valid."""
 
     def test_config_files_have_new_greenongreen_keys(self):
-        """All DAY_SENSITIVITY configs have the new GreenOnGreen keys."""
+        """GENERAL_CONFIG.ini has the new GreenOnGreen keys."""
         import configparser
         config_dir = PROJECT_ROOT / 'config'
 
-        for ini_name in ['DAY_SENSITIVITY_1.ini', 'DAY_SENSITIVITY_2.ini', 'DAY_SENSITIVITY_3.ini']:
-            config = configparser.ConfigParser()
-            config.read(config_dir / ini_name)
+        ini_name = 'GENERAL_CONFIG.ini'
+        config = configparser.ConfigParser()
+        config.read(config_dir / ini_name)
 
-            assert config.has_section('GreenOnGreen'), f'{ini_name} missing GreenOnGreen section'
-            assert config.has_option('GreenOnGreen', 'model_path'), f'{ini_name} missing model_path'
-            assert config.has_option('GreenOnGreen', 'confidence'), f'{ini_name} missing confidence'
-            assert config.has_option('GreenOnGreen', 'detect_classes'), f'{ini_name} missing detect_classes'
-            assert config.has_option('GreenOnGreen', 'actuation_mode'), f'{ini_name} missing actuation_mode'
-            assert config.has_option('GreenOnGreen', 'min_detection_pixels'), f'{ini_name} missing min_detection_pixels'
+        assert config.has_section('GreenOnGreen'), f'{ini_name} missing GreenOnGreen section'
+        assert config.has_option('GreenOnGreen', 'model_path'), f'{ini_name} missing model_path'
+        assert config.has_option('GreenOnGreen', 'confidence'), f'{ini_name} missing confidence'
+        assert config.has_option('GreenOnGreen', 'detect_classes'), f'{ini_name} missing detect_classes'
+        assert config.has_option('GreenOnGreen', 'actuation_mode'), f'{ini_name} missing actuation_mode'
+        assert config.has_option('GreenOnGreen', 'min_detection_pixels'), f'{ini_name} missing min_detection_pixels'
 
-            # Verify old key is removed
-            assert not config.has_option('GreenOnGreen', 'class_filter_id'), \
-                f'{ini_name} still has obsolete class_filter_id'
+        # Verify old key is removed
+        assert not config.has_option('GreenOnGreen', 'class_filter_id'), \
+            f'{ini_name} still has obsolete class_filter_id'
 
     def test_actuation_mode_values_valid(self):
-        """actuation_mode values are valid in all configs."""
+        """actuation_mode values are valid in GENERAL_CONFIG.ini."""
         import configparser
         config_dir = PROJECT_ROOT / 'config'
 
-        for ini_name in ['DAY_SENSITIVITY_1.ini', 'DAY_SENSITIVITY_2.ini', 'DAY_SENSITIVITY_3.ini']:
-            config = configparser.ConfigParser()
-            config.read(config_dir / ini_name)
+        ini_name = 'GENERAL_CONFIG.ini'
+        config = configparser.ConfigParser()
+        config.read(config_dir / ini_name)
 
-            mode = config.get('GreenOnGreen', 'actuation_mode')
-            assert mode in ('centre', 'zone'), f'{ini_name} has invalid actuation_mode: {mode}'
+        mode = config.get('GreenOnGreen', 'actuation_mode')
+        assert mode in ('centre', 'zone'), f'{ini_name} has invalid actuation_mode: {mode}'
+
+    def test_tracking_section_exists(self):
+        """GENERAL_CONFIG.ini has [Tracking] section with required keys."""
+        import configparser
+        config_dir = PROJECT_ROOT / 'config'
+
+        config = configparser.ConfigParser()
+        config.read(config_dir / 'GENERAL_CONFIG.ini')
+
+        assert config.has_section('Tracking'), 'GENERAL_CONFIG.ini missing [Tracking] section'
+        assert config.has_option('Tracking', 'tracking_enabled')
+        assert config.has_option('Tracking', 'track_class_window')
+        assert config.has_option('Tracking', 'track_crop_persist')
+
+        # Values are valid
+        assert config.get('Tracking', 'tracking_enabled') in ('True', 'False')
+        assert config.getint('Tracking', 'track_class_window') > 0
+        assert config.getint('Tracking', 'track_crop_persist') > 0
+
+
+class TestTrackingMode:
+    """Test tracking-related features in GreenOnGreen."""
+
+    @patch('utils.greenongreen.YOLO')
+    def test_tracking_enabled_init(self, mock_yolo_cls, tmp_path):
+        """tracking_enabled=True is stored on the instance."""
+        (tmp_path / 'model.pt').touch()
+        mock_yolo_cls.return_value = make_mock_yolo()
+
+        from utils.greenongreen import GreenOnGreen
+        gog = GreenOnGreen(model_path=str(tmp_path), tracking_enabled=True)
+
+        assert gog.tracking_enabled is True
+        assert gog.last_track_ids == []
+        assert gog.last_raw_boxes == []
+        assert gog.last_class_ids == []
+        assert gog.last_confidences == []
+
+    @patch('utils.greenongreen.YOLO')
+    def test_tracking_disabled_uses_predict(self, mock_yolo_cls, tmp_path):
+        """tracking_enabled=False calls model.predict (not track)."""
+        (tmp_path / 'model.pt').touch()
+        mock_model = make_mock_yolo()
+        mock_yolo_cls.return_value = mock_model
+
+        from utils.greenongreen import GreenOnGreen
+        gog = GreenOnGreen(model_path=str(tmp_path), tracking_enabled=False)
+
+        image = np.zeros((480, 640, 3), dtype=np.uint8)
+        gog.inference(image)
+
+        mock_model.predict.assert_called_once()
+        mock_model.track.assert_not_called()
+
+    @patch('utils.greenongreen.YOLO')
+    def test_tracking_enabled_uses_track(self, mock_yolo_cls, tmp_path):
+        """tracking_enabled=True calls model.track (not predict)."""
+        (tmp_path / 'model.pt').touch()
+        mock_model = make_mock_yolo()
+
+        # Setup track to return same as predict
+        mock_result = MagicMock()
+        mock_box = MagicMock()
+        mock_box.xyxy = [np.array([100, 50, 200, 150])]
+        mock_box.conf = [np.array([0.85])]
+        mock_box.cls = [np.array([0])]
+        mock_result.boxes = make_mock_boxes([mock_box], track_ids=np.array([1]))
+        mock_result.masks = None
+        mock_model.track.return_value = [mock_result]
+        mock_yolo_cls.return_value = mock_model
+
+        from utils.greenongreen import GreenOnGreen
+        gog = GreenOnGreen(model_path=str(tmp_path), tracking_enabled=True)
+
+        image = np.zeros((480, 640, 3), dtype=np.uint8)
+        gog.inference(image)
+
+        mock_model.track.assert_called_once()
+        mock_model.predict.assert_not_called()
+
+    @patch('utils.greenongreen.YOLO')
+    def test_tracking_stores_raw_attrs(self, mock_yolo_cls, tmp_path):
+        """After track(), last_track_ids/class_ids/confidences are populated."""
+        (tmp_path / 'model.pt').touch()
+        mock_model = make_mock_yolo()
+
+        mock_result = MagicMock()
+        mock_box1 = MagicMock()
+        mock_box1.xyxy = [np.array([10, 20, 50, 60])]
+        mock_box1.conf = [np.array([0.9])]
+        mock_box1.cls = [np.array([0])]
+        mock_box2 = MagicMock()
+        mock_box2.xyxy = [np.array([100, 100, 200, 200])]
+        mock_box2.conf = [np.array([0.7])]
+        mock_box2.cls = [np.array([1])]
+
+        mock_result.boxes = make_mock_boxes([mock_box1, mock_box2], track_ids=np.array([5, 8]))
+        mock_result.masks = None
+        mock_model.track.return_value = [mock_result]
+        mock_yolo_cls.return_value = mock_model
+
+        from utils.greenongreen import GreenOnGreen
+        gog = GreenOnGreen(model_path=str(tmp_path), tracking_enabled=True)
+
+        image = np.zeros((480, 640, 3), dtype=np.uint8)
+        gog.inference(image)
+
+        assert gog.last_track_ids == [5, 8]
+        assert gog.last_class_ids == [0, 1]
+        assert len(gog.last_confidences) == 2
+        assert abs(gog.last_confidences[0] - 0.9) < 0.01
+        assert len(gog.last_raw_boxes) == 2
+
+    @patch('utils.greenongreen.YOLO')
+    def test_tracking_no_ids_stores_empty(self, mock_yolo_cls, tmp_path):
+        """When track returns no IDs (first frame), raw attrs are empty lists."""
+        (tmp_path / 'model.pt').touch()
+        mock_model = make_mock_yolo()
+
+        mock_result = MagicMock()
+        mock_box = MagicMock()
+        mock_box.xyxy = [np.array([100, 50, 200, 150])]
+        mock_box.conf = [np.array([0.85])]
+        mock_box.cls = [np.array([0])]
+        mock_result.boxes = make_mock_boxes([mock_box], track_ids=None)
+        mock_result.masks = None
+        mock_model.track.return_value = [mock_result]
+        mock_yolo_cls.return_value = mock_model
+
+        from utils.greenongreen import GreenOnGreen
+        gog = GreenOnGreen(model_path=str(tmp_path), tracking_enabled=True)
+
+        image = np.zeros((480, 640, 3), dtype=np.uint8)
+        _, boxes, centres, _ = gog.inference(image)
+
+        # Boxes and centres still populated (from xyxy), but track IDs empty
+        assert len(boxes) == 1
+        assert gog.last_track_ids == []
+        assert gog.last_class_ids == []
+
+    @patch('utils.greenongreen.YOLO')
+    def test_tracking_no_classes_filter(self, mock_yolo_cls, tmp_path):
+        """With tracking enabled, predict/track is called without classes= filter."""
+        (tmp_path / 'model.pt').touch()
+        mock_model = make_mock_yolo()
+
+        mock_result = MagicMock()
+        mock_result.boxes = make_mock_boxes([], track_ids=None)
+        mock_result.masks = None
+        mock_model.track.return_value = [mock_result]
+        mock_yolo_cls.return_value = mock_model
+
+        from utils.greenongreen import GreenOnGreen
+        gog = GreenOnGreen(model_path=str(tmp_path), tracking_enabled=True,
+                           detect_classes=['weed'])
+
+        image = np.zeros((480, 640, 3), dtype=np.uint8)
+        gog.inference(image)
+
+        # track() should NOT get classes= kwarg (ClassSmoother handles filtering)
+        call_kwargs = mock_model.track.call_args[1]
+        assert 'classes' not in call_kwargs
+
+    @patch('utils.greenongreen.YOLO')
+    def test_reset_tracker_clears_state(self, mock_yolo_cls, tmp_path):
+        """reset_tracker clears all tracking state."""
+        (tmp_path / 'model.pt').touch()
+        mock_model = make_mock_yolo()
+        mock_yolo_cls.return_value = mock_model
+
+        from utils.greenongreen import GreenOnGreen
+        from utils.tracker import CropMaskStabilizer
+
+        stabilizer = CropMaskStabilizer(max_age=3)
+        stabilizer.update([1], [[10, 10, 20, 20]])
+
+        gog = GreenOnGreen(model_path=str(tmp_path), tracking_enabled=True,
+                           crop_stabilizer=stabilizer)
+        gog.last_track_ids = [1, 2]
+        gog.last_raw_boxes = [[0, 0, 10, 10], [20, 20, 30, 30]]
+        gog.last_class_ids = [0, 1]
+        gog.last_confidences = [0.9, 0.8]
+
+        gog.reset_tracker()
+
+        assert gog.last_track_ids == []
+        assert gog.last_raw_boxes == []
+        assert gog.last_class_ids == []
+        assert gog.last_confidences == []
+        assert stabilizer.active_count == 0
+
+    @patch('utils.greenongreen.YOLO')
+    @patch('utils.greenonbrown.GreenOnBrown')
+    def test_hybrid_tracking_uses_track(self, mock_gob_cls, mock_yolo_cls, tmp_path):
+        """Hybrid mode with tracking uses model.track instead of predict."""
+        (tmp_path / 'model.pt').touch()
+        mock_model = make_mock_yolo()
+
+        mock_result = MagicMock()
+        mock_result.boxes = make_mock_boxes([], track_ids=None)
+        mock_result.masks = None
+        mock_model.track.return_value = [mock_result]
+        mock_yolo_cls.return_value = mock_model
+
+        mock_gob = MagicMock()
+        mock_gob.inference.return_value = (None, [], [], np.zeros((480, 640, 3), dtype=np.uint8))
+        mock_gob_cls.return_value = mock_gob
+
+        from utils.greenongreen import GreenOnGreen
+        gog = GreenOnGreen(model_path=str(tmp_path), hybrid_mode=True,
+                           tracking_enabled=True)
+
+        image = np.zeros((480, 640, 3), dtype=np.uint8)
+        gog.inference(image)
+
+        mock_model.track.assert_called_once()
+        mock_model.predict.assert_not_called()
+
+    @patch('utils.greenongreen.YOLO')
+    @patch('utils.greenonbrown.GreenOnBrown')
+    def test_hybrid_tracking_feeds_stabilizer(self, mock_gob_cls, mock_yolo_cls, tmp_path):
+        """Hybrid tracking feeds crop detections to CropMaskStabilizer."""
+        (tmp_path / 'model.pt').touch()
+        mock_model = make_mock_yolo()
+
+        # Create result with tracked crop detection
+        mock_result = MagicMock()
+        mock_box = MagicMock()
+        mock_box.xyxy = [np.array([100, 50, 200, 150])]
+        mock_box.conf = [np.array([0.8])]
+        mock_box.cls = [np.array([1])]  # crop class
+        mock_result.boxes = make_mock_boxes([mock_box], track_ids=np.array([3]))
+        mock_result.masks = None
+        mock_model.track.return_value = [mock_result]
+        mock_yolo_cls.return_value = mock_model
+
+        mock_gob = MagicMock()
+        mock_gob.inference.return_value = (None, [], [], np.zeros((480, 640, 3), dtype=np.uint8))
+        mock_gob_cls.return_value = mock_gob
+
+        from utils.greenongreen import GreenOnGreen
+        from utils.tracker import CropMaskStabilizer
+
+        stabilizer = CropMaskStabilizer(max_age=3)
+        gog = GreenOnGreen(model_path=str(tmp_path), hybrid_mode=True,
+                           tracking_enabled=True, crop_stabilizer=stabilizer)
+
+        image = np.zeros((480, 640, 3), dtype=np.uint8)
+        gog.inference(image)
+
+        # Stabilizer should have received the crop detection
+        assert stabilizer.active_count == 1
+
+    @patch('utils.greenongreen.YOLO')
+    @patch('utils.greenonbrown.GreenOnBrown')
+    def test_hybrid_no_track_ids_falls_back(self, mock_gob_cls, mock_yolo_cls, tmp_path):
+        """When tracking enabled but no track IDs, falls back to per-frame mask."""
+        (tmp_path / 'model.pt').touch()
+        mock_model = make_mock_yolo()
+
+        mock_result = MagicMock()
+        mock_box = MagicMock()
+        mock_box.xyxy = [np.array([100, 50, 200, 150])]
+        mock_box.conf = [np.array([0.8])]
+        mock_box.cls = [np.array([1])]
+        mock_result.boxes = make_mock_boxes([mock_box], track_ids=None)
+        mock_result.masks = None
+        mock_model.track.return_value = [mock_result]
+        mock_yolo_cls.return_value = mock_model
+
+        mock_gob = MagicMock()
+        mock_gob.inference.return_value = (
+            None, [[300, 300, 20, 20]], [[310, 310]],
+            np.zeros((480, 640, 3), dtype=np.uint8)
+        )
+        mock_gob_cls.return_value = mock_gob
+
+        from utils.greenongreen import GreenOnGreen
+        from utils.tracker import CropMaskStabilizer
+
+        stabilizer = CropMaskStabilizer(max_age=3)
+        gog = GreenOnGreen(model_path=str(tmp_path), hybrid_mode=True,
+                           tracking_enabled=True, crop_stabilizer=stabilizer)
+
+        image = np.zeros((480, 640, 3), dtype=np.uint8)
+        _, boxes, centres, _ = gog.inference(image)
+
+        # Should not crash; weed detection still works
+        assert len(boxes) == 1  # weed at (300,300) outside crop at (100,50)

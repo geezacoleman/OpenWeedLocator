@@ -10,6 +10,7 @@ var aiAvailableModels = [];
 var aiCurrentModel = '';
 var aiClassesDirty = false;  // true when user has toggled buttons but not yet applied
 var aiLastModelKey = '';      // tracks model changes to force grid rebuild
+var aiModelPendingUntil = 0; // timestamp: skip dropdown rebuild until model swap settles
 
 // ============================================
 // TAB SWITCHING
@@ -66,7 +67,12 @@ function refreshAITab() {
 
     // Extract AI data from OWL state
     aiAvailableModels = firstOwl.available_models || [];
-    aiCurrentModel = firstOwl.current_model || '';
+    // Don't overwrite model selection during pending swap (model load takes seconds)
+    if (Date.now() < aiModelPendingUntil) {
+        // Keep aiCurrentModel as set by onModelSelected
+    } else {
+        aiCurrentModel = firstOwl.current_model || '';
+    }
     aiModelClasses = firstOwl.model_classes || {};
     var existingSelection = firstOwl.detect_classes || [];
 
@@ -231,6 +237,10 @@ function onModelSelected() {
 
     sendCommand('all', 'set_model', select.value);
     showToast('Switching model to ' + select.value + '...', 'info');
+
+    // Guard: don't let polling overwrite the dropdown for 10s while model loads
+    aiCurrentModel = select.value;
+    aiModelPendingUntil = Date.now() + 10000;
 
     // Clear class selection — new model may have different classes
     clearAIClassSelection();

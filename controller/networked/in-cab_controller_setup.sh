@@ -605,8 +605,8 @@ create_dashboard_service() {
     tee /etc/systemd/system/owl-controller.service > /dev/null <<EOF
 [Unit]
 Description=OWL Central Controller Dashboard
-After=network-online.target mosquitto.service
-Wants=network-online.target
+After=network-online.target mosquitto.service NetworkManager-wait-online.service
+Wants=network-online.target NetworkManager-wait-online.service
 Requires=mosquitto.service
 
 [Service]
@@ -616,8 +616,9 @@ Group=$(id -g -n ${CURRENT_USER})
 WorkingDirectory=${SCRIPT_DIR}
 Environment="PATH=${VENV_PATH}/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PYTHONUNBUFFERED=1"
-# Uncomment to allow dashboard access from any device (default: localhost/kiosk only)
-#Environment="DASHBOARD_OPEN=1"
+# Set to 1 to allow full dashboard access from any device on the network (iPad, laptop, etc.)
+# Set to 0 or remove to restrict full control to localhost/kiosk only (other devices get /demo)
+Environment="DASHBOARD_OPEN=1"
 ExecStart=${VENV_PATH}/bin/gunicorn --bind 127.0.0.1:8000 --workers 1 --threads 8 --timeout 300 networked:app
 Restart=always
 RestartSec=5

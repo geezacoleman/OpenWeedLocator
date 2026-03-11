@@ -43,6 +43,18 @@ function initDashboardControls() {
         });
     }
 
+    // Tracking
+    const trackingBtn = document.getElementById('trackingSwitch');
+    if (trackingBtn) {
+        trackingBtn.addEventListener('click', () => {
+            const isOn = trackingBtn.getAttribute('aria-pressed') === 'true';
+            const fn = isOn ? stopTracking : startTracking;
+            fn()
+                .then(() => updateSystemStats())
+                .catch(err => showNotification('Error', err.message || 'Tracking action failed', 'error'));
+        });
+    }
+
     // All Nozzles
     const nozzleBtn = document.getElementById('nozzleSwitch');
     if (nozzleBtn) {
@@ -55,17 +67,9 @@ function initDashboardControls() {
         });
     }
 
-    // Sensitivity (Low / High)
-    const sensBtns = document.querySelectorAll('.seg-btn[data-sens]');
-    sensBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            setSegActive(sensBtns, btn);
-            const level = btn.dataset.sens.toLowerCase();
-            setSensitivity(level)
-                .then(() => updateSystemStats())
-                .catch(err => showNotification('Error', err.message || 'Failed to set sensitivity', 'error'));
-        });
-    });
+    // Sensitivity presets — bind static buttons, then fetch dynamic list
+    bindSensitivityButtons();
+    fetchSensitivityPresets();
 
     // Fan (Auto / 100)
     const fanBtns = document.querySelectorAll('.seg-btn[data-fan]');
@@ -261,6 +265,39 @@ function startRecording() {
         return Promise.resolve();
     }
 
+    // Check resolution before starting recording
+    if (typeof isResolutionBelowMax === 'function' && isResolutionBelowMax(lastResWidth, lastResHeight)) {
+        return new Promise(function(resolve) {
+            showResolutionWarningModal(lastResWidth, lastResHeight,
+                function onAccept() {
+                    // Persist max resolution (copy-on-write safe) then restart OWL
+                    apiRequest('/api/camera/set_max_resolution', { method: 'POST' })
+                    .then(function() { return stopOwl(); })
+                    .then(function() {
+                        setTimeout(function() {
+                            startOwl();
+                            showNotification('Info',
+                                'Resolution changed to ' + OWL_MAX_RES_WIDTH + 'x' + OWL_MAX_RES_HEIGHT +
+                                ' — OWL restarting. Start recording when it is back online.', 'info', 8000);
+                        }, 1000);
+                    })
+                    .catch(function(err) {
+                        showNotification('Error', err.message || 'Failed to change resolution', 'error');
+                    });
+                    resolve();
+                },
+                function onContinue() {
+                    _doStartRecording();
+                    resolve();
+                }
+            );
+        });
+    }
+
+    return _doStartRecording();
+}
+
+function _doStartRecording() {
     showNotification('Info', 'Starting recording...', 'info');
 
     return apiRequest('/api/recording/start', { method: 'POST' })
@@ -302,6 +339,54 @@ function stopRecording() {
         })
         .catch(error => {
             showNotification('Error', error.message || 'Failed to stop recording', 'error');
+        });
+}
+
+/* --------------------------------------------------------------------------
+   Tracking Controls
+   -------------------------------------------------------------------------- */
+
+function startTracking() {
+    showNotification('Info', 'Enabling tracking...', 'info');
+
+    return apiRequest('/api/tracking/set', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ value: true })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Success', 'Tracking enabled', 'success', 2000);
+                updateSystemStats();
+            } else {
+                throw new Error(data.message || 'Failed to enable tracking');
+            }
+        })
+        .catch(error => {
+            showNotification('Error', error.message || 'Failed to enable tracking', 'error');
+        });
+}
+
+function stopTracking() {
+    showNotification('Info', 'Disabling tracking...', 'info');
+
+    return apiRequest('/api/tracking/set', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ value: false })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Success', 'Tracking disabled', 'success', 2000);
+                updateSystemStats();
+            } else {
+                throw new Error(data.message || 'Failed to disable tracking');
+            }
+        })
+        .catch(error => {
+            showNotification('Error', error.message || 'Failed to disable tracking', 'error');
         });
 }
 
@@ -371,6 +456,62 @@ function setSegActive(nodeList, activeBtn) {
     nodeList.forEach(b => b.classList.toggle('active', b === activeBtn));
 }
 
+function bindSensitivityButtons() {
+    const container = document.getElementById('sensitivity-buttons');
+    if (!container) return;
+    container.querySelectorAll('.seg-btn[data-sens]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const allBtns = container.querySelectorAll('.seg-btn[data-sens]');
+            setSegActive(allBtns, btn);
+            setSensitivity(btn.dataset.sens);
+        });
+    });
+}
+
+function fetchSensitivityPresets() {
+    apiRequest('/api/sensitivity/presets')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) return;
+            renderSensitivityButtons(data.presets || [], data.active || 'medium');
+        })
+        .catch(() => {}); // Silently fall back to static buttons
+}
+
+function renderSensitivityButtons(presets, active) {
+    const container = document.getElementById('sensitivity-buttons');
+    if (!container) return;
+    if (!presets.length) return; // Keep static buttons
+
+    container.innerHTML = '';
+    // Builtin labels
+    const builtinLabels = { low: 'Low', medium: 'Med', high: 'High' };
+
+    // Builtins first, then custom
+    const builtins = presets.filter(p => p.is_builtin);
+    const custom = presets.filter(p => !p.is_builtin);
+    const ordered = [...builtins, ...custom];
+
+    // Adjust segmented class for button count
+    container.className = 'segmented';
+    if (ordered.length === 2) container.classList.add('segmented--two');
+    else if (ordered.length === 3) container.classList.add('segmented--three');
+
+    ordered.forEach(preset => {
+        const btn = document.createElement('button');
+        btn.className = 'seg-btn';
+        if (preset.name === active) btn.classList.add('active');
+        btn.dataset.sens = preset.name;
+        btn.textContent = builtinLabels[preset.name] || preset.name;
+        btn.addEventListener('click', () => {
+            const allBtns = container.querySelectorAll('.seg-btn[data-sens]');
+            setSegActive(allBtns, btn);
+            setSensitivity(preset.name);
+        });
+        container.appendChild(btn);
+    });
+}
+
 function setSensitivity(level) {
     return apiRequest('/api/sensitivity/set', {
         method: 'POST',
@@ -380,7 +521,7 @@ function setSensitivity(level) {
         .then(r => r.json())
         .then(d => {
             if (!d.success) throw new Error(d.error || 'Failed to set sensitivity');
-            showNotification('Success', d.message || 'Sensitivity toggled', 'success', 2000);
+            showNotification('Success', d.message || 'Sensitivity set', 'success', 2000);
             updateSystemStats();
         })
         .catch(err => {

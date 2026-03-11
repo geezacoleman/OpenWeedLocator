@@ -59,13 +59,39 @@ function updateConfigEditorDevices() {
         sel.value = currentValue;
     }
 
-    // Update device count badge
-    var countEl = document.getElementById('config-device-count');
-    if (countEl) {
-        var connectedCount = Object.keys(owlsData).filter(id =>
-            owlsData[id] && owlsData[id].connected === true
-        ).length;
-        countEl.textContent = connectedCount > 0 ? connectedCount + ' device' + (connectedCount > 1 ? 's' : '') : '';
+    // Update target badge with connected count
+    var connectedCount = Object.keys(owlsData).filter(id =>
+        owlsData[id] && owlsData[id].connected === true
+    ).length;
+    var badgeEl = document.getElementById('config-target-badge');
+    if (badgeEl) {
+        badgeEl.textContent = connectedCount > 0
+            ? 'All OWLs (' + connectedCount + ' connected)'
+            : 'All OWLs';
+    }
+
+    // Populate preview device selector
+    var previewSel = document.getElementById('config-preview-device');
+    if (previewSel) {
+        var prevValue = previewSel.value;
+        var previewHtml = '';
+
+        for (const id of Object.keys(owlsData)) {
+            if (owlsData[id] && owlsData[id].connected === true) {
+                previewHtml += '<option value="' + id + '">' + id + '</option>';
+            }
+        }
+
+        if (!previewHtml) {
+            previewHtml = '<option value="" disabled>No OWLs connected</option>';
+        }
+
+        previewSel.innerHTML = previewHtml;
+
+        // Restore previous selection if still valid
+        if ([...previewSel.options].some(o => o.value === prevValue)) {
+            previewSel.value = prevValue;
+        }
     }
 }
 
