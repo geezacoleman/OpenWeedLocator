@@ -36,13 +36,35 @@
         <div class="owl-status-layout">
             <!-- LEFT: OWL Devices panel -->
             <div class="owls-column">
-                <div class="section-title">OWL Devices</div>
+                <div class="section-title-row">
+                    <div class="section-title">OWL Devices</div>
+                    <button class="power-btn" id="power-btn" onclick="initiateShutdown()" title="Shut down all OWLs and controller">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M18.36 6.64a9 9 0 1 1-12.73 0"/>
+                            <line x1="12" y1="2" x2="12" y2="12"/>
+                        </svg>
+                    </button>
+                </div>
                 <div class="owls-card-list" id="owls-column">
                     <div class="empty-state">
                         <div class="empty-state-text">No OWLs Connected</div>
                         <div class="empty-state-subtext">Waiting for MQTT...</div>
                     </div>
                 </div>
+                <!-- Shutdown confirmation overlay -->
+                <div class="shutdown-overlay" id="shutdown-overlay">
+                    <div class="shutdown-overlay-content">
+                        <div class="shutdown-warning">Shut down all OWLs and controller?</div>
+                        <div class="shutdown-subtext">System will power off and require physical restart.</div>
+                        <div class="shutdown-actions">
+                            <button class="btn-confirm-shutdown" id="btn-confirm-shutdown" onclick="executeShutdown()" disabled>
+                                Confirm (<span id="shutdown-countdown">3</span>)
+                            </button>
+                            <button class="btn-cancel-shutdown" onclick="cancelShutdown()">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+                <button class="btn-fix-screen" id="btn-fix-screen" onclick="fixScreen()">Fix Screen</button>
             </div>
 
             <!-- CENTRE: System Health + Sensitivity -->

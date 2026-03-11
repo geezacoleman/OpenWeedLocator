@@ -382,3 +382,116 @@ class TestModelDeployRoute:
         client, ctrl = networked_test_client
         resp = client.post('/api/models/deploy', json={})
         assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# System shutdown / fix-screen / reboot routes
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestSystemShutdown:
+    """Tests for POST /api/system/shutdown."""
+
+    def test_sends_shutdown_to_all_owls(self, networked_test_client):
+        client, ctrl = networked_test_client
+        ctrl.send_command.return_value = {'success': True, 'targets': ['owl-1', 'owl-2']}
+
+        with patch('controller.networked.networked.threading') as mock_threading:
+            with patch('controller.networked.networked.subprocess'):
+                resp = client.post('/api/system/shutdown')
+                data = resp.get_json()
+
+        assert resp.status_code == 200
+        assert data['success'] is True
+        assert 'owl-1' in data['owls_notified']
+        ctrl.send_command.assert_called_once_with('all', 'shutdown')
+
+    def test_starts_background_shutdown_thread(self, networked_test_client):
+        client, ctrl = networked_test_client
+        ctrl.send_command.return_value = {'success': True, 'targets': []}
+
+        with patch('controller.networked.networked.threading') as mock_threading:
+            with patch('controller.networked.networked.subprocess'):
+                resp = client.post('/api/system/shutdown')
+
+        assert resp.status_code == 200
+        mock_threading.Thread.assert_called_once()
+        mock_threading.Thread.return_value.start.assert_called_once()
+
+    def test_returns_success_even_if_no_owls(self, networked_test_client):
+        client, ctrl = networked_test_client
+        ctrl.send_command.return_value = {'success': True, 'targets': []}
+
+        with patch('controller.networked.networked.threading'):
+            with patch('controller.networked.networked.subprocess'):
+                resp = client.post('/api/system/shutdown')
+                data = resp.get_json()
+
+        assert resp.status_code == 200
+        assert data['success'] is True
+        assert data['owls_notified'] == []
+
+
+@pytest.mark.unit
+class TestFixScreen:
+    """Tests for POST /api/system/fix-screen."""
+
+    def test_success_returns_needs_reboot(self, networked_test_client):
+        client, _ = networked_test_client
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = 'ok'
+        mock_result.stderr = ''
+
+        with patch('controller.networked.networked.subprocess.run', return_value=mock_result):
+            resp = client.post('/api/system/fix-screen')
+            data = resp.get_json()
+
+        assert resp.status_code == 200
+        assert data['success'] is True
+        assert data['needs_reboot'] is True
+
+    def test_apt_failure_returns_500(self, networked_test_client):
+        client, _ = networked_test_client
+
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stderr = 'package not found'
+
+        with patch('controller.networked.networked.subprocess.run', return_value=mock_result):
+            resp = client.post('/api/system/fix-screen')
+            data = resp.get_json()
+
+        assert resp.status_code == 500
+        assert data['success'] is False
+
+    def test_timeout_returns_504(self, networked_test_client):
+        client, _ = networked_test_client
+
+        import subprocess as sp
+        with patch('controller.networked.networked.subprocess.run', side_effect=sp.TimeoutExpired('apt', 120)):
+            resp = client.post('/api/system/fix-screen')
+            data = resp.get_json()
+
+        assert resp.status_code == 504
+        assert data['success'] is False
+        assert 'timed out' in data['error']
+
+
+@pytest.mark.unit
+class TestSystemReboot:
+    """Tests for POST /api/system/reboot."""
+
+    def test_returns_success_and_starts_thread(self, networked_test_client):
+        client, _ = networked_test_client
+
+        with patch('controller.networked.networked.threading') as mock_threading:
+            with patch('controller.networked.networked.subprocess'):
+                resp = client.post('/api/system/reboot')
+                data = resp.get_json()
+
+        assert resp.status_code == 200
+        assert data['success'] is True
+        mock_threading.Thread.assert_called_once()
+        mock_threading.Thread.return_value.start.assert_called_once()

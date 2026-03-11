@@ -429,6 +429,8 @@ class Owl:
         self._crop_stabilizer = None
         if self.tracking_enabled:
             from utils.tracker import ClassSmoother, CropMaskStabilizer
+            # Both created regardless of algorithm — smoother unused in hybrid mode
+            # but algorithm can change mid-session, so both must be ready
             self._class_smoother = ClassSmoother(window=self._track_class_window)
             self._crop_stabilizer = CropMaskStabilizer(max_age=self._track_crop_persist)
             self.logger.info(f'Tracking enabled: class_window={self._track_class_window}, '
@@ -495,6 +497,7 @@ class Owl:
         detect_classes = self._detect_classes_list or None
         actuation_mode = self.config.get('GreenOnGreen', 'actuation_mode', fallback='centre')
         min_detection_pixels = self.config.getint('GreenOnGreen', 'min_detection_pixels', fallback=50)
+        _zone_tracking_warned = False
 
         # GoB shared config — already initialised in __init__() and may have been
         # updated by SensitivityManager.apply_preset(), so do NOT re-read from config.
@@ -647,6 +650,12 @@ class Owl:
                             show_display=return_image_out,
                             build_mask=(actuation_mode == 'zone' and not self.tracking_enabled)
                         )
+                        if (self.tracking_enabled and actuation_mode == 'zone'
+                                and not _zone_tracking_warned):
+                            self.logger.warning(
+                                'Zone actuation disabled while tracking is enabled — '
+                                'using centre-based actuation instead')
+                            _zone_tracking_warned = True
 
                         # Apply class smoothing: filter to target classes using majority-vote
                         if (self.tracking_enabled

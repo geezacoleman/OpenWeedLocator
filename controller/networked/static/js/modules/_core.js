@@ -28,6 +28,7 @@ const configParams = {
 let globalDetectionEnabled = false;
 let globalRecordingEnabled = false;
 let globalNozzlesActive = false;
+let globalTrackingEnabled = false;
 let currentVideoDeviceId = null; // Track which device's video is showing
 
 // ============================================

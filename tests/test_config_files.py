@@ -177,6 +177,41 @@ class TestOwlFrameCountMonotonic:
 
 
 @pytest.mark.unit
+class TestNetworkedTrackingOptimisticState:
+    """Verify networked controller has optimistic state variable for tracking."""
+
+    def test_global_tracking_enabled_exists(self):
+        """Networked _core.js must declare globalTrackingEnabled
+        to prevent button snap-back during 2s polling cycle."""
+        core_js = (PROJECT_ROOT / 'controller' / 'networked' / 'static' /
+                   'js' / 'modules' / '_core.js').read_text()
+        assert 'globalTrackingEnabled' in core_js, (
+            "globalTrackingEnabled must be declared in networked _core.js — "
+            "without it, the tracking button flickers on 2s poll"
+        )
+
+    def test_toggle_tracking_sets_optimistic_state(self):
+        """toggleTracking() must set globalTrackingEnabled before sending command."""
+        controls_js = (PROJECT_ROOT / 'controller' / 'networked' / 'static' /
+                       'js' / 'modules' / '_controls.js').read_text()
+        assert 'globalTrackingEnabled = true' in controls_js
+        assert 'globalTrackingEnabled = false' in controls_js
+
+
+@pytest.mark.unit
+class TestZoneTrackingWarning:
+    """Verify owl.py logs a warning when zone actuation and tracking are both active."""
+
+    def test_zone_tracking_warning_exists(self):
+        """owl.py must warn when zone actuation is silently disabled by tracking."""
+        owl_source = (PROJECT_ROOT / 'owl.py').read_text()
+        assert 'Zone actuation disabled while tracking' in owl_source, (
+            "owl.py must warn when tracking disables zone actuation — "
+            "otherwise farmers won't know zone mode is being ignored"
+        )
+
+
+@pytest.mark.unit
 class TestFrontendBackendConfigSync:
     """Cross-validate backend ConfigValidator definitions against frontend
     CONFIG_FIELD_DEFS in shared/js/config.js.

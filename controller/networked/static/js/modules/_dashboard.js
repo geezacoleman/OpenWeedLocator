@@ -198,6 +198,7 @@ async function updateDashboard() {
             const trackingBtn = document.getElementById('main-tracking-btn');
             if (trackingBtn) {
                 const trackingOn = !!firstOwl.tracking_enabled;
+                globalTrackingEnabled = trackingOn;
                 trackingBtn.classList.toggle('active', trackingOn);
                 trackingBtn.textContent = trackingOn ? 'Tracking ON' : 'Tracking';
             }

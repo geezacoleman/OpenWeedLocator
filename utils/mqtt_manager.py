@@ -604,7 +604,8 @@ class OWLMQTTPublisher:
                 self._sync_parameters_to_state()
 
             elif action == 'set_tracking':
-                value = bool(command.get('value', False))
+                raw = command.get('value', False)
+                value = raw if isinstance(raw, bool) else str(raw).lower() == 'true'
                 self.state['tracking_enabled'] = value
                 if self.owl_instance:
                     self.owl_instance.tracking_enabled = value
@@ -637,6 +638,10 @@ class OWLMQTTPublisher:
             elif action == 'restart_service':
                 self.logger.warning("Service restart command received")
                 self._handle_restart_service()
+
+            elif action == 'shutdown':
+                self.logger.warning("Shutdown command received")
+                self._handle_shutdown()
 
             # Update timestamp and publish new state
             self.state['last_update'] = time.time()
@@ -797,6 +802,25 @@ class OWLMQTTPublisher:
             )
         except Exception as e:
             self.logger.error(f"Error restarting service: {e}")
+
+    def _handle_shutdown(self):
+        """Shut down the system (called via MQTT from central controller).
+
+        Resolves shutdown binary path to match the sudoers entry created
+        by controller/shared/setup.sh (command -v shutdown).
+        """
+        try:
+            import shutil
+            import subprocess
+            shutdown_bin = shutil.which('shutdown') or '/usr/sbin/shutdown'
+            self.logger.warning("Shutting down system...")
+            subprocess.Popen(
+                ['sudo', shutdown_bin, 'now'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+        except Exception as e:
+            self.logger.error(f"Error shutting down: {e}")
 
     def _handle_set_actuation_params(self, command):
         """Handle actuation parameter updates from central controller"""

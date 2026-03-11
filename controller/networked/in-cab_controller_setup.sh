@@ -701,6 +701,38 @@ configure_network() {
     check_status "WiFi configuration" "WIFI_CONNECT"
 }
 
+# Step 11b: Configure sudoers for passwordless shutdown/reboot/apt
+configure_sudoers() {
+    echo -e "${GREEN}[INFO] Configuring sudoers for dashboard system commands...${NC}"
+
+    local SUDOERS_FILE="/etc/sudoers.d/owl-controller"
+    local SUDOERS_TMP="/tmp/owl-controller-sudoers.tmp"
+    local SHUTDOWN_BIN REBOOT_BIN APT_BIN
+    SHUTDOWN_BIN="$(command -v shutdown 2>/dev/null || echo /usr/sbin/shutdown)"
+    REBOOT_BIN="$(command -v reboot 2>/dev/null || echo /usr/sbin/reboot)"
+    APT_BIN="$(command -v apt 2>/dev/null || echo /usr/bin/apt)"
+
+    cat > "$SUDOERS_TMP" <<EOF
+# OWL Controller — allow dashboard to shut down, reboot, and reinstall firmware
+# Managed by in-cab_controller_setup.sh — do not edit manually
+${CURRENT_USER} ALL=(ALL) NOPASSWD: ${SHUTDOWN_BIN} now
+${CURRENT_USER} ALL=(ALL) NOPASSWD: ${REBOOT_BIN}
+${CURRENT_USER} ALL=(ALL) NOPASSWD: ${APT_BIN} reinstall -y ed-hmi3010-101c-firmware
+EOF
+
+    # Validate before installing
+    if visudo -c -f "$SUDOERS_TMP" > /dev/null 2>&1; then
+        cp "$SUDOERS_TMP" "$SUDOERS_FILE"
+        chmod 0440 "$SUDOERS_FILE"
+        rm -f "$SUDOERS_TMP"
+        echo -e "${TICK} Sudoers configured for ${CURRENT_USER} (shutdown, reboot, apt reinstall)"
+    else
+        echo -e "${CROSS} Sudoers validation failed — skipping"
+        rm -f "$SUDOERS_TMP"
+        return 1
+    fi
+}
+
 # Step 12: Start and enable services
 start_services() {
     echo -e "${GREEN}[INFO] Starting and enabling services...${NC}"
@@ -915,6 +947,9 @@ main() {
 
     # Step 11: Create CONTROLLER.ini
     create_controller_ini
+
+    # Step 11b: Configure sudoers for dashboard
+    configure_sudoers
 
     # Step 12: Configure kiosk mode
     configure_kiosk_mode

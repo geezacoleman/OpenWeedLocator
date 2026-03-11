@@ -141,11 +141,13 @@ function toggleTracking() {
     if (btn.classList.contains('active')) {
         btn.classList.remove('active');
         btn.textContent = 'Tracking';
+        globalTrackingEnabled = false;
         sendCommand('all', 'set_tracking', false);
         showToast('Tracking disabled', 'info');
     } else {
         btn.classList.add('active');
         btn.textContent = 'Tracking ON';
+        globalTrackingEnabled = true;
         sendCommand('all', 'set_tracking', true);
         showToast('Tracking enabled', 'success');
     }
@@ -245,6 +247,134 @@ function updatePipelineModeUI(algorithm) {
         updateSliderVisibility(algorithm);
     }
 }
+
+// ============================================
+// SYSTEM SHUTDOWN
+// ============================================
+
+var _shutdownTimer = null;
+
+function initiateShutdown() {
+    var overlay = document.getElementById('shutdown-overlay');
+    var confirmBtn = document.getElementById('btn-confirm-shutdown');
+    var countdownEl = document.getElementById('shutdown-countdown');
+    if (!overlay) return;
+
+    overlay.classList.add('visible');
+    confirmBtn.disabled = true;
+
+    var remaining = 3;
+    countdownEl.textContent = remaining;
+
+    _shutdownTimer = setInterval(function() {
+        remaining--;
+        countdownEl.textContent = remaining;
+        if (remaining <= 0) {
+            clearInterval(_shutdownTimer);
+            _shutdownTimer = null;
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = 'Confirm';
+        }
+    }, 1000);
+}
+
+function executeShutdown() {
+    var confirmBtn = document.getElementById('btn-confirm-shutdown');
+    var powerBtn = document.getElementById('power-btn');
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Shutting down...';
+    }
+    if (powerBtn) powerBtn.disabled = true;
+
+    fetch('/api/system/shutdown', { method: 'POST' })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.success) {
+                showToast('Shutting down all OWLs and controller...', 'info');
+            } else {
+                showToast('Shutdown failed: ' + (data.error || 'Unknown'), 'error');
+                cancelShutdown();
+            }
+        })
+        .catch(function() {
+            showToast('Shutdown request sent', 'info');
+        });
+}
+
+function cancelShutdown() {
+    var overlay = document.getElementById('shutdown-overlay');
+    var confirmBtn = document.getElementById('btn-confirm-shutdown');
+    var countdownEl = document.getElementById('shutdown-countdown');
+
+    if (_shutdownTimer) {
+        clearInterval(_shutdownTimer);
+        _shutdownTimer = null;
+    }
+
+    if (overlay) overlay.classList.remove('visible');
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Confirm (3)';
+    }
+    if (countdownEl) countdownEl.textContent = '3';
+}
+
+// ============================================
+// FIX SCREEN
+// ============================================
+
+function fixScreen() {
+    if (!confirm('Reinstall touchscreen firmware?\n\nThis may take up to 2 minutes. A reboot will be needed after.')) {
+        return;
+    }
+
+    var btn = document.getElementById('btn-fix-screen');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Fixing...';
+    }
+
+    fetch('/api/system/fix-screen', { method: 'POST' })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.success && data.needs_reboot) {
+                showToast('Firmware reinstalled. Reboot needed.', 'success');
+                if (btn) {
+                    btn.textContent = 'Reboot Now';
+                    btn.disabled = false;
+                    btn.onclick = function() {
+                        btn.disabled = true;
+                        btn.textContent = 'Rebooting...';
+                        fetch('/api/system/reboot', { method: 'POST' })
+                            .then(function() {
+                                showToast('Rebooting controller...', 'info');
+                            })
+                            .catch(function() {
+                                showToast('Reboot request sent', 'info');
+                            });
+                    };
+                }
+            } else {
+                showToast('Fix screen failed: ' + (data.error || 'Unknown'), 'error');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = 'Fix Screen';
+                }
+            }
+        })
+        .catch(function(err) {
+            showToast('Error: ' + err.message, 'error');
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Fix Screen';
+            }
+        });
+}
+
+// ============================================
+// MODE AVAILABILITY
+// ============================================
 
 function updateModeAvailability(modelAvailable) {
     var gogBtn = document.querySelector('.mode-btn[data-mode="gog"]');

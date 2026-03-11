@@ -803,6 +803,32 @@ class TestSetTracking:
         mqtt_publisher._handle_command({'action': 'set_tracking', 'value': True})
         assert mqtt_publisher.client.publish.called
 
+    def test_string_false_disables_tracking(self, mqtt_publisher, mock_owl):
+        """Sending value='false' as string must disable tracking (not bool('false') = True)."""
+        mock_owl.tracking_enabled = True
+        mock_owl._class_smoother = None
+        mock_owl._crop_stabilizer = None
+        mock_owl._gog_detector = None
+
+        mqtt_publisher._handle_command({'action': 'set_tracking', 'value': 'false'})
+
+        assert mqtt_publisher.state['tracking_enabled'] is False
+        assert mock_owl.tracking_enabled is False
+
+    def test_string_true_enables_tracking(self, mqtt_publisher, mock_owl):
+        """Sending value='true' as string must enable tracking."""
+        mock_owl.tracking_enabled = False
+        mock_owl._class_smoother = None
+        mock_owl._crop_stabilizer = None
+        mock_owl._track_class_window = 5
+        mock_owl._track_crop_persist = 3
+        mock_owl._gog_detector = None
+
+        mqtt_publisher._handle_command({'action': 'set_tracking', 'value': 'true'})
+
+        assert mqtt_publisher.state['tracking_enabled'] is True
+        assert mock_owl.tracking_enabled is True
+
 
 # ---------------------------------------------------------------------------
 # reboot (currently a no-op / future implementation)
@@ -820,3 +846,32 @@ class TestReboot:
         mqtt_publisher.client.publish.reset_mock()
         mqtt_publisher._handle_command({'action': 'reboot'})
         assert mqtt_publisher.client.publish.called
+
+
+# ---------------------------------------------------------------------------
+# shutdown
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestShutdown:
+    """Tests for shutdown command handler."""
+
+    def test_shutdown_calls_popen(self, mqtt_publisher, mock_owl):
+        with patch('subprocess.Popen') as mock_popen:
+            mqtt_publisher._handle_command({'action': 'shutdown'})
+            mock_popen.assert_called_once()
+            args = mock_popen.call_args[0][0]
+            assert args[0] == 'sudo'
+            assert 'shutdown' in args[1]  # full path may vary by OS
+            assert args[2] == 'now'
+
+    def test_shutdown_publishes_state(self, mqtt_publisher, mock_owl):
+        mqtt_publisher.client.publish.reset_mock()
+        with patch('subprocess.Popen'):
+            mqtt_publisher._handle_command({'action': 'shutdown'})
+        assert mqtt_publisher.client.publish.called
+
+    def test_shutdown_handles_popen_failure(self, mqtt_publisher, mock_owl):
+        with patch('subprocess.Popen', side_effect=OSError('not found')):
+            # Should not raise — error is caught and logged
+            mqtt_publisher._handle_command({'action': 'shutdown'})

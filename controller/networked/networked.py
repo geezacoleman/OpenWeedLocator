@@ -25,6 +25,7 @@ import configparser
 import hashlib
 import shutil
 import io
+import subprocess
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -804,6 +805,9 @@ class CentralController:
         elif action == 'restart_service':
             payload = {'action': 'restart_service'}
 
+        elif action == 'shutdown':
+            payload = {'action': 'shutdown'}
+
         else:
             payload = {'action': action, 'value': value}
 
@@ -1226,11 +1230,16 @@ def restart_owl(device_id):
 
 
 def _resolve_owl_host(device_id):
-    """Get the best host for an OWL: static IP from MQTT state, fallback to .local mDNS."""
+    """Get the best host for an OWL: static IP from MQTT state, fallback to .local mDNS.
+
+    Rejects localhost/loopback — those mean the OWL hasn't configured its
+    real static_ip in CONTROLLER.ini yet.
+    """
+    _LOOPBACK = {'localhost', '127.0.0.1', '::1', ''}
     with controller.mqtt_lock:
         state = controller.owls_state.get(device_id, {})
-    ip = state.get('static_ip', '')
-    if ip:
+    ip = (state.get('static_ip') or '').strip()
+    if ip and ip not in _LOOPBACK:
         return ip
     return f"{device_id}.local"
 
@@ -1718,6 +1727,106 @@ def api_gps_config():
             return jsonify({'success': False, 'error': 'Invalid boom_width'}), 400
 
     return jsonify({'success': False, 'error': 'No valid config parameters'}), 400
+
+
+# ---------------------------------------------------------------------------
+# System admin routes (shutdown, fix screen, reboot)
+# ---------------------------------------------------------------------------
+
+@app.route('/api/system/shutdown', methods=['POST'])
+def system_shutdown():
+    """Shut down all OWLs and the controller itself."""
+    try:
+        # Send shutdown to all connected OWLs
+        result = controller.send_command('all', 'shutdown')
+
+        # Resolve paths to match sudoers entries (command -v in setup script)
+        shutdown_bin = shutil.which('shutdown') or '/usr/sbin/shutdown'
+
+        # Background: wait, blank screen, then shut down controller
+        def _delayed_shutdown():
+            time.sleep(3)
+            # Best-effort screen blank (EDATEC / Pi displays)
+            # bl_power is root-owned so use sudo tee
+            try:
+                import glob as globmod
+                for bl in globmod.glob('/sys/class/backlight/*/bl_power'):
+                    subprocess.run(
+                        ['sudo', 'tee', bl],
+                        input=b'1', stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL, timeout=5
+                    )
+            except Exception:
+                pass
+            time.sleep(1)
+            subprocess.Popen(
+                ['sudo', shutdown_bin, 'now'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+
+        t = threading.Thread(target=_delayed_shutdown, daemon=True)
+        t.start()
+
+        return jsonify({
+            'success': True,
+            'message': 'Shutdown command sent to OWLs. Controller shutting down in ~4s.',
+            'owls_notified': result.get('targets', []) if result.get('success') else []
+        })
+    except Exception as e:
+        logger.error(f"Error initiating shutdown: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/system/fix-screen', methods=['POST'])
+def system_fix_screen():
+    """Reinstall EDATEC HMI3010 touchscreen firmware."""
+    try:
+        apt_bin = shutil.which('apt') or '/usr/bin/apt'
+        result = subprocess.run(
+            ['sudo', apt_bin, 'reinstall', '-y', 'ed-hmi3010-101c-firmware'],
+            capture_output=True, text=True, timeout=120
+        )
+        if result.returncode == 0:
+            return jsonify({
+                'success': True,
+                'message': 'Firmware reinstalled successfully',
+                'needs_reboot': True
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'apt exited with code {result.returncode}',
+                'stderr': result.stderr[:500]
+            }), 500
+    except subprocess.TimeoutExpired:
+        return jsonify({'success': False, 'error': 'Firmware reinstall timed out (120s)'}), 504
+    except Exception as e:
+        logger.error(f"Error fixing screen: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/system/reboot', methods=['POST'])
+def system_reboot():
+    """Reboot the controller (e.g. after firmware fix)."""
+    try:
+        reboot_bin = shutil.which('reboot') or '/usr/sbin/reboot'
+
+        def _delayed_reboot():
+            time.sleep(2)
+            subprocess.Popen(
+                ['sudo', reboot_bin],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+
+        t = threading.Thread(target=_delayed_reboot, daemon=True)
+        t.start()
+
+        return jsonify({'success': True, 'message': 'Rebooting in ~2s'})
+    except Exception as e:
+        logger.error(f"Error initiating reboot: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # Initialize on startup
