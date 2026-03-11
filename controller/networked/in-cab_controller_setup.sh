@@ -292,12 +292,12 @@ collect_user_input() {
 
     # Screen resolution (for kiosk display)
     SCREEN_WIDTH=1280
-    SCREEN_HEIGHT=720
+    SCREEN_HEIGHT=800
 
     if [[ "$KIOSK_MODE" =~ ^[Yy]$ ]]; then
         echo ""
         echo -e "${GREEN}[INFO] Select display resolution (for kiosk/touchscreen):${NC}"
-        echo "  1) 1280x720  (7\" default)"
+        echo "  1) 1280x800  (EDATEC HMI3010 default)"
         echo "  2) 1024x600  (7\" alternative)"
         echo "  3) 1920x1080 (Full HD)"
         echo "  4) Custom"
@@ -307,7 +307,7 @@ collect_user_input() {
             read -p "Select resolution (1-4, default 1): " res_choice
             res_choice=${res_choice:-1}
             case "$res_choice" in
-                1) SCREEN_WIDTH=1280; SCREEN_HEIGHT=720; break ;;
+                1) SCREEN_WIDTH=1280; SCREEN_HEIGHT=800; break ;;
                 2) SCREEN_WIDTH=1024; SCREEN_HEIGHT=600; break ;;
                 3) SCREEN_WIDTH=1920; SCREEN_HEIGHT=1080; break ;;
                 4)
