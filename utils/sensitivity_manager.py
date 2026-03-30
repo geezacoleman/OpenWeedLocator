@@ -9,10 +9,15 @@ detection thresholds change.
 
 import logging
 import os
+import time
 import tempfile
 import configparser
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Protected config files that must never be written to directly
+PROTECTED_CONFIGS = frozenset({'GENERAL_CONFIG.ini', 'CONTROLLER.ini'})
 
 
 class SensitivityManager:
@@ -197,17 +202,46 @@ class SensitivityManager:
         return True
 
     def persist(self):
-        """Write config to disk safely (temp + rename)."""
+        """Write config to disk safely.
+
+        If the config path is a protected default (GENERAL_CONFIG.ini),
+        creates a timestamped copy and updates active_config.txt so
+        neither owl.py nor the dashboard pollute the template.
+        """
         try:
-            dir_name = os.path.dirname(self.config_path)
+            target_path = self.config_path
+            basename = os.path.basename(target_path)
+
+            if basename in PROTECTED_CONFIGS:
+                # Copy-on-write: create a new config file
+                config_dir = os.path.dirname(target_path)
+                timestamp = time.strftime('%Y%m%d_%H%M%S')
+                new_name = f'config_{timestamp}.ini'
+                target_path = os.path.join(config_dir, new_name)
+                logger.info(
+                    f"Protected config {basename} — writing to {new_name}"
+                )
+
+                # Update active_config.txt so owl.py uses the new file
+                pointer_path = os.path.join(config_dir, 'active_config.txt')
+                try:
+                    with open(pointer_path, 'w') as f:
+                        f.write(f'config/{new_name}')
+                except Exception as e:
+                    logger.error(f"Failed to update active_config.txt: {e}")
+
+                # Future writes go to the new file
+                self.config_path = target_path
+
+            dir_name = os.path.dirname(target_path)
             fd, tmp_path = tempfile.mkstemp(
                 suffix='.ini', prefix='.owl_cfg_', dir=dir_name or '.'
             )
             with os.fdopen(fd, 'w') as f:
                 self.config.write(f)
             # Atomic rename (works on POSIX; on Windows replaces dest)
-            os.replace(tmp_path, self.config_path)
-            logger.info(f"Config persisted to {self.config_path}")
+            os.replace(tmp_path, target_path)
+            logger.info(f"Config persisted to {target_path}")
         except Exception as e:
             logger.error(f"Failed to persist config: {e}")
             # Clean up temp file if rename failed

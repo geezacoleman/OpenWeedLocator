@@ -435,3 +435,91 @@ class TestFrontendBackendConfigSync:
         assert js_path.exists(), (
             "controller/shared/js/resolution_warning.js not found"
         )
+
+
+@pytest.mark.unit
+class TestTrackingConfig:
+    """Validate ByteTrack tracking parameters in config, validators, and frontend."""
+
+    BYTETRACK_KEYS = [
+        'track_high_thresh', 'track_low_thresh', 'new_track_thresh',
+        'track_buffer', 'match_thresh',
+    ]
+
+    def test_general_config_has_bytetrack_params(self):
+        """GENERAL_CONFIG.ini [Tracking] must have all ByteTrack params."""
+        config = configparser.ConfigParser()
+        config.read(CONFIG_DIR / 'GENERAL_CONFIG.ini')
+        assert config.has_section('Tracking')
+        for key in self.BYTETRACK_KEYS:
+            assert config.has_option('Tracking', key), (
+                f"Missing [Tracking].{key} in GENERAL_CONFIG.ini"
+            )
+
+    def test_bytetrack_param_values_are_valid(self):
+        """Default ByteTrack values in GENERAL_CONFIG.ini must be within valid ranges."""
+        config = configparser.ConfigParser()
+        config.read(CONFIG_DIR / 'GENERAL_CONFIG.ini')
+
+        # All threshold params should be 0.0-1.0
+        for key in ['track_high_thresh', 'track_low_thresh', 'new_track_thresh', 'match_thresh']:
+            val = config.getfloat('Tracking', key)
+            assert 0.0 < val < 1.0, f"{key}={val} out of range (0, 1)"
+
+        # track_buffer should be a positive integer
+        buf = config.getint('Tracking', 'track_buffer')
+        assert 10 <= buf <= 150, f"track_buffer={buf} out of range [10, 150]"
+
+    def test_bytetrack_params_in_config_validator(self):
+        """All ByteTrack params must be registered in ConfigValidator optional_keys."""
+        from utils.config_manager import ConfigValidator
+        tracking_opts = ConfigValidator.OPTIONAL_SECTIONS.get('Tracking', {})
+        optional_keys = tracking_opts.get('optional_keys', set())
+        for key in self.BYTETRACK_KEYS:
+            assert key in optional_keys, (
+                f"{key} missing from ConfigValidator.OPTIONAL_SECTIONS['Tracking']['optional_keys']"
+            )
+
+    def test_bytetrack_numeric_params_have_validators(self):
+        """Numeric ByteTrack params must have VALUE_VALIDATORS entries."""
+        from utils.config_manager import ConfigValidator
+        for key in self.BYTETRACK_KEYS:
+            assert key in ConfigValidator.VALUE_VALIDATORS, (
+                f"{key} missing from ConfigValidator.VALUE_VALIDATORS"
+            )
+            val_type, min_val, max_val = ConfigValidator.VALUE_VALIDATORS[key]
+            assert val_type in ('int', 'float'), (
+                f"{key} validator type must be 'int' or 'float', got '{val_type}'"
+            )
+
+    def test_greenongreen_preset_values_are_valid(self):
+        """All track stability preset values must be within validator ranges."""
+        from utils.config_manager import ConfigValidator
+        from utils.greenongreen import GreenOnGreen
+
+        for level, preset in GreenOnGreen.TRACK_STABILITY_PRESETS.items():
+            for key, value in preset.items():
+                assert key in ConfigValidator.VALUE_VALIDATORS, (
+                    f"Preset '{level}' key '{key}' not in VALUE_VALIDATORS"
+                )
+                val_type, min_val, max_val = ConfigValidator.VALUE_VALIDATORS[key]
+                assert min_val <= value <= max_val, (
+                    f"Preset '{level}' {key}={value} out of range [{min_val}, {max_val}]"
+                )
+
+    def test_presets_match_validator_ranges(self):
+        """All preset values must be within ConfigValidator min/max ranges.
+
+        This ensures the Low/Medium/High preset buttons produce values
+        that won't be rejected by config validation.
+        """
+        from utils.config_manager import ConfigValidator
+        from utils.greenongreen import GreenOnGreen
+
+        for level, preset in GreenOnGreen.TRACK_STABILITY_PRESETS.items():
+            for key, value in preset.items():
+                val_type, min_val, max_val = ConfigValidator.VALUE_VALIDATORS[key]
+                assert min_val <= value <= max_val, (
+                    f"Preset '{level}' {key}={value} out of validator "
+                    f"range [{min_val}, {max_val}]"
+                )

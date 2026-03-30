@@ -71,6 +71,35 @@ class OWLDashboard:
 
         self.setup_routes()
 
+        # Widget system (optional — does not block dashboard startup)
+        widgets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'agent', 'widgets')
+        try:
+            from agent.widget_manager import WidgetManager
+            self.widget_manager = WidgetManager(widgets_dir)
+        except Exception as e:
+            self.logger.warning(f"Widget system unavailable: {e}")
+            self.widget_manager = None
+
+        # Agent engine (optional — does not block dashboard startup)
+        try:
+            from agent import ToolRegistry, AgentEngine
+            registry = ToolRegistry(developer_mode=False)
+            registry.discover()
+            agent_context = {
+                'mqtt_client': self.mqtt_client,
+                'config': self.config,
+                'widget_manager': self.widget_manager,
+            }
+            sessions_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'agent', 'sessions')
+            self.agent_engine = AgentEngine(
+                tool_registry=registry,
+                context=agent_context,
+                sessions_dir=sessions_dir,
+            )
+        except Exception as e:
+            self.logger.warning(f"Agent engine unavailable: {e}")
+            self.agent_engine = None
+
         self.logger.info("OWL Dashboard initialized")
 
     def get_owl_service_state(self):
@@ -1154,6 +1183,194 @@ class OWLDashboard:
 
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)}), 500
+
+        # =====================
+        # Widget Routes
+        # =====================
+
+        @self.app.route('/api/widgets')
+        def list_widgets():
+            """List all installed widgets."""
+            if not hasattr(self, 'widget_manager') or self.widget_manager is None:
+                return jsonify([])
+            return jsonify(self.widget_manager.scan())
+
+        @self.app.route('/api/widgets/<widget_id>/template')
+        def widget_template(widget_id):
+            """Return rendered HTML for a widget."""
+            if not hasattr(self, 'widget_manager') or self.widget_manager is None:
+                return 'Widget system not available', 404
+            html = self.widget_manager.render(widget_id)
+            if html is None:
+                return 'Widget not found', 404
+            return html, 200, {'Content-Type': 'text/html'}
+
+        @self.app.route('/api/widgets/<widget_id>/script')
+        def widget_script(widget_id):
+            """Return IIFE-wrapped JS for a custom widget."""
+            if not hasattr(self, 'widget_manager') or self.widget_manager is None:
+                return 'Widget system not available', 404
+            widget = self.widget_manager.get(widget_id)
+            if widget is None or widget.get('type') != 'custom':
+                return 'Not found', 404
+            script_path = self.widget_manager.widgets_dir / widget_id / 'script.js'
+            if not script_path.exists():
+                return '', 200, {'Content-Type': 'application/javascript'}
+            js = script_path.read_text()
+            wrapped = f'(function(OWLWidget) {{\n{js}\n}})(window.OWLWidget);'
+            return wrapped, 200, {'Content-Type': 'application/javascript'}
+
+        @self.app.route('/api/widgets/<widget_id>/style')
+        def widget_style(widget_id):
+            """Return scoped CSS for a custom widget."""
+            if not hasattr(self, 'widget_manager') or self.widget_manager is None:
+                return 'Widget system not available', 404
+            widget = self.widget_manager.get(widget_id)
+            if widget is None or widget.get('type') != 'custom':
+                return 'Not found', 404
+            style_path = self.widget_manager.widgets_dir / widget_id / 'style.css'
+            if not style_path.exists():
+                return '', 200, {'Content-Type': 'text/css'}
+            css = style_path.read_text()
+            scoped = f'.widget-container[data-widget-id="{widget_id}"] {{\n{css}\n}}'
+            return scoped, 200, {'Content-Type': 'text/css'}
+
+        @self.app.route('/api/widgets/<widget_id>', methods=['DELETE'])
+        def delete_widget(widget_id):
+            """Delete an installed widget."""
+            if not hasattr(self, 'widget_manager') or self.widget_manager is None:
+                return jsonify({'error': 'Widget system not available'}), 500
+            success, error = self.widget_manager.remove(widget_id)
+            if success:
+                return jsonify({'status': 'ok'})
+            return jsonify({'error': error}), 404
+
+        # ---- Agent API routes ----
+
+        @self.app.route('/api/agent/connect', methods=['POST'])
+        def agent_connect():
+            """Validate API key and configure agent provider."""
+            if not hasattr(self, 'agent_engine') or self.agent_engine is None:
+                return jsonify({'error': 'Agent engine not available'}), 500
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'No JSON body'}), 400
+            api_key = data.get('api_key', '').strip()
+            provider = data.get('provider', 'anthropic').strip()
+            if not api_key:
+                return jsonify({'error': 'API key is required'}), 400
+            try:
+                valid = self.agent_engine.set_provider(api_key, provider)
+                if valid:
+                    status = self.agent_engine.get_status()
+                    return jsonify({'status': 'connected', 'model': status.get('model')})
+                return jsonify({'error': 'Invalid API key'}), 401
+            except Exception as e:
+                return jsonify({'error': str(e)}), 400
+
+        @self.app.route('/api/agent/chat', methods=['POST'])
+        def agent_chat():
+            """Stream agent responses via SSE."""
+            if not hasattr(self, 'agent_engine') or self.agent_engine is None:
+                return jsonify({'error': 'Agent engine not available'}), 500
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'No JSON body'}), 400
+            message = data.get('message', '').strip()
+            images = data.get('images', [])
+            session_id = data.get('session_id', 'default')
+            if not message and not images:
+                return jsonify({'error': 'Message or image is required'}), 400
+
+            # Validate images
+            if len(images) > 4:
+                return jsonify({'error': 'Maximum 4 images per message'}), 400
+            for img in images:
+                if not isinstance(img, str) or len(img) > 1_400_000:
+                    return jsonify({'error': 'Invalid or oversized image (max ~1MB)'}), 400
+
+            # Build content array if images present
+            if images:
+                content = []
+                for img_data in images:
+                    content.append({
+                        'type': 'image',
+                        'source': {'type': 'base64', 'media_type': 'image/jpeg', 'data': img_data}
+                    })
+                if message:
+                    content.append({'type': 'text', 'text': message})
+                chat_input = content
+            else:
+                chat_input = message
+
+            import json as json_mod
+
+            def generate():
+                try:
+                    for chunk in self.agent_engine.chat(session_id, chat_input):
+                        event_data = json_mod.dumps({
+                            'type': chunk.type,
+                            'data': chunk.data if not hasattr(chunk.data, '__dict__')
+                                    else {'id': chunk.data.id, 'name': chunk.data.name,
+                                          'arguments': chunk.data.arguments},
+                        })
+                        yield f"data: {event_data}\n\n"
+                    # Send done event
+                    session_info = self.agent_engine.get_session_info(session_id)
+                    yield f"data: {json_mod.dumps({'type': 'done', 'data': session_info})}\n\n"
+                except Exception as e:
+                    self.logger.exception("Agent chat error")
+                    yield f"data: {json_mod.dumps({'type': 'error', 'data': str(e)})}\n\n"
+
+            return Response(generate(), mimetype='text/event-stream',
+                            headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+        @self.app.route('/api/agent/grab_frame')
+        def agent_grab_frame():
+            """Grab frame from local OWL, return as base64 for agent chat."""
+            import base64 as b64mod
+            try:
+                with urllib.request.urlopen('http://127.0.0.1:8001/latest_frame.jpg', timeout=2) as resp:
+                    b64 = b64mod.b64encode(resp.read()).decode('ascii')
+                return jsonify({'image': b64})
+            except Exception as e:
+                self.logger.error(f"Grab frame error: {e}")
+                return jsonify({'error': f'Could not grab frame: {e}'}), 502
+
+        @self.app.route('/api/agent/status')
+        def agent_status():
+            """Return agent connection status and token usage."""
+            if not hasattr(self, 'agent_engine') or self.agent_engine is None:
+                return jsonify({'connected': False, 'provider': None, 'model': None})
+            status = self.agent_engine.get_status()
+            return jsonify(status)
+
+        @self.app.route('/api/agent/sessions')
+        def agent_sessions():
+            """List saved agent sessions."""
+            if not hasattr(self, 'agent_engine') or self.agent_engine is None:
+                return jsonify([])
+            return jsonify(self.agent_engine.list_sessions())
+
+        @self.app.route('/api/agent/sessions/<session_id>')
+        def agent_session_load(session_id):
+            """Load a saved session with full message history."""
+            if not hasattr(self, 'agent_engine') or self.agent_engine is None:
+                return jsonify({'error': 'Agent engine not available'}), 500
+            data = self.agent_engine.load_session(session_id)
+            if data is None:
+                return jsonify({'error': 'Session not found'}), 404
+            return jsonify(data)
+
+        @self.app.route('/api/agent/sessions/<session_id>', methods=['DELETE'])
+        def agent_session_delete(session_id):
+            """Delete a saved session."""
+            if not hasattr(self, 'agent_engine') or self.agent_engine is None:
+                return jsonify({'error': 'Agent engine not available'}), 500
+            deleted = self.agent_engine.delete_session(session_id)
+            if deleted:
+                return jsonify({'status': 'deleted'})
+            return jsonify({'error': 'Session not found'}), 404
 
     def _get_active_config_path(self):
         """Get the active config path from pointer file, or default."""

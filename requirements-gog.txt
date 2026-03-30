@@ -1,0 +1,5 @@
+## Green-on-Green (YOLO) dependencies ##
+# Install with: pip install -r requirements-gog.txt
+# Requires ~2GB additional disk space (includes PyTorch)
+ultralytics>=8.0.0
+ncnn

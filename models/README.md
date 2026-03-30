@@ -96,6 +96,26 @@ Then set `algorithm = gog` (pure AI detection) or `algorithm = gog-hybrid` (AI c
 - **`centre`** (default) — The centre X coordinate of each detection box determines which relay fires. Works with both detection and segmentation models.
 - **`zone`** (segmentation models only) — The frame is divided into lanes (one per relay). If the number of weed pixels in a lane exceeds `min_detection_pixels`, that relay fires. A large weed spanning multiple lanes triggers multiple relays simultaneously.
 
+## Tracking (ByteTrack)
+
+When tracking is enabled (`[Tracking] tracking_enabled = True`), YOLO runs in tracking mode using ByteTrack to maintain consistent weed IDs across frames. This enables:
+
+- **Class smoothing** — noisy per-frame class predictions are stabilised using a majority-vote window (`track_class_window` frames). Reduces flickering between classes.
+- **Crop mask stabilisation** — in `gog-hybrid` mode, crop masks persist for `track_crop_persist` frames after the crop leaves the field of view, preventing false spray triggers at crop boundaries.
+
+Tracking config lives in the `[Tracking]` section of `GENERAL_CONFIG.ini`:
+
+```ini
+[Tracking]
+tracking_enabled = False    # Enable ByteTrack weed tracking
+track_class_window = 5      # Frames for majority-vote class smoothing
+track_crop_persist = 3      # Frames to persist crop mask (hybrid mode only)
+```
+
+## Model Deployment via Dashboard
+
+In networked mode, models can be uploaded to the central controller via the `/models` page and deployed to OWL units over WiFi. NCNN models should be uploaded as `.zip` files (containing `.param` and `.bin` files). The controller stores uploads in `uploads/` and OWLs download deployed models to their local `models/` directory.
+
 ## References
 
 - [Ultralytics YOLO Documentation](https://docs.ultralytics.com/)

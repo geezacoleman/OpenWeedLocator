@@ -1,0 +1,4 @@
+# Model uploads directory — managed by the controller's Model Manager
+# Keep this directory in git but ignore all uploaded content
+*
+!.gitignore

@@ -46,6 +46,7 @@ STATUS_DASHBOARD_DEPS=""
 STATUS_DASHBOARD=""
 STATUS_GLOBAL_NUMPY=""
 STATUS_NUMPY_COMPAT=""
+STATUS_GOG_DEPS=""
 
 ERROR_UPGRADE=""
 ERROR_CAMERA=""
@@ -60,6 +61,7 @@ ERROR_DASHBOARD_DEPS=""
 ERROR_DASHBOARD=""
 ERROR_GLOBAL_NUMPY=""
 ERROR_NUMPY_COMPAT=""
+ERROR_GOG_DEPS=""
 
 # Function to check the exit status of the last executed command
 check_status() {
@@ -85,7 +87,7 @@ reload_bashrc() {
 install_dashboard_dependencies() {
   echo -e "${GREEN}[INFO] Installing dashboard Python dependencies...${NC}"
   source $HOME/.virtualenvs/owl/bin/activate
-  pip install flask gunicorn paho-mqtt psutil boto3
+  pip install flask gunicorn paho-mqtt psutil boto3 pyserial
   check_status "Installing dashboard Python dependencies" "DASHBOARD_DEPS"
 
   echo -e "${GREEN}[INFO] Verifying Python package installations...${NC}"
@@ -350,6 +352,25 @@ cd "$SCRIPT_DIR"
 pip install -r requirements.txt
 check_status "Installing dependencies from requirements.txt" "OWL_DEPS"
 
+# Step 8b: Optional Green-on-Green (YOLO) support
+echo -e "${GREEN}[INFO] Green-on-Green (YOLO) support available...${NC}"
+read -p "Do you want to install Green-on-Green (YOLO) support? This requires ~2GB of additional packages. (y/n): " gog_choice
+case "$gog_choice" in
+  y|Y )
+    echo -e "${GREEN}[INFO] Installing Green-on-Green dependencies...${NC}"
+    pip install -r requirements-gog.txt
+    check_status "Installing GoG dependencies from requirements-gog.txt" "GOG_DEPS"
+    ;;
+  n|N )
+    echo -e "${GREEN}[INFO] Green-on-Green setup skipped.${NC}"
+    STATUS_GOG_DEPS="SKIPPED"
+    ;;
+  * )
+    echo -e "${RED}[ERROR] Invalid input. Green-on-Green setup skipped.${NC}"
+    STATUS_GOG_DEPS="SKIPPED"
+    ;;
+esac
+
 # Step 9: Make scripts executable and set up boot configuration
 echo -e "${GREEN}[INFO] Setting up OWL to start on boot with systemd...${NC}"
 chmod a+x owl.py
@@ -436,6 +457,13 @@ echo -e "$STATUS_GLOBAL_NUMPY Global NumPy Version Detected"
 echo -e "$STATUS_OPENCV OpenCV Installed"
 echo -e "$STATUS_NUMPY_COMPAT NumPy Versions Aligned"
 echo -e "$STATUS_OWL_DEPS OWL Dependencies Installed"
+
+if [[ "$STATUS_GOG_DEPS" == "${TICK}" ]]; then
+    echo -e "$STATUS_GOG_DEPS Green-on-Green (YOLO) Dependencies"
+elif [[ "$STATUS_GOG_DEPS" == "SKIPPED" ]]; then
+    echo -e "${ORANGE}[SKIPPED]${NC} Green-on-Green (YOLO) Dependencies"
+fi
+
 echo -e "$STATUS_OWL_SERVICE OWL Service (systemd) Started"
 echo -e "$STATUS_DESKTOP_ICON Desktop Icon Created"
 

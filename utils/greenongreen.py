@@ -14,7 +14,11 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
+
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +26,8 @@ logger = logging.getLogger(__name__)
 class GreenOnGreen:
     def __init__(self, model_path='models', confidence=0.5, detect_classes=None,
                  hybrid_mode=False, inference_resolution=320, crop_buffer_px=20,
-                 tracking_enabled=False, crop_stabilizer=None):
+                 tracking_enabled=False, crop_stabilizer=None,
+                 detection_persist_frames=0):
         """
         Args:
             model_path: Path to NCNN model dir, .pt file, or parent dir containing models.
@@ -32,6 +37,12 @@ class GreenOnGreen:
             inference_resolution: YOLO input resolution for hybrid mode (lower = faster).
             crop_buffer_px: Dilation buffer around detected crop in pixels (hybrid mode).
         """
+        if YOLO is None:
+            raise ImportError(
+                "ultralytics is required for Green-on-Green detection but is not installed. "
+                "Install with: pip install -r requirements-gog.txt"
+            )
+
         self.model_path = Path(model_path)
         self.confidence = confidence
         self.hybrid_mode = hybrid_mode
@@ -48,6 +59,7 @@ class GreenOnGreen:
         # Tracking state (ByteTrack via model.track())
         self.tracking_enabled = tracking_enabled
         self._crop_stabilizer = crop_stabilizer
+        self.detection_persist_frames = detection_persist_frames
         # Raw detection attributes (populated each frame when tracking enabled)
         self.last_track_ids = []
         self.last_raw_boxes = []
@@ -175,6 +187,116 @@ class GreenOnGreen:
                     cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
         return mask
 
+    # Track stability presets — map user-facing names to ByteTrack params
+    TRACK_STABILITY_PRESETS = {
+        'low': {
+            'track_high_thresh': 0.3,
+            'track_low_thresh': 0.15,
+            'new_track_thresh': 0.3,
+            'track_buffer': 30,
+            'match_thresh': 0.8,
+        },
+        'medium': {
+            'track_high_thresh': 0.2,
+            'track_low_thresh': 0.05,
+            'new_track_thresh': 0.2,
+            'track_buffer': 60,
+            'match_thresh': 0.7,
+        },
+        'high': {
+            'track_high_thresh': 0.15,
+            'track_low_thresh': 0.05,
+            'new_track_thresh': 0.15,
+            'track_buffer': 90,
+            'match_thresh': 0.6,
+        },
+    }
+
+    def update_tracker_params(self, stability_level):
+        """Update ByteTrack params at runtime from a stability preset.
+
+        Args:
+            stability_level: 'low', 'medium', or 'high'
+        """
+        preset = self.TRACK_STABILITY_PRESETS.get(stability_level)
+        if not preset:
+            logger.warning(f"Unknown track stability level: {stability_level}")
+            return
+
+        if not hasattr(self.model, 'predictor') or self.model.predictor is None:
+            logger.info(f"Track stability set to '{stability_level}' (will apply on next track call)")
+            return
+
+        for tracker in getattr(self.model.predictor, 'trackers', []):
+            for key, value in preset.items():
+                if hasattr(tracker, key):
+                    setattr(tracker, key, value)
+                # track_buffer sets max_time_lost in BYTETracker
+                if key == 'track_buffer' and hasattr(tracker, 'max_time_lost'):
+                    tracker.max_time_lost = value
+            tracker.reset()
+
+        logger.info(f"Track stability updated to '{stability_level}': {preset}")
+
+    def update_tracker_params_direct(self, params):
+        """Update ByteTrack params at runtime from a dict of individual values.
+
+        Args:
+            params: dict with keys like 'track_high_thresh', 'match_thresh', etc.
+        """
+        if not hasattr(self.model, 'predictor') or self.model.predictor is None:
+            logger.info(f"Tracker params queued (will apply on next track call): {params}")
+            return
+
+        for tracker in getattr(self.model.predictor, 'trackers', []):
+            for key, value in params.items():
+                if hasattr(tracker, key):
+                    setattr(tracker, key, value)
+                if key == 'track_buffer' and hasattr(tracker, 'max_time_lost'):
+                    tracker.max_time_lost = int(value)
+            tracker.reset()
+
+        logger.info(f"Tracker params updated directly: {params}")
+
+    def get_lost_tracks(self, max_age=None):
+        """Read Kalman-predicted positions for lost tracks from ByteTrack.
+
+        ByteTrack internally maintains lost_stracks with Kalman-predicted
+        positions updated every frame. This exposes them for detection
+        persistence — boxes continue through YOLO flicker.
+
+        Args:
+            max_age: Max frames since last match (None = no limit).
+
+        Returns:
+            List of dicts: [{'track_id', 'xyxy', 'cls', 'score', 'age'}]
+        """
+        if not (hasattr(self.model, 'predictor') and self.model.predictor):
+            return []
+        trackers = getattr(self.model.predictor, 'trackers', [])
+        if not trackers:
+            return []
+
+        tracker = trackers[0]  # single-stream
+        lost = []
+        try:
+            for strack in tracker.lost_stracks:
+                age = tracker.frame_id - strack.end_frame
+                if max_age is not None and age > max_age:
+                    continue
+                xyxy = strack.xyxy
+                lost.append({
+                    'track_id': strack.track_id,
+                    'xyxy': xyxy,
+                    'cls': int(strack.cls),
+                    'score': float(strack.score),
+                    'age': age,
+                })
+        except Exception:
+            # Defensive — Ultralytics internal API may change
+            pass
+        return lost
+
     def reset_tracker(self):
         """Reset ByteTrack state and tracking layers. Call when detection toggled off."""
         self.last_track_ids = []
@@ -247,7 +369,7 @@ class GreenOnGreen:
                 source=image,
                 conf=confidence,
                 persist=True,
-                tracker='bytetrack.yaml',
+                tracker='config/bytetrack_owl.yaml',
                 verbose=False,
                 device='cpu'
             )
@@ -310,14 +432,23 @@ class GreenOnGreen:
                     cv2.drawContours(overlay, [contour], -1, (0, 255, 0), -1)
                 cv2.addWeighted(overlay, 0.3, image_out, 0.7, 0, image_out)
 
-            # Draw bounding boxes + labels
+            # Draw bounding boxes + labels (green if tracked, red if not)
             for i, box_data in enumerate(boxes):
                 x, y, w, h = box_data
                 conf_val = float(result.boxes[i].conf[0]) if i < len(result.boxes) else confidence
                 cls_id = int(result.boxes[i].cls[0]) if i < len(result.boxes) else 0
                 cls_name = self.model.names.get(cls_id, label)
-                box_label = f'{int(conf_val * 100)}% {cls_name}'
-                cv2.rectangle(image_out, (x, y), (x + w, y + h), (0, 0, 255), 2)
+
+                has_track = (self.tracking_enabled and i < len(track_ids)
+                             and track_ids[i] is not None)
+                if has_track:
+                    box_label = f'ID{track_ids[i]} {int(conf_val * 100)}% {cls_name}'
+                    box_color = (0, 200, 0)   # green — tracked
+                else:
+                    box_label = f'{int(conf_val * 100)}% {cls_name}'
+                    box_color = (0, 0, 255)   # red — untracked
+
+                cv2.rectangle(image_out, (x, y), (x + w, y + h), box_color, 2)
                 cv2.putText(image_out, box_label, (x, y - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
@@ -368,7 +499,7 @@ class GreenOnGreen:
                 conf=confidence,
                 classes=self._detect_class_ids,
                 persist=True,
-                tracker='bytetrack.yaml',
+                tracker='config/bytetrack_owl.yaml',
                 imgsz=self.inference_resolution,
                 verbose=False,
                 device='cpu'
@@ -415,6 +546,18 @@ class GreenOnGreen:
             else:
                 # No track IDs available — fall back to per-frame mask
                 crop_mask = self._build_crop_mask(results, h_full, w_full)
+
+            # Paint Kalman-predicted lost crop tracks into the mask
+            # ByteTrack predicts where dropped crops moved — fills mask holes
+            persist = self.detection_persist_frames
+            lost_crops = self.get_lost_tracks(
+                max_age=persist if persist > 0
+                else (self._crop_stabilizer.max_age if self._crop_stabilizer else 3))
+            for lc in lost_crops:
+                x1, y1, x2, y2 = [max(0, int(v)) for v in lc['xyxy']]
+                x2, y2 = min(w_full, x2), min(h_full, y2)
+                if x2 > x1 and y2 > y1:
+                    crop_mask[y1:y2, x1:x2] = 255
         else:
             crop_mask = self._build_crop_mask(results, h_full, w_full)
 

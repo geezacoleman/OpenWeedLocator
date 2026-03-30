@@ -41,3 +41,5 @@
 @import 'components/_config.css';
 @import 'components/_config_tab.css';
 @import 'components/_ai_tab.css';
+@import '../../../shared/css/_widgets.css';
+@import '../../../shared/css/_agent.css';

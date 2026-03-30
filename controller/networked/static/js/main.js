@@ -33,6 +33,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     initSensitivityDial();
     startActuationPolling();
     if (typeof Numpad !== 'undefined') Numpad.init();
+    if (typeof initWidgets === 'function') initWidgets();
+    if (typeof initAgent === 'function') initAgent();
     updateDashboard();
     updateInterval = setInterval(updateDashboard, UPDATE_INTERVAL);
 });
@@ -48,6 +50,22 @@ function initGaugeArcs() {
             el.setAttribute('d', describeArc(70, 80, 55, -90, 90));
         }
     }
+}
+
+function switchToAgentTab() {
+    document.getElementById('tab-agent').classList.add('active');
+    document.getElementById('tab-owls').classList.remove('active');
+    document.getElementById('tab-gps').classList.remove('active');
+    document.getElementById('tab-ai').classList.remove('active');
+    document.getElementById('tab-config').classList.remove('active');
+    document.getElementById('view-agent').style.display = '';
+    document.getElementById('view-owls').style.display = 'none';
+    document.getElementById('view-gps').style.display = 'none';
+    document.getElementById('view-ai').style.display = 'none';
+    document.getElementById('view-config').style.display = 'none';
+    aiTabActive = false;
+    stopGPSPolling();
+    stopConfigPreview();
 }
 
 function setupEventListeners() {

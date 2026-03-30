@@ -152,6 +152,13 @@ owl_data/
 # OWL non-template log files
 owl.jsonl
 
+# Agent runtime data (directory structure kept, contents ignored)
+agent/widgets/*/
+agent/sessions/
+
+# Custom algorithms (user-generated via agent)
+custom_algorithms/
+
 # Internal design docs (not for public repo)
 claude_docs/
 .claude/
@@ -159,3 +166,4 @@ PROJECT_NOTES.md
 CLAUDE.md
 tmpclaude-*
 /PLAN.md
+/agent_sessions/

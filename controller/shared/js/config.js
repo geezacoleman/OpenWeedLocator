@@ -104,8 +104,14 @@ const CONFIG_FIELD_DEFS = {
     },
     'Tracking': {
         'tracking_enabled': { type: 'boolean', help: 'Enable weed tracking (class smoothing + crop mask persistence)' },
+        'track_high_thresh': { type: 'number', min: 0.01, max: 0.5, step: 0.01, help: 'First-pass confidence threshold (lower = more detections matched)' },
+        'track_low_thresh': { type: 'number', min: 0.01, max: 0.3, step: 0.01, help: 'Second-pass threshold for marginal detections' },
+        'new_track_thresh': { type: 'number', min: 0.01, max: 0.5, step: 0.01, help: 'Minimum confidence to start a new track' },
+        'track_buffer': { type: 'number', min: 10, max: 150, step: 5, help: 'Frames to keep lost tracks alive (higher = more persistent)' },
+        'match_thresh': { type: 'number', min: 0.1, max: 0.95, step: 0.05, help: 'IoU matching threshold (lower = tolerates more camera vibration)' },
         'track_class_window': { type: 'number', min: 1, max: 20, help: 'Frames of class history for majority vote' },
-        'track_crop_persist': { type: 'number', min: 1, max: 10, help: 'Frames to persist crop mask after detection drops' }
+        'track_crop_persist': { type: 'number', min: 1, max: 10, help: 'Frames to persist crop mask after detection drops' },
+        'detection_persist_frames': { type: 'number', min: 0, max: 15, step: 1, help: 'Frames to persist lost detections via Kalman prediction (0=disabled, 5=~0.5s)' }
     },
     'Relays': { _isRelaySection: true }
 };

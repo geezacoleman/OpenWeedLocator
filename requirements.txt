@@ -7,5 +7,9 @@ tqdm
 blessed
 matplotlib==3.10.3
 Pillow>=11.2.1,<11.3.0
-ultralytics>=8.0.0
-ncnn
+pyserial
+# Optional: Green-on-Green (YOLO) support — install with: pip install -r requirements-gog.txt
+# ultralytics>=8.0.0
+# ncnn
+# Optional: AI agent (installed via in-cab controller setup)
+# httpx

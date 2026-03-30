@@ -19,6 +19,7 @@ def controller():
         # Manually init required attributes
         ctrl.owls_state = {}
         ctrl.desired_state = {}
+        ctrl.lwt_timestamps = {}
         ctrl.mqtt_connected = True
         ctrl.mqtt_lock = __import__('threading').Lock()
         ctrl.mqtt_client = MagicMock()

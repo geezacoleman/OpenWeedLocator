@@ -22,6 +22,13 @@ class GreenOnBrown:
             'gndvi': gndvi
         }
 
+        # Discover custom algorithms (file-isolated, AST-validated)
+        try:
+            from custom_algorithms import discover_custom_algorithms
+            self.algorithms.update(discover_custom_algorithms())
+        except Exception:
+            pass
+
     def inference(self, image,
                   exg_min=30,
                   exg_max=250,
@@ -51,7 +58,21 @@ class GreenOnBrown:
                                             brightness_max=brightness_max, saturation_min=saturation_min,
                                             saturation_max=saturation_max, invert_hue=invert_hue)
         else:
-            output = func(image)
+            # Custom algorithms can optionally accept a params dict
+            params = {
+                'exg_min': exg_min, 'exg_max': exg_max,
+                'hue_min': hue_min, 'hue_max': hue_max,
+                'brightness_min': brightness_min, 'brightness_max': brightness_max,
+                'saturation_min': saturation_min, 'saturation_max': saturation_max,
+                'min_detection_area': min_detection_area, 'invert_hue': invert_hue,
+            }
+            try:
+                output = func(image, params)
+            except TypeError:
+                output = func(image)
+            # Custom algorithms may return (image, True) for pre-thresholded output
+            if isinstance(output, tuple):
+                output, threshed_already = output[0], bool(output[1])
 
         weed_centres = []
         boxes = []

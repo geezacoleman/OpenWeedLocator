@@ -7,6 +7,11 @@ import argparse
 import time
 import threading
 from collections import deque
+
+try:
+    import serial
+except ImportError:
+    serial = None
 from datetime import datetime
 from multiprocessing import Process, Value
 from pathlib import Path
@@ -66,7 +71,7 @@ except ImportError as e:
 try:
     import numpy as np
     from utils.input_manager import UteController, AdvancedController, get_rpi_version
-    from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator
+    from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator, GPSStatusLED, GPSLEDState
     from utils.directory_manager import DirectorySetup
     from utils.video_manager import VideoStream, StreamingHandler, ThreadedHTTPServer
     from utils.image_sampler import ImageRecorder
@@ -77,6 +82,7 @@ try:
     from utils.log_manager import LogManager, MQTTLogHandler
     from utils.shared_types import Sensitivity
     import utils.error_manager as errors
+    from utils.gps_manager import GPSState, parse_sentence
     from version import SystemInfo, VERSION
 
 except ImportError as e:
@@ -252,15 +258,46 @@ class Owl:
             if self.dash:
                 self.dash.set_stream_status(self.stream_active)
 
-        # GPS setup (only if enabled in config)
+        # GPS setup
         self.gps_source = self.config.get('GPS', 'source', fallback='none').lower()
         self.gps_data = None
+        self._gps_state = None
+        self._gps_serial = None
+        self._gps_running = False
+        self.gps_status_led = None
 
-        if self.gps_source != "none":
-            if self.dash:  # Override with dashboard if enabled
+        if self.gps_source == 'serial':
+            self.gps_port = self.config.get('GPS', 'port', fallback='/dev/ttyUSB1')
+            self.gps_baudrate = self.config.getint('GPS', 'baudrate', fallback=115200)
+
+            if serial is None:
+                self.logger.error("pyserial not installed — serial GPS disabled. Install with: pip install pyserial")
+                # Fall back to dashboard (browser geolocation) if available, otherwise disable
+                if self.dash:
+                    self.gps_source = 'dashboard'
+                    self.logger.info("Falling back to dashboard GPS (browser geolocation)")
+                else:
+                    self.gps_source = 'none'
+            else:
+                self._gps_state = GPSState()
+                self._gps_running = True
+                self.gps_status_led = GPSStatusLED(pin='BOARD38')
+                self._gps_thread = threading.Thread(target=self._serial_gps_reader, daemon=True)
+                self._gps_thread.start()
+                self.logger.info(f"Serial GPS reader started on {self.gps_port} @ {self.gps_baudrate}")
+
+        elif self.gps_source != 'none':
+            # Non-serial, non-none source (e.g. 'tcp') — fall back to dashboard GPS
+            if self.dash:
                 self.gps_source = 'dashboard'
-            self.gps_port = self.config.get('GPS', 'port', fallback='/dev/ttyUSB0')
-            self.gps_baudrate = self.config.getint('GPS', 'baudrate', fallback=9600)
+
+        # Create GPS status LED on hardware setups (UTE/Advanced controller) even if GPS
+        # source is 'none' — the LED shows whether dashboard browser GPS is active.
+        # The LED state is driven by _get_best_gps_data() in the update_state loop.
+        if self.gps_status_led is None:
+            controller_type_check = self.config.get('Controller', 'controller_type', fallback='none').strip("'\" ").lower()
+            if controller_type_check in ('ute', 'advanced'):
+                self.gps_status_led = GPSStatusLED(pin='BOARD38')
 
         # if a controller is connected, sample images must be true to set up directories correctly
         self.controller_type = self.config.get('Controller', 'controller_type').strip("'\" ").lower()
@@ -303,8 +340,8 @@ class Owl:
 
         # initialise controller buttons and async management
         if self.controller_type == 'ute':
-            self.status_indicator = UteStatusIndicator(save_directory=self.save_directory, record_led_pin='BOARD38',
-                                                       storage_led_pin='BOARD40')
+            self.status_indicator = UteStatusIndicator(save_directory=self.save_directory,
+                                                       status_led_pin='BOARD40')
             self.controller = UteController(
                 detection_state=self.detection_enable,
                 sample_state=self.image_sample_enable,
@@ -312,7 +349,7 @@ class Owl:
                 owl_instance=self,
                 status_indicator=self.status_indicator,
                 switch_purpose=self.config.get('Controller', 'switch_purpose', fallback='recording').strip("'\" ").lower(),
-                switch_board_pin=f"BOARD{self.config.getint('Controller', 'switch_pin', fallback=37)}"
+                switch_board_pin=f"BOARD{self.config.getint('Controller', 'switch_pin', fallback=36)}"
             )
             self.controller_process = Process(target=self.controller.run)
             self.controller_process.start()
@@ -322,7 +359,7 @@ class Owl:
                 self.sensitivity_level = Value('i', Sensitivity.HIGH.value)
 
             self.status_indicator = AdvancedStatusIndicator(save_directory=self.save_directory,
-                                                            status_led_pin='BOARD37')
+                                                            status_led_pin='BOARD40')
             self.controller = AdvancedController(
                 recording_state=self.image_sample_enable,
                 sensitivity_level=self.sensitivity_level,
@@ -423,8 +460,15 @@ class Owl:
 
         # Tracking config (ByteTrack + class smoothing + crop mask persistence)
         self.tracking_enabled = self.config.getboolean('Tracking', 'tracking_enabled', fallback=False)
+        self.track_high_thresh = self.config.getfloat('Tracking', 'track_high_thresh', fallback=0.2)
+        self.track_low_thresh = self.config.getfloat('Tracking', 'track_low_thresh', fallback=0.05)
+        self.new_track_thresh = self.config.getfloat('Tracking', 'new_track_thresh', fallback=0.2)
+        self.track_buffer = self.config.getint('Tracking', 'track_buffer', fallback=60)
+        self.match_thresh = self.config.getfloat('Tracking', 'match_thresh', fallback=0.7)
         self._track_class_window = self.config.getint('Tracking', 'track_class_window', fallback=5)
         self._track_crop_persist = self.config.getint('Tracking', 'track_crop_persist', fallback=3)
+        self.detection_persist_frames = self.config.getint(
+            'Tracking', 'detection_persist_frames', fallback=5)
         self._class_smoother = None
         self._crop_stabilizer = None
         if self.tracking_enabled:
@@ -512,6 +556,7 @@ class Owl:
                     confidence=self._gog_confidence,
                     detect_classes=current_classes,
                     tracking_enabled=self.tracking_enabled,
+                    detection_persist_frames=self.detection_persist_frames,
                 )
             elif algo == 'gog-hybrid':
                 from utils.greenongreen import GreenOnGreen
@@ -524,6 +569,7 @@ class Owl:
                     crop_buffer_px=self.crop_buffer_px,
                     tracking_enabled=self.tracking_enabled,
                     crop_stabilizer=self._crop_stabilizer,
+                    detection_persist_frames=self.detection_persist_frames,
                 )
             else:
                 return GreenOnBrown(algorithm=algo)
@@ -585,58 +631,58 @@ class Owl:
                     self.brightness_min = cv2.getTrackbarPos("Bright-Min", self.window_name)
                     self.brightness_max = cv2.getTrackbarPos("Bright-Max", self.window_name)
 
-                # pass image, thresholds to green_on_brown function
-                if self._detection_enable:
-                    # Live algorithm switching
-                    if self._pending_algorithm and (weed_detector is None or self._pending_algorithm != algorithm):
-                        try:
-                            weed_detector = _create_detector(self._pending_algorithm)
-                            algorithm = self._pending_algorithm
-                            if algorithm in ('gog', 'gog-hybrid'):
-                                self._gog_detector = weed_detector
-                            self.logger.info(f"Live algorithm switch to: {algorithm}")
-                            if self.dash:
-                                self.dash.state.pop('algorithm_error', None)
-                        except Exception as e:
-                            self.logger.error(f"Failed to load detector for {self._pending_algorithm}: {e}")
-                            # Revert — keep using current weed_detector and algorithm
-                            if self.dash:
-                                self.dash.state['algorithm'] = algorithm
-                                self.dash.state['algorithm_error'] = str(e)
-                        self._pending_algorithm = None
+                # Pre-load detectors/models outside detection guard so they're
+                # ready instantly when the user enables detection.
+                # Live algorithm switching
+                if self._pending_algorithm and (weed_detector is None or self._pending_algorithm != algorithm):
+                    try:
+                        weed_detector = _create_detector(self._pending_algorithm)
+                        algorithm = self._pending_algorithm
+                        if algorithm in ('gog', 'gog-hybrid'):
+                            self._gog_detector = weed_detector
+                        self.logger.info(f"Live algorithm switch to: {algorithm}")
+                        if self.dash:
+                            self.dash.state.pop('algorithm_error', None)
+                    except Exception as e:
+                        self.logger.error(f"Failed to load detector for {self._pending_algorithm}: {e}")
+                        # Revert — keep using current weed_detector and algorithm
+                        if self.dash:
+                            self.dash.state['algorithm'] = algorithm
+                            self.dash.state['algorithm_error'] = str(e)
+                    self._pending_algorithm = None
 
-                    # Live model switching
-                    if self._pending_model:
-                        new_model = self._pending_model
-                        self._pending_model = None
-                        try:
-                            self._model_path = new_model
-                            weed_detector = _create_detector(algorithm)
-                            if algorithm in ('gog', 'gog-hybrid'):
-                                self._gog_detector = weed_detector
-                            self.logger.info(f"Live model switch to: {new_model}")
-                            if self.dash:
-                                self.dash.state.pop('algorithm_error', None)
-                        except Exception as e:
-                            self.logger.error(f"Failed to switch model: {e}")
-                            if self.dash:
-                                self.dash.state['algorithm_error'] = str(e)
+                # Live model switching
+                if self._pending_model:
+                    new_model = self._pending_model
+                    self._pending_model = None
+                    try:
+                        self._model_path = new_model
+                        weed_detector = _create_detector(algorithm)
+                        if algorithm in ('gog', 'gog-hybrid'):
+                            self._gog_detector = weed_detector
+                        self.logger.info(f"Live model switch to: {new_model}")
+                        if self.dash:
+                            self.dash.state.pop('algorithm_error', None)
+                    except Exception as e:
+                        self.logger.error(f"Failed to switch model: {e}")
+                        if self.dash:
+                            self.dash.state['algorithm_error'] = str(e)
 
-                    # Live detect_classes update
-                    if self._pending_detect_classes is not None:
-                        new_classes = self._pending_detect_classes
-                        self._pending_detect_classes = None
-                        self._detect_classes_list = new_classes
-                        if weed_detector and hasattr(weed_detector, 'update_detect_classes'):
-                            weed_detector.update_detect_classes(new_classes or None)
-                        self.logger.info(f"detect_classes updated: {new_classes}")
+                # Live detect_classes update
+                if self._pending_detect_classes is not None:
+                    new_classes = self._pending_detect_classes
+                    self._pending_detect_classes = None
+                    self._detect_classes_list = new_classes
+                    if weed_detector and hasattr(weed_detector, 'update_detect_classes'):
+                        weed_detector.update_detect_classes(new_classes or None)
+                    self.logger.info(f"detect_classes updated: {new_classes}")
 
-                    # Live crop buffer update (hybrid mode only)
-                    if (algorithm == 'gog-hybrid'
-                            and weed_detector
-                            and hasattr(weed_detector, 'set_crop_buffer')
-                            and weed_detector.crop_buffer_px != self.crop_buffer_px):
-                        weed_detector.set_crop_buffer(self.crop_buffer_px)
+                # Live crop buffer update (hybrid mode only)
+                if (algorithm == 'gog-hybrid'
+                        and weed_detector
+                        and hasattr(weed_detector, 'set_crop_buffer')
+                        and weed_detector.crop_buffer_px != self.crop_buffer_px):
+                    weed_detector.set_crop_buffer(self.crop_buffer_px)
 
                 if self._detection_enable and weed_detector is not None:
                     cropped_frame = frame[self.crop_slice]
@@ -709,6 +755,46 @@ class Owl:
                             invert_hue=self.invert_hue,
                             label='WEED'
                         )
+
+                    # Merge Kalman-predicted lost tracks into detection output
+                    # Only for pure gog mode — in hybrid, lost_stracks are crops not weeds
+                    if (self.tracking_enabled
+                            and self.detection_persist_frames > 0
+                            and algorithm == 'gog'
+                            and hasattr(weed_detector, 'get_lost_tracks')):
+                        lost = weed_detector.get_lost_tracks(
+                            max_age=self.detection_persist_frames)
+                        target_ids = set(weed_detector._detect_class_ids or [])
+                        persisted_boxes = []
+                        for lt in lost:
+                            smoothed_cls = (self._class_smoother.get_class(lt['track_id'])
+                                            if self._class_smoother else lt['cls'])
+                            if target_ids and smoothed_cls not in target_ids:
+                                continue
+                            x1, y1, x2, y2 = [int(v) for v in lt['xyxy']]
+                            w, h = x2 - x1, y2 - y1
+                            boxes.append([x1, y1, w, h])
+                            weed_centres.append([int((x1 + x2) / 2), int((y1 + y2) / 2)])
+                            cls_name = weed_detector.model.names.get(lt['cls'], 'unknown')
+                            persisted_boxes.append({
+                                'x': x1, 'y': y1, 'w': w, 'h': h,
+                                'track_id': lt['track_id'], 'age': lt['age'],
+                                'conf': lt['score'], 'cls_name': cls_name,
+                            })
+
+                        # Draw persisted boxes on image_out with dimmed colour
+                        if persisted_boxes and image_out is not None and return_image_out:
+                            for pb in persisted_boxes:
+                                cv2.rectangle(image_out,
+                                              (pb['x'], pb['y']),
+                                              (pb['x'] + pb['w'], pb['y'] + pb['h']),
+                                              (0, 120, 0), 2)
+                                lbl = (f"ID{pb['track_id']} [{pb['age']}] "
+                                       f"{int(pb['conf'] * 100)}% {pb['cls_name']}")
+                                cv2.putText(image_out, lbl,
+                                            (pb['x'], pb['y'] - 10),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                                            (0, 120, 0), 1)
 
                     if len(weed_centres) > 0:
                         if self.dash:
@@ -927,6 +1013,16 @@ class Owl:
             # Stop status indicator
             if hasattr(self, 'status_indicator') and self.status_indicator:
                 safe_stop(self.status_indicator, 'status indicator', fallback_to_terminate=False)
+
+            # Stop serial GPS
+            self._gps_running = False
+            if self._gps_serial and self._gps_serial.is_open:
+                try:
+                    self._gps_serial.close()
+                except Exception as e:
+                    self.logger.warning(f"Error closing GPS serial port: {e}")
+            if self.gps_status_led:
+                safe_stop(self.gps_status_led, 'GPS status LED', fallback_to_terminate=False)
 
             # Stop relay controller
             if hasattr(self, 'relay_controller') and self.relay_controller:
@@ -1208,15 +1304,11 @@ class Owl:
                         self.dash.set_sensitivity_level(hardware_sensitivity_string)
                         self._sensitivity_level = hardware_sensitivity_string
 
-                    # GPS from dashboard takes priority
-                    self.gps_data = self.dash.get_gps_data()
-
                 else:
                     # No hardware controller - normal dashboard control
                     self._detection_enable = self.dash.get_detection_enable()
                     self._image_sample_enable = self.dash.get_image_sample_enable()
                     self._sensitivity_level = self.dash.get_sensitivity_level()
-                    self.gps_data = self.dash.get_gps_data()
 
             else:
                 # Hardware only, no dashboard - existing behavior
@@ -1231,7 +1323,120 @@ class Owl:
                         sensitivity_int = self.sensitivity_level.value
                     self._sensitivity_level = Sensitivity(sensitivity_int).name.lower()
 
+            # GPS: serial takes priority, then dashboard (browser geolocation)
+            self.gps_data = self._get_best_gps_data()
+
             time.sleep(self._STATE_CHECK_INTERVAL)
+
+    # Dashboard GPS is stale if no update received for this many seconds.
+    # Browser watchPosition fires every 1-5s when active; 30s covers brief interruptions.
+    _GPS_STALE_THRESHOLD = 30
+
+    def _get_best_gps_data(self):
+        """Return GPS data from the best available source. Serial > Dashboard (browser).
+
+        Returns None if no source has fresh data, preventing stale coordinates
+        from being written into image EXIF.
+        """
+        # Try serial GPS first
+        if self._gps_state is not None:
+            snapshot = self._gps_state.get_dict()
+            if snapshot.get('fix_valid') and snapshot.get('latitude') is not None:
+                if self.gps_status_led:
+                    self.gps_status_led.set_state(GPSLEDState.FIX)
+                return {
+                    'latitude': snapshot['latitude'],
+                    'longitude': snapshot['longitude'],
+                    'accuracy': snapshot.get('hdop'),
+                    'timestamp': time.time()
+                }
+
+        # Fallback to dashboard GPS (browser geolocation via MQTT)
+        if self.dash:
+            gps = self.dash.get_gps_data()
+            if gps is not None:
+                age = time.time() - gps.get('timestamp', 0)
+                if age <= self._GPS_STALE_THRESHOLD:
+                    if self.gps_status_led:
+                        self.gps_status_led.set_state(GPSLEDState.FIX)
+                    return gps
+                else:
+                    # Dashboard GPS is stale — phone disconnected or tab backgrounded
+                    if self.gps_status_led:
+                        self.gps_status_led.set_state(GPSLEDState.ERROR)
+                    return None
+
+        # No GPS source available
+        if self.gps_status_led:
+            self.gps_status_led.set_state(GPSLEDState.OFF)
+        return None
+
+    def _serial_gps_reader(self):
+        """Background thread: read NMEA sentences from serial GPS, update self._gps_state."""
+        RECONNECT_DELAY = 5
+
+        while self._gps_running:
+            try:
+                self._gps_serial = serial.Serial(
+                    port=self.gps_port,
+                    baudrate=self.gps_baudrate,
+                    timeout=2
+                )
+                self.logger.info(f"Serial GPS connected: {self.gps_port}")
+
+                while self._gps_running:
+                    try:
+                        raw_line = self._gps_serial.readline().decode('ascii', errors='replace').strip()
+                    except (serial.SerialException, OSError) as e:
+                        self.logger.warning(f"Serial GPS read error: {e}")
+                        if self.gps_status_led:
+                            self.gps_status_led.set_state(GPSLEDState.ERROR)
+                        break
+
+                    if not raw_line:
+                        continue
+
+                    parsed = parse_sentence(raw_line)
+                    if parsed is None:
+                        continue
+
+                    sentence_type = parsed.get('type')
+                    if sentence_type == 'RMC':
+                        self._gps_state.update_from_rmc(parsed)
+                    elif sentence_type == 'GGA':
+                        self._gps_state.update_from_gga(parsed)
+                    elif sentence_type == 'VTG':
+                        self._gps_state.update_from_vtg(parsed)
+                    elif sentence_type == 'GSV':
+                        self._gps_state.update_from_gsv(parsed)
+
+                    # Update GPS LED state
+                    if self.gps_status_led:
+                        snapshot = self._gps_state.get_dict()
+                        if snapshot['fix_valid']:
+                            self.gps_status_led.set_state(GPSLEDState.FIX)
+                        else:
+                            self.gps_status_led.set_state(GPSLEDState.ACQUIRING)
+
+            except (OSError, FileNotFoundError) as e:
+                self.logger.warning(f"Serial GPS connection failed: {e}")
+                if self.gps_status_led:
+                    self.gps_status_led.set_state(GPSLEDState.ERROR)
+            except Exception as e:
+                if serial and isinstance(e, serial.SerialException):
+                    self.logger.warning(f"Serial GPS connection failed: {e}")
+                    if self.gps_status_led:
+                        self.gps_status_led.set_state(GPSLEDState.ERROR)
+                else:
+                    self.logger.error(f"Unexpected error in serial GPS reader: {e}", exc_info=True)
+                    if self.gps_status_led:
+                        self.gps_status_led.set_state(GPSLEDState.ERROR)
+            finally:
+                if self._gps_serial and self._gps_serial.is_open:
+                    self._gps_serial.close()
+
+            if self._gps_running:
+                time.sleep(RECONNECT_DELAY)
 
     def _log_system_info(self):
         """Log system information on startup"""

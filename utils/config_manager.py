@@ -7,6 +7,13 @@ import utils.error_manager as errors
 
 logger = logging.getLogger(__name__)
 
+GREENONBROWN_PARAMS = frozenset({
+    'exg_min', 'exg_max', 'hue_min', 'hue_max',
+    'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
+    'min_detection_area', 'invert_hue',
+})
+
+
 class ConfigValidator:
     """Validates OWL configuration files"""
 
@@ -112,12 +119,30 @@ class ConfigValidator:
         'detection_mode_pin_down': ('pin', 1, 40),
         'recording_pin': ('pin', 1, 40),
         'sensitivity_pin': ('pin', 1, 40),
-        # Tracking
+        # Tracking (ByteTrack params)
+        'track_high_thresh': ('float', 0.01, 0.5),
+        'track_low_thresh': ('float', 0.01, 0.3),
+        'new_track_thresh': ('float', 0.01, 0.5),
+        'track_buffer': ('int', 10, 150),
+        'match_thresh': ('float', 0.1, 0.95),
         'track_class_window': ('int', 1, 20),
         'track_crop_persist': ('int', 1, 10),
+        'detection_persist_frames': ('int', 0, 15),
     }
 
     VALID_ALGORITHMS = {'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'gog', 'gog-hybrid'}
+
+    @classmethod
+    def get_valid_algorithms(cls):
+        """Return builtin algorithms plus any custom ones on disk."""
+        valid = set(cls.VALID_ALGORITHMS)
+        try:
+            from custom_algorithms import list_algorithms
+            for algo in list_algorithms():
+                valid.add(algo['name'])
+        except Exception:
+            pass
+        return valid
     VALID_CONTROLLER_TYPES = {'none', 'ute', 'advanced'}
     VALID_SWITCH_PURPOSES = {'recording', 'detection'}
     VALID_ACTUATION_MODES = {'centre', 'zone'}
@@ -138,7 +163,10 @@ class ConfigValidator:
             'optional_keys': {'active'}
         },
         'Tracking': {
-            'optional_keys': {'tracking_enabled', 'track_class_window', 'track_crop_persist'}
+            'optional_keys': {'tracking_enabled', 'track_high_thresh', 'track_low_thresh',
+                              'new_track_thresh', 'track_buffer', 'match_thresh',
+                              'track_class_window', 'track_crop_persist',
+                              'detection_persist_frames'}
         },
     }
 
@@ -199,9 +227,10 @@ class ConfigValidator:
         if not algorithm:
             return False, {'System': {'algorithm': 'Algorithm must be specified'}}
 
-        if algorithm not in cls.VALID_ALGORITHMS:
+        valid = cls.get_valid_algorithms()
+        if algorithm not in valid:
             return False, {'System': {
-                'algorithm': f'Invalid algorithm. Must be one of: {", ".join(sorted(cls.VALID_ALGORITHMS))}'
+                'algorithm': f'Invalid algorithm. Must be one of: {", ".join(sorted(valid))}'
             }}
 
         return True, {}
@@ -480,6 +509,18 @@ class ConfigValidator:
                 'sections': f"Missing required sections: {', '.join(missing_sections)}"
             }
 
+        # Determine which controller pin keys are inactive (belong to a different controller type)
+        # so their pin values don't cause false "already in use" conflicts
+        controller_type = config.get('Controller', 'controller_type', fallback='none').strip("'\" ").lower()
+        _UTE_PINS = {'switch_pin'}
+        _ADVANCED_PINS = {'detection_mode_pin_up', 'detection_mode_pin_down', 'recording_pin', 'sensitivity_pin'}
+        if controller_type == 'ute':
+            inactive_pin_keys = _ADVANCED_PINS
+        elif controller_type == 'advanced':
+            inactive_pin_keys = _UTE_PINS
+        else:
+            inactive_pin_keys = _UTE_PINS | _ADVANCED_PINS
+
         # Validate sections and values
         for section in config.sections():
             # Skip Sensitivity_* preset sections — validated separately below
@@ -487,6 +528,9 @@ class ConfigValidator:
                 continue
             section_errors = {}
             for key, value in config[section].items():
+                # Skip pin conflict checks for controller pins that aren't active
+                if section == 'Controller' and key in inactive_pin_keys:
+                    continue
                 is_valid, error_msg = cls.validate_value(key, value, used_pins)
                 if not is_valid:
                     section_errors[key] = value + f" - {error_msg}"

@@ -15,6 +15,7 @@ from pathlib import Path
 import socket
 
 from collections import deque
+from utils.config_manager import GREENONBROWN_PARAMS
 
 try:
     import paho.mqtt.client as mqtt
@@ -143,6 +144,16 @@ class OWLMQTTPublisher:
                 'status': 'idle',
                 'model_name': '',
                 'progress': 0,
+                'error': ''
+            },
+            # Data sessions and transfer state
+            'data_sessions': [],
+            'data_transfer': {
+                'status': 'idle',
+                'session_date': '',
+                'progress': 0,
+                'bytes_sent': 0,
+                'bytes_total': 0,
                 'error': ''
             }
         }
@@ -463,7 +474,11 @@ class OWLMQTTPublisher:
 
             elif action == 'set_algorithm':
                 value = command.get('value', '').lower()
-                valid = {'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'gog', 'gog-hybrid'}
+                try:
+                    from utils.config_manager import ConfigValidator
+                    valid = ConfigValidator.get_valid_algorithms()
+                except Exception:
+                    valid = {'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'gog', 'gog-hybrid'}
                 if value in valid:
                     self.state['algorithm'] = value
                     if self.owl_instance:
@@ -474,6 +489,25 @@ class OWLMQTTPublisher:
                     self.logger.info(f"Algorithm set to: {value}")
                 else:
                     self.logger.error(f"Invalid algorithm: {value}")
+
+            elif action == 'install_algorithm':
+                algo_name = command.get('name', '')
+                algo_code = command.get('code', '')
+                if algo_name and algo_code:
+                    try:
+                        from custom_algorithms import validate_algorithm_code, save_algorithm
+                        ok, err = validate_algorithm_code(algo_code)
+                        if ok:
+                            result = save_algorithm(algo_name, algo_code,
+                                                    command.get('description', ''))
+                            if result.get('success'):
+                                self.logger.info(f"Custom algorithm installed: {algo_name}")
+                            else:
+                                self.logger.error(f"Custom algorithm save failed: {result.get('error')}")
+                        else:
+                            self.logger.error(f"Custom algorithm validation failed: {err}")
+                    except Exception as e:
+                        self.logger.error(f"Custom algorithm install error: {e}")
 
             elif action == 'set_greenongreen_param':
                 key = command.get('key')
@@ -509,6 +543,7 @@ class OWLMQTTPublisher:
                     self.owl_instance._pending_detect_classes = class_list
                 self.state['detect_classes'] = class_list
                 self.logger.info(f"detect_classes queued: {class_list}")
+                self._publish_state()
 
             elif action == 'set_model':
                 model_name = command.get('value', '')
@@ -519,6 +554,7 @@ class OWLMQTTPublisher:
                     # Immediately report new model so dashboard doesn't snap back
                     self.state['current_model'] = str(model_name)
                     self.logger.info(f"Model switch queued: {model_path}")
+                    self._publish_state()
 
             elif action == 'get_config':
                 self._handle_get_config()
@@ -630,6 +666,38 @@ class OWLMQTTPublisher:
                         elif value and self.owl_instance._crop_stabilizer:
                             gog._crop_stabilizer = self.owl_instance._crop_stabilizer
                 self.logger.info(f"Tracking {'enabled' if value else 'disabled'}")
+                self._publish_state()
+
+            elif action == 'list_data_sessions':
+                threading.Thread(
+                    target=self._list_data_sessions,
+                    daemon=True
+                ).start()
+
+            elif action == 'transfer_session':
+                session_date = command.get('session_date', '')
+                data_types = command.get('data_types', ['images', 'logs', 'tracks', 'config'])
+                upload_url = command.get('upload_url', '')
+                if session_date and upload_url:
+                    threading.Thread(
+                        target=self._upload_session,
+                        args=(session_date, data_types, upload_url),
+                        daemon=True
+                    ).start()
+                else:
+                    self.logger.error("transfer_session missing session_date or upload_url")
+
+            elif action == 'delete_session':
+                session_date = command.get('session_date', '')
+                data_types = command.get('data_types', ['images'])
+                if session_date:
+                    threading.Thread(
+                        target=self._delete_session,
+                        args=(session_date, data_types),
+                        daemon=True
+                    ).start()
+                else:
+                    self.logger.error("delete_session missing session_date")
 
             elif action == 'reboot':
                 self.logger.warning("Reboot command received - this requires system privileges")
@@ -678,6 +746,7 @@ class OWLMQTTPublisher:
         except Exception as e:
             self.logger.error(f"Error handling get_config: {e}")
 
+
     def _handle_set_config_section(self, section, params):
         """Update multiple parameters in a section on the live OWL instance"""
         if self.owl_instance is None:
@@ -685,10 +754,13 @@ class OWLMQTTPublisher:
             return
 
         try:
+            gob_changed = False
             for key, value in params.items():
-                # Update GreenOnBrown params on the live instance
-                if section == 'GreenOnBrown':
+                # Route threshold keys through _update_greenonbrown_param
+                # regardless of section name (defense-in-depth)
+                if key in GREENONBROWN_PARAMS:
                     self._update_greenonbrown_param(key, value)
+                    gob_changed = True
                 elif section == 'GreenOnGreen':
                     self._update_greenongreen_param(key, value)
                 elif section == 'System' and key == 'algorithm':
@@ -711,14 +783,52 @@ class OWLMQTTPublisher:
                     except (ValueError, TypeError) as e:
                         self.logger.warning(f"Cannot convert {section}.{key}={value}: {e}")
 
-                # Also update the config object for persistence
-                with self.config_lock:
-                    if hasattr(self.owl_instance, 'config'):
-                        if not self.owl_instance.config.has_section(section):
-                            self.owl_instance.config.add_section(section)
-                        self.owl_instance.config.set(section, key, str(value))
+                # Also update the config object for persistence (non-GoB keys only;
+                # _update_greenonbrown_param handles GoB config internally)
+                if key not in GREENONBROWN_PARAMS:
+                    with self.config_lock:
+                        if hasattr(self.owl_instance, 'config'):
+                            if not self.owl_instance.config.has_section(section):
+                                self.owl_instance.config.add_section(section)
+                            self.owl_instance.config.set(section, key, str(value))
 
             self.logger.info(f"Applied {len(params)} params to [{section}]")
+
+            # Push ByteTrack params to live tracker when Tracking section changes
+            if section == 'Tracking':
+                # Route tracking_enabled through set_tracking handler (creates
+                # ClassSmoother/CropMaskStabilizer and sets gog.tracking_enabled)
+                if 'tracking_enabled' in params:
+                    self._handle_command({
+                        'action': 'set_tracking',
+                        'value': params['tracking_enabled']
+                    })
+
+                tracker_keys = {'track_high_thresh', 'track_low_thresh',
+                                'new_track_thresh', 'track_buffer', 'match_thresh'}
+                if tracker_keys & set(params.keys()):
+                    gog = getattr(self.owl_instance, '_gog_detector', None)
+                    if gog and hasattr(gog, 'update_tracker_params_direct'):
+                        tracker_params = {}
+                        for k in tracker_keys:
+                            val = getattr(self.owl_instance, k, None)
+                            if val is not None:
+                                tracker_params[k] = val
+                        gog.update_tracker_params_direct(tracker_params)
+
+                if 'detection_persist_frames' in params:
+                    gog = getattr(self.owl_instance, '_gog_detector', None)
+                    if gog:
+                        gog.detection_persist_frames = getattr(
+                            self.owl_instance, 'detection_persist_frames', 0)
+
+            # Ensure dashboard sees the changes immediately
+            self._sync_parameters_to_state()
+            self._publish_state()
+
+            # Auto-persist GreenOnBrown threshold changes (copy-on-write safe)
+            if gob_changed:
+                self._handle_save_config()
 
         except Exception as e:
             self.logger.error(f"Error setting config section [{section}]: {e}")
@@ -997,6 +1107,244 @@ class OWLMQTTPublisher:
                     'error': str(e)
                 }
             self._publish_state()
+
+    def _list_data_sessions(self):
+        """Scan save_directory for YYYYMMDD subdirs, logs, and tracks. Publish to state."""
+        import re
+
+        sessions = []
+
+        try:
+            # Scan image directories
+            save_dir = getattr(self.owl_instance, 'save_directory', None) if self.owl_instance else None
+            if save_dir and os.path.isdir(save_dir):
+                date_pattern = re.compile(r'^\d{8}$')
+                for entry in sorted(os.listdir(save_dir)):
+                    entry_path = os.path.join(save_dir, entry)
+                    if os.path.isdir(entry_path) and date_pattern.match(entry):
+                        image_files = [f for f in os.listdir(entry_path)
+                                       if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                        image_size = sum(
+                            os.path.getsize(os.path.join(entry_path, f))
+                            for f in image_files
+                        )
+                        sessions.append({
+                            'date': entry,
+                            'image_count': len(image_files),
+                            'image_size': image_size,
+                            'total_size': image_size,
+                        })
+
+            with self.state_lock:
+                self.state['data_sessions'] = sessions
+            self._publish_state()
+
+        except Exception as e:
+            self.logger.error(f"Error listing data sessions: {e}")
+            with self.state_lock:
+                self.state['data_sessions'] = []
+            self._publish_state()
+
+    def _upload_session(self, session_date, data_types, upload_url):
+        """ZIP and upload a data session to the controller. Runs in background thread."""
+        import re
+        import urllib.request
+        import ssl
+        import tempfile
+        import zipfile
+
+        # Validate date format
+        if not re.match(r'^\d{8}$', session_date):
+            self.logger.error(f"Invalid session date: {session_date}")
+            with self.state_lock:
+                self.state['data_transfer'] = {
+                    'status': 'error', 'session_date': session_date,
+                    'progress': 0, 'bytes_sent': 0, 'bytes_total': 0,
+                    'error': 'Invalid date format'
+                }
+            self._publish_state()
+            return
+
+        # Guard: one transfer at a time
+        with self.state_lock:
+            if self.state['data_transfer']['status'] not in ('idle', 'complete', 'error'):
+                self.logger.warning("Transfer already in progress")
+                return
+            self.state['data_transfer'] = {
+                'status': 'scanning', 'session_date': session_date,
+                'progress': 0, 'bytes_sent': 0, 'bytes_total': 0, 'error': ''
+            }
+        self._publish_state()
+
+        tmp_path = None
+        try:
+            save_dir = getattr(self.owl_instance, 'save_directory', None) if self.owl_instance else None
+
+            # Collect files to zip
+            files_to_zip = []  # (archive_name, full_path)
+
+            if 'images' in data_types and save_dir:
+                img_dir = os.path.join(save_dir, session_date)
+                if os.path.isdir(img_dir):
+                    for f in os.listdir(img_dir):
+                        fp = os.path.join(img_dir, f)
+                        if os.path.isfile(fp):
+                            files_to_zip.append((f'images/{f}', fp))
+
+            if not files_to_zip:
+                with self.state_lock:
+                    self.state['data_transfer'] = {
+                        'status': 'error', 'session_date': session_date,
+                        'progress': 0, 'bytes_sent': 0, 'bytes_total': 0,
+                        'error': 'No files found for this session'
+                    }
+                self._publish_state()
+                return
+
+            # Create temp ZIP (ZIP_STORED — JPEGs already compressed)
+            with self.state_lock:
+                self.state['data_transfer']['status'] = 'zipping'
+            self._publish_state()
+
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix='.zip')
+            with os.fdopen(tmp_fd, 'wb') as tmp_f:
+                with zipfile.ZipFile(tmp_f, 'w', zipfile.ZIP_STORED) as zf:
+                    for i, (arc_name, full_path) in enumerate(files_to_zip):
+                        zf.write(full_path, arc_name)
+                        # Progress during zipping: 0-50%
+                        progress = int((i + 1) / len(files_to_zip) * 50)
+                        with self.state_lock:
+                            self.state['data_transfer']['progress'] = progress
+                        if (i + 1) % 10 == 0:
+                            self._publish_state()
+
+            zip_size = os.path.getsize(tmp_path)
+
+            # Upload via HTTP POST
+            with self.state_lock:
+                self.state['data_transfer']['status'] = 'uploading'
+                self.state['data_transfer']['bytes_total'] = zip_size
+            self._publish_state()
+
+            ssl_ctx = ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+
+            # Stream the file in chunks — never load entire ZIP into memory
+            # Use a wrapper that tracks bytes read for progress reporting
+            upload_state = self.state['data_transfer']
+
+            class ProgressReader:
+                """File wrapper that publishes upload progress via MQTT."""
+                def __init__(inner_self, fh, total, publisher):
+                    inner_self.fh = fh
+                    inner_self.total = total
+                    inner_self.sent = 0
+                    inner_self.publisher = publisher
+                    inner_self.last_publish = 0
+
+                def read(inner_self, size=-1):
+                    chunk = inner_self.fh.read(size)
+                    inner_self.sent += len(chunk)
+                    # Progress 50-100% during upload (0-50% was zipping)
+                    if inner_self.total > 0:
+                        pct = 50 + int(inner_self.sent / inner_self.total * 50)
+                    else:
+                        pct = 100
+                    with inner_self.publisher.state_lock:
+                        inner_self.publisher.state['data_transfer']['progress'] = pct
+                        inner_self.publisher.state['data_transfer']['bytes_sent'] = inner_self.sent
+                    # Publish every 100KB
+                    if inner_self.sent - inner_self.last_publish >= 102400:
+                        inner_self.last_publish = inner_self.sent
+                        inner_self.publisher._publish_state()
+                    return chunk
+
+                def __len__(inner_self):
+                    return inner_self.total
+
+            with open(tmp_path, 'rb') as f:
+                progress_fh = ProgressReader(f, zip_size, self)
+                req = urllib.request.Request(
+                    upload_url,
+                    data=progress_fh,
+                    method='POST',
+                    headers={
+                        'Content-Type': 'application/octet-stream',
+                        'X-OWL-Device-ID': self.device_id,
+                        'X-OWL-Session-Date': session_date,
+                        'Content-Length': str(zip_size),
+                    }
+                )
+
+                response = urllib.request.urlopen(req, context=ssl_ctx, timeout=300)
+            resp_code = response.getcode()
+
+            if resp_code in (200, 201):
+                with self.state_lock:
+                    self.state['data_transfer'] = {
+                        'status': 'complete', 'session_date': session_date,
+                        'progress': 100, 'bytes_sent': zip_size,
+                        'bytes_total': zip_size, 'error': ''
+                    }
+                self._publish_state()
+                self.logger.info(f"Session {session_date} uploaded successfully ({zip_size} bytes)")
+            else:
+                raise Exception(f"Upload failed with status {resp_code}")
+
+        except Exception as e:
+            self.logger.error(f"Session upload failed: {e}")
+            with self.state_lock:
+                self.state['data_transfer'] = {
+                    'status': 'error', 'session_date': session_date,
+                    'progress': 0, 'bytes_sent': 0, 'bytes_total': 0,
+                    'error': str(e)
+                }
+            self._publish_state()
+
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+    def _delete_session(self, session_date, data_types):
+        """Delete a data session directory from the OWL. Runs in background thread."""
+        import re
+        import shutil
+
+        if not re.match(r'^\d{8}$', session_date):
+            self.logger.error(f"Invalid session date for deletion: {session_date}")
+            return
+
+        try:
+            save_dir = getattr(self.owl_instance, 'save_directory', None) if self.owl_instance else None
+            if not save_dir:
+                self.logger.error("No save_directory configured")
+                return
+
+            if 'images' in data_types:
+                target = os.path.join(save_dir, session_date)
+                real_target = os.path.realpath(target)
+                real_save = os.path.realpath(save_dir)
+
+                # Path traversal check
+                if not real_target.startswith(real_save + os.sep):
+                    self.logger.error(f"Path traversal rejected: {target}")
+                    return
+
+                if os.path.isdir(target):
+                    shutil.rmtree(target)
+                    self.logger.info(f"Deleted session directory: {target}")
+                else:
+                    self.logger.warning(f"Session directory not found: {target}")
+
+            # Refresh sessions list
+            self._list_data_sessions()
+
+        except Exception as e:
+            self.logger.error(f"Error deleting session {session_date}: {e}")
 
     def _resolve_config_path(self):
         """Resolve the current config file path"""

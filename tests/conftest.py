@@ -206,7 +206,7 @@ def mock_owl(tmp_config_dir):
     owl._model_path = 'models'
     owl._detect_classes_list = []
 
-    # Tracking state — must be a real bool so state dict is JSON-serialisable
+    # Tracking state — must be real values so state dict is JSON-serialisable
     owl.tracking_enabled = False
 
     return owl

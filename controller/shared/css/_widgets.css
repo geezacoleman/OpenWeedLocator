@@ -1,0 +1,216 @@
+/* ==========================================================================
+   Widget System Styles
+   Provides layout and styling for user-installed dashboard widgets.
+   Slider widgets match the actuation-slider-group pattern.
+   ========================================================================== */
+
+/* Widget slots — flex column with gap, hidden when empty */
+.widget-slot {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.widget-slot:empty {
+    display: none;
+}
+
+/* Widget container — matches existing card styling */
+.widget-container {
+    background: white;
+    border-radius: var(--radius-md, 8px);
+    border: 1px solid #dce1e8;
+    padding: 12px 16px;
+}
+
+/* Widget error state */
+.widget-error {
+    color: #c0392b;
+    border-color: #e74c3c;
+    background: #fdf0ef;
+    font-size: 14px;
+}
+
+/* ---- Slider widget (matches actuation-slider-group layout) ---- */
+
+.widget-slider-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.widget-slider-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.widget-slider-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-dark, #2c3e50);
+}
+
+.widget-slider-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Style native range input to match the custom slider look */
+.widget-range {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    height: 6px;
+    border-radius: 3px;
+    background: #e0e5ec;
+    outline: none;
+    cursor: pointer;
+}
+
+.widget-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: white;
+    border: 3px solid var(--primary, #3a7bd5);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.widget-range::-webkit-slider-thumb:hover {
+    border-color: var(--green, #27ae60);
+    box-shadow: 0 0 0 4px rgba(58, 123, 213, 0.15);
+}
+
+.widget-range::-moz-range-thumb {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: white;
+    border: 3px solid var(--primary, #3a7bd5);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+    cursor: pointer;
+}
+
+.widget-range::-moz-range-track {
+    height: 6px;
+    border-radius: 3px;
+    background: #e0e5ec;
+}
+
+.widget-value {
+    min-width: 36px;
+    text-align: right;
+    font-weight: 700;
+    font-size: 0.8rem;
+    color: var(--text-dark, #2c3e50);
+}
+
+.widget-unit {
+    color: #8a94a6;
+    font-size: 0.75rem;
+}
+
+/* ---- Delete button ---- */
+
+.widget-delete-btn {
+    background: none;
+    border: none;
+    color: #bdc3c7;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: color 0.15s, background 0.15s;
+}
+
+.widget-delete-btn:hover {
+    color: #c0392b;
+    background: #fdf0ef;
+}
+
+/* ---- Legacy field layout (non-slider widgets) ---- */
+
+.widget-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.widget-label {
+    font-size: 13px;
+    color: #5a6577;
+    font-weight: 500;
+}
+
+/* Widget toggle button */
+.widget-toggle {
+    min-height: 44px;
+    min-width: 120px;
+    border: 1px solid #dce1e8;
+    border-radius: var(--radius-md, 8px);
+    background: #f0f2f5;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.widget-toggle.active {
+    background: var(--green, #27ae60);
+    color: white;
+    border-color: var(--green, #27ae60);
+}
+
+.widget-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Widget select */
+.widget-select {
+    min-height: 44px;
+    padding: 0 12px;
+    border: 1px solid #dce1e8;
+    border-radius: var(--radius-md, 8px);
+    background: white;
+    font-size: 14px;
+}
+
+/* Widget stat display */
+.widget-stat {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+.widget-stat-label {
+    font-size: 13px;
+    color: #5a6577;
+}
+
+.widget-stat-value {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.widget-stat-unit {
+    font-size: 12px;
+    color: #8a94a6;
+}
+
+/* Widget buttons inherit action-button styles */
+.widget-button {
+    min-height: 44px;
+}
+
+.widget-preset-button {
+    min-height: 44px;
+}
