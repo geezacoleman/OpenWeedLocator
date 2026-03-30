@@ -1,0 +1,11 @@
+# ByteTrack configuration tuned for OWL weed detection
+# OWL runs ~10-15fps on Pi with camera vibration on a tractor.
+# See: https://docs.ultralytics.com/modes/track/
+
+tracker_type: bytetrack
+track_high_thresh: 0.2     # first-pass association — lowered for ag models
+track_low_thresh: 0.05     # second-pass association — catch marginal detections
+new_track_thresh: 0.2      # minimum score to initialize new track
+track_buffer: 60           # frames to keep lost tracks (~4-6s at 10-15fps)
+match_thresh: 0.7          # IoU matching — relaxed for camera vibration on small boxes
+fuse_score: true           # combine confidence + IoU in cost matrix

@@ -15,10 +15,12 @@ function switchToOWLTab() {
     document.getElementById('tab-gps').classList.remove('active');
     document.getElementById('tab-ai').classList.remove('active');
     document.getElementById('tab-config').classList.remove('active');
+    document.getElementById('tab-agent').classList.remove('active');
     document.getElementById('view-owls').style.display = '';
     document.getElementById('view-gps').style.display = 'none';
     document.getElementById('view-ai').style.display = 'none';
     document.getElementById('view-config').style.display = 'none';
+    document.getElementById('view-agent').style.display = 'none';
     aiTabActive = false;
     stopGPSPolling();
     stopConfigPreview();
@@ -29,10 +31,12 @@ function switchToGPSTab() {
     document.getElementById('tab-owls').classList.remove('active');
     document.getElementById('tab-ai').classList.remove('active');
     document.getElementById('tab-config').classList.remove('active');
+    document.getElementById('tab-agent').classList.remove('active');
     document.getElementById('view-gps').style.display = '';
     document.getElementById('view-owls').style.display = 'none';
     document.getElementById('view-ai').style.display = 'none';
     document.getElementById('view-config').style.display = 'none';
+    document.getElementById('view-agent').style.display = 'none';
     aiTabActive = false;
     startGPSPolling();
     stopConfigPreview();
@@ -43,10 +47,12 @@ function switchToConfigTab() {
     document.getElementById('tab-owls').classList.remove('active');
     document.getElementById('tab-gps').classList.remove('active');
     document.getElementById('tab-ai').classList.remove('active');
+    document.getElementById('tab-agent').classList.remove('active');
     document.getElementById('view-config').style.display = '';
     document.getElementById('view-owls').style.display = 'none';
     document.getElementById('view-gps').style.display = 'none';
     document.getElementById('view-ai').style.display = 'none';
+    document.getElementById('view-agent').style.display = 'none';
     aiTabActive = false;
     stopGPSPolling();
 }

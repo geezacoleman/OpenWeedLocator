@@ -69,6 +69,12 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initialize on-screen numpad for kiosk
     if (typeof Numpad !== 'undefined') Numpad.init();
 
+    // Initialize widget system
+    if (typeof initWidgets === 'function') initWidgets();
+
+    // Initialize agent tab
+    if (typeof initAgent === 'function') initAgent();
+
     // Start system stats polling
     startUpdateInterval();
 });

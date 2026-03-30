@@ -24,6 +24,9 @@
     <script src="{{ url_for('static', filename='js/modules/_ai_tab.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/modules/_config_tab.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/modules/_config.js') }}" defer></script>
+    <script src="/shared/js/widgets.js" defer></script>
+    <script>var isStandalone = true;</script>
+    <script src="/shared/js/agent.js" defer></script>
     <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
 </head>
 <body>
@@ -62,6 +65,9 @@
         </div>
         <div class="nav-tab" data-tab="config">
             <span class="tab-text">Config</span>
+        </div>
+        <div class="nav-tab" data-tab="agent">
+            <span class="tab-text">Agent</span>
         </div>
     </div>
 
@@ -119,6 +125,16 @@
                         <span class="switch-track"><span class="switch-thumb"></span></span>
                         <span class="switch-state" id="trackingSwitchState">OFF</span>
                     </button>
+
+                    <!-- Track Stability (shown when tracking enabled) -->
+                    <div class="control-tile" id="track-stability-tile" style="display: none;">
+                        <div class="tile-label">Track stability</div>
+                        <div id="track-stability-buttons" class="segmented segmented--three">
+                            <button class="seg-btn" data-stability="low" onclick="setTrackStability('low')">Low</button>
+                            <button class="seg-btn active" data-stability="medium" onclick="setTrackStability('medium')">Med</button>
+                            <button class="seg-btn" data-stability="high" onclick="setTrackStability('high')">High</button>
+                        </div>
+                    </div>
 
                     <!-- Recording + Nozzles split row -->
                     <div class="split-row">
@@ -227,7 +243,13 @@
                         <button class="icon-btn" id="downloadFrame">Save Frame</button>
                     </div>
                 </div>
+
+                <!-- Widget slot: dashboard controls -->
+                <div data-widget-slot="dashboard_controls" class="widget-slot"></div>
             </div>
+
+            <!-- Widget slot: dashboard footer -->
+            <div data-widget-slot="dashboard_footer" class="widget-slot"></div>
 
         </div>
     </div>
@@ -313,6 +335,9 @@
                     <span style="color:var(--text-light);">Load a model to see classes</span>
                 </div>
             </div>
+
+            <!-- Widget slot: after AI classes -->
+            <div data-widget-slot="ai_after_classes" class="widget-slot"></div>
 
             <!-- Action bar -->
             <div class="ai-action-bar">
@@ -513,6 +538,9 @@
                 </div>
             </div>
 
+            <!-- Widget slot: before advanced settings -->
+            <div data-widget-slot="config_before_advanced" class="widget-slot"></div>
+
             <!-- Advanced Settings (collapsible INI editor) -->
             <div class="config-advanced-toggle" id="config-advanced-toggle" onclick="toggleAdvancedSettings()">
                 <span class="config-advanced-arrow">&#9654;</span>
@@ -546,6 +574,68 @@
                 </div>
             </div>
 
+        </div>
+    </div>
+
+    <!-- Agent Tab -->
+    <div id="agent" class="tab-content">
+        <div class="agent-panel">
+            <!-- Setup panel (shown when not connected) -->
+            <div class="agent-setup" id="agentSetup">
+                <div class="agent-setup-title">Connect AI assistant</div>
+                <div class="agent-setup-form">
+                    <div class="agent-field">
+                        <label for="agentProvider">Provider</label>
+                        <select id="agentProvider">
+                            <option value="anthropic">Anthropic (Claude)</option>
+                            <option value="openai">OpenAI (GPT)</option>
+                        </select>
+                    </div>
+                    <div class="agent-field">
+                        <label for="agentApiKey">API key</label>
+                        <input type="password" id="agentApiKey" placeholder="sk-..." autocomplete="off">
+                    </div>
+                    <div class="agent-connect-error" id="agentConnectError"></div>
+                    <button class="agent-connect-btn" id="agentConnectBtn">Connect</button>
+                    <div class="agent-cost-notice">
+                        This uses your API key. Each message costs tokens. You are responsible for usage charges. See your provider's pricing page.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat panel (shown after connected) -->
+            <div class="agent-chat" id="agentChat">
+                <div class="agent-status-bar">
+                    <span class="agent-status-provider" id="agentStatusProvider">Not connected</span>
+                    <span class="agent-status-tokens" id="agentStatusTokens">Tokens: 0 in / 0 out</span>
+                    <button class="agent-status-btn" id="agentHistoryBtn">History</button>
+                    <button class="agent-disconnect-btn" id="agentDisconnectBtn">Disconnect</button>
+                </div>
+                <div class="agent-messages" id="agentMessages"></div>
+                <div class="agent-image-preview" id="agentImagePreview"></div>
+                <div class="agent-input-row">
+                    <button class="agent-media-btn" id="agentAttachBtn" title="Upload image">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+                    </button>
+                    <button class="agent-media-btn" id="agentGrabBtn" title="Grab camera frame">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                    </button>
+                    <input type="text" class="agent-input" id="agentInput"
+                           placeholder="Ask about your OWL settings..." autocomplete="off">
+                    <button class="agent-send-btn" id="agentSendBtn">Send</button>
+                </div>
+                <input type="file" id="agentFileInput" accept="image/*" multiple style="display:none">
+            </div>
+
+            <!-- Slide-out sidebar -->
+            <div class="agent-sidebar" id="agentSidebar">
+                <div class="agent-sidebar-header">
+                    <span class="agent-sidebar-title">Chat history</span>
+                    <button class="agent-sidebar-close" id="agentSidebarClose">&times;</button>
+                </div>
+                <button class="agent-sidebar-new-chat" id="agentNewChatBtn">New chat</button>
+                <div class="agent-session-list" id="agentSessionList"></div>
+            </div>
         </div>
     </div>
 </div>

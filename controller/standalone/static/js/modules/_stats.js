@@ -41,6 +41,12 @@ function updateSystemStats() {
             syncSwitch('nozzleSwitch', nozzlesOn);
             syncSwitch('trackingSwitch', !!data.tracking_enabled);
 
+            // Show/hide track stability panel based on tracking state
+            var stabilityTile = document.getElementById('track-stability-tile');
+            if (stabilityTile) {
+                stabilityTile.style.display = data.tracking_enabled ? '' : 'none';
+            }
+
             // OWL service status chip
             const owlChip = document.getElementById('owlStatusChip');
             const owlText = document.getElementById('owlStatusText');

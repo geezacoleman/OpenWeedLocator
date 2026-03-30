@@ -423,8 +423,15 @@ class Owl:
 
         # Tracking config (ByteTrack + class smoothing + crop mask persistence)
         self.tracking_enabled = self.config.getboolean('Tracking', 'tracking_enabled', fallback=False)
+        self.track_high_thresh = self.config.getfloat('Tracking', 'track_high_thresh', fallback=0.2)
+        self.track_low_thresh = self.config.getfloat('Tracking', 'track_low_thresh', fallback=0.05)
+        self.new_track_thresh = self.config.getfloat('Tracking', 'new_track_thresh', fallback=0.2)
+        self.track_buffer = self.config.getint('Tracking', 'track_buffer', fallback=60)
+        self.match_thresh = self.config.getfloat('Tracking', 'match_thresh', fallback=0.7)
         self._track_class_window = self.config.getint('Tracking', 'track_class_window', fallback=5)
         self._track_crop_persist = self.config.getint('Tracking', 'track_crop_persist', fallback=3)
+        self.detection_persist_frames = self.config.getint(
+            'Tracking', 'detection_persist_frames', fallback=5)
         self._class_smoother = None
         self._crop_stabilizer = None
         if self.tracking_enabled:
@@ -512,6 +519,7 @@ class Owl:
                     confidence=self._gog_confidence,
                     detect_classes=current_classes,
                     tracking_enabled=self.tracking_enabled,
+                    detection_persist_frames=self.detection_persist_frames,
                 )
             elif algo == 'gog-hybrid':
                 from utils.greenongreen import GreenOnGreen
@@ -524,6 +532,7 @@ class Owl:
                     crop_buffer_px=self.crop_buffer_px,
                     tracking_enabled=self.tracking_enabled,
                     crop_stabilizer=self._crop_stabilizer,
+                    detection_persist_frames=self.detection_persist_frames,
                 )
             else:
                 return GreenOnBrown(algorithm=algo)
@@ -585,58 +594,58 @@ class Owl:
                     self.brightness_min = cv2.getTrackbarPos("Bright-Min", self.window_name)
                     self.brightness_max = cv2.getTrackbarPos("Bright-Max", self.window_name)
 
-                # pass image, thresholds to green_on_brown function
-                if self._detection_enable:
-                    # Live algorithm switching
-                    if self._pending_algorithm and (weed_detector is None or self._pending_algorithm != algorithm):
-                        try:
-                            weed_detector = _create_detector(self._pending_algorithm)
-                            algorithm = self._pending_algorithm
-                            if algorithm in ('gog', 'gog-hybrid'):
-                                self._gog_detector = weed_detector
-                            self.logger.info(f"Live algorithm switch to: {algorithm}")
-                            if self.dash:
-                                self.dash.state.pop('algorithm_error', None)
-                        except Exception as e:
-                            self.logger.error(f"Failed to load detector for {self._pending_algorithm}: {e}")
-                            # Revert — keep using current weed_detector and algorithm
-                            if self.dash:
-                                self.dash.state['algorithm'] = algorithm
-                                self.dash.state['algorithm_error'] = str(e)
-                        self._pending_algorithm = None
+                # Pre-load detectors/models outside detection guard so they're
+                # ready instantly when the user enables detection.
+                # Live algorithm switching
+                if self._pending_algorithm and (weed_detector is None or self._pending_algorithm != algorithm):
+                    try:
+                        weed_detector = _create_detector(self._pending_algorithm)
+                        algorithm = self._pending_algorithm
+                        if algorithm in ('gog', 'gog-hybrid'):
+                            self._gog_detector = weed_detector
+                        self.logger.info(f"Live algorithm switch to: {algorithm}")
+                        if self.dash:
+                            self.dash.state.pop('algorithm_error', None)
+                    except Exception as e:
+                        self.logger.error(f"Failed to load detector for {self._pending_algorithm}: {e}")
+                        # Revert — keep using current weed_detector and algorithm
+                        if self.dash:
+                            self.dash.state['algorithm'] = algorithm
+                            self.dash.state['algorithm_error'] = str(e)
+                    self._pending_algorithm = None
 
-                    # Live model switching
-                    if self._pending_model:
-                        new_model = self._pending_model
-                        self._pending_model = None
-                        try:
-                            self._model_path = new_model
-                            weed_detector = _create_detector(algorithm)
-                            if algorithm in ('gog', 'gog-hybrid'):
-                                self._gog_detector = weed_detector
-                            self.logger.info(f"Live model switch to: {new_model}")
-                            if self.dash:
-                                self.dash.state.pop('algorithm_error', None)
-                        except Exception as e:
-                            self.logger.error(f"Failed to switch model: {e}")
-                            if self.dash:
-                                self.dash.state['algorithm_error'] = str(e)
+                # Live model switching
+                if self._pending_model:
+                    new_model = self._pending_model
+                    self._pending_model = None
+                    try:
+                        self._model_path = new_model
+                        weed_detector = _create_detector(algorithm)
+                        if algorithm in ('gog', 'gog-hybrid'):
+                            self._gog_detector = weed_detector
+                        self.logger.info(f"Live model switch to: {new_model}")
+                        if self.dash:
+                            self.dash.state.pop('algorithm_error', None)
+                    except Exception as e:
+                        self.logger.error(f"Failed to switch model: {e}")
+                        if self.dash:
+                            self.dash.state['algorithm_error'] = str(e)
 
-                    # Live detect_classes update
-                    if self._pending_detect_classes is not None:
-                        new_classes = self._pending_detect_classes
-                        self._pending_detect_classes = None
-                        self._detect_classes_list = new_classes
-                        if weed_detector and hasattr(weed_detector, 'update_detect_classes'):
-                            weed_detector.update_detect_classes(new_classes or None)
-                        self.logger.info(f"detect_classes updated: {new_classes}")
+                # Live detect_classes update
+                if self._pending_detect_classes is not None:
+                    new_classes = self._pending_detect_classes
+                    self._pending_detect_classes = None
+                    self._detect_classes_list = new_classes
+                    if weed_detector and hasattr(weed_detector, 'update_detect_classes'):
+                        weed_detector.update_detect_classes(new_classes or None)
+                    self.logger.info(f"detect_classes updated: {new_classes}")
 
-                    # Live crop buffer update (hybrid mode only)
-                    if (algorithm == 'gog-hybrid'
-                            and weed_detector
-                            and hasattr(weed_detector, 'set_crop_buffer')
-                            and weed_detector.crop_buffer_px != self.crop_buffer_px):
-                        weed_detector.set_crop_buffer(self.crop_buffer_px)
+                # Live crop buffer update (hybrid mode only)
+                if (algorithm == 'gog-hybrid'
+                        and weed_detector
+                        and hasattr(weed_detector, 'set_crop_buffer')
+                        and weed_detector.crop_buffer_px != self.crop_buffer_px):
+                    weed_detector.set_crop_buffer(self.crop_buffer_px)
 
                 if self._detection_enable and weed_detector is not None:
                     cropped_frame = frame[self.crop_slice]
@@ -709,6 +718,46 @@ class Owl:
                             invert_hue=self.invert_hue,
                             label='WEED'
                         )
+
+                    # Merge Kalman-predicted lost tracks into detection output
+                    # Only for pure gog mode — in hybrid, lost_stracks are crops not weeds
+                    if (self.tracking_enabled
+                            and self.detection_persist_frames > 0
+                            and algorithm == 'gog'
+                            and hasattr(weed_detector, 'get_lost_tracks')):
+                        lost = weed_detector.get_lost_tracks(
+                            max_age=self.detection_persist_frames)
+                        target_ids = set(weed_detector._detect_class_ids or [])
+                        persisted_boxes = []
+                        for lt in lost:
+                            smoothed_cls = (self._class_smoother.get_class(lt['track_id'])
+                                            if self._class_smoother else lt['cls'])
+                            if target_ids and smoothed_cls not in target_ids:
+                                continue
+                            x1, y1, x2, y2 = [int(v) for v in lt['xyxy']]
+                            w, h = x2 - x1, y2 - y1
+                            boxes.append([x1, y1, w, h])
+                            weed_centres.append([int((x1 + x2) / 2), int((y1 + y2) / 2)])
+                            cls_name = weed_detector.model.names.get(lt['cls'], 'unknown')
+                            persisted_boxes.append({
+                                'x': x1, 'y': y1, 'w': w, 'h': h,
+                                'track_id': lt['track_id'], 'age': lt['age'],
+                                'conf': lt['score'], 'cls_name': cls_name,
+                            })
+
+                        # Draw persisted boxes on image_out with dimmed colour
+                        if persisted_boxes and image_out is not None and return_image_out:
+                            for pb in persisted_boxes:
+                                cv2.rectangle(image_out,
+                                              (pb['x'], pb['y']),
+                                              (pb['x'] + pb['w'], pb['y'] + pb['h']),
+                                              (0, 120, 0), 2)
+                                lbl = (f"ID{pb['track_id']} [{pb['age']}] "
+                                       f"{int(pb['conf'] * 100)}% {pb['cls_name']}")
+                                cv2.putText(image_out, lbl,
+                                            (pb['x'], pb['y'] - 10),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                                            (0, 120, 0), 1)
 
                     if len(weed_centres) > 0:
                         if self.dash:

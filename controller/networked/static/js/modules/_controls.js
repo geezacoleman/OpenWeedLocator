@@ -151,6 +151,37 @@ function toggleTracking() {
         sendCommand('all', 'set_tracking', true);
         showToast('Tracking enabled', 'success');
     }
+
+    // Show/hide track stability panel
+    const stabilityPanel = document.getElementById('track-stability-panel');
+    if (stabilityPanel) {
+        stabilityPanel.style.display = globalTrackingEnabled ? '' : 'none';
+    }
+}
+
+// ============================================
+// TRACK STABILITY
+// ============================================
+
+var TRACK_STABILITY_PRESETS = {
+    low:    { track_high_thresh: 0.3,  track_low_thresh: 0.15, new_track_thresh: 0.3,  track_buffer: 30, match_thresh: 0.8 },
+    medium: { track_high_thresh: 0.2,  track_low_thresh: 0.05, new_track_thresh: 0.2,  track_buffer: 60, match_thresh: 0.7 },
+    high:   { track_high_thresh: 0.15, track_low_thresh: 0.05, new_track_thresh: 0.15, track_buffer: 90, match_thresh: 0.6 }
+};
+
+function setTrackStability(level) {
+    const selector = document.getElementById('track-stability-selector');
+    if (!selector) return;
+
+    selector.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    const target = selector.querySelector(`[data-stability="${level}"]`);
+    if (target) target.classList.add('active');
+
+    const preset = TRACK_STABILITY_PRESETS[level];
+    if (preset) {
+        sendCommand('all', 'set_config_section', { section: 'Tracking', params: preset });
+    }
+    showToast(`Track stability: ${level}`, 'info');
 }
 
 // ============================================

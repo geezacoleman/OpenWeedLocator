@@ -51,6 +51,7 @@ STATUS_KIOSK_MODE=""
 STATUS_UFW_CONFIG=""
 STATUS_SERVICES=""
 STATUS_CONTROLLER_INI=""
+STATUS_AGENT_DEPS=""
 
 ERROR_PACKAGES=""
 ERROR_WIFI_CONNECT=""
@@ -65,6 +66,7 @@ ERROR_KIOSK_MODE=""
 ERROR_UFW_CONFIG=""
 ERROR_SERVICES=""
 ERROR_CONTROLLER_INI=""
+ERROR_AGENT_DEPS=""
 
 # Function to check the exit status of the last executed command
 check_status() {
@@ -409,6 +411,27 @@ setup_python_venv() {
     echo -e "${GREEN}[INFO] Installing Python dependencies...${NC}"
     sudo -u $CURRENT_USER bash -c "source ${VENV_PATH}/bin/activate && pip install --upgrade pip && pip install flask==2.2.2 werkzeug==2.2.3 gunicorn==23.0.0 paho-mqtt==2.1.0 psutil==5.9.4 boto3==1.39.13 requests"
     check_status "Installing Python dependencies" "PYTHON_VENV"
+}
+
+# Step 2b: Install AI agent dependencies (optional)
+install_agent_dependencies() {
+  echo ""
+  echo -e "${GREEN}[INFO] AI Agent (optional)${NC}"
+  echo -e "  Adds a chat assistant to the dashboard that can adjust"
+  echo -e "  detection settings, create custom algorithms, and more."
+  echo -e "  Requires an Anthropic or OpenAI API key to use."
+  echo ""
+  read -p "Install AI agent support? (y/N): " INSTALL_AGENT
+
+  if [[ "$INSTALL_AGENT" =~ ^[Yy]$ ]]; then
+    echo -e "${GREEN}[INFO] Installing AI agent dependencies...${NC}"
+    VENV_PATH="/home/${CURRENT_USER}/controller_venv"
+    sudo -u $CURRENT_USER bash -c "source ${VENV_PATH}/bin/activate && pip install httpx"
+    check_status "Installing AI agent dependencies (httpx)" "AGENT_DEPS"
+  else
+    echo -e "${GREEN}[INFO] Skipping AI agent. You can install later with: pip install httpx${NC}"
+    STATUS_AGENT_DEPS="SKIPPED"
+  fi
 }
 
 # Step 3: Configure hostname
@@ -924,6 +947,9 @@ main() {
     # Step 3: Setup Python environment
     setup_python_venv
 
+    # Step 3b: AI agent dependencies (optional)
+    install_agent_dependencies
+
     # Step 4: Configure hostname
     configure_hostname
 
@@ -972,6 +998,11 @@ main() {
     echo -e "${GREEN}============================================${NC}"
     echo -e "$STATUS_PACKAGES System Packages"
     echo -e "$STATUS_PYTHON_VENV Python Environment"
+    if [[ "$STATUS_AGENT_DEPS" == "SKIPPED" ]]; then
+        echo -e "${ORANGE}[SKIPPED]${NC} AI Agent Dependencies"
+    else
+        echo -e "$STATUS_AGENT_DEPS AI Agent Dependencies"
+    fi
     echo -e "$STATUS_MQTT_BROKER MQTT Broker Configuration"
     echo -e "$STATUS_SSL_CERT SSL Certificate"
     echo -e "$STATUS_NGINX_CONFIG Nginx Configuration"

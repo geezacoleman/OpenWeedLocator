@@ -211,9 +211,9 @@ class TestSaveCustomPreset:
         values = {k: 99 for k in SensitivityManager.SENSITIVITY_KEYS}
         sm.save_custom_preset('test_preset', values)
 
-        # Re-read from disk
+        # Re-read from wherever persist() wrote (may be copy-on-write)
         config2 = configparser.ConfigParser()
-        config2.read(path)
+        config2.read(sm.config_path)
         assert config2.has_section('Sensitivity_Test_preset')
         assert config2.getint('Sensitivity_Test_preset', 'exg_min') == 99
 
@@ -312,9 +312,9 @@ class TestPersist:
         sm.apply_preset('low', owl)
         sm.persist()
 
-        # Re-read from disk
+        # Re-read from wherever persist() wrote (may be copy-on-write)
         config2 = configparser.ConfigParser()
-        config2.read(path)
+        config2.read(sm.config_path)
         assert config2.get('Sensitivity', 'active') == 'low'
 
     def test_hardware_settings_preserved(self, tmp_path):
@@ -328,6 +328,32 @@ class TestPersist:
         sm.persist()
 
         config2 = configparser.ConfigParser()
-        config2.read(path)
+        config2.read(sm.config_path)
         assert config2.getint('System', 'relay_num') == 4
         assert config2.getint('Camera', 'resolution_width') == 640
+
+    def test_protected_config_not_overwritten(self, tmp_path):
+        """GENERAL_CONFIG.ini must never be modified — persist creates a copy."""
+        config, path = _make_config(tmp_path)
+        original_content = open(path).read()
+
+        sm = SensitivityManager(config, path)
+        values = {k: 77 for k in SensitivityManager.SENSITIVITY_KEYS}
+        sm.save_custom_preset('field_test', values)
+
+        # Original file must be untouched
+        assert open(path).read() == original_content
+
+        # persist() should have created a new file and updated config_path
+        assert sm.config_path != path
+        assert os.path.exists(sm.config_path)
+
+        # New file should contain the preset
+        config2 = configparser.ConfigParser()
+        config2.read(sm.config_path)
+        assert config2.has_section('Sensitivity_Field_test')
+
+        # active_config.txt should point to the new file
+        pointer = os.path.join(tmp_path, 'active_config.txt')
+        assert os.path.exists(pointer)
+        assert os.path.basename(sm.config_path) in open(pointer).read()

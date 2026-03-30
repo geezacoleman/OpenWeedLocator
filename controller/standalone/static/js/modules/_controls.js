@@ -391,6 +391,44 @@ function stopTracking() {
 }
 
 /* --------------------------------------------------------------------------
+   Track Stability
+   -------------------------------------------------------------------------- */
+
+var TRACK_STABILITY_PRESETS = {
+    low:    { track_high_thresh: 0.3,  track_low_thresh: 0.15, new_track_thresh: 0.3,  track_buffer: 30, match_thresh: 0.8 },
+    medium: { track_high_thresh: 0.2,  track_low_thresh: 0.05, new_track_thresh: 0.2,  track_buffer: 60, match_thresh: 0.7 },
+    high:   { track_high_thresh: 0.15, track_low_thresh: 0.05, new_track_thresh: 0.15, track_buffer: 90, match_thresh: 0.6 }
+};
+
+function setTrackStability(level) {
+    var btns = document.querySelectorAll('#track-stability-buttons .seg-btn');
+    btns.forEach(function(b) { b.classList.remove('active'); });
+    var target = document.querySelector('#track-stability-buttons .seg-btn[data-stability="' + level + '"]');
+    if (target) target.classList.add('active');
+
+    var preset = TRACK_STABILITY_PRESETS[level];
+    if (!preset) return;
+
+    return apiRequest('/api/config/section', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ section: 'Tracking', params: preset })
+    })
+        .then(function(response) { return response.json(); })
+        .then(function(data) {
+            if (data.success) {
+                showNotification('Success', 'Track stability: ' + level, 'success', 2000);
+                updateSystemStats();
+            } else {
+                throw new Error(data.error || 'Failed to set track stability');
+            }
+        })
+        .catch(function(error) {
+            showNotification('Error', error.message || 'Failed to set track stability', 'error');
+        });
+}
+
+/* --------------------------------------------------------------------------
    All Nozzles Controls
    -------------------------------------------------------------------------- */
 

@@ -49,6 +49,11 @@ ALLOWED_MODEL_EXTENSIONS = {'pt', 'zip'}
 PROTECTED_MODEL_FILES = set()  # .gitignore protected by secure_filename stripping dots
 MAX_ZIP_UNCOMPRESSED_SIZE = 500 * 1024 * 1024  # 500MB zip bomb guard
 
+# Downloads staging directory
+DOWNLOADS_DIR = Path(__file__).parent.parent.parent / 'downloads'
+DOWNLOADS_DIR.mkdir(exist_ok=True)
+MAX_DOWNLOADS_SIZE_MB = 2000  # 2GB default staging quota
+
 
 def _compute_sha256(filepath):
     """Streaming SHA256 hash for large files."""
@@ -228,6 +233,7 @@ class CentralController:
         # State management
         self.owls_state = {}
         self.desired_state = {}  # {device_id: {'detection_enable': bool, ...}}
+        self.lwt_timestamps = {}  # {device_id: time.time()} — when LWT marked device offline
         self.mqtt_connected = False
         self.mqtt_lock = threading.Lock()
 
@@ -425,6 +431,8 @@ class CentralController:
                 if topic_type == 'status':
                     if not payload.get('connected', True) or not payload.get('owl_running', True):
                         self.owls_state[device_id]['connected'] = False
+                        self.lwt_timestamps[device_id] = current_time
+                        is_reconnect = False  # cancel any reconnect flag from stale heartbeat
                         logger.info(f"{device_id} marked offline via LWT/status message")
                         return
 
@@ -432,8 +440,14 @@ class CentralController:
                 self.owls_state[device_id]['connected'] = True
 
             # Push desired state on reconnect (outside lock to avoid deadlock)
+            # Skip if device was marked offline by LWT within 5s — that's a
+            # stale in-flight heartbeat, not a real reconnect (Pi boot takes 10-30s)
             if is_reconnect:
-                self._push_desired_state(device_id)
+                lwt_time = self.lwt_timestamps.get(device_id, 0)
+                if current_time - lwt_time > 5:
+                    self._push_desired_state(device_id)
+                else:
+                    logger.debug(f"Suppressed reconnect push for {device_id} — LWT grace period")
 
             logger.debug(f"Updated {device_id} ({topic_type})")
 
@@ -700,6 +714,80 @@ class CentralController:
             'config_path': str(config_path)
         }
 
+    # -- Tool-compatible interface (used by agent_engine) ----------------
+
+    @property
+    def current_state(self):
+        """Return first connected OWL's state (tools need a flat dict)."""
+        for state in self.owls_state.values():
+            if state.get('connected'):
+                return state
+        return {}
+
+    @property
+    def owl_config(self):
+        """Return the full config dict from the first connected OWL.
+
+        OWLs publish their config on the 'config' topic, stored as
+        owls_state[device_id]['config'].  This is a nested dict with
+        section names as keys (e.g. 'GreenOnBrown', 'System').
+        Returns ``None`` if no OWL config is available.
+        """
+        for state in self.owls_state.values():
+            if state.get('connected') and state.get('config'):
+                return state['config']
+        return None
+
+    def _send_command(self, action, **kwargs):
+        """Tool-compatible command interface. Broadcasts to all OWLs."""
+        if action == 'set_config':
+            section = kwargs.get('section', 'GreenOnBrown')
+            key = kwargs.get('key')
+            val = kwargs.get('value')
+            if section and section != 'GreenOnBrown':
+                return self.send_command('all', 'set_config_section',
+                                         {'section': section, 'params': {key: str(val)}})
+            value = {'key': key, 'value': val}
+        elif action == 'save_sensitivity_preset':
+            return self._broadcast_raw({'action': action, **kwargs})
+        elif action == 'delete_sensitivity_preset':
+            return self._broadcast_raw({'action': action, **kwargs})
+        elif action == 'install_algorithm':
+            return self._broadcast_raw({
+                'action': action,
+                'name': kwargs.get('name'),
+                'code': kwargs.get('code'),
+                'description': kwargs.get('description', ''),
+            })
+        else:
+            if kwargs and 'value' not in kwargs:
+                logger.warning(
+                    f"_send_command: action '{action}' has kwargs "
+                    f"{list(kwargs.keys())} that may be dropped"
+                )
+            value = kwargs.get('value') if kwargs else None
+        return self.send_command('all', action, value)
+
+    def _broadcast_raw(self, payload):
+        """Publish a raw payload to all connected OWLs."""
+        if not self.mqtt_connected or not self.mqtt_client:
+            return {'success': False, 'error': 'MQTT not connected'}
+        sent_to = []
+        with self.mqtt_lock:
+            for owl_id, state in self.owls_state.items():
+                if state.get('connected', False):
+                    self.mqtt_client.publish(f"owl/{owl_id}/commands", json.dumps(payload))
+                    sent_to.append(owl_id)
+        return {'success': True, 'message': f'Sent to {len(sent_to)} OWLs'}
+
+    def set_detection_enable(self, value):
+        """Tool-compatible detection toggle."""
+        return self.send_command('all', 'toggle_detection', bool(value))
+
+    def set_sensitivity_level(self, level):
+        """Tool-compatible sensitivity setter."""
+        return self.send_command('all', 'set_sensitivity', level.lower())
+
     def send_command(self, device_id, action, value=None):
         """Send command to OWL(s)"""
         if not self.mqtt_connected or not self.mqtt_client:
@@ -847,6 +935,29 @@ app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB upload limit
 # Initialize controller
 controller = CentralController()
 
+# Widget system (optional — does not block startup)
+widget_manager = None
+try:
+    from agent.widget_manager import WidgetManager
+    widget_manager = WidgetManager(str(Path(__file__).parent.parent.parent / 'agent' / 'widgets'))
+except Exception as e:
+    logger.warning(f"Widget system unavailable: {e}")
+
+# Agent engine (optional — does not block startup)
+agent_engine = None
+try:
+    from agent import ToolRegistry, AgentEngine
+    _registry = ToolRegistry(developer_mode=False)
+    _registry.discover()
+    _sessions_dir = str(Path(__file__).parent.parent.parent / 'agent' / 'sessions')
+    agent_engine = AgentEngine(
+        tool_registry=_registry,
+        context={'mqtt_client': controller, 'config': controller.config, 'widget_manager': widget_manager},
+        sessions_dir=_sessions_dir,
+    )
+except Exception as e:
+    logger.warning(f"Agent engine unavailable: {e}")
+
 # ---------------------------------------------------------------------------
 # Access control — localhost (kiosk) gets everything, everyone else gets /demo
 # only. Nginx sets X-Real-IP so we see the real client, not 127.0.0.1.
@@ -951,6 +1062,21 @@ def get_greenonbrown_defaults():
         'min_detection_area': {'value': 10, 'min': 1, 'max': 1000, 'step': 1, 'label': 'Min Detection Area'}
     }
     return jsonify(defaults)
+
+
+@app.route('/api/config', methods=['GET'])
+def get_config_generic():
+    """Return config from first connected OWL (widget API)."""
+    cfg = controller.owl_config
+    if cfg is None:
+        # Trigger a config request from first connected OWL
+        for device_id, state in controller.owls_state.items():
+            if state.get('connected'):
+                controller.send_command(device_id, 'get_config')
+                break
+        return jsonify({'success': False, 'error': 'Config not yet available'}), 503
+    config_data = cfg.get('config', cfg) if isinstance(cfg, dict) else cfg
+    return jsonify({'success': True, 'config': config_data})
 
 
 @app.route('/api/config/<device_id>', methods=['GET'])
@@ -1661,6 +1787,293 @@ def delete_model(name):
 
 
 # ---------------------------------------------------------------------------
+# Data Downloads routes
+# ---------------------------------------------------------------------------
+
+
+def _get_downloads_storage():
+    """Calculate downloads directory storage usage."""
+    used = 0
+    if DOWNLOADS_DIR.exists():
+        for f in DOWNLOADS_DIR.iterdir():
+            if f.is_file():
+                used += f.stat().st_size
+    used_mb = round(used / (1024 * 1024), 1)
+    return {
+        'used_mb': used_mb,
+        'max_mb': MAX_DOWNLOADS_SIZE_MB,
+        'free_mb': round(MAX_DOWNLOADS_SIZE_MB - used_mb, 1),
+        'percent': round(used_mb / MAX_DOWNLOADS_SIZE_MB * 100, 1) if MAX_DOWNLOADS_SIZE_MB > 0 else 0,
+    }
+
+
+@app.route('/downloads')
+def downloads_page():
+    return render_template('downloads.html')
+
+
+@app.route('/api/downloads/sessions/<device_id>')
+def api_downloads_sessions(device_id):
+    """Return data_sessions from OWL state and trigger a scan."""
+    try:
+        # Send scan command via MQTT
+        if controller.mqtt_connected and controller.mqtt_client:
+            topic = f'owl/{device_id}/commands'
+            payload = json.dumps({'action': 'list_data_sessions'})
+            controller.mqtt_client.publish(topic, payload)
+
+        # Return currently known sessions from state
+        with controller.mqtt_lock:
+            owl_state = controller.owls_state.get(device_id, {})
+            sessions = owl_state.get('data_sessions', [])
+            transfer = owl_state.get('data_transfer', {})
+
+        return jsonify({
+            'sessions': sessions,
+            'transfer': transfer,
+            'device_id': device_id,
+        })
+    except Exception as e:
+        logger.error(f"Error fetching sessions for {device_id}: {e}")
+        return jsonify({'sessions': [], 'error': str(e)}), 500
+
+
+@app.route('/api/downloads/request', methods=['POST'])
+def api_downloads_request():
+    """Send transfer_session MQTT command to an OWL."""
+    try:
+        data = request.json
+        if not data:
+            return jsonify({'success': False, 'error': 'No data'}), 400
+
+        device_id = data.get('device_id')
+        session_date = data.get('session_date')
+        data_types = data.get('data_types', ['images'])
+
+        if not device_id or not session_date:
+            return jsonify({'success': False, 'error': 'Missing device_id or session_date'}), 400
+
+        if not controller.mqtt_connected or not controller.mqtt_client:
+            return jsonify({'success': False, 'error': 'MQTT not connected'}), 503
+
+        # Pre-check quota: estimate from session data
+        with controller.mqtt_lock:
+            owl_state = controller.owls_state.get(device_id, {})
+            sessions = owl_state.get('data_sessions', [])
+
+        session_info = next((s for s in sessions if s.get('date') == session_date), None)
+        if session_info:
+            session_size_mb = session_info.get('total_size', 0) / (1024 * 1024)
+            storage = _get_downloads_storage()
+            if session_size_mb > storage['free_mb']:
+                return jsonify({
+                    'success': False,
+                    'error': f"Not enough space on controller. Session is ~{session_size_mb:.0f}MB "
+                             f"but only {storage['free_mb']:.0f}MB available. "
+                             f"Download and remove existing files first."
+                }), 507
+
+        # Build upload URL for OWL to POST back to
+        static_ip = controller.config.get('Network', 'static_ip', fallback='localhost')
+        upload_url = f'https://{static_ip}/api/downloads/receive'
+
+        topic = f'owl/{device_id}/commands'
+        payload = json.dumps({
+            'action': 'transfer_session',
+            'session_date': session_date,
+            'data_types': data_types,
+            'upload_url': upload_url,
+        })
+        result = controller.mqtt_client.publish(topic, payload)
+
+        if result.rc == 0:
+            return jsonify({'success': True, 'message': f'Transfer command sent to {device_id}'})
+        else:
+            return jsonify({'success': False, 'error': 'MQTT publish failed'}), 500
+
+    except Exception as e:
+        logger.error(f"Error requesting transfer: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/downloads/receive', methods=['POST'])
+def api_downloads_receive():
+    """Receive ZIP data from an OWL unit."""
+    try:
+        device_id = request.headers.get('X-OWL-Device-ID', 'unknown')
+        session_date = request.headers.get('X-OWL-Session-Date', 'unknown')
+
+        safe_device = secure_filename(device_id) or 'unknown'
+        safe_date = secure_filename(session_date) or 'unknown'
+        filename = f'{safe_device}_{safe_date}.zip'
+
+        # Check disk space
+        disk = shutil.disk_usage(DOWNLOADS_DIR)
+        if disk.free < 500 * 1024 * 1024:
+            return jsonify({'success': False, 'error': 'Insufficient disk space (<500MB free)'}), 507
+
+        # Check quota using Content-Length header (before reading body)
+        incoming_size = request.content_length or 0
+        storage = _get_downloads_storage()
+        incoming_mb = incoming_size / (1024 * 1024)
+        if incoming_size > 0 and storage['used_mb'] + incoming_mb > MAX_DOWNLOADS_SIZE_MB:
+            return jsonify({
+                'success': False,
+                'error': f"Downloads storage full ({storage['used_mb']:.0f}MB / {MAX_DOWNLOADS_SIZE_MB}MB). "
+                         f"Delete existing files before transferring more."
+            }), 507
+
+        DOWNLOADS_DIR.mkdir(exist_ok=True)
+        save_path = DOWNLOADS_DIR / filename
+
+        # Path traversal check
+        if save_path.resolve().parent != DOWNLOADS_DIR.resolve():
+            return jsonify({'success': False, 'error': 'Invalid filename'}), 400
+
+        # Stream to disk — never load entire ZIP into memory
+        written = 0
+        with open(save_path, 'wb') as f:
+            while True:
+                chunk = request.stream.read(65536)
+                if not chunk:
+                    break
+                f.write(chunk)
+                written += len(chunk)
+
+        # Post-write quota check (if Content-Length was missing/wrong)
+        actual_mb = written / (1024 * 1024)
+        if storage['used_mb'] + actual_mb > MAX_DOWNLOADS_SIZE_MB:
+            save_path.unlink(missing_ok=True)
+            return jsonify({
+                'success': False,
+                'error': f"Downloads storage full ({storage['used_mb']:.0f}MB / {MAX_DOWNLOADS_SIZE_MB}MB). "
+                         f"Delete existing files before transferring more."
+            }), 507
+
+        logger.info(f"Received download: {filename} ({written} bytes)")
+        return jsonify({'success': True, 'filename': filename, 'size': written})
+
+    except Exception as e:
+        logger.error(f"Error receiving download: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/downloads/status/<device_id>')
+def api_downloads_status(device_id):
+    """Return data_transfer progress from OWL state."""
+    with controller.mqtt_lock:
+        owl_state = controller.owls_state.get(device_id, {})
+        transfer = owl_state.get('data_transfer', {})
+    return jsonify(transfer)
+
+
+@app.route('/api/downloads/files')
+def api_downloads_files():
+    """List ZIP files in the downloads staging directory."""
+    try:
+        files = []
+        if DOWNLOADS_DIR.exists():
+            for f in sorted(DOWNLOADS_DIR.iterdir()):
+                if f.is_file() and f.suffix == '.zip':
+                    stat = f.stat()
+                    files.append({
+                        'filename': f.name,
+                        'size': stat.st_size,
+                        'modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    })
+
+        return jsonify({
+            'files': files,
+            'storage': _get_downloads_storage(),
+        })
+    except Exception as e:
+        logger.error(f"Error listing downloads: {e}")
+        return jsonify({'files': [], 'error': str(e)}), 500
+
+
+@app.route('/api/downloads/file/<filename>')
+def api_downloads_file(filename):
+    """Serve a ZIP file to the browser for download."""
+    try:
+        safe_name = secure_filename(filename)
+        if not safe_name:
+            return jsonify({'error': 'Invalid filename'}), 400
+
+        target = DOWNLOADS_DIR / safe_name
+        if target.resolve().parent != DOWNLOADS_DIR.resolve():
+            return jsonify({'error': 'Invalid path'}), 400
+
+        if not target.is_file():
+            return jsonify({'error': 'File not found'}), 404
+
+        return send_from_directory(str(DOWNLOADS_DIR), safe_name, as_attachment=True)
+
+    except Exception as e:
+        logger.error(f"Error serving download {filename}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/downloads/file/<filename>', methods=['DELETE'])
+def api_downloads_delete_file(filename):
+    """Delete a ZIP from the downloads staging directory."""
+    try:
+        safe_name = secure_filename(filename)
+        if not safe_name:
+            return jsonify({'success': False, 'error': 'Invalid filename'}), 400
+
+        target = DOWNLOADS_DIR / safe_name
+        if target.resolve().parent != DOWNLOADS_DIR.resolve():
+            return jsonify({'success': False, 'error': 'Invalid path'}), 400
+
+        if not target.is_file():
+            return jsonify({'success': False, 'error': 'File not found'}), 404
+
+        target.unlink()
+        logger.info(f"Download deleted: {safe_name}")
+        return jsonify({'success': True, 'message': f'Deleted {safe_name}'})
+
+    except Exception as e:
+        logger.error(f"Error deleting download: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/downloads/delete-remote', methods=['POST'])
+def api_downloads_delete_remote():
+    """Send delete_session MQTT command to an OWL."""
+    try:
+        data = request.json
+        if not data:
+            return jsonify({'success': False, 'error': 'No data'}), 400
+
+        device_id = data.get('device_id')
+        session_date = data.get('session_date')
+        data_types = data.get('data_types', ['images'])
+
+        if not device_id or not session_date:
+            return jsonify({'success': False, 'error': 'Missing device_id or session_date'}), 400
+
+        if not controller.mqtt_connected or not controller.mqtt_client:
+            return jsonify({'success': False, 'error': 'MQTT not connected'}), 503
+
+        topic = f'owl/{device_id}/commands'
+        payload = json.dumps({
+            'action': 'delete_session',
+            'session_date': session_date,
+            'data_types': data_types,
+        })
+        result = controller.mqtt_client.publish(topic, payload)
+
+        if result.rc == 0:
+            return jsonify({'success': True, 'message': f'Delete command sent to {device_id}'})
+        else:
+            return jsonify({'success': False, 'error': 'MQTT publish failed'}), 500
+
+    except Exception as e:
+        logger.error(f"Error sending delete command: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
 # GPS API routes
 # ---------------------------------------------------------------------------
 
@@ -1826,6 +2239,247 @@ def system_reboot():
         return jsonify({'success': True, 'message': 'Rebooting in ~2s'})
     except Exception as e:
         logger.error(f"Error initiating reboot: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---- Widget API routes ----
+
+@app.route('/api/widgets')
+def list_widgets():
+    if widget_manager is None:
+        return jsonify([])
+    return jsonify(widget_manager.scan())
+
+@app.route('/api/widgets/<widget_id>/template')
+def widget_template(widget_id):
+    if widget_manager is None:
+        return 'Widget system not available', 404
+    html = widget_manager.render(widget_id)
+    if html is None:
+        return 'Widget not found', 404
+    return html, 200, {'Content-Type': 'text/html'}
+
+@app.route('/api/widgets/<widget_id>/script')
+def widget_script(widget_id):
+    if widget_manager is None:
+        return 'Widget system not available', 404
+    widget = widget_manager.get(widget_id)
+    if widget is None or widget.get('type') != 'custom':
+        return 'Not found', 404
+    script_path = widget_manager.widgets_dir / widget_id / 'script.js'
+    if not script_path.exists():
+        return '', 200, {'Content-Type': 'application/javascript'}
+    js = script_path.read_text()
+    wrapped = f'(function(OWLWidget) {{\n{js}\n}})(window.OWLWidget);'
+    return wrapped, 200, {'Content-Type': 'application/javascript'}
+
+@app.route('/api/widgets/<widget_id>/style')
+def widget_style(widget_id):
+    if widget_manager is None:
+        return 'Widget system not available', 404
+    widget = widget_manager.get(widget_id)
+    if widget is None or widget.get('type') != 'custom':
+        return 'Not found', 404
+    style_path = widget_manager.widgets_dir / widget_id / 'style.css'
+    if not style_path.exists():
+        return '', 200, {'Content-Type': 'text/css'}
+    css = style_path.read_text()
+    scoped = f'.widget-container[data-widget-id="{widget_id}"] {{\n{css}\n}}'
+    return scoped, 200, {'Content-Type': 'text/css'}
+
+@app.route('/api/widgets/<widget_id>', methods=['DELETE'])
+def delete_widget(widget_id):
+    if widget_manager is None:
+        return jsonify({'error': 'Widget system not available'}), 500
+    success, error = widget_manager.remove(widget_id)
+    if success:
+        return jsonify({'status': 'ok'})
+    return jsonify({'error': error}), 404
+
+
+# ---- Agent API routes ----
+
+@app.route('/api/agent/connect', methods=['POST'])
+def agent_connect():
+    """Validate API key and configure agent provider."""
+    if agent_engine is None:
+        return jsonify({'error': 'Agent engine not available'}), 500
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No JSON body'}), 400
+    api_key = data.get('api_key', '').strip()
+    provider = data.get('provider', 'anthropic').strip()
+    if not api_key:
+        return jsonify({'error': 'API key is required'}), 400
+    try:
+        valid = agent_engine.set_provider(api_key, provider)
+        if valid:
+            status = agent_engine.get_status()
+            return jsonify({'status': 'connected', 'model': status.get('model')})
+        return jsonify({'error': 'Invalid API key'}), 401
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/api/agent/chat', methods=['POST'])
+def agent_chat():
+    """Stream agent responses via SSE."""
+    if agent_engine is None:
+        return jsonify({'error': 'Agent engine not available'}), 500
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No JSON body'}), 400
+    message = data.get('message', '').strip()
+    images = data.get('images', [])
+    session_id = data.get('session_id', 'default')
+    if not message and not images:
+        return jsonify({'error': 'Message or image is required'}), 400
+
+    # Validate images
+    if len(images) > 4:
+        return jsonify({'error': 'Maximum 4 images per message'}), 400
+    for img in images:
+        if not isinstance(img, str) or len(img) > 1_400_000:
+            return jsonify({'error': 'Invalid or oversized image (max ~1MB)'}), 400
+
+    # Build content array if images present
+    if images:
+        content = []
+        for img_data in images:
+            content.append({
+                'type': 'image',
+                'source': {'type': 'base64', 'media_type': 'image/jpeg', 'data': img_data}
+            })
+        if message:
+            content.append({'type': 'text', 'text': message})
+        chat_input = content
+    else:
+        chat_input = message
+
+    def generate():
+        try:
+            for chunk in agent_engine.chat(session_id, chat_input):
+                event_data = json.dumps({
+                    'type': chunk.type,
+                    'data': chunk.data if not hasattr(chunk.data, '__dict__')
+                            else {'id': chunk.data.id, 'name': chunk.data.name,
+                                  'arguments': chunk.data.arguments},
+                })
+                yield f"data: {event_data}\n\n"
+            session_info = agent_engine.get_session_info(session_id)
+            yield f"data: {json.dumps({'type': 'done', 'data': session_info})}\n\n"
+        except Exception as e:
+            logger.exception("Agent chat error")
+            yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
+
+    return Response(generate(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+@app.route('/api/agent/grab_frame/<device_id>')
+def agent_grab_frame(device_id):
+    """Grab frame from OWL device, return as base64 for agent chat."""
+    import base64 as b64mod
+    device_id = device_id.replace('_', '-')
+    host = _resolve_owl_host(device_id)
+    snapshot_url = f"https://{host}/latest_frame.jpg"
+    try:
+        r = requests.get(snapshot_url, timeout=5, verify=False)
+        if r.status_code != 200:
+            return jsonify({'error': f'Could not get frame from {device_id}'}), 502
+        b64 = b64mod.b64encode(r.content).decode('ascii')
+        return jsonify({'image': b64, 'device_id': device_id})
+    except requests.exceptions.ConnectionError:
+        return jsonify({'error': f'{device_id} is offline'}), 502
+    except Exception as e:
+        logger.error(f"Grab frame error for {device_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/agent/status')
+def agent_status():
+    """Return agent connection status and token usage."""
+    if agent_engine is None:
+        return jsonify({'connected': False, 'provider': None, 'model': None})
+    status = agent_engine.get_status()
+    return jsonify(status)
+
+@app.route('/api/agent/sessions')
+def agent_sessions():
+    """List saved agent sessions."""
+    if agent_engine is None:
+        return jsonify([])
+    return jsonify(agent_engine.list_sessions())
+
+@app.route('/api/agent/sessions/<session_id>')
+def agent_session_load(session_id):
+    """Load a saved session with full message history."""
+    if agent_engine is None:
+        return jsonify({'error': 'Agent engine not available'}), 500
+    data = agent_engine.load_session(session_id)
+    if data is None:
+        return jsonify({'error': 'Session not found'}), 404
+    return jsonify(data)
+
+@app.route('/api/agent/sessions/<session_id>', methods=['DELETE'])
+def agent_session_delete(session_id):
+    """Delete a saved session."""
+    if agent_engine is None:
+        return jsonify({'error': 'Agent engine not available'}), 500
+    deleted = agent_engine.delete_session(session_id)
+    if deleted:
+        return jsonify({'status': 'deleted'})
+    return jsonify({'error': 'Session not found'}), 404
+
+
+# ---- Config param route (widget compatibility) ----
+
+def _coerce_value(value):
+    """Smart type coercion for widget API values."""
+    if isinstance(value, (int, float, bool)):
+        return value
+    if isinstance(value, str):
+        low = value.lower()
+        if low in ('true', 'false'):
+            return low == 'true'
+        try:
+            return int(value)
+        except ValueError:
+            pass
+        try:
+            return float(value)
+        except ValueError:
+            pass
+    return value
+
+@app.route('/api/config/param', methods=['POST'])
+def set_config_param():
+    """Set a config parameter or dispatch MQTT command."""
+    try:
+        data = request.get_json() or {}
+
+        # Action dispatch (widget buttons, sendCommand)
+        action = data.get('action')
+        if action:
+            value = data.get('value')
+            result = controller.send_command('all', action, value)
+            return jsonify(result)
+
+        # Param/value mode (widget sliders, setParam)
+        param = data.get('param', '')
+        value = data.get('value')
+        if not param or value is None:
+            return jsonify({'success': False, 'error': 'param and value required'}), 400
+
+        section = data.get('section', 'GreenOnBrown')
+        typed_value = _coerce_value(value)
+
+        if not section or section == 'GreenOnBrown':
+            result = controller.send_command('all', 'set_config',
+                                              {'key': param, 'value': typed_value})
+        else:
+            result = controller.send_command('all', 'set_config_section',
+                                              {'section': section, 'params': {param: str(typed_value)}})
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error in config/param: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

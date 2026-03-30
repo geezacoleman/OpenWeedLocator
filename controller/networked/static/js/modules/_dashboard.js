@@ -202,7 +202,18 @@ async function updateDashboard() {
                 trackingBtn.classList.toggle('active', trackingOn);
                 trackingBtn.textContent = trackingOn ? 'Tracking ON' : 'Tracking';
             }
+
+            // Show/hide track stability panel based on tracking state
+            const stabilityPanel = document.getElementById('track-stability-panel');
+            if (stabilityPanel) {
+                stabilityPanel.style.display = globalTrackingEnabled ? '' : 'none';
+            }
         }
+        // Broadcast to widget state listeners
+        if (typeof OWLWidget !== 'undefined' && firstOwl) {
+            OWLWidget._broadcastState(firstOwl);
+        }
+
         // Sync AI tab if it's active
         if (typeof syncAITabFromDashboard === 'function') syncAITabFromDashboard();
     } catch (err) {

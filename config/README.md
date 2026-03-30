@@ -1,24 +1,32 @@
 # Configuration Files
 
-OWL uses INI configuration files to control both detection behaviour and system infrastructure. These are split into two types: **detection presets** and **infrastructure config**.
+OWL uses INI configuration files to control both detection behaviour and system infrastructure. These are split into two types: **detection config** and **infrastructure config**.
 
-## Detection Presets
+## Detection Config (GENERAL_CONFIG.ini)
 
-These files control how OWL detects weeds -- algorithm choice, colour thresholds, camera settings, relay wiring, and data collection options. Three presets are included out of the box:
+`GENERAL_CONFIG.ini` is the single unified detection configuration file. It controls algorithm choice, colour thresholds, camera settings, relay wiring, data collection, tracking, and sensitivity presets -- all in one file.
 
-| File | Description |
-|------|-------------|
-| `DAY_SENSITIVITY_1.ini` | Low sensitivity -- fewer false positives, may miss smaller weeds |
-| `DAY_SENSITIVITY_2.ini` | Medium sensitivity -- good general-purpose starting point |
-| `DAY_SENSITIVITY_3.ini` | High sensitivity -- catches more weeds, more likely to spray non-targets |
+`GENERAL_CONFIG.ini` and `CONTROLLER.ini` are **protected defaults** -- the dashboard won't let you overwrite or delete them. When you change settings via the dashboard, OWL creates a timestamped copy (e.g. `config_20260207_153022.ini`) and writes changes there.
 
-These are **protected defaults** -- the dashboard won't let you overwrite or delete them. You can create your own presets by saving from the dashboard or copying and editing one of these files.
+### Which config is active?
 
-### Which preset is active?
+`active_config.txt` contains the path to the detection config OWL loads on boot. If this file doesn't exist, OWL defaults to `config/GENERAL_CONFIG.ini`. You can change the active config from the dashboard or by editing this file directly.
 
-`active_config.txt` contains the path to the detection preset OWL loads on boot. If this file doesn't exist, OWL defaults to `DAY_SENSITIVITY_2.ini`. You can change the active preset from the dashboard or by editing this file directly.
+### Sensitivity presets
 
-### Key sections in detection presets
+Rather than separate config files, sensitivity presets are embedded as sections within `GENERAL_CONFIG.ini`:
+
+| Section | Description |
+|---------|-------------|
+| `[Sensitivity_Low]` | Fewer false positives, may miss smaller weeds |
+| `[Sensitivity_Medium]` | Good general-purpose starting point |
+| `[Sensitivity_High]` | Catches more weeds, more likely to spray non-targets |
+
+The `[Sensitivity]` section holds the `active` key (`low`, `medium`, or `high`) which determines which preset is applied. Presets only change the 9 `[GreenOnBrown]` threshold values -- hardware settings (relay count, resolution, GPIO pins) are never touched.
+
+You can create custom presets by saving from the dashboard. Custom presets are saved as additional `[Sensitivity_*]` sections and can be deleted from the dashboard. The three built-in presets (Low/Medium/High) cannot be deleted.
+
+### Key sections in GENERAL_CONFIG.ini
 
 | Section | What it controls |
 |---------|-----------------|
@@ -29,13 +37,16 @@ These are **protected defaults** -- the dashboard won't let you overwrite or del
 | `[Controller]` | Hardware controller type (`none`, `ute`, `advanced`) and pin mappings |
 | `[DataCollection]` | Image sampling settings, save directory, logging |
 | `[Relays]` | Maps relay IDs to GPIO pin numbers |
+| `[Tracking]` | ByteTrack weed tracking settings |
 | `[Visualisation]` | Display settings when running with `--show-display` |
+| `[Sensitivity]` | Active sensitivity preset |
+| `[Sensitivity_Low/Medium/High]` | Built-in sensitivity preset thresholds |
 
 ---
 
 ## All configurable options
 
-Defaults shown are from `DAY_SENSITIVITY_2.ini` (the medium sensitivity preset). The low and high presets differ mainly in threshold ranges and resolution -- see the preset files for exact values.
+Defaults shown are from `GENERAL_CONFIG.ini`.
 
 ### `[System]`
 
@@ -46,6 +57,7 @@ Defaults shown are from `DAY_SENSITIVITY_2.ini` (the medium sensitivity preset).
 | `relay_num` | `4` | 0+ (integer) | Number of relays connected to the OWL. Must match entries in `[Relays]` |
 | `actuation_duration` | `0.15` | Seconds (float) | How long each relay stays on when a weed is detected |
 | `delay` | `0` | Seconds (float) | Delay between detection and relay actuation. Use for speed/distance compensation |
+| `actuation_zone` | `100` | 1--100 (integer) | Percentage of the frame width used for relay lane mapping |
 
 ### Detection algorithms
 
@@ -67,13 +79,13 @@ All algorithms except `gog`, `gog-hybrid`, and `hsv` use the `[GreenOnBrown]` th
 
 | Key | Default | Range / Valid values | Description |
 |-----|---------|---------------------|-------------|
-| `resolution_width` | `640` | 1+ (integer) | Camera capture width in pixels |
-| `resolution_height` | `480` | 1+ (integer) | Camera capture height in pixels |
+| `resolution_width` | `1456` | 1+ (integer) | Camera capture width in pixels |
+| `resolution_height` | `1088` | 1+ (integer) | Camera capture height in pixels |
 | `exp_compensation` | `-2` | -10 to 10 (integer) | Exposure compensation. Negative = darker (reduces sky/soil glare) |
-| `crop_factor_horizontal` | `0.1` | 0.0 to 0.5 (float) | Fraction of image width to crop from each side. Removes edge distortion |
+| `crop_factor_horizontal` | `0.02` | 0.0 to 0.5 (float) | Fraction of image width to crop from each side. Removes edge distortion |
 | `crop_factor_vertical` | `0.02` | 0.0 to 0.5 (float) | Fraction of image height to crop from top and bottom |
 
-Lower resolution (e.g. 416x320 in sensitivity 1 and 3) is faster but detects fewer small weeds. 640x480 is a good balance for most setups.
+Higher resolution gives better detection of small weeds but is slower. The dashboard provides resolution presets as a dropdown.
 
 ### `[GreenOnBrown]`
 
@@ -92,7 +104,7 @@ Used by all algorithms except `gog`. The ExG thresholds are used by `exg`, `exgr
 | `min_detection_area` | `10` | 0+ (integer) | Minimum contour area in pixels to count as a weed. Higher = ignore small detections |
 | `invert_hue` | `False` | `True` / `False` | If True, detect pixels *outside* the hue range instead of inside. Useful for non-green targets |
 
-**Tuning tips:** Start with the medium preset and adjust using `--show-display` or the dashboard sliders. Wider ranges (lower mins, higher maxes) catch more weeds but increase false positives. Narrower ranges are more precise but may miss weeds in variable lighting.
+**Tuning tips:** Start with the medium sensitivity preset and adjust using `--show-display` or the dashboard sliders. Wider ranges (lower mins, higher maxes) catch more weeds but increase false positives. Narrower ranges are more precise but may miss weeds in variable lighting.
 
 ### `[GreenOnGreen]`
 
@@ -118,6 +130,16 @@ Used when `algorithm = gog` or `algorithm = gog-hybrid`. Green-on-Green detectio
 
 - **`zone`** -- Uses the segmentation mask to count weed pixels in each relay lane. A relay fires only if the pixel count exceeds `min_detection_pixels`. **Requires a segmentation model** (detection-only models have no mask data). More precise for large or irregularly shaped weeds.
 
+### `[Tracking]`
+
+Optional weed tracking using ByteTrack. When enabled, YOLO runs in tracking mode to maintain consistent weed IDs across frames. This enables class smoothing (stabilising noisy per-frame class predictions) and crop mask stabilisation (persisting crop masks for a few frames after the crop leaves the field of view).
+
+| Key | Default | Range / Valid values | Description |
+|-----|---------|---------------------|-------------|
+| `tracking_enabled` | `False` | `True` / `False` | Enable ByteTrack weed tracking |
+| `track_class_window` | `5` | 1+ (integer) | Number of recent frames to use for majority-vote class smoothing |
+| `track_crop_persist` | `3` | 0+ (integer) | Number of frames to persist a crop mask after the crop is no longer detected. Only used in `gog-hybrid` mode |
+
 ### `[Controller]`
 
 Controls the optional hardware input controller (physical switches on the OWL unit). Most users set this to `none` and use the web dashboard instead.
@@ -141,18 +163,31 @@ Controls the optional hardware input controller (physical switches on the OWL un
 | `detection_mode_pin_down` | `35` | 1--40 (BCM pin) | Switch pin for detection mode down |
 | `recording_pin` | `38` | 1--40 (BCM pin) | Switch pin to toggle image recording |
 | `sensitivity_pin` | `40` | 1--40 (BCM pin) | Switch pin to cycle sensitivity presets (low/high toggle) |
-| `low_sensitivity_config` | `config/DAY_SENSITIVITY_1.ini` | File path | Config loaded when sensitivity switch is set to low |
-| `high_sensitivity_config` | `config/DAY_SENSITIVITY_3.ini` | File path | Config loaded when sensitivity switch is set to high |
 
-**Sensitivity presets** (used by the web dashboard for low/medium/high switching):
+The hardware switch cycles between the Low and High sensitivity presets (two-position toggle). The web dashboard supports all three levels (low/medium/high) via MQTT. Both use the `SensitivityManager` which reads from the `[Sensitivity_*]` sections.
+
+### `[Sensitivity]`
 
 | Key | Default | Range / Valid values | Description |
 |-----|---------|---------------------|-------------|
-| `low_sensitivity_config` | `config/DAY_SENSITIVITY_1.ini` | File path | Preset loaded when dashboard selects low sensitivity |
-| `medium_sensitivity_config` | `config/DAY_SENSITIVITY_2.ini` | File path | Preset loaded when dashboard selects medium sensitivity |
-| `high_sensitivity_config` | `config/DAY_SENSITIVITY_3.ini` | File path | Preset loaded when dashboard selects high sensitivity |
+| `active` | `medium` | `low`, `medium`, `high`, or custom preset name | The currently active sensitivity preset |
 
-The Advanced controller hardware switch is a two-position toggle (low/high only). The web dashboard supports all three levels (low/medium/high) via MQTT.
+### `[Sensitivity_Low]`, `[Sensitivity_Medium]`, `[Sensitivity_High]`
+
+Each preset section contains the same 9 keys as `[GreenOnBrown]` (the threshold values). When a preset is applied, these values overwrite the corresponding `[GreenOnBrown]` keys at runtime. Example:
+
+```ini
+[Sensitivity_Low]
+exg_min = 25
+exg_max = 200
+hue_min = 41
+hue_max = 80
+saturation_min = 52
+saturation_max = 218
+brightness_min = 62
+brightness_max = 188
+min_detection_area = 20
+```
 
 ### `[Visualisation]`
 
@@ -208,10 +243,11 @@ cp config/CONTROLLER_TEMPLATE.ini config/CONTROLLER.ini
 | `[Network]` | Operation mode (`standalone` or `networked`), IP addresses |
 | `[WebDashboard]` | Flask dashboard port |
 | `[GPS]` | GPS source, serial settings, networked GPS server config |
+| `[Actuation]` | Speed-adaptive actuation settings |
 
 ## How the two files work together
 
-OWL reads both files on startup. The detection preset is read first, then `CONTROLLER.ini` is layered on top. If the same key exists in both files, `CONTROLLER.ini` wins (this is how Python's ConfigParser merge works). This means old custom presets that still have `[MQTT]` or `[Network]` sections from before the split will still work -- `CONTROLLER.ini` values take precedence.
+OWL reads both files on startup. `GENERAL_CONFIG.ini` is read first, then `CONTROLLER.ini` is layered on top. If the same key exists in both files, `CONTROLLER.ini` wins (this is how Python's ConfigParser merge works). This means old custom configs that still have `[MQTT]` or `[Network]` sections will still work -- `CONTROLLER.ini` values take precedence.
 
 ## Operation Modes
 
@@ -349,4 +385,4 @@ If you didn't use the setup script, add this rule manually.
 
 ## Custom presets saved from the dashboard
 
-When you save a new preset from the dashboard (standalone or networked), it creates a timestamped INI file in this directory (e.g. `config_20260207_153022.ini`). These contain only detection parameters. You can set any saved preset as the active boot config from the dashboard.
+When you save a new preset from the dashboard (standalone or networked), it creates a timestamped INI file in this directory (e.g. `config_20260207_153022.ini`) and saves the preset as a new `[Sensitivity_*]` section. You can set any saved preset as the active boot config from the dashboard.

@@ -224,6 +224,7 @@ class TestControllerMQTTReconnect:
             ctrl = CentralController.__new__(CentralController)
             ctrl.owls_state = {}
             ctrl.desired_state = {}
+            ctrl.lwt_timestamps = {}
             ctrl.mqtt_connected = False
             ctrl.mqtt_lock = threading.Lock()
             ctrl.mqtt_client = None
@@ -370,6 +371,7 @@ class TestSimultaneousPowerOn:
             ctrl = CentralController.__new__(CentralController)
             ctrl.owls_state = {}
             ctrl.desired_state = {}
+            ctrl.lwt_timestamps = {}
             ctrl.mqtt_connected = False
             ctrl.mqtt_lock = threading.Lock()
             ctrl.mqtt_client = MagicMock()
@@ -430,6 +432,7 @@ class TestSimultaneousPowerOn:
             ctrl = CentralController.__new__(CentralController)
             ctrl.owls_state = {}
             ctrl.desired_state = {'all': {'detection_enable': True}}
+            ctrl.lwt_timestamps = {}
             ctrl.mqtt_connected = True
             ctrl.mqtt_lock = threading.Lock()
             ctrl.mqtt_client = MagicMock()
@@ -465,6 +468,7 @@ class TestSimultaneousPowerOn:
             ctrl = CentralController.__new__(CentralController)
             ctrl.owls_state = {}
             ctrl.desired_state = {}
+            ctrl.lwt_timestamps = {}
             ctrl.mqtt_connected = True
             ctrl.mqtt_lock = threading.Lock()
             ctrl.mqtt_client = MagicMock()
@@ -502,6 +506,7 @@ class TestSimultaneousPowerOn:
             ctrl = CentralController.__new__(CentralController)
             ctrl.owls_state = {}
             ctrl.desired_state = {'all': {'detection_enable': True}}
+            ctrl.lwt_timestamps = {}
             ctrl.mqtt_connected = True
             ctrl.mqtt_lock = threading.Lock()
             ctrl.mqtt_client = MagicMock()
