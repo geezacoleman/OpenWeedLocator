@@ -509,6 +509,18 @@ class ConfigValidator:
                 'sections': f"Missing required sections: {', '.join(missing_sections)}"
             }
 
+        # Determine which controller pin keys are inactive (belong to a different controller type)
+        # so their pin values don't cause false "already in use" conflicts
+        controller_type = config.get('Controller', 'controller_type', fallback='none').strip("'\" ").lower()
+        _UTE_PINS = {'switch_pin'}
+        _ADVANCED_PINS = {'detection_mode_pin_up', 'detection_mode_pin_down', 'recording_pin', 'sensitivity_pin'}
+        if controller_type == 'ute':
+            inactive_pin_keys = _ADVANCED_PINS
+        elif controller_type == 'advanced':
+            inactive_pin_keys = _UTE_PINS
+        else:
+            inactive_pin_keys = _UTE_PINS | _ADVANCED_PINS
+
         # Validate sections and values
         for section in config.sections():
             # Skip Sensitivity_* preset sections — validated separately below
@@ -516,6 +528,9 @@ class ConfigValidator:
                 continue
             section_errors = {}
             for key, value in config[section].items():
+                # Skip pin conflict checks for controller pins that aren't active
+                if section == 'Controller' and key in inactive_pin_keys:
+                    continue
                 is_valid, error_msg = cls.validate_value(key, value, used_pins)
                 if not is_valid:
                     section_errors[key] = value + f" - {error_msg}"

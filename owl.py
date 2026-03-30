@@ -7,6 +7,11 @@ import argparse
 import time
 import threading
 from collections import deque
+
+try:
+    import serial
+except ImportError:
+    serial = None
 from datetime import datetime
 from multiprocessing import Process, Value
 from pathlib import Path
@@ -66,7 +71,7 @@ except ImportError as e:
 try:
     import numpy as np
     from utils.input_manager import UteController, AdvancedController, get_rpi_version
-    from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator
+    from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator, GPSStatusLED, GPSLEDState
     from utils.directory_manager import DirectorySetup
     from utils.video_manager import VideoStream, StreamingHandler, ThreadedHTTPServer
     from utils.image_sampler import ImageRecorder
@@ -77,6 +82,7 @@ try:
     from utils.log_manager import LogManager, MQTTLogHandler
     from utils.shared_types import Sensitivity
     import utils.error_manager as errors
+    from utils.gps_manager import GPSState, parse_sentence
     from version import SystemInfo, VERSION
 
 except ImportError as e:
@@ -252,15 +258,46 @@ class Owl:
             if self.dash:
                 self.dash.set_stream_status(self.stream_active)
 
-        # GPS setup (only if enabled in config)
+        # GPS setup
         self.gps_source = self.config.get('GPS', 'source', fallback='none').lower()
         self.gps_data = None
+        self._gps_state = None
+        self._gps_serial = None
+        self._gps_running = False
+        self.gps_status_led = None
 
-        if self.gps_source != "none":
-            if self.dash:  # Override with dashboard if enabled
+        if self.gps_source == 'serial':
+            self.gps_port = self.config.get('GPS', 'port', fallback='/dev/ttyUSB1')
+            self.gps_baudrate = self.config.getint('GPS', 'baudrate', fallback=115200)
+
+            if serial is None:
+                self.logger.error("pyserial not installed — serial GPS disabled. Install with: pip install pyserial")
+                # Fall back to dashboard (browser geolocation) if available, otherwise disable
+                if self.dash:
+                    self.gps_source = 'dashboard'
+                    self.logger.info("Falling back to dashboard GPS (browser geolocation)")
+                else:
+                    self.gps_source = 'none'
+            else:
+                self._gps_state = GPSState()
+                self._gps_running = True
+                self.gps_status_led = GPSStatusLED(pin='BOARD38')
+                self._gps_thread = threading.Thread(target=self._serial_gps_reader, daemon=True)
+                self._gps_thread.start()
+                self.logger.info(f"Serial GPS reader started on {self.gps_port} @ {self.gps_baudrate}")
+
+        elif self.gps_source != 'none':
+            # Non-serial, non-none source (e.g. 'tcp') — fall back to dashboard GPS
+            if self.dash:
                 self.gps_source = 'dashboard'
-            self.gps_port = self.config.get('GPS', 'port', fallback='/dev/ttyUSB0')
-            self.gps_baudrate = self.config.getint('GPS', 'baudrate', fallback=9600)
+
+        # Create GPS status LED on hardware setups (UTE/Advanced controller) even if GPS
+        # source is 'none' — the LED shows whether dashboard browser GPS is active.
+        # The LED state is driven by _get_best_gps_data() in the update_state loop.
+        if self.gps_status_led is None:
+            controller_type_check = self.config.get('Controller', 'controller_type', fallback='none').strip("'\" ").lower()
+            if controller_type_check in ('ute', 'advanced'):
+                self.gps_status_led = GPSStatusLED(pin='BOARD38')
 
         # if a controller is connected, sample images must be true to set up directories correctly
         self.controller_type = self.config.get('Controller', 'controller_type').strip("'\" ").lower()
@@ -303,8 +340,8 @@ class Owl:
 
         # initialise controller buttons and async management
         if self.controller_type == 'ute':
-            self.status_indicator = UteStatusIndicator(save_directory=self.save_directory, record_led_pin='BOARD38',
-                                                       storage_led_pin='BOARD40')
+            self.status_indicator = UteStatusIndicator(save_directory=self.save_directory,
+                                                       status_led_pin='BOARD40')
             self.controller = UteController(
                 detection_state=self.detection_enable,
                 sample_state=self.image_sample_enable,
@@ -312,7 +349,7 @@ class Owl:
                 owl_instance=self,
                 status_indicator=self.status_indicator,
                 switch_purpose=self.config.get('Controller', 'switch_purpose', fallback='recording').strip("'\" ").lower(),
-                switch_board_pin=f"BOARD{self.config.getint('Controller', 'switch_pin', fallback=37)}"
+                switch_board_pin=f"BOARD{self.config.getint('Controller', 'switch_pin', fallback=36)}"
             )
             self.controller_process = Process(target=self.controller.run)
             self.controller_process.start()
@@ -322,7 +359,7 @@ class Owl:
                 self.sensitivity_level = Value('i', Sensitivity.HIGH.value)
 
             self.status_indicator = AdvancedStatusIndicator(save_directory=self.save_directory,
-                                                            status_led_pin='BOARD37')
+                                                            status_led_pin='BOARD40')
             self.controller = AdvancedController(
                 recording_state=self.image_sample_enable,
                 sensitivity_level=self.sensitivity_level,
@@ -977,6 +1014,16 @@ class Owl:
             if hasattr(self, 'status_indicator') and self.status_indicator:
                 safe_stop(self.status_indicator, 'status indicator', fallback_to_terminate=False)
 
+            # Stop serial GPS
+            self._gps_running = False
+            if self._gps_serial and self._gps_serial.is_open:
+                try:
+                    self._gps_serial.close()
+                except Exception as e:
+                    self.logger.warning(f"Error closing GPS serial port: {e}")
+            if self.gps_status_led:
+                safe_stop(self.gps_status_led, 'GPS status LED', fallback_to_terminate=False)
+
             # Stop relay controller
             if hasattr(self, 'relay_controller') and self.relay_controller:
                 safe_stop(self.relay_controller, 'relay controller', fallback_to_terminate=False)
@@ -1257,15 +1304,11 @@ class Owl:
                         self.dash.set_sensitivity_level(hardware_sensitivity_string)
                         self._sensitivity_level = hardware_sensitivity_string
 
-                    # GPS from dashboard takes priority
-                    self.gps_data = self.dash.get_gps_data()
-
                 else:
                     # No hardware controller - normal dashboard control
                     self._detection_enable = self.dash.get_detection_enable()
                     self._image_sample_enable = self.dash.get_image_sample_enable()
                     self._sensitivity_level = self.dash.get_sensitivity_level()
-                    self.gps_data = self.dash.get_gps_data()
 
             else:
                 # Hardware only, no dashboard - existing behavior
@@ -1280,7 +1323,120 @@ class Owl:
                         sensitivity_int = self.sensitivity_level.value
                     self._sensitivity_level = Sensitivity(sensitivity_int).name.lower()
 
+            # GPS: serial takes priority, then dashboard (browser geolocation)
+            self.gps_data = self._get_best_gps_data()
+
             time.sleep(self._STATE_CHECK_INTERVAL)
+
+    # Dashboard GPS is stale if no update received for this many seconds.
+    # Browser watchPosition fires every 1-5s when active; 30s covers brief interruptions.
+    _GPS_STALE_THRESHOLD = 30
+
+    def _get_best_gps_data(self):
+        """Return GPS data from the best available source. Serial > Dashboard (browser).
+
+        Returns None if no source has fresh data, preventing stale coordinates
+        from being written into image EXIF.
+        """
+        # Try serial GPS first
+        if self._gps_state is not None:
+            snapshot = self._gps_state.get_dict()
+            if snapshot.get('fix_valid') and snapshot.get('latitude') is not None:
+                if self.gps_status_led:
+                    self.gps_status_led.set_state(GPSLEDState.FIX)
+                return {
+                    'latitude': snapshot['latitude'],
+                    'longitude': snapshot['longitude'],
+                    'accuracy': snapshot.get('hdop'),
+                    'timestamp': time.time()
+                }
+
+        # Fallback to dashboard GPS (browser geolocation via MQTT)
+        if self.dash:
+            gps = self.dash.get_gps_data()
+            if gps is not None:
+                age = time.time() - gps.get('timestamp', 0)
+                if age <= self._GPS_STALE_THRESHOLD:
+                    if self.gps_status_led:
+                        self.gps_status_led.set_state(GPSLEDState.FIX)
+                    return gps
+                else:
+                    # Dashboard GPS is stale — phone disconnected or tab backgrounded
+                    if self.gps_status_led:
+                        self.gps_status_led.set_state(GPSLEDState.ERROR)
+                    return None
+
+        # No GPS source available
+        if self.gps_status_led:
+            self.gps_status_led.set_state(GPSLEDState.OFF)
+        return None
+
+    def _serial_gps_reader(self):
+        """Background thread: read NMEA sentences from serial GPS, update self._gps_state."""
+        RECONNECT_DELAY = 5
+
+        while self._gps_running:
+            try:
+                self._gps_serial = serial.Serial(
+                    port=self.gps_port,
+                    baudrate=self.gps_baudrate,
+                    timeout=2
+                )
+                self.logger.info(f"Serial GPS connected: {self.gps_port}")
+
+                while self._gps_running:
+                    try:
+                        raw_line = self._gps_serial.readline().decode('ascii', errors='replace').strip()
+                    except (serial.SerialException, OSError) as e:
+                        self.logger.warning(f"Serial GPS read error: {e}")
+                        if self.gps_status_led:
+                            self.gps_status_led.set_state(GPSLEDState.ERROR)
+                        break
+
+                    if not raw_line:
+                        continue
+
+                    parsed = parse_sentence(raw_line)
+                    if parsed is None:
+                        continue
+
+                    sentence_type = parsed.get('type')
+                    if sentence_type == 'RMC':
+                        self._gps_state.update_from_rmc(parsed)
+                    elif sentence_type == 'GGA':
+                        self._gps_state.update_from_gga(parsed)
+                    elif sentence_type == 'VTG':
+                        self._gps_state.update_from_vtg(parsed)
+                    elif sentence_type == 'GSV':
+                        self._gps_state.update_from_gsv(parsed)
+
+                    # Update GPS LED state
+                    if self.gps_status_led:
+                        snapshot = self._gps_state.get_dict()
+                        if snapshot['fix_valid']:
+                            self.gps_status_led.set_state(GPSLEDState.FIX)
+                        else:
+                            self.gps_status_led.set_state(GPSLEDState.ACQUIRING)
+
+            except (OSError, FileNotFoundError) as e:
+                self.logger.warning(f"Serial GPS connection failed: {e}")
+                if self.gps_status_led:
+                    self.gps_status_led.set_state(GPSLEDState.ERROR)
+            except Exception as e:
+                if serial and isinstance(e, serial.SerialException):
+                    self.logger.warning(f"Serial GPS connection failed: {e}")
+                    if self.gps_status_led:
+                        self.gps_status_led.set_state(GPSLEDState.ERROR)
+                else:
+                    self.logger.error(f"Unexpected error in serial GPS reader: {e}", exc_info=True)
+                    if self.gps_status_led:
+                        self.gps_status_led.set_state(GPSLEDState.ERROR)
+            finally:
+                if self._gps_serial and self._gps_serial.is_open:
+                    self._gps_serial.close()
+
+            if self._gps_running:
+                time.sleep(RECONNECT_DELAY)
 
     def _log_system_info(self):
         """Log system information on startup"""

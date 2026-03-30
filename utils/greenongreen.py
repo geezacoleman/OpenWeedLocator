@@ -14,7 +14,11 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
+
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +37,12 @@ class GreenOnGreen:
             inference_resolution: YOLO input resolution for hybrid mode (lower = faster).
             crop_buffer_px: Dilation buffer around detected crop in pixels (hybrid mode).
         """
+        if YOLO is None:
+            raise ImportError(
+                "ultralytics is required for Green-on-Green detection but is not installed. "
+                "Install with: pip install -r requirements-gog.txt"
+            )
+
         self.model_path = Path(model_path)
         self.confidence = confidence
         self.hybrid_mode = hybrid_mode
