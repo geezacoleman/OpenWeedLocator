@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OWL Data Downloads</title>
+    <!-- Shared foundation CSS -->
+    <link rel="stylesheet" href="/shared/css/_variables.css" />
+    <link rel="stylesheet" href="/shared/css/_reset.css" />
+    <!-- Page-specific CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/components/_downloads.css') }}" />
+    <style>
+        /* Toast (inline — no shared dependency) */
+        .downloads-toast {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%) translateY(60px);
+            padding: 10px 24px;
+            border-radius: 6px;
+            font-size: 14px;
+            color: white;
+            background: #2c3e50;
+            opacity: 0;
+            transition: opacity 0.3s, transform 0.3s;
+            z-index: 2000;
+            pointer-events: none;
+        }
+        .downloads-toast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+        .downloads-toast.success { background: #27ae60; }
+        .downloads-toast.error { background: #c0392b; }
+    </style>
+</head>
+<body>
+<div class="downloads-page">
+    <!-- Header -->
+    <div class="downloads-header">
+        <h1>Data Downloads</h1>
+        <a class="downloads-back-link" href="/">Back to Dashboard</a>
+    </div>
+
+    <!-- Sessions Card -->
+    <div class="downloads-card">
+        <div class="downloads-card-header">
+            <h2>Recording sessions</h2>
+            <button class="btn-dl refresh" id="refresh-btn">Refresh</button>
+        </div>
+        <div id="sessions-list">
+            <div class="list-empty">Loading sessions...</div>
+        </div>
+    </div>
+
+    <!-- Storage Info Card -->
+    <div class="downloads-card">
+        <div class="downloads-card-header">
+            <h2 id="storage-header">Storage</h2>
+        </div>
+        <div class="downloads-card-body">
+            <div class="storage-bar">
+                <div class="storage-bar-track">
+                    <div class="storage-bar-fill" id="storage-fill"></div>
+                </div>
+                <span class="storage-text" id="storage-text">--</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast -->
+<div id="downloads-toast" class="downloads-toast"></div>
+
+<!-- JS -->
+<script src="{{ url_for('static', filename='js/modules/_downloads.js') }}"></script>
+</body>
+</html>

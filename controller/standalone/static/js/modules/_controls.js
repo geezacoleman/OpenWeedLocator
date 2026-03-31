@@ -188,11 +188,32 @@ function stopOwl() {
 }
 
 /* --------------------------------------------------------------------------
+   Hardware lock check — controller-type-aware
+   -------------------------------------------------------------------------- */
+
+/**
+ * Check if a specific control is hardware-locked for the current controller type.
+ * UTE: only 'recording' is hardware-controlled.
+ * Advanced: 'recording', 'detection', 'sensitivity' are hardware-controlled.
+ * Returns true if the action should be blocked.
+ */
+function isHardwareLocked(control) {
+    if (!hardwareControllerActive) return false;
+
+    if (controllerType === 'ute') {
+        return control === 'recording';
+    } else if (controllerType === 'advanced') {
+        return ['recording', 'detection', 'sensitivity'].includes(control);
+    }
+    return false;
+}
+
+/* --------------------------------------------------------------------------
    Detection Controls
    -------------------------------------------------------------------------- */
 
 function startDetection() {
-    if (hardwareControllerActive) {
+    if (isHardwareLocked('detection')) {
         showNotification(
             'Hardware Priority',
             `Use the detection switch on your ${controllerType.toUpperCase()} controller`,
@@ -225,7 +246,7 @@ function startDetection() {
 }
 
 function stopDetection() {
-    if (hardwareControllerActive) {
+    if (isHardwareLocked('detection')) {
         showNotification(
             'Hardware Priority',
             `Use the detection switch on your ${controllerType.toUpperCase()} controller`,
@@ -256,7 +277,7 @@ function stopDetection() {
    -------------------------------------------------------------------------- */
 
 function startRecording() {
-    if (hardwareControllerActive) {
+    if (isHardwareLocked('recording')) {
         showNotification(
             'Hardware Priority',
             `Use the recording switch on your ${controllerType.toUpperCase()} controller`,
@@ -316,7 +337,7 @@ function _doStartRecording() {
 }
 
 function stopRecording() {
-    if (hardwareControllerActive) {
+    if (isHardwareLocked('recording')) {
         showNotification(
             'Hardware Priority',
             `Use the recording switch on your ${controllerType.toUpperCase()} controller`,
@@ -433,15 +454,6 @@ function setTrackStability(level) {
    -------------------------------------------------------------------------- */
 
 function startAllNozzles() {
-    if (hardwareControllerActive) {
-        showNotification(
-            'Hardware Priority',
-            `Use the physical switch on your ${controllerType.toUpperCase()} controller`,
-            'warning'
-        );
-        return Promise.resolve();
-    }
-
     showNotification('Info', 'Turning all nozzles ON...', 'info');
 
     return apiRequest('/api/nozzles/all-on', { method: 'POST' })
@@ -460,15 +472,6 @@ function startAllNozzles() {
 }
 
 function stopAllNozzles() {
-    if (hardwareControllerActive) {
-        showNotification(
-            'Hardware Priority',
-            `Use the physical switch on your ${controllerType.toUpperCase()} controller`,
-            'warning'
-        );
-        return Promise.resolve();
-    }
-
     showNotification('Info', 'Turning all nozzles OFF...', 'info');
 
     return apiRequest('/api/nozzles/all-off', { method: 'POST' })
@@ -664,43 +667,49 @@ function checkHardwareControllerStatus() {
 }
 
 function updateHardwareLockUI() {
-    // Update OWL switches
-    const switches = document.querySelectorAll('.owl-switch');
-    switches.forEach(sw => {
-        if (hardwareControllerActive) {
-            sw.classList.add('hardware-locked');
-            const stateSpan = sw.querySelector('.switch-state');
-            if (stateSpan && !stateSpan.querySelector('.lock-icon')) {
-                addLockIcon(stateSpan);
-            }
-        } else {
-            sw.classList.remove('hardware-locked');
-            const stateSpan = sw.querySelector('.switch-state');
-            if (stateSpan) {
-                removeLockIcon(stateSpan);
-            }
-        }
+    // Clear all locks first
+    document.querySelectorAll('.hardware-locked').forEach(el => {
+        el.classList.remove('hardware-locked');
     });
+    document.querySelectorAll('.lock-icon').forEach(el => el.remove());
 
-    // Update segmented controls
-    const segmentedControls = document.querySelectorAll('.segmented');
-    segmentedControls.forEach(seg => {
-        if (hardwareControllerActive) {
-            seg.classList.add('hardware-locked');
-            const tile = seg.closest('.control-tile');
-            if (tile) tile.classList.add('hardware-locked');
-        } else {
-            seg.classList.remove('hardware-locked');
-            const tile = seg.closest('.control-tile');
-            if (tile) tile.classList.remove('hardware-locked');
-        }
-    });
-
-    // Update hardware notice
+    // Hardware notice
     const notice = document.querySelector('.hardware-notice');
     if (notice) {
         notice.style.display = hardwareControllerActive ? 'flex' : 'none';
     }
+
+    if (!hardwareControllerActive) return;
+
+    // Controller-type-selective locking:
+    // UTE: only the recording switch (or detection, based on switch_purpose)
+    // Advanced: recording, detection, sensitivity
+    // Fan, tracking, track stability, nozzles: NEVER locked
+    if (controllerType === 'ute') {
+        lockSwitch('recordSwitch');
+    } else if (controllerType === 'advanced') {
+        lockSwitch('recordSwitch');
+        lockSwitch('detectSwitch');
+        lockSegmented('sensitivity-buttons');
+    }
+}
+
+function lockSwitch(switchId) {
+    const sw = document.getElementById(switchId);
+    if (!sw) return;
+    sw.classList.add('hardware-locked');
+    const stateSpan = sw.querySelector('.switch-state');
+    if (stateSpan && !stateSpan.querySelector('.lock-icon')) {
+        addLockIcon(stateSpan);
+    }
+}
+
+function lockSegmented(segId) {
+    const seg = document.getElementById(segId);
+    if (!seg) return;
+    seg.classList.add('hardware-locked');
+    const tile = seg.closest('.control-tile');
+    if (tile) tile.classList.add('hardware-locked');
 }
 
 function addLockIcon(element) {
