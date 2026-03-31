@@ -1009,3 +1009,110 @@ function updateGPSIndicator() {
         statusText.textContent = '\u00B1' + Math.round(gpsData.accuracy) + 'm';
     }
 }
+
+/* --------------------------------------------------------------------------
+   Session Metadata
+   -------------------------------------------------------------------------- */
+
+let _sessionMetadataLocked = false;
+let _lastRecordingState = false;
+
+function initSessionMetadata() {
+    const toggle = document.getElementById('sessionInfoToggle');
+    if (toggle) {
+        toggle.addEventListener('click', function () {
+            const body = document.getElementById('sessionInfoBody');
+            const chevron = document.getElementById('sessionChevron');
+            if (body) {
+                const visible = body.style.display !== 'none';
+                body.style.display = visible ? 'none' : '';
+                if (chevron) chevron.style.transform = visible ? '' : 'rotate(180deg)';
+            }
+        });
+    }
+}
+
+function syncSessionMetadataPanel(isRecording) {
+    // Auto-expand when recording starts
+    if (isRecording && !_lastRecordingState) {
+        const body = document.getElementById('sessionInfoBody');
+        const chevron = document.getElementById('sessionChevron');
+        if (body) {
+            body.style.display = '';
+            if (chevron) chevron.style.transform = 'rotate(180deg)';
+        }
+        loadSessionMetadata();
+    }
+    _lastRecordingState = isRecording;
+}
+
+function loadSessionMetadata() {
+    fetch('/api/session/metadata')
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            var fn = document.getElementById('metaFieldName');
+            var crop = document.getElementById('metaCrop');
+            var weather = document.getElementById('metaWeather');
+            var vehicle = document.getElementById('metaVehicle');
+            if (fn) fn.value = data.field_name || '';
+            if (crop) crop.value = data.crop || '';
+            if (weather) weather.value = data.weather || '';
+            if (vehicle) vehicle.value = data.vehicle || '';
+        })
+        .catch(function () {});
+}
+
+function saveSessionMetadata() {
+    var data = {
+        field_name: (document.getElementById('metaFieldName') || {}).value || '',
+        crop: (document.getElementById('metaCrop') || {}).value || '',
+        weather: (document.getElementById('metaWeather') || {}).value || '',
+        vehicle: (document.getElementById('metaVehicle') || {}).value || '',
+    };
+
+    fetch('/api/session/metadata', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (result) {
+        if (result.success !== false) {
+            _lockMetadataForm();
+            showNotification('Success', 'Session info saved', 'success');
+        } else {
+            showNotification('Error', result.error || 'Save failed', 'error');
+        }
+    })
+    .catch(function () {
+        showNotification('Error', 'Failed to save session info', 'error');
+    });
+}
+
+function editSessionMetadata() {
+    _unlockMetadataForm();
+}
+
+function _lockMetadataForm() {
+    _sessionMetadataLocked = true;
+    document.querySelectorAll('.session-field input').forEach(function (el) {
+        el.readOnly = true;
+        el.classList.add('locked');
+    });
+    var saveBtn = document.getElementById('sessionSaveBtn');
+    var editBtn = document.getElementById('sessionEditBtn');
+    if (saveBtn) saveBtn.style.display = 'none';
+    if (editBtn) editBtn.style.display = '';
+}
+
+function _unlockMetadataForm() {
+    _sessionMetadataLocked = false;
+    document.querySelectorAll('.session-field input').forEach(function (el) {
+        el.readOnly = false;
+        el.classList.remove('locked');
+    });
+    var saveBtn = document.getElementById('sessionSaveBtn');
+    var editBtn = document.getElementById('sessionEditBtn');
+    if (saveBtn) saveBtn.style.display = '';
+    if (editBtn) editBtn.style.display = 'none';
+}

@@ -146,6 +146,15 @@ class OWLMQTTPublisher:
                 'progress': 0,
                 'error': ''
             },
+            # Storage
+            'save_directory': '',
+            # Session metadata (filled by farmer via dashboard)
+            'session_metadata': {
+                'field_name': '',
+                'crop': '',
+                'weather': '',
+                'vehicle': '',
+            },
             # Data sessions and transfer state
             'data_sessions': [],
             'data_transfer': {
@@ -242,6 +251,9 @@ class OWLMQTTPublisher:
                 self.owl_instance, 'crop_buffer_px', 20)
             self.state['inference_resolution'] = getattr(
                 self.owl_instance, 'inference_resolution', 320)
+
+            # Save directory (runtime-resolved — may differ from config if USB path changed)
+            self.state['save_directory'] = getattr(self.owl_instance, 'save_directory', '')
 
             # Camera resolution
             res = getattr(self.owl_instance, 'resolution', (0, 0))
@@ -443,8 +455,13 @@ class OWLMQTTPublisher:
                 self.logger.info(f"Detection enable set to: {self.state['detection_enable']}")
 
             elif action == 'set_image_sample_enable':
+                was_recording = self.state['image_sample_enable']
                 self.state['image_sample_enable'] = bool(command.get('value', False))
                 self.logger.info(f"Image sample enable set to: {self.state['image_sample_enable']}")
+
+                # Auto-save session metadata when recording stops
+                if was_recording and not self.state['image_sample_enable']:
+                    self._auto_save_session_metadata()
 
             elif action == 'set_sensitivity_level':
                 level = command.get('level', '').lower()
@@ -667,6 +684,17 @@ class OWLMQTTPublisher:
                             gog._crop_stabilizer = self.owl_instance._crop_stabilizer
                 self.logger.info(f"Tracking {'enabled' if value else 'disabled'}")
                 self._publish_state()
+
+            elif action == 'set_session_metadata':
+                metadata = {
+                    'field_name': str(command.get('field_name', '')).strip(),
+                    'crop': str(command.get('crop', '')).strip(),
+                    'weather': str(command.get('weather', '')).strip(),
+                    'vehicle': str(command.get('vehicle', '')).strip(),
+                }
+                self.state['session_metadata'] = metadata
+                self._write_session_metadata(metadata)
+                self.logger.info(f"Session metadata saved: {metadata}")
 
             elif action == 'list_data_sessions':
                 threading.Thread(
@@ -1107,6 +1135,50 @@ class OWLMQTTPublisher:
                     'error': str(e)
                 }
             self._publish_state()
+
+    def _write_session_metadata(self, metadata):
+        """Write session_metadata.json to the active session directory."""
+        save_dir = getattr(self.owl_instance, 'save_directory', None) if self.owl_instance else None
+        if not save_dir or not os.path.isdir(save_dir):
+            self.logger.warning("Cannot write session metadata: save_directory not available")
+            return
+
+        # Find the most recent YYYYMMDD directory (the active session)
+        import re
+        date_pattern = re.compile(r'^\d{8}$')
+        session_dirs = sorted(
+            [d for d in os.listdir(save_dir) if os.path.isdir(os.path.join(save_dir, d)) and date_pattern.match(d)],
+            reverse=True
+        )
+
+        if not session_dirs:
+            self.logger.warning("Cannot write session metadata: no session directories found")
+            return
+
+        session_path = os.path.join(save_dir, session_dirs[0])
+        metadata_path = os.path.join(session_path, 'session_metadata.json')
+
+        import json
+        from datetime import datetime
+        payload = dict(metadata)
+        payload['recorded_at'] = datetime.now().isoformat(timespec='seconds')
+        payload['owl_id'] = self.state.get('device_id', '')
+
+        try:
+            with open(metadata_path, 'w') as f:
+                json.dump(payload, f, indent=2)
+            self.logger.info(f"Session metadata written to {metadata_path}")
+        except OSError as e:
+            self.logger.error(f"Failed to write session metadata: {e}")
+
+    def _auto_save_session_metadata(self):
+        """Auto-save session metadata when recording stops (if any fields are non-empty)."""
+        with self.state_lock:
+            metadata = self.state.get('session_metadata', {})
+
+        # Only save if at least one field has content
+        if any(v.strip() for v in metadata.values() if isinstance(v, str)):
+            self._write_session_metadata(metadata)
 
     def _list_data_sessions(self):
         """Scan save_directory for YYYYMMDD subdirs, logs, and tracks. Publish to state."""
@@ -1602,10 +1674,16 @@ class OWLMQTTPublisher:
         self._publish_state()
 
     def set_image_sample_enable(self, value):
-        """Set image sampling state (for owl.py internal use)"""
+        """Set image sampling state (for owl.py internal use and hardware controllers)"""
         with self.state_lock:
+            was_recording = self.state['image_sample_enable']
             self.state['image_sample_enable'] = bool(value)
             self.state['last_update'] = time.time()
+
+        # Auto-save session metadata when recording stops (hardware switch path)
+        if was_recording and not bool(value):
+            self._auto_save_session_metadata()
+
         self._publish_state()
 
     def weed_detect_indicator(self):
