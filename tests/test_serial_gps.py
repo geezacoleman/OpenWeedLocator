@@ -454,16 +454,16 @@ class TestGPSFallback:
     def test_stale_dashboard_gps_returns_none(self):
         """When dashboard GPS data is older than threshold, return None — not stale coordinates."""
         dash = MagicMock()
-        # Simulate GPS data from 60 seconds ago (farmer disconnected phone)
+        # Simulate GPS data from 10 seconds ago (farmer disconnected phone)
         stale_data = {
             'latitude': -33.5, 'longitude': 151.0,
-            'accuracy': 5.0, 'timestamp': time.time() - 60
+            'accuracy': 5.0, 'timestamp': time.time() - 10
         }
         dash.get_gps_data.return_value = stale_data
 
         # Reproduce _get_best_gps_data logic with staleness check
         _gps_state = None  # No serial GPS
-        _GPS_STALE_THRESHOLD = 30
+        _GPS_STALE_THRESHOLD = 3
 
         result = None
         if _gps_state is None:
@@ -487,7 +487,7 @@ class TestGPSFallback:
         dash.get_gps_data.return_value = fresh_data
 
         _gps_state = None
-        _GPS_STALE_THRESHOLD = 30
+        _GPS_STALE_THRESHOLD = 3
 
         gps = dash.get_gps_data()
         age = time.time() - gps.get('timestamp', 0)
@@ -506,16 +506,16 @@ class TestGPSFallback:
         dash.get_gps_data.return_value = fresh
 
         age = time.time() - fresh['timestamp']
-        assert age <= 30
+        assert age <= 3
         led.set_state(GPSLEDState.FIX)
         assert led._state == GPSLEDState.FIX
 
         # Phase 2: Phone disconnected, data goes stale
-        stale = {'latitude': -33.5, 'longitude': 151.0, 'accuracy': 3.0, 'timestamp': time.time() - 45}
+        stale = {'latitude': -33.5, 'longitude': 151.0, 'accuracy': 3.0, 'timestamp': time.time() - 10}
         dash.get_gps_data.return_value = stale
 
         age = time.time() - stale['timestamp']
-        assert age > 30
+        assert age > 3
         led.set_state(GPSLEDState.ERROR)  # Stale data = error state
         assert led._state == GPSLEDState.ERROR
 
@@ -524,7 +524,7 @@ class TestGPSFallback:
         dash.get_gps_data.return_value = reconnected
 
         age = time.time() - reconnected['timestamp']
-        assert age <= 30
+        assert age <= 3
         led.set_state(GPSLEDState.FIX)
         assert led._state == GPSLEDState.FIX
 

@@ -306,6 +306,17 @@ class Owl:
             self.logger.error(f"Invalid controller type: {self.controller_type}")
             raise errors.ControllerTypeError(self.controller_type, valid_types=list({'none', 'ute', 'advanced'}))
 
+        # Create status indicator EARLY so it can signal boot errors via LED.
+        # save_directory is set to None for now; updated after storage setup succeeds.
+        if self.controller_type == 'ute':
+            self.status_indicator = UteStatusIndicator(save_directory=None,
+                                                       status_led_pin='BOARD40')
+        elif self.controller_type == 'advanced':
+            self.status_indicator = AdvancedStatusIndicator(save_directory=None,
+                                                            status_led_pin='BOARD40')
+        else:
+            self.status_indicator = HeadlessStatusIndicator(save_directory=None, no_save=True)
+
         if self.controller_type != 'none' and not self.dash:
             self.detection_enable = Value('b', False)
             self.image_sample_enable = Value('b', False)
@@ -330,18 +341,30 @@ class Owl:
 
                 self.image_recorder = ImageRecorder(save_directory=self.save_subdirectory, mode=self.sample_method)
 
+                # Update status indicator with the resolved save_directory for storage monitoring
+                self.status_indicator.save_directory = self.save_directory
+
             except (errors.NoWritableUSBError, errors.USBMountError, errors.USBWriteError,
                     errors.StorageSystemError) as e:
                 self.logger.critical(str(e))
-                self.stop()
-                raise
+                # Flash both LEDs in sync to signal boot error — process stays alive
+                self.status_indicator.error(6)
+                if self.gps_status_led:
+                    self.gps_status_led.set_state(GPSLEDState.ERROR)
+                self.logger.critical("Both LEDs flashing — storage error. Fix USB drive and restart.")
+                # Block here so LEDs keep flashing (systemd will not restart while process is alive)
+                try:
+                    while True:
+                        time.sleep(5)
+                except KeyboardInterrupt:
+                    self.stop()
+                    raise
 
         ############################
 
         # initialise controller buttons and async management
         if self.controller_type == 'ute':
-            self.status_indicator = UteStatusIndicator(save_directory=self.save_directory,
-                                                       status_led_pin='BOARD40')
+            # Status indicator already created above — just set up controller
             self.controller = UteController(
                 detection_state=self.detection_enable,
                 sample_state=self.image_sample_enable,
@@ -358,8 +381,7 @@ class Owl:
             if not hasattr(self, 'sensitivity_level'):
                 self.sensitivity_level = Value('i', Sensitivity.HIGH.value)
 
-            self.status_indicator = AdvancedStatusIndicator(save_directory=self.save_directory,
-                                                            status_led_pin='BOARD40')
+            # Status indicator already created above
             self.controller = AdvancedController(
                 recording_state=self.image_sample_enable,
                 sensitivity_level=self.sensitivity_level,
@@ -378,12 +400,9 @@ class Owl:
 
         else:
             self.controller = None
+            # Status indicator already created above; start storage monitoring if recording
             if self._image_sample_enable:
-                self.status_indicator = HeadlessStatusIndicator(save_directory=self.save_directory)
                 self.status_indicator.start_storage_indicator()
-
-            else:
-                self.status_indicator = HeadlessStatusIndicator(save_directory=None, no_save=True)
 
         # Infrastructure is set up. Now set the actual initial recording state.
         # Dashboard-only (no hardware controller): start OFF — user enables via dashboard.
@@ -519,6 +538,10 @@ class Owl:
         return self._config_path
 
     def hoot(self):
+        # Signal successful boot with LED blink
+        if hasattr(self, 'status_indicator') and hasattr(self.status_indicator, 'setup_success'):
+            self.status_indicator.setup_success()
+
         self.record_video = False  # Flag to control video recording
         self.video_writer = None
         image_out = None
@@ -1329,8 +1352,9 @@ class Owl:
             time.sleep(self._STATE_CHECK_INTERVAL)
 
     # Dashboard GPS is stale if no update received for this many seconds.
-    # Browser watchPosition fires every 1-5s when active; 30s covers brief interruptions.
-    _GPS_STALE_THRESHOLD = 30
+    # Browser watchPosition fires every 1-5s when active; 3s gives fast LED feedback
+    # when the farmer closes the browser or switches apps.
+    _GPS_STALE_THRESHOLD = 3
 
     def _get_best_gps_data(self):
         """Return GPS data from the best available source. Serial > Dashboard (browser).

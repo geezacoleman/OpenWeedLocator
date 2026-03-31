@@ -414,12 +414,19 @@ class TestSensitivityRoute:
         assert resp.status_code == 200
         assert data['success'] is True
 
-    def test_set_sensitivity_locked_by_hardware(self, standalone_test_client):
-        """Hardware controller lock should prevent dashboard changes."""
+    def test_set_sensitivity_locked_by_advanced_controller(self, standalone_test_client):
+        """Advanced controller locks sensitivity — it has a hardware switch for it."""
+        client, dashboard, tmp_dir = standalone_test_client
+        dashboard._get_controller_type = lambda: 'advanced'
+        resp = client.post('/api/sensitivity/set', json={'level': 'high'})
+        assert resp.status_code == 423  # Locked
+
+    def test_set_sensitivity_allowed_with_ute_controller(self, standalone_test_client):
+        """UTE controller does NOT lock sensitivity — it only controls recording."""
         client, dashboard, tmp_dir = standalone_test_client
         dashboard._get_controller_type = lambda: 'ute'
         resp = client.post('/api/sensitivity/set', json={'level': 'high'})
-        assert resp.status_code == 423  # Locked
+        assert resp.status_code != 423
 
 
 @pytest.mark.unit
@@ -515,11 +522,12 @@ class TestNozzleRoutes:
         data = resp.get_json()
         assert resp.status_code == 200
 
-    def test_nozzles_locked_by_hardware(self, standalone_test_client):
+    def test_nozzles_not_locked_by_ute(self, standalone_test_client):
+        """Nozzles are never hardware-locked — no controller manages them."""
         client, dashboard, tmp_dir = standalone_test_client
         dashboard._get_controller_type = lambda: 'ute'
         resp = client.post('/api/nozzles/all-on')
-        assert resp.status_code == 423
+        assert resp.status_code != 423
 
 
 @pytest.mark.unit

@@ -33,7 +33,7 @@
 <div class="header">
     <div class="header-content">
         <div class="logo-section">
-            <h1>OWL Controller</h1>
+            <h1>Dashboard</h1>
         </div>
         <div class="status-indicator">
             <!-- Notification bell -->
@@ -135,22 +135,13 @@
                     <!-- Recording + Nozzles split row -->
                     <div class="split-row">
                         <button class="owl-switch owl-switch--record" id="recordSwitch" aria-pressed="false">
-                            <span class="switch-label">
-                                <svg aria-hidden viewBox="0 0 24 24" class="switch-icon">
-                                    <path fill="currentColor" d="M12,2A10,10 0 1,0 22,12A10,10 0 0,0 12,2Z"/>
-                                </svg>
-                                <strong>Recording</strong>
-                            </span>
-                            <span class="switch-state" id="recordSwitchState">OFF</span>
+                            <span class="record-dot" id="recordDot"></span>
+                            <strong>Recording</strong>
+                            <span class="switch-state" id="recordSwitchState"></span>
                         </button>
                         <button class="owl-switch owl-switch--nozzles" id="nozzleSwitch" aria-pressed="false">
-                            <span class="switch-label">
-                                <svg aria-hidden viewBox="0 0 24 24" class="switch-icon">
-                                    <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
-                                </svg>
-                                <strong>All Nozzles</strong>
-                            </span>
-                            <span class="switch-state" id="nozzleSwitchState">OFF</span>
+                            <strong>All Nozzles</strong>
+                            <span class="switch-state" id="nozzleSwitchState"></span>
                         </button>
                     </div>
                 </div>

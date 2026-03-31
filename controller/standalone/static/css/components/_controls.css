@@ -227,26 +227,45 @@
     color: #fff;
 }
 
-/* Recording variant (red) */
+/* Recording variant — red dot blinks when active */
+.record-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #999;
+    flex-shrink: 0;
+}
+
 .owl-switch.owl-switch--record[aria-pressed="true"] {
     border-color: var(--danger);
     background: #fdf0ef;
 }
 
-.owl-switch.owl-switch--record[aria-pressed="true"] .switch-state {
+.owl-switch.owl-switch--record[aria-pressed="true"] .record-dot {
     background: var(--danger);
-    color: #fff;
+    animation: record-blink 1.5s ease-in-out infinite;
 }
 
-/* Nozzle variant (orange) */
+@keyframes record-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.2; }
+}
+
+/* Hide state badge for recording/nozzles — no OFF/ON text */
+.owl-switch.owl-switch--record .switch-state,
+.owl-switch.owl-switch--nozzles .switch-state {
+    display: none;
+}
+
+/* Nozzle variant — green when active, grey when off */
 .owl-switch.owl-switch--nozzles[aria-pressed="true"] {
-    border-color: #e67e22;
-    background: #fef5ec;
+    border-color: var(--success);
+    background: #f0faf4;
+    color: #fff;
 }
 
-.owl-switch.owl-switch--nozzles[aria-pressed="true"] .switch-state {
-    background: #e67e22;
-    color: #fff;
+.owl-switch.owl-switch--nozzles[aria-pressed="true"] strong {
+    color: var(--success);
 }
 
 /* --------------------------------------------------------------------------

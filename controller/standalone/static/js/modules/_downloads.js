@@ -44,22 +44,75 @@
             var sizeStr = formatBytes(s.total_size || 0);
             var dateStr = formatDate(s.date);
 
-            html += '<div class="session-item">'
+            html += '<div class="session-block" data-date="' + escapeAttr(s.date) + '">'
+                + '<div class="session-item" onclick="togglePreview(\'' + escapeAttr(s.date) + '\')">'
                 + '  <div class="session-info">'
                 + '    <div class="session-date">' + escapeHtml(dateStr) + '</div>'
                 + '    <div class="session-meta">'
                 + '      <span>' + s.image_count + ' images</span>'
                 + '      <span>' + sizeStr + '</span>'
+                + '      <span class="preview-hint">tap to preview</span>'
                 + '    </div>'
                 + '  </div>'
                 + '  <div class="session-actions">'
-                + '    <a class="btn-dl success" href="/api/downloads/session/' + escapeAttr(s.date) + '">Download ZIP</a>'
-                + '    <button class="btn-dl danger" onclick="deleteSession(\'' + escapeAttr(s.date) + '\')">Delete</button>'
+                + '    <a class="btn-dl success" href="/api/downloads/session/' + escapeAttr(s.date) + '" onclick="event.stopPropagation()">Download ZIP</a>'
+                + '    <button class="btn-dl danger" onclick="event.stopPropagation(); deleteSession(\'' + escapeAttr(s.date) + '\')">Delete</button>'
                 + '  </div>'
+                + '</div>'
+                + '<div class="session-preview" id="preview-' + escapeAttr(s.date) + '" style="display:none;"></div>'
                 + '</div>';
         });
 
         sessionsList.innerHTML = html;
+    }
+
+    // -----------------------------------------------------------------------
+    // Image preview
+    // -----------------------------------------------------------------------
+
+    function togglePreview(date) {
+        var previewEl = document.getElementById('preview-' + date);
+        if (!previewEl) return;
+
+        if (previewEl.style.display !== 'none') {
+            previewEl.style.display = 'none';
+            return;
+        }
+
+        // Already loaded?
+        if (previewEl.dataset.loaded) {
+            previewEl.style.display = '';
+            return;
+        }
+
+        previewEl.innerHTML = '<div class="list-empty">Loading images...</div>';
+        previewEl.style.display = '';
+
+        fetch('/api/downloads/session/' + encodeURIComponent(date) + '/files')
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                var files = data.files || [];
+                if (files.length === 0) {
+                    previewEl.innerHTML = '<div class="list-empty">No images</div>';
+                    return;
+                }
+
+                var html = '<div class="thumb-grid">';
+                files.forEach(function (f) {
+                    var src = '/api/downloads/file/' + encodeURIComponent(date) + '/' + encodeURIComponent(f.filename);
+                    html += '<a class="thumb-link" href="' + src + '" target="_blank">'
+                        + '<img class="thumb-img" src="' + src + '" loading="lazy" alt="' + escapeAttr(f.filename) + '">'
+                        + '<span class="thumb-name">' + escapeHtml(f.filename) + '</span>'
+                        + '</a>';
+                });
+                html += '</div>';
+
+                previewEl.innerHTML = html;
+                previewEl.dataset.loaded = '1';
+            })
+            .catch(function () {
+                previewEl.innerHTML = '<div class="list-empty">Error loading images</div>';
+            });
     }
 
     function renderStorage(storage) {
@@ -162,6 +215,7 @@
     // -----------------------------------------------------------------------
 
     window.deleteSession = deleteSession;
+    window.togglePreview = togglePreview;
 
     document.addEventListener('DOMContentLoaded', function () {
         loadSessions();

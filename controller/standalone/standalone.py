@@ -859,6 +859,32 @@ class OWLDashboard:
 
             return jsonify({'files': files, 'date': date})
 
+        @self.app.route('/api/downloads/file/<date>/<filename>')
+        def api_downloads_serve_file(date, filename):
+            """Serve an individual image file for preview."""
+            import re
+            from werkzeug.utils import secure_filename as sf
+
+            if not re.match(r'^\d{8}$', date):
+                return jsonify({'error': 'Invalid date format'}), 400
+
+            safe_name = sf(filename)
+            if not safe_name:
+                return jsonify({'error': 'Invalid filename'}), 400
+
+            save_dir = self._get_save_directory()
+            if not save_dir:
+                return jsonify({'error': 'Save directory not configured'}), 500
+
+            file_path = os.path.join(save_dir, date, safe_name)
+            if not os.path.realpath(file_path).startswith(os.path.realpath(save_dir)):
+                return jsonify({'error': 'Invalid path'}), 400
+
+            if not os.path.isfile(file_path):
+                return "File not found", 404
+
+            return send_file(file_path)
+
         @self.app.route('/api/downloads/session/<date>', methods=['DELETE'])
         def api_downloads_delete_session(date):
             """Delete a recording session directory."""
