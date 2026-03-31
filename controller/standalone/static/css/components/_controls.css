@@ -203,58 +203,50 @@
     gap: 0.5rem;
 }
 
-.owl-switch .switch-track {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: flex-start;
-    width: 78px;
-    height: 34px;
-    border-radius: 999px;
-    background: #cfd6de;
-    transition: background 0.2s;
-}
-
-.owl-switch .switch-thumb {
-    position: absolute;
-    left: 4px;
-    top: 4px;
-    width: 26px;
-    height: 26px;
-    border-radius: 999px;
-    background: #fff;
-    transition: transform 0.2s;
-}
-
-.owl-switch[aria-pressed="true"] .switch-track {
-    background: var(--success);
-}
-
-.owl-switch[aria-pressed="true"] .switch-thumb {
-    transform: translateX(44px);
-}
-
+/* Latch button state indicator */
 .owl-switch .switch-state {
     font-weight: 700;
+    font-size: 0.85rem;
+    padding: 0.35rem 0.8rem;
+    border-radius: 8px;
+    background: #e9ecef;
     color: var(--secondary);
+    transition: background 0.2s, color 0.2s;
+    min-width: 48px;
+    text-align: center;
 }
 
-/* Recording Switch Variant */
-.owl-switch.owl-switch--record[aria-pressed="true"] .switch-track {
+/* Active states — coloured latch */
+.owl-switch[aria-pressed="true"] {
+    border-color: var(--success);
+    background: #f0faf4;
+}
+
+.owl-switch[aria-pressed="true"] .switch-state {
+    background: var(--success);
+    color: #fff;
+}
+
+/* Recording variant (red) */
+.owl-switch.owl-switch--record[aria-pressed="true"] {
+    border-color: var(--danger);
+    background: #fdf0ef;
+}
+
+.owl-switch.owl-switch--record[aria-pressed="true"] .switch-state {
     background: var(--danger);
+    color: #fff;
 }
 
-.owl-switch.owl-switch--record .switch-state {
-    color: var(--danger);
+/* Nozzle variant (orange) */
+.owl-switch.owl-switch--nozzles[aria-pressed="true"] {
+    border-color: #e67e22;
+    background: #fef5ec;
 }
 
-/* Nozzle Switch Variant (orange when active) */
-.owl-switch.owl-switch--nozzles[aria-pressed="true"] .switch-track {
+.owl-switch.owl-switch--nozzles[aria-pressed="true"] .switch-state {
     background: #e67e22;
-}
-
-.owl-switch.owl-switch--nozzles .switch-state {
-    color: #e67e22;
+    color: #fff;
 }
 
 /* --------------------------------------------------------------------------
@@ -632,17 +624,7 @@
     fill: #999;
 }
 
-.owl-switch.hardware-locked .switch-state::before {
-    content: '';
-    display: inline-block;
-    width: 12px;
-    height: 12px;
-    margin-right: 4px;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23f39c12' d='M12,17A2,2 0 0,0 14,15C14,13.89 13.1,13 12,13A2,2 0 0,0 10,15A2,2 0 0,0 12,17M18,8A2,2 0 0,1 20,10V20A2,2 0 0,1 18,22H6A2,2 0 0,1 4,20V10C4,8.89 4.9,8 6,8H7V6A5,5 0 0,1 12,1A5,5 0 0,1 17,6V8H18M12,3A3,3 0 0,0 9,6V8H15V6A3,3 0 0,0 12,3Z'/%3E%3C/svg%3E");
-    background-size: contain;
-    background-repeat: no-repeat;
-    vertical-align: middle;
-}
+/* Lock icon is injected by JS only — no CSS ::before pseudo-element needed */
 
 /* --------------------------------------------------------------------------
    Pipeline Mode Selector
@@ -785,15 +767,6 @@
 
     .owl-switch .switch-state {
         white-space: nowrap;
-    }
-
-    .owl-switch .switch-track {
-        width: 72px;
-        flex-shrink: 0;
-    }
-
-    .owl-switch[aria-pressed="true"] .switch-thumb {
-        transform: translateX(38px);
     }
 
     .hardware-priority-banner {

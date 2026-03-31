@@ -591,3 +591,136 @@ class TestReceiveQuota:
         # The file should have been cleaned up
         assert not (downloads_dir / 'owl-1_20260313.zip').exists()
         net_mod.MAX_DOWNLOADS_SIZE_MB = original
+
+
+# ---------------------------------------------------------------------------
+# Standalone download route tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def standalone_dl_client(tmp_path):
+    """Create a standalone Flask test client with a fake save_directory."""
+    from controller.standalone.standalone import OWLDashboard
+
+    save_dir = tmp_path / 'save'
+    save_dir.mkdir()
+
+    # Create two sessions
+    d1 = save_dir / '20260315'
+    d1.mkdir()
+    (d1 / 'img_001.jpg').write_bytes(b'\xff\xd8' + b'\x00' * 1000)
+    (d1 / 'img_002.jpg').write_bytes(b'\xff\xd8' + b'\x00' * 2000)
+
+    d2 = save_dir / '20260316'
+    d2.mkdir()
+    (d2 / 'img_001.jpg').write_bytes(b'\xff\xd8' + b'\x00' * 500)
+
+    # Non-date directory should be ignored
+    (save_dir / 'not_a_date').mkdir()
+    (save_dir / 'not_a_date' / 'file.txt').write_bytes(b'hello')
+
+    dashboard = OWLDashboard.__new__(OWLDashboard)
+    dashboard.logger = MagicMock()
+    dashboard.config = MagicMock()
+    dashboard.mqtt_client = None
+    dashboard._get_save_directory = MagicMock(return_value=str(save_dir))
+
+    from flask import Flask
+    app = Flask(__name__,
+                template_folder=str(Path(__file__).parent.parent / 'controller' / 'standalone' / 'templates'),
+                static_folder=str(Path(__file__).parent.parent / 'controller' / 'standalone' / 'static'))
+    dashboard.app = app
+    dashboard.setup_routes()
+
+    return app.test_client(), save_dir
+
+
+@pytest.mark.unit
+class TestStandaloneDownloadSessions:
+
+    def test_list_sessions(self, standalone_dl_client):
+        client, _ = standalone_dl_client
+        resp = client.get('/api/downloads/sessions')
+        assert resp.status_code == 200
+        data = resp.get_json()
+        sessions = data['sessions']
+        assert len(sessions) == 2
+        # Sorted reverse — most recent first
+        assert sessions[0]['date'] == '20260316'
+        assert sessions[1]['date'] == '20260315'
+        assert sessions[1]['image_count'] == 2
+
+    def test_list_sessions_includes_storage(self, standalone_dl_client):
+        client, _ = standalone_dl_client
+        resp = client.get('/api/downloads/sessions')
+        data = resp.get_json()
+        assert data['storage'] is not None
+        assert 'used_mb' in data['storage']
+        assert 'free_mb' in data['storage']
+
+    def test_non_date_dirs_ignored(self, standalone_dl_client):
+        client, _ = standalone_dl_client
+        resp = client.get('/api/downloads/sessions')
+        dates = [s['date'] for s in resp.get_json()['sessions']]
+        assert 'not_a_date' not in dates
+
+
+@pytest.mark.unit
+class TestStandaloneDownloadZIP:
+
+    def test_download_session_zip(self, standalone_dl_client):
+        client, _ = standalone_dl_client
+        resp = client.get('/api/downloads/session/20260315')
+        assert resp.status_code == 200
+        assert resp.content_type == 'application/zip'
+        assert 'owl_20260315.zip' in resp.headers.get('Content-Disposition', '')
+
+        # Verify ZIP contents
+        zf = zipfile.ZipFile(io.BytesIO(resp.data))
+        names = zf.namelist()
+        assert 'img_001.jpg' in names
+        assert 'img_002.jpg' in names
+
+    def test_download_invalid_date_rejected(self, standalone_dl_client):
+        client, _ = standalone_dl_client
+        resp = client.get('/api/downloads/session/not-a-date')
+        assert resp.status_code == 400
+
+    def test_download_nonexistent_session(self, standalone_dl_client):
+        client, _ = standalone_dl_client
+        resp = client.get('/api/downloads/session/99990101')
+        assert resp.status_code == 404
+
+
+@pytest.mark.unit
+class TestStandaloneDownloadFiles:
+
+    def test_list_session_files(self, standalone_dl_client):
+        client, _ = standalone_dl_client
+        resp = client.get('/api/downloads/session/20260315/files')
+        assert resp.status_code == 200
+        files = resp.get_json()['files']
+        assert len(files) == 2
+        assert files[0]['filename'] == 'img_001.jpg'
+
+
+@pytest.mark.unit
+class TestStandaloneDeleteSession:
+
+    def test_delete_session(self, standalone_dl_client):
+        client, save_dir = standalone_dl_client
+        assert (save_dir / '20260315').exists()
+        resp = client.delete('/api/downloads/session/20260315')
+        assert resp.status_code == 200
+        assert resp.get_json()['success'] is True
+        assert not (save_dir / '20260315').exists()
+
+    def test_delete_invalid_date_rejected(self, standalone_dl_client):
+        client, _ = standalone_dl_client
+        resp = client.delete('/api/downloads/session/abcd1234')
+        assert resp.status_code == 400
+
+    def test_delete_nonexistent_session(self, standalone_dl_client):
+        client, _ = standalone_dl_client
+        resp = client.delete('/api/downloads/session/99990101')
+        assert resp.status_code == 404

@@ -295,14 +295,11 @@ class OWLDashboard:
 
         @self.app.route('/api/detection/start', methods=['POST'])
         def start_detection():
-            # Read fresh controller type from config
-            controller_type = self._get_controller_type()
-
-            if controller_type not in ('none', ''):
+            if self._is_hardware_locked('detection'):
                 return jsonify({
                     'success': False,
-                    'message': f'{controller_type.upper()} controller active - use physical switches'
-                }), 423  # HTTP 423 Locked
+                    'message': f'{self._get_controller_type().upper()} controller active - use physical switches'
+                }), 423
 
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
@@ -310,17 +307,13 @@ class OWLDashboard:
             self.logger.info("Detection enabled via dashboard")
             return jsonify(result)
 
-        # Replace the existing detection/stop route
         @self.app.route('/api/detection/stop', methods=['POST'])
         def stop_detection():
-            # Read fresh controller type from config
-            controller_type = self._get_controller_type()
-
-            if controller_type not in ('none', ''):
+            if self._is_hardware_locked('detection'):
                 return jsonify({
                     'success': False,
-                    'message': f'{controller_type.upper()} controller active - use physical switches'
-                }), 423  # HTTP 423 Locked
+                    'message': f'{self._get_controller_type().upper()} controller active - use physical switches'
+                }), 423
 
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
@@ -330,14 +323,11 @@ class OWLDashboard:
 
         @self.app.route('/api/recording/start', methods=['POST'])
         def start_recording():
-            # Read fresh controller type from config
-            controller_type = self._get_controller_type()
-
-            if controller_type not in ('none', ''):
+            if self._is_hardware_locked('recording'):
                 return jsonify({
                     'success': False,
-                    'message': f'{controller_type.upper()} controller active - use physical switches'
-                }), 423  # HTTP 423 Locked
+                    'message': f'{self._get_controller_type().upper()} controller active - use physical switches'
+                }), 423
 
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
@@ -347,14 +337,11 @@ class OWLDashboard:
 
         @self.app.route('/api/recording/stop', methods=['POST'])
         def stop_recording():
-            # Read fresh controller type from config
-            controller_type = self._get_controller_type()
-
-            if controller_type not in ('none', ''):
+            if self._is_hardware_locked('recording'):
                 return jsonify({
                     'success': False,
-                    'message': f'{controller_type.upper()} controller active - use physical switches'
-                }), 423  # HTTP 423 Locked
+                    'message': f'{self._get_controller_type().upper()} controller active - use physical switches'
+                }), 423
 
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
@@ -364,12 +351,6 @@ class OWLDashboard:
 
         @self.app.route('/api/nozzles/all-on', methods=['POST'])
         def nozzles_all_on():
-            controller_type = self._get_controller_type()
-            if controller_type not in ('none', ''):
-                return jsonify({
-                    'success': False,
-                    'message': f'{controller_type.upper()} controller active - use physical switches'
-                }), 423
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             result = self.mqtt_client.set_detection_mode(2)
@@ -378,12 +359,6 @@ class OWLDashboard:
 
         @self.app.route('/api/nozzles/all-off', methods=['POST'])
         def nozzles_all_off():
-            controller_type = self._get_controller_type()
-            if controller_type not in ('none', ''):
-                return jsonify({
-                    'success': False,
-                    'message': f'{controller_type.upper()} controller active - use physical switches'
-                }), 423
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             result = self.mqtt_client.set_detection_mode(1)
@@ -407,13 +382,10 @@ class OWLDashboard:
         @self.app.route('/api/sensitivity/set', methods=['POST'])
         def set_sensitivity():
             """Set sensitivity to specific level"""
-            # Read fresh controller type from config
-            controller_type = self._get_controller_type()
-
-            if controller_type not in ('none', ''):
+            if self._is_hardware_locked('sensitivity'):
                 return jsonify({
                     'success': False,
-                    'message': f'{controller_type.upper()} controller active - use physical switches'
+                    'message': f'{self._get_controller_type().upper()} controller active - use physical switches'
                 }), 423
 
             if not self.mqtt_client:
@@ -757,6 +729,166 @@ class OWLDashboard:
             except Exception as e:
                 self.logger.error(f"Error creating log archive: {e}")
                 return jsonify({'error': str(e)}), 500
+
+        # ------------------------------------------------------------------
+        # Data Downloads (separate page — local filesystem, no MQTT)
+        # ------------------------------------------------------------------
+
+        @self.app.route('/downloads')
+        def downloads_page():
+            return render_template('downloads.html')
+
+        @self.app.route('/api/downloads/sessions')
+        def api_downloads_sessions():
+            """List local recording sessions (YYYYMMDD directories)."""
+            import re
+
+            save_dir = self._get_save_directory()
+            if not save_dir or not os.path.isdir(save_dir):
+                return jsonify({'sessions': [], 'storage': None,
+                                'error': 'Save directory not configured or not found'})
+
+            sessions = []
+            date_pattern = re.compile(r'^\d{8}$')
+
+            try:
+                for entry in sorted(os.listdir(save_dir), reverse=True):
+                    entry_path = os.path.join(save_dir, entry)
+                    if os.path.isdir(entry_path) and date_pattern.match(entry):
+                        image_files = [f for f in os.listdir(entry_path)
+                                       if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                        image_size = sum(
+                            os.path.getsize(os.path.join(entry_path, f))
+                            for f in image_files
+                        )
+                        sessions.append({
+                            'date': entry,
+                            'image_count': len(image_files),
+                            'image_size': image_size,
+                            'total_size': image_size,
+                        })
+            except OSError as e:
+                self.logger.error(f"Error scanning sessions: {e}")
+                return jsonify({'sessions': [], 'error': str(e)}), 500
+
+            # Storage info
+            storage = None
+            try:
+                usage = shutil.disk_usage(save_dir)
+                storage = {
+                    'used_mb': round(usage.used / 1048576),
+                    'total_mb': round(usage.total / 1048576),
+                    'free_mb': round(usage.free / 1048576),
+                }
+            except OSError:
+                pass
+
+            return jsonify({'sessions': sessions, 'storage': storage})
+
+        @self.app.route('/api/downloads/session/<date>')
+        def api_downloads_session_zip(date):
+            """Serve a recording session as a ZIP file (created on-demand)."""
+            import re
+            import zipfile
+            import tempfile
+
+            if not re.match(r'^\d{8}$', date):
+                return jsonify({'error': 'Invalid date format'}), 400
+
+            save_dir = self._get_save_directory()
+            if not save_dir:
+                return jsonify({'error': 'Save directory not configured'}), 500
+
+            session_path = os.path.join(save_dir, date)
+
+            # Path traversal check
+            if not os.path.realpath(session_path).startswith(os.path.realpath(save_dir)):
+                return jsonify({'error': 'Invalid path'}), 400
+
+            if not os.path.isdir(session_path):
+                return jsonify({'error': 'Session not found'}), 404
+
+            try:
+                temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
+                with zipfile.ZipFile(temp_zip.name, 'w', zipfile.ZIP_STORED) as zf:
+                    for f in sorted(os.listdir(session_path)):
+                        fpath = os.path.join(session_path, f)
+                        if os.path.isfile(fpath):
+                            zf.write(fpath, f)
+
+                filename = f'owl_{date}.zip'
+                return send_file(
+                    temp_zip.name,
+                    as_attachment=True,
+                    download_name=filename,
+                    mimetype='application/zip'
+                )
+            except Exception as e:
+                self.logger.error(f"Error creating session ZIP: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/api/downloads/session/<date>/files')
+        def api_downloads_session_files(date):
+            """List images in a recording session."""
+            import re
+
+            if not re.match(r'^\d{8}$', date):
+                return jsonify({'error': 'Invalid date format'}), 400
+
+            save_dir = self._get_save_directory()
+            if not save_dir:
+                return jsonify({'error': 'Save directory not configured'}), 500
+
+            session_path = os.path.join(save_dir, date)
+            if not os.path.realpath(session_path).startswith(os.path.realpath(save_dir)):
+                return jsonify({'error': 'Invalid path'}), 400
+
+            if not os.path.isdir(session_path):
+                return jsonify({'error': 'Session not found'}), 404
+
+            files = []
+            for f in sorted(os.listdir(session_path)):
+                fpath = os.path.join(session_path, f)
+                if os.path.isfile(fpath) and f.lower().endswith(('.jpg', '.jpeg', '.png')):
+                    stat = os.stat(fpath)
+                    files.append({
+                        'filename': f,
+                        'size': stat.st_size,
+                        'modified': stat.st_mtime,
+                    })
+
+            return jsonify({'files': files, 'date': date})
+
+        @self.app.route('/api/downloads/session/<date>', methods=['DELETE'])
+        def api_downloads_delete_session(date):
+            """Delete a recording session directory."""
+            import re
+
+            if not re.match(r'^\d{8}$', date):
+                return jsonify({'error': 'Invalid date format'}), 400
+
+            save_dir = self._get_save_directory()
+            if not save_dir:
+                return jsonify({'error': 'Save directory not configured'}), 500
+
+            session_path = os.path.join(save_dir, date)
+            if not os.path.realpath(session_path).startswith(os.path.realpath(save_dir)):
+                return jsonify({'error': 'Invalid path'}), 400
+
+            if not os.path.isdir(session_path):
+                return jsonify({'error': 'Session not found'}), 404
+
+            try:
+                shutil.rmtree(session_path)
+                self.logger.info(f"Deleted session: {session_path}")
+                return jsonify({'success': True})
+            except OSError as e:
+                self.logger.error(f"Error deleting session: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        # ------------------------------------------------------------------
+        # End Downloads routes
+        # ------------------------------------------------------------------
 
         @self.app.route('/api/controller_config', methods=['GET'])
         def get_controller_config():
@@ -1411,6 +1543,39 @@ class OWLDashboard:
             self.logger.warning(f"Could not read controller_type: {e}")
 
         return 'none'
+
+    def _is_hardware_locked(self, control):
+        """Check if a control is hardware-locked for the current controller type.
+
+        UTE: only 'recording' is hardware-controlled.
+        Advanced: 'recording', 'detection', 'sensitivity' are hardware-controlled.
+        Nozzles, tracking, fan: never locked.
+        """
+        controller_type = self._get_controller_type()
+        if controller_type in ('none', ''):
+            return False
+
+        if controller_type == 'ute':
+            return control == 'recording'
+        elif controller_type == 'advanced':
+            return control in ('recording', 'detection', 'sensitivity')
+
+        return False
+
+    def _get_save_directory(self):
+        """Read save_directory from the active OWL config."""
+        try:
+            active_config = self._get_active_config_path()
+            config_path = self._resolve_config_path(active_config)
+
+            if os.path.exists(config_path):
+                config = configparser.ConfigParser()
+                config.read(config_path)
+                return config.get('DataCollection', 'save_directory', fallback=None)
+        except Exception as e:
+            self.logger.warning(f"Could not read save_directory: {e}")
+
+        return None
 
     def _resolve_config_path(self, relative_path):
         """Resolve a relative config path to absolute."""
