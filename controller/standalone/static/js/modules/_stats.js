@@ -41,6 +41,11 @@ function updateSystemStats() {
             syncSwitch('nozzleSwitch', nozzlesOn);
             syncSwitch('trackingSwitch', !!data.tracking_enabled);
 
+            // Sync session metadata panel visibility with recording state
+            if (typeof syncSessionMetadataPanel === 'function') {
+                syncSessionMetadataPanel(recordingOn);
+            }
+
             // Show/hide track stability panel based on tracking state
             var stabilityTile = document.getElementById('track-stability-tile');
             if (stabilityTile) {

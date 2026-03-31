@@ -916,6 +916,41 @@ class OWLDashboard:
         # End Downloads routes
         # ------------------------------------------------------------------
 
+        # ------------------------------------------------------------------
+        # Session metadata
+        # ------------------------------------------------------------------
+
+        @self.app.route('/api/session/metadata', methods=['GET'])
+        def get_session_metadata():
+            """Get current session metadata from MQTT state."""
+            if not self.mqtt_client:
+                return jsonify({'field_name': '', 'crop': '', 'weather': '', 'vehicle': ''})
+            state = self.mqtt_client.get_state()
+            return jsonify(state.get('session_metadata', {
+                'field_name': '', 'crop': '', 'weather': '', 'vehicle': ''
+            }))
+
+        @self.app.route('/api/session/metadata', methods=['POST'])
+        def set_session_metadata():
+            """Save session metadata — writes to session_metadata.json on the OWL."""
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            try:
+                data = request.get_json() or {}
+                result = self.mqtt_client._send_command('set_session_metadata',
+                    field_name=data.get('field_name', ''),
+                    crop=data.get('crop', ''),
+                    weather=data.get('weather', ''),
+                    vehicle=data.get('vehicle', ''),
+                )
+                return jsonify(result)
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        # ------------------------------------------------------------------
+        # End Session metadata routes
+        # ------------------------------------------------------------------
+
         @self.app.route('/api/controller_config', methods=['GET'])
         def get_controller_config():
             """Get controller config - reads fresh from active config file."""
@@ -1589,7 +1624,20 @@ class OWLDashboard:
         return False
 
     def _get_save_directory(self):
-        """Read save_directory from the active OWL config."""
+        """Get the runtime save_directory from MQTT state (preferred) or config (fallback).
+
+        The MQTT state has the actual resolved path from owl.py's DirectorySetup,
+        which may differ from the config value if the USB drive mounted at a
+        different path or a local fallback was used.
+        """
+        # Try MQTT state first — this has the actual runtime path
+        if self.mqtt_client:
+            state = self.mqtt_client.get_state()
+            mqtt_dir = state.get('save_directory', '')
+            if mqtt_dir and os.path.isdir(mqtt_dir):
+                return mqtt_dir
+
+        # Fallback: read from config file
         try:
             active_config = self._get_active_config_path()
             config_path = self._resolve_config_path(active_config)
@@ -1597,7 +1645,9 @@ class OWLDashboard:
             if os.path.exists(config_path):
                 config = configparser.ConfigParser()
                 config.read(config_path)
-                return config.get('DataCollection', 'save_directory', fallback=None)
+                config_dir = config.get('DataCollection', 'save_directory', fallback=None)
+                if config_dir and os.path.isdir(config_dir):
+                    return config_dir
         except Exception as e:
             self.logger.warning(f"Could not read save_directory: {e}")
 

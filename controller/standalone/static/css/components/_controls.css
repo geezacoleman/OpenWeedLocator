@@ -278,6 +278,97 @@
 }
 
 /* --------------------------------------------------------------------------
+   Session Info (collapsible metadata card)
+   -------------------------------------------------------------------------- */
+.session-info {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: #fff;
+    overflow: hidden;
+}
+
+.session-info-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 0.7rem 1.1rem;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--secondary);
+}
+
+.session-chevron {
+    transition: transform 0.2s;
+}
+
+.session-info-body {
+    padding: 0 1.1rem 1rem;
+}
+
+.session-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+}
+
+.session-field label {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--secondary);
+    margin-bottom: 0.2rem;
+}
+
+.session-field input {
+    width: 100%;
+    padding: 0.5rem 0.6rem;
+    font-size: 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    box-sizing: border-box;
+}
+
+.session-field input.locked {
+    background: var(--background, #f5f7fa);
+    color: var(--secondary);
+    cursor: default;
+}
+
+.session-field input:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.session-actions-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+}
+
+.session-save-btn,
+.session-edit-btn {
+    padding: 0.5rem 1.2rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    background: var(--primary);
+    color: #fff;
+}
+
+.session-edit-btn {
+    background: #fff;
+    color: var(--primary);
+    border-color: var(--primary);
+}
+
+/* --------------------------------------------------------------------------
    Two-Up Layout (Side by side controls)
    -------------------------------------------------------------------------- */
 .two-up {

@@ -63,6 +63,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initNotifications();
     initHardwareControllerCheck();
     initDashboardControls();
+    initSessionMetadata();
     initConfigEditor();
     initSliders();
 

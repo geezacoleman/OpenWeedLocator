@@ -144,6 +144,40 @@
                             <span class="switch-state" id="nozzleSwitchState"></span>
                         </button>
                     </div>
+
+                    <!-- Session info (collapsible) -->
+                    <div class="session-info" id="sessionInfo">
+                        <button class="session-info-toggle" id="sessionInfoToggle" type="button">
+                            <span>Session info</span>
+                            <svg class="session-chevron" id="sessionChevron" width="16" height="16" viewBox="0 0 24 24">
+                                <path fill="currentColor" d="M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"/>
+                            </svg>
+                        </button>
+                        <div class="session-info-body" id="sessionInfoBody" style="display: none;">
+                            <div class="session-fields">
+                                <div class="session-field">
+                                    <label for="metaFieldName">Field name</label>
+                                    <input type="text" id="metaFieldName" placeholder="e.g., North paddock">
+                                </div>
+                                <div class="session-field">
+                                    <label for="metaCrop">Crop</label>
+                                    <input type="text" id="metaCrop" placeholder="e.g., Wheat, Canola">
+                                </div>
+                                <div class="session-field">
+                                    <label for="metaWeather">Weather</label>
+                                    <input type="text" id="metaWeather" placeholder="e.g., Sunny, 22C">
+                                </div>
+                                <div class="session-field">
+                                    <label for="metaVehicle">Vehicle</label>
+                                    <input type="text" id="metaVehicle" placeholder="e.g., John Deere 6120M">
+                                </div>
+                            </div>
+                            <div class="session-actions-row">
+                                <button class="session-save-btn" id="sessionSaveBtn" onclick="saveSessionMetadata()">Save</button>
+                                <button class="session-edit-btn" id="sessionEditBtn" onclick="editSessionMetadata()" style="display: none;">Edit</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Pipeline Mode Selector -->
