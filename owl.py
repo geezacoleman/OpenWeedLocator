@@ -615,6 +615,7 @@ class Owl:
             self.relay_controller.vis = True
 
         prev_detection_enable = False
+        prev_recording_enable = False
 
         try:
             while True:
@@ -635,6 +636,22 @@ class Owl:
                             self._class_smoother.reset()
                         self.logger.info("Tracker state reset (detection disabled)")
                 prev_detection_enable = self._detection_enable
+
+                # Create new session directory when recording starts
+                if self._image_sample_enable and not prev_recording_enable:
+                    if hasattr(self, 'save_directory') and self.save_directory:
+                        session_name = f"session_{datetime.now().strftime('%H%M%S')}"
+                        date_dir = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
+                        session_dir = os.path.join(date_dir, session_name)
+                        os.makedirs(session_dir, exist_ok=True)
+
+                        # Stop old ImageRecorder, create new one for this session
+                        if hasattr(self, 'image_recorder') and self.image_recorder:
+                            self.image_recorder.stop()
+                        self.image_recorder = ImageRecorder(
+                            save_directory=session_dir, mode=self.sample_method)
+                        self.logger.info(f"New recording session: {session_dir}")
+                prev_recording_enable = self._image_sample_enable
 
                 # Drain queued trackbar updates from MQTT thread (thread-safe)
                 if self.show_display and self._pending_trackbar_updates:
