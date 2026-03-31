@@ -43,11 +43,15 @@
         sessions.forEach(function (s) {
             var sizeStr = formatBytes(s.total_size || 0);
             var dateStr = formatDate(s.date);
+            var timeStr = s.time ? ' ' + s.time.slice(0,2) + ':' + s.time.slice(2,4) + ':' + s.time.slice(4,6) : '';
+            var sid = s.session_id;
+            // Safe ID for DOM element (replace / with -)
+            var domId = sid.replace(/\//g, '-');
 
-            html += '<div class="session-block" data-date="' + escapeAttr(s.date) + '">'
-                + '<div class="session-item" onclick="togglePreview(\'' + escapeAttr(s.date) + '\')">'
+            html += '<div class="session-block">'
+                + '<div class="session-item" onclick="togglePreview(\'' + escapeAttr(sid) + '\')">'
                 + '  <div class="session-info">'
-                + '    <div class="session-date">' + escapeHtml(dateStr) + '</div>'
+                + '    <div class="session-date">' + escapeHtml(dateStr + timeStr) + '</div>'
                 + '    <div class="session-meta">'
                 + '      <span>' + s.image_count + ' images</span>'
                 + '      <span>' + sizeStr + '</span>'
@@ -55,11 +59,11 @@
                 + '    </div>'
                 + '  </div>'
                 + '  <div class="session-actions">'
-                + '    <a class="btn-dl success" href="/api/downloads/session/' + escapeAttr(s.date) + '" onclick="event.stopPropagation()">Download ZIP</a>'
-                + '    <button class="btn-dl danger" onclick="event.stopPropagation(); deleteSession(\'' + escapeAttr(s.date) + '\')">Delete</button>'
+                + '    <a class="btn-dl success" href="/api/downloads/session/' + encodeURI(sid) + '" onclick="event.stopPropagation()">Download ZIP</a>'
+                + '    <button class="btn-dl danger" onclick="event.stopPropagation(); deleteSession(\'' + escapeAttr(sid) + '\')">Delete</button>'
                 + '  </div>'
                 + '</div>'
-                + '<div class="session-preview" id="preview-' + escapeAttr(s.date) + '" style="display:none;"></div>'
+                + '<div class="session-preview" id="preview-' + escapeAttr(domId) + '" style="display:none;"></div>'
                 + '</div>';
         });
 
@@ -70,8 +74,9 @@
     // Image preview
     // -----------------------------------------------------------------------
 
-    function togglePreview(date) {
-        var previewEl = document.getElementById('preview-' + date);
+    function togglePreview(sessionId) {
+        var domId = sessionId.replace(/\//g, '-');
+        var previewEl = document.getElementById('preview-' + domId);
         if (!previewEl) return;
 
         if (previewEl.style.display !== 'none') {
@@ -88,7 +93,7 @@
         previewEl.innerHTML = '<div class="list-empty">Loading images...</div>';
         previewEl.style.display = '';
 
-        fetch('/api/downloads/session/' + encodeURIComponent(date) + '/files')
+        fetch('/api/downloads/session/' + encodeURI(sessionId) + '/files')
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 var files = data.files || [];
@@ -99,7 +104,7 @@
 
                 var html = '<div class="thumb-grid">';
                 files.forEach(function (f) {
-                    var src = '/api/downloads/file/' + encodeURIComponent(date) + '/' + encodeURIComponent(f.filename);
+                    var src = '/api/downloads/file/' + encodeURI(sessionId) + '/' + encodeURIComponent(f.filename);
                     html += '<a class="thumb-link" href="' + src + '" target="_blank">'
                         + '<img class="thumb-img" src="' + src + '" loading="lazy" alt="' + escapeAttr(f.filename) + '">'
                         + '<span class="thumb-name">' + escapeHtml(f.filename) + '</span>'
@@ -148,14 +153,14 @@
     // Delete
     // -----------------------------------------------------------------------
 
-    function deleteSession(sessionDate) {
-        if (!confirm('Delete session "' + sessionDate + '"? This removes the images permanently.')) return;
+    function deleteSession(sessionId) {
+        if (!confirm('Delete session "' + sessionId + '"? This removes the images permanently.')) return;
 
-        fetch('/api/downloads/session/' + encodeURIComponent(sessionDate), { method: 'DELETE' })
+        fetch('/api/downloads/session/' + encodeURI(sessionId), { method: 'DELETE' })
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 if (data.success) {
-                    showToast('Session deleted: ' + sessionDate, 'success');
+                    showToast('Session deleted', 'success');
                     loadSessions();
                 } else {
                     showToast(data.error || 'Delete failed', 'error');

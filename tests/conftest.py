@@ -209,6 +209,9 @@ def mock_owl(tmp_config_dir):
     # Tracking state — must be real values so state dict is JSON-serialisable
     owl.tracking_enabled = False
 
+    # Storage — must be a real string so state dict is JSON-serialisable
+    owl.save_directory = ''
+
     return owl
 
 

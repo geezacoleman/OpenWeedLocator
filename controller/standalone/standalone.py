@@ -740,7 +740,12 @@ class OWLDashboard:
 
         @self.app.route('/api/downloads/sessions')
         def api_downloads_sessions():
-            """List local recording sessions (YYYYMMDD directories)."""
+            """List local recording sessions.
+
+            Supports two directory structures:
+            - New: save_dir/YYYYMMDD/session_HHMMSS/ (session per recording cycle)
+            - Legacy: save_dir/YYYYMMDD/ (flat, all images in date dir)
+            """
             import re
 
             save_dir = self._get_save_directory()
@@ -750,23 +755,54 @@ class OWLDashboard:
 
             sessions = []
             date_pattern = re.compile(r'^\d{8}$')
+            session_pattern = re.compile(r'^session_\d{6}$')
 
             try:
-                for entry in sorted(os.listdir(save_dir), reverse=True):
-                    entry_path = os.path.join(save_dir, entry)
-                    if os.path.isdir(entry_path) and date_pattern.match(entry):
-                        image_files = [f for f in os.listdir(entry_path)
+                for date_entry in sorted(os.listdir(save_dir), reverse=True):
+                    date_path = os.path.join(save_dir, date_entry)
+                    if not os.path.isdir(date_path) or not date_pattern.match(date_entry):
+                        continue
+
+                    # Check for session subdirectories (new structure)
+                    subdirs = [d for d in os.listdir(date_path)
+                               if os.path.isdir(os.path.join(date_path, d)) and session_pattern.match(d)]
+
+                    if subdirs:
+                        # New structure: each session_HHMMSS is a separate session
+                        for sess in sorted(subdirs, reverse=True):
+                            sess_path = os.path.join(date_path, sess)
+                            image_files = [f for f in os.listdir(sess_path)
+                                           if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                            image_size = sum(
+                                os.path.getsize(os.path.join(sess_path, f))
+                                for f in image_files
+                            )
+                            # session_id encodes full path: "YYYYMMDD/session_HHMMSS"
+                            sessions.append({
+                                'session_id': f"{date_entry}/{sess}",
+                                'date': date_entry,
+                                'time': sess.replace('session_', ''),
+                                'image_count': len(image_files),
+                                'image_size': image_size,
+                                'total_size': image_size,
+                            })
+                    else:
+                        # Legacy structure: images directly in YYYYMMDD dir
+                        image_files = [f for f in os.listdir(date_path)
                                        if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-                        image_size = sum(
-                            os.path.getsize(os.path.join(entry_path, f))
-                            for f in image_files
-                        )
-                        sessions.append({
-                            'date': entry,
-                            'image_count': len(image_files),
-                            'image_size': image_size,
-                            'total_size': image_size,
-                        })
+                        if image_files:
+                            image_size = sum(
+                                os.path.getsize(os.path.join(date_path, f))
+                                for f in image_files
+                            )
+                            sessions.append({
+                                'session_id': date_entry,
+                                'date': date_entry,
+                                'time': '',
+                                'image_count': len(image_files),
+                                'image_size': image_size,
+                                'total_size': image_size,
+                            })
             except OSError as e:
                 self.logger.error(f"Error scanning sessions: {e}")
                 return jsonify({'sessions': [], 'error': str(e)}), 500
@@ -785,28 +821,41 @@ class OWLDashboard:
 
             return jsonify({'sessions': sessions, 'storage': storage})
 
-        @self.app.route('/api/downloads/session/<date>')
-        def api_downloads_session_zip(date):
-            """Serve a recording session as a ZIP file (created on-demand)."""
-            import re
-            import zipfile
-            import tempfile
+        def _validate_session_path(session_id):
+            """Resolve and validate a session_id to a filesystem path.
 
-            if not re.match(r'^\d{8}$', date):
-                return jsonify({'error': 'Invalid date format'}), 400
+            session_id can be:
+              - "YYYYMMDD" (legacy flat structure)
+              - "YYYYMMDD/session_HHMMSS" (new per-session structure)
+
+            Returns (session_path, error_response) — error_response is None on success.
+            """
+            import re
+            if not re.match(r'^\d{8}(/session_\d{6})?$', session_id):
+                return None, (jsonify({'error': 'Invalid session ID'}), 400)
 
             save_dir = self._get_save_directory()
             if not save_dir:
-                return jsonify({'error': 'Save directory not configured'}), 500
+                return None, (jsonify({'error': 'Save directory not configured'}), 500)
 
-            session_path = os.path.join(save_dir, date)
-
-            # Path traversal check
+            session_path = os.path.join(save_dir, session_id)
             if not os.path.realpath(session_path).startswith(os.path.realpath(save_dir)):
-                return jsonify({'error': 'Invalid path'}), 400
+                return None, (jsonify({'error': 'Invalid path'}), 400)
 
             if not os.path.isdir(session_path):
-                return jsonify({'error': 'Session not found'}), 404
+                return None, (jsonify({'error': 'Session not found'}), 404)
+
+            return session_path, None
+
+        @self.app.route('/api/downloads/session/<path:session_id>')
+        def api_downloads_session_zip(session_id):
+            """Serve a recording session as a ZIP file (created on-demand)."""
+            import zipfile
+            import tempfile
+
+            session_path, err = _validate_session_path(session_id)
+            if err:
+                return err
 
             try:
                 temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
@@ -816,7 +865,8 @@ class OWLDashboard:
                         if os.path.isfile(fpath):
                             zf.write(fpath, f)
 
-                filename = f'owl_{date}.zip'
+                safe_name = session_id.replace('/', '_')
+                filename = f'owl_{safe_name}.zip'
                 return send_file(
                     temp_zip.name,
                     as_attachment=True,
@@ -827,24 +877,12 @@ class OWLDashboard:
                 self.logger.error(f"Error creating session ZIP: {e}")
                 return jsonify({'error': str(e)}), 500
 
-        @self.app.route('/api/downloads/session/<date>/files')
-        def api_downloads_session_files(date):
+        @self.app.route('/api/downloads/session/<path:session_id>/files')
+        def api_downloads_session_files(session_id):
             """List images in a recording session."""
-            import re
-
-            if not re.match(r'^\d{8}$', date):
-                return jsonify({'error': 'Invalid date format'}), 400
-
-            save_dir = self._get_save_directory()
-            if not save_dir:
-                return jsonify({'error': 'Save directory not configured'}), 500
-
-            session_path = os.path.join(save_dir, date)
-            if not os.path.realpath(session_path).startswith(os.path.realpath(save_dir)):
-                return jsonify({'error': 'Invalid path'}), 400
-
-            if not os.path.isdir(session_path):
-                return jsonify({'error': 'Session not found'}), 404
+            session_path, err = _validate_session_path(session_id)
+            if err:
+                return err
 
             files = []
             for f in sorted(os.listdir(session_path)):
@@ -857,26 +895,23 @@ class OWLDashboard:
                         'modified': stat.st_mtime,
                     })
 
-            return jsonify({'files': files, 'date': date})
+            return jsonify({'files': files, 'session_id': session_id})
 
-        @self.app.route('/api/downloads/file/<date>/<filename>')
-        def api_downloads_serve_file(date, filename):
+        @self.app.route('/api/downloads/file/<path:session_id>/<filename>')
+        def api_downloads_serve_file(session_id, filename):
             """Serve an individual image file for preview."""
-            import re
             from werkzeug.utils import secure_filename as sf
 
-            if not re.match(r'^\d{8}$', date):
-                return jsonify({'error': 'Invalid date format'}), 400
+            session_path, err = _validate_session_path(session_id)
+            if err:
+                return err
 
             safe_name = sf(filename)
             if not safe_name:
                 return jsonify({'error': 'Invalid filename'}), 400
 
             save_dir = self._get_save_directory()
-            if not save_dir:
-                return jsonify({'error': 'Save directory not configured'}), 500
-
-            file_path = os.path.join(save_dir, date, safe_name)
+            file_path = os.path.join(session_path, safe_name)
             if not os.path.realpath(file_path).startswith(os.path.realpath(save_dir)):
                 return jsonify({'error': 'Invalid path'}), 400
 
@@ -885,28 +920,22 @@ class OWLDashboard:
 
             return send_file(file_path)
 
-        @self.app.route('/api/downloads/session/<date>', methods=['DELETE'])
-        def api_downloads_delete_session(date):
+        @self.app.route('/api/downloads/session/<path:session_id>', methods=['DELETE'])
+        def api_downloads_delete_session(session_id):
             """Delete a recording session directory."""
-            import re
-
-            if not re.match(r'^\d{8}$', date):
-                return jsonify({'error': 'Invalid date format'}), 400
-
-            save_dir = self._get_save_directory()
-            if not save_dir:
-                return jsonify({'error': 'Save directory not configured'}), 500
-
-            session_path = os.path.join(save_dir, date)
-            if not os.path.realpath(session_path).startswith(os.path.realpath(save_dir)):
-                return jsonify({'error': 'Invalid path'}), 400
-
-            if not os.path.isdir(session_path):
-                return jsonify({'error': 'Session not found'}), 404
+            session_path, err = _validate_session_path(session_id)
+            if err:
+                return err
 
             try:
                 shutil.rmtree(session_path)
                 self.logger.info(f"Deleted session: {session_path}")
+
+                # Clean up empty parent date directory
+                parent = os.path.dirname(session_path)
+                if os.path.isdir(parent) and not os.listdir(parent):
+                    os.rmdir(parent)
+
                 return jsonify({'success': True})
             except OSError as e:
                 self.logger.error(f"Error deleting session: {e}")

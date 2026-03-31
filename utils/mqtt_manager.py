@@ -1137,25 +1137,49 @@ class OWLMQTTPublisher:
             self._publish_state()
 
     def _write_session_metadata(self, metadata):
-        """Write session_metadata.json to the active session directory."""
-        save_dir = getattr(self.owl_instance, 'save_directory', None) if self.owl_instance else None
-        if not save_dir or not os.path.isdir(save_dir):
-            self.logger.warning("Cannot write session metadata: save_directory not available")
-            return
+        """Write session_metadata.json to the active session directory.
 
-        # Find the most recent YYYYMMDD directory (the active session)
-        import re
-        date_pattern = re.compile(r'^\d{8}$')
-        session_dirs = sorted(
-            [d for d in os.listdir(save_dir) if os.path.isdir(os.path.join(save_dir, d)) and date_pattern.match(d)],
-            reverse=True
-        )
+        Uses the ImageRecorder's save_directory (the active session subfolder)
+        if available, otherwise falls back to the most recent date directory.
+        """
+        # Prefer the active session dir from ImageRecorder
+        session_path = None
+        if self.owl_instance:
+            recorder = getattr(self.owl_instance, 'image_recorder', None)
+            if recorder:
+                rec_dir = getattr(recorder, 'save_directory', None)
+                if rec_dir and os.path.isdir(rec_dir):
+                    session_path = rec_dir
 
-        if not session_dirs:
+        # Fallback: find most recent YYYYMMDD dir (or session subdir within it)
+        if not session_path:
+            save_dir = getattr(self.owl_instance, 'save_directory', None) if self.owl_instance else None
+            if not save_dir or not os.path.isdir(save_dir):
+                self.logger.warning("Cannot write session metadata: save_directory not available")
+                return
+
+            import re
+            date_pattern = re.compile(r'^\d{8}$')
+            session_pattern = re.compile(r'^session_\d{6}$')
+
+            for date_dir in sorted(os.listdir(save_dir), reverse=True):
+                date_path = os.path.join(save_dir, date_dir)
+                if not os.path.isdir(date_path) or not date_pattern.match(date_dir):
+                    continue
+                # Check for session subdirs
+                subdirs = sorted([d for d in os.listdir(date_path)
+                                  if os.path.isdir(os.path.join(date_path, d)) and session_pattern.match(d)],
+                                 reverse=True)
+                if subdirs:
+                    session_path = os.path.join(date_path, subdirs[0])
+                else:
+                    session_path = date_path
+                break
+
+        if not session_path:
             self.logger.warning("Cannot write session metadata: no session directories found")
             return
 
-        session_path = os.path.join(save_dir, session_dirs[0])
         metadata_path = os.path.join(session_path, 'session_metadata.json')
 
         import json
