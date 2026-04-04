@@ -7,6 +7,7 @@ the OWL CSS design system colors (navy primary with lighter shades).
 """
 import json
 import os
+import statistics
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -84,10 +85,10 @@ def megapixels(res_str):
 
 
 # =============================================================================
-# Chart 1: ExHSV Loop Time vs Image Size (line chart) — uses MEDIAN
+# Chart 1: ExHSV Loop Time vs Image Size (line chart)
 # =============================================================================
 def plot_exhsv_loop_time(data, output_dir):
-    """Line chart: loop time (ms) vs image size with SEM error bars."""
+    """Line chart: mean loop time (ms) vs image size with SEM error bars."""
     exhsv = [r for r in data['full_loop_results'] if r['algorithm'] == 'exhsv']
     exhsv.sort(key=lambda r: pixel_count(r['resolution']))
 
@@ -96,6 +97,9 @@ def plot_exhsv_loop_time(data, output_dir):
     v1_times = [r['v1_2021']['mean'] for r in exhsv]
     v2_times = [r['v2_main']['mean'] for r in exhsv]
     v3_times = [r['v3_current']['mean'] for r in exhsv]
+    v1_sem = [r['v1_2021']['sem'] for r in exhsv]
+    v2_sem = [r['v2_main']['sem'] for r in exhsv]
+    v3_sem = [r['v3_current']['sem'] for r in exhsv]
 
     fig, ax = plt.subplots(figsize=(9, 5.5))
 
@@ -104,13 +108,13 @@ def plot_exhsv_loop_time(data, output_dir):
     ax.text(mpx[-1] + 0.02, 34.5, '30 fps limit', fontfamily=FONT_FAMILY,
             fontsize=8, color=OWL_DANGER, alpha=0.7, va='bottom')
 
-    # Plot lines — lightest to darkest
-    ax.plot(mpx, v1_times, 'o-', color=V1_COLOR, linewidth=2, markersize=7,
-            label='v1 (Aug 2021)', zorder=3)
-    ax.plot(mpx, v2_times, 's-', color=V2_COLOR, linewidth=2, markersize=7,
-            label='v2 (main)', zorder=3)
-    ax.plot(mpx, v3_times, 'D-', color=V3_COLOR, linewidth=2.5, markersize=8,
-            label='v3 (this release)', zorder=4)
+    # Plot lines with SEM error bars — lightest to darkest
+    ax.errorbar(mpx, v1_times, yerr=v1_sem, fmt='o-', color=V1_COLOR,
+                linewidth=2, markersize=7, capsize=3, label='v1 (Aug 2021)', zorder=3)
+    ax.errorbar(mpx, v2_times, yerr=v2_sem, fmt='s-', color=V2_COLOR,
+                linewidth=2, markersize=7, capsize=3, label='v2 (main)', zorder=3)
+    ax.errorbar(mpx, v3_times, yerr=v3_sem, fmt='D-', color=V3_COLOR,
+                linewidth=2.5, markersize=8, capsize=3, label='v3 (this release)', zorder=4)
 
     # Resolution labels on v3 points
     for mx, t, res in zip(mpx, v3_times, resolutions):
@@ -129,7 +133,7 @@ def plot_exhsv_loop_time(data, output_dir):
 
     owl_style(ax, title='Detection loop time vs image size (ExHSV)',
               xlabel='Image size (megapixels)',
-              ylabel='Loop time per frame (ms)')
+              ylabel='Mean loop time per frame (ms)')
 
     ax.legend(fontsize=10, loc='upper left', frameon=True,
               facecolor='white', edgecolor='black',
@@ -144,14 +148,13 @@ def plot_exhsv_loop_time(data, output_dir):
 
 
 # =============================================================================
-# Chart 2: FPS vs Image Size (line chart) — uses MEDIAN-derived FPS
+# Chart 2: FPS vs Image Size (line chart)
 # =============================================================================
 def plot_exhsv_fps(data, output_dir):
-    """Line chart: FPS vs image size for all three versions with SEM error bars."""
+    """Line chart: FPS vs image size for all three versions."""
     exhsv = [r for r in data['full_loop_results'] if r['algorithm'] == 'exhsv']
     exhsv.sort(key=lambda r: pixel_count(r['resolution']))
 
-    resolutions = [r['resolution'] for r in exhsv]
     mpx = [megapixels(r['resolution']) for r in exhsv]
 
     v1_fps = [1000.0 / r['v1_2021']['mean'] for r in exhsv]
@@ -198,58 +201,7 @@ def plot_exhsv_fps(data, output_dir):
 
 
 # =============================================================================
-# Chart 3: Algorithm Comparison Bar Chart (grouped bars at 1280x720)
-# =============================================================================
-def plot_algorithm_comparison(data, output_dir):
-    """Grouped bar chart: all algorithms at 640x480 across three versions."""
-    results_640 = [r for r in data['full_loop_results']
-                   if r['resolution'] == '640x480']
-    results_640.sort(key=lambda r: r['v3_current']['mean'], reverse=True)
-
-    algorithms = [r['algorithm'].upper() for r in results_640]
-    v1_times = [r['v1_2021']['mean'] for r in results_640]
-    v2_times = [r['v2_main']['mean'] for r in results_640]
-    v3_times = [r['v3_current']['mean'] for r in results_640]
-
-    x = np.arange(len(algorithms))
-    bar_width = 0.25
-
-    fig, ax = plt.subplots(figsize=(9, 5))
-
-    ax.bar(x - bar_width, v1_times, bar_width, label='v1 (Aug 2021)',
-           color=V1_COLOR, edgecolor='white', linewidth=0.5, zorder=3)
-    ax.bar(x, v2_times, bar_width, label='v2 (main)',
-           color=V2_COLOR, edgecolor='white', linewidth=0.5, zorder=3)
-    bars3 = ax.bar(x + bar_width, v3_times, bar_width, label='v3 (this release)',
-                   color=V3_COLOR, edgecolor='white', linewidth=0.5, zorder=3)
-
-    # Speedup labels on v3 bars
-    for bar, v2t, v3t in zip(bars3, v2_times, v3_times):
-        speedup = v2t / v3t
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.3,
-                f'{speedup:.1f}x', ha='center', va='bottom',
-                fontsize=9, fontfamily=FONT_FAMILY, fontweight=600,
-                color=V3_COLOR)
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(algorithms)
-
-    owl_style(ax, title='Algorithm performance at 640x480',
-              ylabel='Loop time per frame (ms)')
-
-    ax.legend(fontsize=10, loc='upper right', frameon=True,
-              facecolor='white', edgecolor='black',
-              prop={'family': FONT_FAMILY, 'size': 10})
-
-    fig.tight_layout()
-    path = os.path.join(output_dir, 'benchmark_algorithm_comparison.png')
-    fig.savefig(path, dpi=150, bbox_inches='tight', facecolor='white')
-    plt.close(fig)
-    print(f"  Saved: {path}")
-
-
-# =============================================================================
-# Chart 4: Speedup Factor Chart
+# Chart 3: Speedup Factor Chart (uses mean)
 # =============================================================================
 def plot_speedup(data, output_dir):
     """Horizontal bar chart: speedup factors (v2 -> v3) at each resolution."""
@@ -257,9 +209,8 @@ def plot_speedup(data, output_dir):
     exhsv.sort(key=lambda r: pixel_count(r['resolution']))
 
     resolutions = [r['resolution'] for r in exhsv]
-    # Compute speedups from median for consistency
-    v2_v3_speedups = [r['v2_main']['median'] / r['v3_current']['median'] for r in exhsv]
-    v1_v3_speedups = [r['v1_2021']['median'] / r['v3_current']['median'] for r in exhsv]
+    v2_v3_speedups = [r['v2_main']['mean'] / r['v3_current']['mean'] for r in exhsv]
+    v1_v3_speedups = [r['v1_2021']['mean'] / r['v3_current']['mean'] for r in exhsv]
 
     y = np.arange(len(resolutions))
     bar_height = 0.35
@@ -290,7 +241,7 @@ def plot_speedup(data, output_dir):
     ax.set_yticklabels(resolutions)
     ax.invert_yaxis()
 
-    owl_style(ax, title='v3 speedup factor (ExHSV, median)',
+    owl_style(ax, title='v3 speedup factor (ExHSV, mean)',
               xlabel='Speedup (higher is better)')
 
     ax.legend(fontsize=10, loc='lower right', frameon=True,
@@ -299,6 +250,98 @@ def plot_speedup(data, output_dir):
 
     fig.tight_layout()
     path = os.path.join(output_dir, 'benchmark_speedup.png')
+    fig.savefig(path, dpi=150, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+    print(f"  Saved: {path}")
+
+
+# =============================================================================
+# Chart 4: Weed Density vs Loop Time
+# =============================================================================
+def plot_weed_density(data, output_dir):
+    """Line chart: mean loop time vs weed count, binned in groups of 5.
+
+    Shows whether older pipeline versions degrade more at higher weed density.
+    Uses the largest resolution that has per_iteration data.
+    """
+    # Pick the largest resolution with per-iteration data
+    exhsv = [r for r in data['full_loop_results']
+             if r['algorithm'] == 'exhsv' and 'per_iteration' in r]
+    if not exhsv:
+        print("  [SKIP] No per-iteration data for weed density chart")
+        return
+
+    exhsv.sort(key=lambda r: pixel_count(r['resolution']), reverse=True)
+    result = exhsv[0]
+    per_iter = result['per_iteration']
+    resolution = result['resolution']
+
+    weed_counts = np.array(per_iter['weed_counts'])
+    v1_times = np.array(per_iter['v1_times_ms'])
+    v2_times = np.array(per_iter['v2_times_ms'])
+    v3_times = np.array(per_iter['v3_times_ms'])
+
+    # Bin into groups of 5 weeds: 0-4, 5-9, 10-14, ...
+    bin_size = 5
+    max_count = int(weed_counts.max())
+    bin_edges = list(range(0, max_count + bin_size + 1, bin_size))
+
+    bin_centres = []
+    v1_means, v2_means, v3_means = [], [], []
+    v1_sems, v2_sems, v3_sems = [], [], []
+
+    for lo, hi in zip(bin_edges[:-1], bin_edges[1:]):
+        mask = (weed_counts >= lo) & (weed_counts < hi)
+        n = mask.sum()
+        if n < 3:
+            continue
+
+        bin_centres.append((lo + hi) / 2)
+
+        for times, means, sems in [(v1_times, v1_means, v1_sems),
+                                   (v2_times, v2_means, v2_sems),
+                                   (v3_times, v3_means, v3_sems)]:
+            vals = times[mask]
+            m = vals.mean()
+            means.append(m)
+            sems.append(vals.std() / np.sqrt(n))
+
+    fig, ax = plt.subplots(figsize=(9, 5.5))
+
+    ax.errorbar(bin_centres, v1_means, yerr=v1_sems, fmt='o-', color=V1_COLOR,
+                linewidth=2, markersize=7, capsize=3, label='v1 (Aug 2021)', zorder=3)
+    ax.errorbar(bin_centres, v2_means, yerr=v2_sems, fmt='s-', color=V2_COLOR,
+                linewidth=2, markersize=7, capsize=3, label='v2 (main)', zorder=3)
+    ax.errorbar(bin_centres, v3_means, yerr=v3_sems, fmt='D-', color=V3_COLOR,
+                linewidth=2.5, markersize=8, capsize=3, label='v3 (this release)', zorder=4)
+
+    # Slope annotations — show how much each version slows per 10 extra weeds
+    if len(bin_centres) >= 2:
+        for label, means, color, y_off in [
+            ('v1', v1_means, V1_COLOR, 8),
+            ('v2', v2_means, V2_COLOR, 8),
+            ('v3', v3_means, V3_COLOR, -14),
+        ]:
+            slope = (means[-1] - means[0]) / (bin_centres[-1] - bin_centres[0]) * 10
+            sign = '+' if slope >= 0 else ''
+            ax.annotate(f'{sign}{slope:.2f} ms / 10 weeds',
+                        (bin_centres[-1], means[-1]),
+                        textcoords="offset points", xytext=(10, y_off),
+                        ha='left', fontsize=8, fontfamily=FONT_FAMILY,
+                        fontweight=600, color=color)
+
+    owl_style(ax, title=f'Loop time vs weed density (ExHSV, {resolution})',
+              xlabel='Weed count per frame',
+              ylabel='Mean loop time (ms)')
+
+    ax.legend(fontsize=10, loc='upper left', frameon=True,
+              facecolor='white', edgecolor='black',
+              prop={'family': FONT_FAMILY, 'size': 10})
+    ax.set_ylim(bottom=0)
+    ax.set_xlim(left=0)
+
+    fig.tight_layout()
+    path = os.path.join(output_dir, 'benchmark_weed_density.png')
     fig.savefig(path, dpi=150, bbox_inches='tight', facecolor='white')
     plt.close(fig)
     print(f"  Saved: {path}")
@@ -314,8 +357,8 @@ def main():
     print("\nGenerating OWL benchmark charts...")
     plot_exhsv_loop_time(data, output_dir)
     plot_exhsv_fps(data, output_dir)
-    plot_algorithm_comparison(data, output_dir)
     plot_speedup(data, output_dir)
+    plot_weed_density(data, output_dir)
     print("\nDone.")
 
 

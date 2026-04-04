@@ -591,37 +591,6 @@ EOF
     echo -e "${GREEN}[INFO]   MQTT: enable=True, broker=${BROKER_IP}:1883, device_id=${DEVICE_ID}${NC}"
     echo -e "${GREEN}[INFO]   Network: mode=${NET_MODE}, static_ip=${NET_STATIC_IP}, controller=${NET_CONTROLLER_IP}${NC}"
 
-    # Hardware controller configuration
-    local OWL_CONFIG="${CONFIG_DIR}/GENERAL_CONFIG.ini"
-    if [ -f "$OWL_CONFIG" ]; then
-        local current_ctrl
-        current_ctrl=$(awk -F' = ' '/^\[Controller\]/{found=1} found && /^controller_type/{print $2; exit}' "$OWL_CONFIG" | tr -d '[:space:]')
-
-        echo ""
-        echo -e "${GREEN}[INFO] Hardware controller setup${NC}"
-        echo -e "${GREEN}[INFO] Current controller_type: ${current_ctrl:-none}${NC}"
-        echo ""
-        echo "  Controller types:"
-        echo "    none     - No hardware controller (dashboard-only control)"
-        echo "    ute      - Single toggle switch (recording or detection)"
-        echo "    advanced - Multi-switch panel (recording, sensitivity, detection mode)"
-        echo ""
-        read -p "Enter controller type [none/ute/advanced] (default: ${current_ctrl:-none}): " ctrl_input
-        ctrl_input="${ctrl_input,,}"  # lowercase
-        ctrl_input="${ctrl_input:-${current_ctrl:-none}}"
-
-        case "$ctrl_input" in
-          none|ute|advanced )
-            _update_ini_key "$OWL_CONFIG" "Controller" "controller_type" "$ctrl_input"
-            chown "${CURRENT_USER}:${CURRENT_USER}" "$OWL_CONFIG"
-            echo -e "${TICK} controller_type = ${ctrl_input} written to GENERAL_CONFIG.ini"
-            ;;
-          * )
-            echo -e "${ORANGE}[WARNING] Invalid type '${ctrl_input}', keeping '${current_ctrl:-none}'${NC}"
-            ;;
-        esac
-    fi
-
     return 0
 }
 

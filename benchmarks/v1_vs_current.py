@@ -1,10 +1,15 @@
 #!/usr/bin/env python
 """
-Benchmark: Three eras of OWL — FULL FRAME LOOP comparison.
+Benchmark: Three eras of OWL — FULL FRAME LOOP comparison (exhsv).
 
   v1 (Aug 2021):  cam.read -> green_on_brown -> lane assignment -> controller.receive -> fps.update
   v2 (main):      cam.read -> green_on_brown (class) -> lane assignment -> controller.receive
-  v3 (current):   cam.read -> crop -> inference -> dedup actuation -> stream copy -> loop timing
+  v3 (current):   cam.read -> inference -> dedup actuation -> stream copy -> loop timing
+
+Each iteration uses a synthetic image with a random number of weeds (0-50).
+All three versions process the same image and receive the same synthetic weed
+centres for actuation, so the comparison is fair regardless of per-version
+detection differences. Detection still runs on the real image for timing.
 
 v1 code inlined verbatim from `git show 4e513b2`.
 v2 code inlined from `git show main:utils/algorithms.py` and `git show main:utils/greenonbrown.py`.
@@ -356,11 +361,32 @@ def make_test_image(width, height, num_weeds=8, seed=42):
 
 
 # =============================================================================
+# SYNTHETIC DETECTIONS
+# =============================================================================
+
+def generate_synthetic_centres(width, height, max_detections=50,
+                               iterations=1000, seed=42):
+    """Pre-generate random weed centres for each iteration.
+
+    Returns a list of `iterations` lists, each containing 0-max_detections
+    random [x, y] centres within the image bounds.
+    """
+    rng = np.random.RandomState(seed)
+    all_centres = []
+    for _ in range(iterations):
+        n = rng.randint(0, max_detections + 1)
+        centres = [[rng.randint(0, width), rng.randint(0, height)]
+                    for _ in range(n)]
+        all_centres.append(centres)
+    return all_centres
+
+
+# =============================================================================
 # FULL FRAME LOOP SIMULATORS
 # =============================================================================
 
 def simulate_original_frame(frame, algorithm, params, nozzle_num, lane_coords,
-                            lane_width, y_act, controller):
+                            lane_width, controller, synthetic_centres):
     """
     Simulates one iteration of the original hoot() loop from commit 4e513b2.
 
@@ -368,33 +394,32 @@ def simulate_original_frame(frame, algorithm, params, nozzle_num, lane_coords,
     1. cam.read() [simulated: frame already provided]
     2. frame.copy() before passing to green_on_brown
     3. green_on_brown() — algorithm + threshold + contour + rectangle drawing
-    4. Lane assignment loop over weed centres
+    4. Lane assignment loop over weed centres (using synthetic centres)
     5. controller.receive() per weed (with logging)
     6. fps.update() [imutils FPS counter]
     """
     # Step 2: Copy frame (original always did frame.copy())
     frame_copy = frame.copy()
 
-    # Step 3: Detection
-    cnts, boxes, weed_centres, image_out = orig_green_on_brown(
-        frame_copy, algorithm=algorithm, headless=True, **params)
+    # Step 3: Detection (timed, but output not used for actuation)
+    orig_green_on_brown(frame_copy, algorithm=algorithm, headless=True, **params)
 
-    # Step 4-5: Lane assignment + actuation (per weed, per lane)
-    for ID, centre in enumerate(weed_centres):
-        if centre[1] > y_act:
-            spray_time = time.time()
-            for i in range(nozzle_num):
-                if int(lane_coords[i]) <= centre[0] < int(lane_coords[i] + lane_width):
-                    controller.receive(nozzle=i, timeStamp=spray_time, duration=0.15)
+    # Step 4-5: Lane assignment + actuation using synthetic centres
+    for ID, centre in enumerate(synthetic_centres):
+        spray_time = time.time()
+        for i in range(nozzle_num):
+            if int(lane_coords[i]) <= centre[0] < int(lane_coords[i] + lane_width):
+                controller.receive(nozzle=i, timeStamp=spray_time, duration=0.15)
 
     # Step 6: FPS counter overhead (original used imutils FPS which calls time.time())
     _ = time.time()
 
-    return weed_centres, image_out
+    return synthetic_centres, frame_copy
 
 
 def simulate_main_frame(frame, algorithm, detector, params, nozzle_num,
-                        lane_coords, lane_width, y_act, controller):
+                        lane_coords, lane_width, controller,
+                        synthetic_centres):
     """
     Simulates one iteration of the main branch (v2.3.1) hoot() loop.
 
@@ -405,8 +430,8 @@ def simulate_main_frame(frame, algorithm, detector, params, nozzle_num,
     # Step 2: Copy frame
     frame_copy = frame.copy()
 
-    # Step 3: Detection (class-based, kernel reused)
-    cnts, boxes, weed_centres, image_out = detector.inference(
+    # Step 3: Detection (class-based, kernel reused — timed, output not used for actuation)
+    detector.inference(
         frame_copy, algorithm=algorithm, show_display=False,
         exg_min=params['exgMin'], exg_max=params['exgMax'],
         hue_min=params['hueMin'], hue_max=params['hueMax'],
@@ -414,72 +439,68 @@ def simulate_main_frame(frame, algorithm, detector, params, nozzle_num,
         brightness_min=params['brightnessMin'], brightness_max=params['brightnessMax'],
         min_detection_area=params['minArea'])
 
-    # Step 4-5: Lane assignment + actuation (same as original — per weed, per lane)
-    for ID, centre in enumerate(weed_centres):
-        if centre[1] > y_act:
-            spray_time = time.time()
-            for i in range(nozzle_num):
-                if int(lane_coords[i]) <= centre[0] < int(lane_coords[i] + lane_width):
-                    controller.receive(nozzle=i, timeStamp=spray_time, duration=0.15)
+    # Step 4-5: Lane assignment + actuation using synthetic centres
+    for ID, centre in enumerate(synthetic_centres):
+        spray_time = time.time()
+        for i in range(nozzle_num):
+            if int(lane_coords[i]) <= centre[0] < int(lane_coords[i] + lane_width):
+                controller.receive(nozzle=i, timeStamp=spray_time, duration=0.15)
 
     # Step 6: FPS counter overhead
     _ = time.time()
 
-    return weed_centres, image_out
+    return synthetic_centres, frame_copy
 
 
-def simulate_current_frame(frame, algorithm, crop_slice, detector, params,
+def simulate_current_frame(frame, algorithm, detector, params,
                             relay_num, lane_coords_int, lane_width,
                             relay_controller, stream_lock, loop_times,
-                            frame_count, actuation_duration, delay):
+                            frame_count, actuation_duration, delay,
+                            synthetic_centres):
     """
     Simulates one iteration of the current hoot() loop.
 
     What happens per frame in current:
     1. loop_start = time.time()
     2. cam.read() [simulated: frame already provided]
-    3. Crop frame (edge artifact removal)
-    4. detector.inference() — class-based, no rectangle drawing when headless
-    5. Deduplicated relay actuation (fired set)
-    6. Stream frame copy (every 5th frame, thread-safe)
-    7. Loop time tracking (deque rolling average)
+    3. detector.inference() — class-based, no rectangle drawing when headless
+    4. Deduplicated relay actuation (fired set, using synthetic centres)
+    5. Stream frame copy (every 5th frame, thread-safe)
+    6. Loop time tracking (deque rolling average)
     """
     # Step 1: Loop timing
     loop_start = time.time()
 
-    # Step 3: Crop
-    cropped = frame[crop_slice]
-
-    # Step 4: Detection
-    cnts, boxes, weed_centres, image_out = detector.inference(
-        cropped, algorithm=algorithm, show_display=False,
+    # Step 3: Detection (timed, output not used for actuation)
+    detector.inference(
+        frame, algorithm=algorithm, show_display=False,
         exg_min=params['exgMin'], exg_max=params['exgMax'],
         hue_min=params['hueMin'], hue_max=params['hueMax'],
         saturation_min=params['saturationMin'], saturation_max=params['saturationMax'],
         brightness_min=params['brightnessMin'], brightness_max=params['brightnessMax'],
         min_detection_area=params['minArea'])
 
-    # Step 5: Deduplicated actuation
-    if weed_centres:
+    # Step 4: Deduplicated actuation using synthetic centres
+    if synthetic_centres:
         actuation_time = time.time()
         fired = set()
-        for centre in weed_centres:
+        for centre in synthetic_centres:
             relay_id = min(int(centre[0] / lane_width), relay_num - 1)
             fired.add(relay_id)
         for relay_id in fired:
             relay_controller.receive(relay=relay_id, delay=delay,
                                       time_stamp=actuation_time, duration=actuation_duration)
 
-    # Step 6: Stream copy (simulate every-5th-frame behaviour)
+    # Step 5: Stream copy (simulate every-5th-frame behaviour)
     if frame_count % 5 == 0:
         with stream_lock:
             _ = frame.copy()
 
-    # Step 7: Loop timing
+    # Step 6: Loop timing
     loop_time_ms = (time.time() - loop_start) * 1000
     loop_times.append(loop_time_ms)
 
-    return weed_centres, image_out
+    return synthetic_centres, frame
 
 
 # =============================================================================
@@ -500,42 +521,45 @@ def stats(times):
     }
 
 
-def run_full_loop_benchmark(algorithm, width, height, iterations=500):
-    """Benchmark the complete per-frame pipeline for all three versions."""
+def run_full_loop_benchmark(algorithm, width, height, iterations=1000,
+                            max_detections=50):
+    """Benchmark the complete per-frame pipeline for all three versions.
+
+    Each iteration uses a random number of synthetic weed centres (0 to
+    max_detections) so all three versions handle the same actuation load.
+    Detection still runs on a real image for accurate timing.
+    """
     nozzle_num = 4
     params = dict(exgMin=25, exgMax=200, hueMin=39, hueMax=83,
                   saturationMin=50, saturationMax=220,
                   brightnessMin=60, brightnessMax=190, minArea=10)
 
-    # Scale weed count with image size for realism
-    pixel_count = width * height
-    num_weeds = max(8, int(pixel_count / 40000))
-    img = make_test_image(width, height, num_weeds=num_weeds)
+    # Pre-generate synthetic centres: random count 0-max_detections per iteration
+    # Same sequence used for all three versions
+    warmup_centres = generate_synthetic_centres(
+        width, height, max_detections=max_detections, iterations=20, seed=99)
+    bench_centres = generate_synthetic_centres(
+        width, height, max_detections=max_detections, iterations=iterations, seed=42)
+
+    # Each iteration's image has the same number of weeds as its synthetic centres
+    # Deterministic seeds so all three versions get the exact same image per iteration
+    weed_counts = [len(c) for c in bench_centres]
+    avg_detections = statistics.mean(weed_counts)
 
     # --- v1 (Original 2021) setup ---
     nozzle_dict = {0: 13, 1: 15, 2: 16, 3: 18}
     orig_controller = OrigController(nozzle_dict)
     orig_lane_width = width / nozzle_num
     orig_lane_coords = {i: int(i * orig_lane_width) for i in range(nozzle_num)}
-    orig_y_act = int(0.2 * height)
 
     # --- v2 (Main branch) setup ---
     main_detector = MainGreenOnBrown(algorithm=algorithm)
-    main_controller = OrigController(nozzle_dict)  # same actuation as v1
+    main_controller = OrigController(nozzle_dict)
     main_lane_width = width / nozzle_num
     main_lane_coords = {i: int(i * main_lane_width) for i in range(nozzle_num)}
-    main_y_act = int(0.2 * height)
 
     # --- v3 (Current) setup ---
-    crop_h = 0.1
-    crop_v = 0.1
-    crop_left = int(width * crop_h)
-    crop_right = int(width - crop_left)
-    crop_top = int(height * crop_v)
-    crop_bottom = int(height - crop_top)
-    crop_slice = (slice(crop_top, crop_bottom), slice(crop_left, crop_right))
-    cropped_width = crop_right - crop_left
-    curr_lane_width = cropped_width / nozzle_num
+    curr_lane_width = width / nozzle_num
     curr_lane_coords_int = {i: int(i * curr_lane_width) for i in range(nozzle_num)}
     curr_detector = GreenOnBrown(algorithm=algorithm)
     curr_relay_controller = CurrentRelayController({0: 13, 1: 15, 2: 16, 3: 18})
@@ -544,61 +568,58 @@ def run_full_loop_benchmark(algorithm, width, height, iterations=500):
 
     print(f"\n{'='*80}")
     print(f"  FULL LOOP: {algorithm.upper()} @ {width}x{height}  ({iterations} iterations)")
-    print(f"  v1/v2 frame: {width}x{height} | v3 cropped: {cropped_width}x{crop_bottom - crop_top}")
+    print(f"  Synthetic detections per frame: 0-{max_detections} (avg {avg_detections:.1f})")
     print(f"{'='*80}")
 
-    # Verify all three work
-    test_wc_orig, _ = simulate_original_frame(
-        img.copy(), algorithm, params, nozzle_num, orig_lane_coords,
-        orig_lane_width, orig_y_act, orig_controller)
-    test_wc_main, _ = simulate_main_frame(
-        img.copy(), algorithm, main_detector, params, nozzle_num,
-        main_lane_coords, main_lane_width, main_y_act, main_controller)
-    test_wc_curr, _ = simulate_current_frame(
-        img.copy(), algorithm, crop_slice, curr_detector, params,
-        nozzle_num, curr_lane_coords_int, curr_lane_width,
-        curr_relay_controller, curr_stream_lock, curr_loop_times, 0, 0.15, 0)
-    print(f"  Detections -- v1: {len(test_wc_orig)}, v2 (main): {len(test_wc_main)}, v3 (current): {len(test_wc_curr)}")
-
-    # Warmup
+    # Warmup (fixed image)
+    warmup_img = make_test_image(width, height, num_weeds=25, seed=0)
     for i in range(20):
-        simulate_original_frame(img.copy(), algorithm, params, nozzle_num,
-                                 orig_lane_coords, orig_lane_width, orig_y_act, orig_controller)
-        simulate_main_frame(img.copy(), algorithm, main_detector, params, nozzle_num,
-                            main_lane_coords, main_lane_width, main_y_act, main_controller)
-        simulate_current_frame(img.copy(), algorithm, crop_slice, curr_detector, params,
+        centres = warmup_centres[i]
+        simulate_original_frame(warmup_img.copy(), algorithm, params, nozzle_num,
+                                 orig_lane_coords, orig_lane_width,
+                                 orig_controller, centres)
+        simulate_main_frame(warmup_img.copy(), algorithm, main_detector, params, nozzle_num,
+                            main_lane_coords, main_lane_width,
+                            main_controller, centres)
+        simulate_current_frame(warmup_img.copy(), algorithm, curr_detector, params,
                                 nozzle_num, curr_lane_coords_int, curr_lane_width,
-                                curr_relay_controller, curr_stream_lock, curr_loop_times, i, 0.15, 0)
+                                curr_relay_controller, curr_stream_lock, curr_loop_times,
+                                i, 0.15, 0, centres)
 
     # Benchmark v1 (original 2021)
     orig_times = []
     for i in range(iterations):
-        frame = img.copy()
+        img = make_test_image(width, height, num_weeds=weed_counts[i], seed=i)
+        centres = bench_centres[i]
         t0 = time.perf_counter()
-        simulate_original_frame(frame, algorithm, params, nozzle_num,
-                                 orig_lane_coords, orig_lane_width, orig_y_act, orig_controller)
+        simulate_original_frame(img, algorithm, params, nozzle_num,
+                                 orig_lane_coords, orig_lane_width,
+                                 orig_controller, centres)
         t1 = time.perf_counter()
         orig_times.append((t1 - t0) * 1000)
 
     # Benchmark v2 (main branch)
     main_times = []
     for i in range(iterations):
-        frame = img.copy()
+        img = make_test_image(width, height, num_weeds=weed_counts[i], seed=i)
+        centres = bench_centres[i]
         t0 = time.perf_counter()
-        simulate_main_frame(frame, algorithm, main_detector, params, nozzle_num,
-                            main_lane_coords, main_lane_width, main_y_act, main_controller)
+        simulate_main_frame(img, algorithm, main_detector, params, nozzle_num,
+                            main_lane_coords, main_lane_width,
+                            main_controller, centres)
         t1 = time.perf_counter()
         main_times.append((t1 - t0) * 1000)
 
     # Benchmark v3 (current)
     curr_times = []
     for i in range(iterations):
-        frame = img.copy()
+        img = make_test_image(width, height, num_weeds=weed_counts[i], seed=i)
+        centres = bench_centres[i]
         t0 = time.perf_counter()
-        simulate_current_frame(frame, algorithm, crop_slice, curr_detector, params,
+        simulate_current_frame(img, algorithm, curr_detector, params,
                                 nozzle_num, curr_lane_coords_int, curr_lane_width,
                                 curr_relay_controller, curr_stream_lock, curr_loop_times,
-                                i, 0.15, 0)
+                                i, 0.15, 0, centres)
         t1 = time.perf_counter()
         curr_times.append((t1 - t0) * 1000)
 
@@ -628,8 +649,9 @@ def run_full_loop_benchmark(algorithm, width, height, iterations=500):
     return {
         'algorithm': algorithm,
         'resolution': f"{width}x{height}",
-        'cropped_resolution': f"{cropped_width}x{crop_bottom - crop_top}",
         'iterations': iterations,
+        'max_detections': max_detections,
+        'avg_detections': round(avg_detections, 1),
         'v1_2021': orig_s,
         'v2_main': main_s,
         'v3_current': curr_s,
@@ -638,6 +660,12 @@ def run_full_loop_benchmark(algorithm, width, height, iterations=500):
         'v3_fps': round(curr_fps, 1),
         'speedup_v1_v3': round(v1_v3_speedup, 2),
         'speedup_v2_v3': round(v2_v3_speedup, 2),
+        'per_iteration': {
+            'weed_counts': weed_counts,
+            'v1_times_ms': [round(t, 3) for t in orig_times],
+            'v2_times_ms': [round(t, 3) for t in main_times],
+            'v3_times_ms': [round(t, 3) for t in curr_times],
+        },
     }
 
 
@@ -660,12 +688,6 @@ def run_component_breakdown(algorithm, width, height, iterations=500):
     curr_ctrl = CurrentRelayController(nozzle_dict)
     stream_lock = threading.Lock()
 
-    crop_h, crop_v = 0.1, 0.1
-    crop_left = int(width * crop_h)
-    crop_right = int(width - crop_left)
-    crop_top = int(height * crop_v)
-    crop_bottom = int(height - crop_top)
-    crop_slice = (slice(crop_top, crop_bottom), slice(crop_left, crop_right))
     lane_width = width / nozzle_num
     lane_coords = {i: int(i * lane_width) for i in range(nozzle_num)}
 
@@ -680,16 +702,7 @@ def run_component_breakdown(algorithm, width, height, iterations=500):
         times.append((t1 - t0) * 1000)
     components['frame_copy'] = stats(times)
 
-    # 2. Crop slice (current only)
-    times = []
-    for _ in range(iterations):
-        t0 = time.perf_counter()
-        _ = img[crop_slice]
-        t1 = time.perf_counter()
-        times.append((t1 - t0) * 1000)
-    components['crop_slice'] = stats(times)
-
-    # 3. Original detection (includes rectangle drawing)
+    # 2. Original detection (includes rectangle drawing)
     times = []
     for _ in range(iterations):
         frame = img.copy()
@@ -699,11 +712,10 @@ def run_component_breakdown(algorithm, width, height, iterations=500):
         times.append((t1 - t0) * 1000)
     components['orig_detection'] = stats(times)
 
-    # 4. Current detection (no drawing when show_display=False)
+    # 3. Current detection (no drawing when show_display=False)
     times = []
-    cropped = img[crop_slice]
     for _ in range(iterations):
-        frame = cropped.copy()
+        frame = img.copy()
         t0 = time.perf_counter()
         curr_detector.inference(frame, algorithm=algorithm, show_display=False,
                                  exg_min=params['exgMin'], exg_max=params['exgMax'],
@@ -717,24 +729,22 @@ def run_component_breakdown(algorithm, width, height, iterations=500):
         times.append((t1 - t0) * 1000)
     components['curr_detection'] = stats(times)
 
-    # 5. Original actuation (per-weed, per-lane, with logger)
+    # 4. Original actuation (per-weed, per-lane, with logger)
     fake_centres = [[100, 200], [300, 200], [500, 200], [200, 100]]
-    y_act = int(0.2 * height)
     times = []
     for _ in range(iterations):
         t0 = time.perf_counter()
         for ID, centre in enumerate(fake_centres):
-            if centre[1] > y_act:
-                spray_time = time.time()
-                for i in range(nozzle_num):
-                    if int(lane_coords[i]) <= centre[0] < int(lane_coords[i] + lane_width):
-                        orig_ctrl.receive(nozzle=i, timeStamp=spray_time, duration=0.15)
+            spray_time = time.time()
+            for i in range(nozzle_num):
+                if int(lane_coords[i]) <= centre[0] < int(lane_coords[i] + lane_width):
+                    orig_ctrl.receive(nozzle=i, timeStamp=spray_time, duration=0.15)
         t1 = time.perf_counter()
         times.append((t1 - t0) * 1000)
     components['orig_actuation'] = stats(times)
 
-    # 6. Current actuation (deduplicated, no logger per-call)
-    curr_lane_width = (crop_right - crop_left) / nozzle_num
+    # 5. Current actuation (deduplicated, no logger per-call)
+    curr_lane_width = width / nozzle_num
     times = []
     for _ in range(iterations):
         t0 = time.perf_counter()
@@ -750,7 +760,7 @@ def run_component_breakdown(algorithm, width, height, iterations=500):
         times.append((t1 - t0) * 1000)
     components['curr_actuation'] = stats(times)
 
-    # 7. Stream frame copy (current only, every 5th frame cost)
+    # 6. Stream frame copy (current only, every 5th frame cost)
     times = []
     for _ in range(iterations):
         t0 = time.perf_counter()
@@ -760,7 +770,7 @@ def run_component_breakdown(algorithm, width, height, iterations=500):
         times.append((t1 - t0) * 1000)
     components['stream_copy'] = stats(times)
 
-    # 8. Kernel creation overhead (original creates per-frame, current once in __init__)
+    # 7. Kernel creation overhead (original creates per-frame, current once in __init__)
     times = []
     for _ in range(iterations):
         t0 = time.perf_counter()
@@ -786,10 +796,11 @@ def main():
 
     iterations = args.iterations
 
+    algorithm = 'exhsv'
+
     if args.rpi:
         # IMX296 global shutter native: 1456x1088 (4:3-ish, actually 91:68)
         # Scale down at same aspect ratio, plus common OWL field resolutions
-        algorithms = ['exhsv']
         resolutions = [
             (416, 320),     # Minimum viable — Pi 3B+ safe
             (512, 384),     # Quarter-HD equivalent
@@ -799,12 +810,8 @@ def main():
             (1024, 768),    # XGA
             (1456, 1088),   # IMX296 native resolution
         ]
-        # Also test exg and hsv at the two most common field resolutions
-        extra_algos = [('exg', [(640, 480), (800, 608)]),
-                       ('hsv', [(640, 480), (800, 608)])]
         breakdown_res = (800, 608)
     else:
-        algorithms = ['exhsv']
         resolutions = [
             (416, 320),
             (640, 480),
@@ -812,8 +819,6 @@ def main():
             (1280, 720),
             (1920, 1080),
         ]
-        extra_algos = [('exg', [(640, 480), (1280, 720)]),
-                       ('hsv', [(640, 480), (1280, 720)])]
         breakdown_res = (1280, 720)
 
     mode = "RPi (IMX296 native)" if args.rpi else "Desktop"
@@ -825,15 +830,9 @@ def main():
 
     # --- Part 1: Full loop comparison ---
     all_results = []
-    for algo in algorithms:
-        for w, h in resolutions:
-            result = run_full_loop_benchmark(algo, w, h, iterations=iterations)
-            all_results.append(result)
-
-    for algo, res_list in extra_algos:
-        for w, h in res_list:
-            result = run_full_loop_benchmark(algo, w, h, iterations=iterations)
-            all_results.append(result)
+    for w, h in resolutions:
+        result = run_full_loop_benchmark(algorithm, w, h, iterations=iterations)
+        all_results.append(result)
 
     # Summary
     print(f"\n\n{'='*90}")
@@ -863,7 +862,6 @@ def main():
     print(f"  {'-'*72}")
     notes = {
         'frame_copy':      'Both versions (original copies before detection)',
-        'crop_slice':      'Current only (numpy view, near-zero cost)',
         'orig_detection':  'Original green_on_brown() + rectangle drawing',
         'curr_detection':  'Current GreenOnBrown.inference() (no drawing)',
         'orig_actuation':  'Per-weed per-lane + logger.log_line() per fire',
@@ -880,19 +878,17 @@ def main():
                   components['orig_detection']['mean'] +
                   components['orig_actuation']['mean'] +
                   components['kernel_creation']['mean'])
-    curr_total = (components['crop_slice']['mean'] +
-                  components['curr_detection']['mean'] +
+    curr_total = (components['curr_detection']['mean'] +
                   components['curr_actuation']['mean'] +
                   components['stream_copy']['mean'] * 0.2)  # 1 in 5 frames
     print(f"\n  Estimated total per frame:")
     print(f"    Original: {orig_total:.3f} ms  (detection + copy + actuation + kernel)")
-    print(f"    Current:  {curr_total:.3f} ms  (detection + crop + actuation + stream/5)")
+    print(f"    Current:  {curr_total:.3f} ms  (detection + actuation + stream/5)")
     if curr_total > 0:
         print(f"    Speedup:  {orig_total / curr_total:.2f}x")
 
     # What's new in current that didn't exist in original
     print(f"\n  ADDITIONAL WORK in current loop (not in original):")
-    print(f"    - Frame cropping (edge artifact removal)")
     print(f"    - MJPEG stream copy (every 5th frame)")
     print(f"    - Loop time tracking (deque rolling avg)")
     print(f"    - MQTT state sync (update_state thread)")
