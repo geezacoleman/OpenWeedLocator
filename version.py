@@ -8,8 +8,8 @@ from typing import Optional
 
 @dataclass
 class Version:
-    major: int = 2
-    minor: int = 3
+    major: int = 3
+    minor: int = 0
     patch: int = 0
     tag: Optional[str] = None
 
