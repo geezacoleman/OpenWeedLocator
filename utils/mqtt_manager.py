@@ -16,6 +16,7 @@ import socket
 
 from collections import deque
 from utils.config_manager import GREENONBROWN_PARAMS
+from utils.directory_manager import scan_sessions, collect_session_files
 
 try:
     import paho.mqtt.client as mqtt
@@ -703,7 +704,8 @@ class OWLMQTTPublisher:
                 ).start()
 
             elif action == 'transfer_session':
-                session_date = command.get('session_date', '')
+                # session_id (YYYYMMDD/session_HHMMSS) preferred; session_date (YYYYMMDD) for legacy
+                session_date = command.get('session_id') or command.get('session_date', '')
                 data_types = command.get('data_types', ['images', 'logs', 'tracks', 'config'])
                 upload_url = command.get('upload_url', '')
                 if session_date and upload_url:
@@ -716,7 +718,7 @@ class OWLMQTTPublisher:
                     self.logger.error("transfer_session missing session_date or upload_url")
 
             elif action == 'delete_session':
-                session_date = command.get('session_date', '')
+                session_date = command.get('session_id') or command.get('session_date', '')
                 data_types = command.get('data_types', ['images'])
                 if session_date:
                     threading.Thread(
@@ -1205,31 +1207,10 @@ class OWLMQTTPublisher:
             self._write_session_metadata(metadata)
 
     def _list_data_sessions(self):
-        """Scan save_directory for YYYYMMDD subdirs, logs, and tracks. Publish to state."""
-        import re
-
-        sessions = []
-
+        """Scan save_directory for recording sessions. Publish to state."""
         try:
-            # Scan image directories
             save_dir = getattr(self.owl_instance, 'save_directory', None) if self.owl_instance else None
-            if save_dir and os.path.isdir(save_dir):
-                date_pattern = re.compile(r'^\d{8}$')
-                for entry in sorted(os.listdir(save_dir)):
-                    entry_path = os.path.join(save_dir, entry)
-                    if os.path.isdir(entry_path) and date_pattern.match(entry):
-                        image_files = [f for f in os.listdir(entry_path)
-                                       if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-                        image_size = sum(
-                            os.path.getsize(os.path.join(entry_path, f))
-                            for f in image_files
-                        )
-                        sessions.append({
-                            'date': entry,
-                            'image_count': len(image_files),
-                            'image_size': image_size,
-                            'total_size': image_size,
-                        })
+            sessions = scan_sessions(save_dir)
 
             with self.state_lock:
                 self.state['data_sessions'] = sessions
@@ -1242,21 +1223,25 @@ class OWLMQTTPublisher:
             self._publish_state()
 
     def _upload_session(self, session_date, data_types, upload_url):
-        """ZIP and upload a data session to the controller. Runs in background thread."""
+        """ZIP and upload a data session to the controller. Runs in background thread.
+
+        session_date can be "YYYYMMDD" (all sessions under that date) or
+        "YYYYMMDD/session_HHMMSS" (specific session).
+        """
         import re
         import urllib.request
         import ssl
         import tempfile
         import zipfile
 
-        # Validate date format
-        if not re.match(r'^\d{8}$', session_date):
-            self.logger.error(f"Invalid session date: {session_date}")
+        # Validate format: date or date/session
+        if not re.match(r'^\d{8}(/session_\d{6})?$', session_date):
+            self.logger.error(f"Invalid session identifier: {session_date}")
             with self.state_lock:
                 self.state['data_transfer'] = {
                     'status': 'error', 'session_date': session_date,
                     'progress': 0, 'bytes_sent': 0, 'bytes_total': 0,
-                    'error': 'Invalid date format'
+                    'error': 'Invalid session identifier'
                 }
             self._publish_state()
             return
@@ -1276,16 +1261,10 @@ class OWLMQTTPublisher:
         try:
             save_dir = getattr(self.owl_instance, 'save_directory', None) if self.owl_instance else None
 
-            # Collect files to zip
-            files_to_zip = []  # (archive_name, full_path)
-
+            # Collect files to zip using shared scanner
+            files_to_zip = []
             if 'images' in data_types and save_dir:
-                img_dir = os.path.join(save_dir, session_date)
-                if os.path.isdir(img_dir):
-                    for f in os.listdir(img_dir):
-                        fp = os.path.join(img_dir, f)
-                        if os.path.isfile(fp):
-                            files_to_zip.append((f'images/{f}', fp))
+                files_to_zip = collect_session_files(save_dir, session_date)
 
             if not files_to_zip:
                 with self.state_lock:
@@ -1406,12 +1385,15 @@ class OWLMQTTPublisher:
                     pass
 
     def _delete_session(self, session_date, data_types):
-        """Delete a data session directory from the OWL. Runs in background thread."""
+        """Delete a data session directory from the OWL. Runs in background thread.
+
+        session_date can be "YYYYMMDD" or "YYYYMMDD/session_HHMMSS".
+        """
         import re
         import shutil
 
-        if not re.match(r'^\d{8}$', session_date):
-            self.logger.error(f"Invalid session date for deletion: {session_date}")
+        if not re.match(r'^\d{8}(/session_\d{6})?$', session_date):
+            self.logger.error(f"Invalid session identifier for deletion: {session_date}")
             return
 
         try:

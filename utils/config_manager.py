@@ -65,7 +65,7 @@ class ConfigValidator:
         },
         'Camera': {
             'required_keys': {'resolution_width', 'resolution_height'},
-            'optional_keys': {'exp_compensation', 'crop_factor_horizontal', 'crop_factor_vertical'}
+            'optional_keys': {'exp_compensation', 'crop_factor_horizontal', 'crop_factor_vertical', 'camera_type'}
         },
         'GreenOnGreen': {
             'required_keys': {'model_path', 'confidence'},
@@ -128,6 +128,12 @@ class ConfigValidator:
         'track_class_window': ('int', 1, 20),
         'track_crop_persist': ('int', 1, 10),
         'detection_persist_frames': ('int', 0, 15),
+        # Boolean fields
+        'image_sample_enable': ('bool', None, None),
+        'detection_enable': ('bool', None, None),
+        'log_fps': ('bool', None, None),
+        'invert_hue': ('bool', None, None),
+        'tracking_enabled': ('bool', None, None),
     }
 
     VALID_ALGORITHMS = {'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'gog', 'gog-hybrid'}
@@ -146,6 +152,25 @@ class ConfigValidator:
     VALID_CONTROLLER_TYPES = {'none', 'ute', 'advanced'}
     VALID_SWITCH_PURPOSES = {'recording', 'detection'}
     VALID_ACTUATION_MODES = {'centre', 'zone'}
+    VALID_CAMERA_TYPES = {'rpi', 'usb', 'auto'}
+    VALID_SAMPLE_METHODS = {'bbox', 'square', 'whole'}
+    VALID_BOOLEANS = {'true', 'false', '1', '0', 'yes', 'no', 'on', 'off'}
+
+    # Valid Raspberry Pi GPIO pins (BOARD numbering)
+    # Excludes: power pins (1, 2, 4, 17), ground pins (6, 9, 14, 20, 25, 30, 34, 39),
+    # and I2C EEPROM reserved pins (27, 28)
+    VALID_GPIO_PINS = {
+        3, 5, 7, 8, 10, 11, 12, 13, 15, 16, 18, 19,
+        21, 22, 23, 24, 26, 29, 31, 32, 33, 35, 36, 37, 38, 40
+    }
+
+    # Human-readable descriptions for invalid pins
+    RESERVED_PIN_DESCRIPTIONS = {
+        1: '3.3V Power', 2: '5V Power', 4: '5V Power', 17: '3.3V Power',
+        6: 'Ground', 9: 'Ground', 14: 'Ground', 20: 'Ground',
+        25: 'Ground', 30: 'Ground', 34: 'Ground', 39: 'Ground',
+        27: 'I2C EEPROM (ID_SD)', 28: 'I2C EEPROM (ID_SC)'
+    }
 
     # Sensitivity preset section keys
     SENSITIVITY_SECTION_KEYS = {
@@ -324,12 +349,19 @@ class ConfigValidator:
                 if max_val is not None and val > max_val:
                     return False, f"Value must be <= {max_val}"
 
+            elif val_type == 'bool':
+                if value.lower() not in cls.VALID_BOOLEANS:
+                    return False, f"Must be a boolean value (true/false, yes/no, 1/0, on/off)"
+
             elif val_type == 'pin':
                 val = int(value)
                 if min_val is not None and val < min_val:
                     return False, f"Pin must be >= {min_val}"
                 if max_val is not None and val > max_val:
                     return False, f"Pin must be <= {max_val}"
+                if val not in cls.VALID_GPIO_PINS:
+                    desc = cls.RESERVED_PIN_DESCRIPTIONS.get(val, 'Reserved/Invalid')
+                    return False, f"Pin {val} is not a valid GPIO pin ({desc})"
                 if val in used_pins:
                     return False, f"Pin {val} is already in use"
                 used_pins.add(val)
@@ -338,6 +370,66 @@ class ConfigValidator:
             return False, f"Must be a valid {val_type}"
 
         return True, ""
+
+    @classmethod
+    def validate_camera_type(cls, config: ConfigParser) -> Tuple[bool, Dict[str, Dict[str, str]]]:
+        """Validate camera type selection."""
+        if not config.has_option('Camera', 'camera_type'):
+            return True, {}  # Optional field, skip if not present
+
+        camera_type = config.get('Camera', 'camera_type', fallback='').lower()
+
+        if camera_type not in cls.VALID_CAMERA_TYPES:
+            return False, {'Camera': {
+                'camera_type': f'Invalid camera type. Must be one of: {", ".join(sorted(cls.VALID_CAMERA_TYPES))}'
+            }}
+
+        return True, {}
+
+    @classmethod
+    def validate_sample_method(cls, config: ConfigParser) -> Tuple[bool, Dict[str, Dict[str, str]]]:
+        """Validate sample method selection."""
+        if not config.has_option('DataCollection', 'sample_method'):
+            return True, {}  # Will be caught by required key validation
+
+        sample_method = config.get('DataCollection', 'sample_method', fallback='').lower()
+
+        if sample_method not in cls.VALID_SAMPLE_METHODS:
+            return False, {'DataCollection': {
+                'sample_method': f'Invalid sample method. Must be one of: {", ".join(sorted(cls.VALID_SAMPLE_METHODS))}'
+            }}
+
+        return True, {}
+
+    @classmethod
+    def validate_relay_pin_conflicts(cls, config: ConfigParser, used_pins: Set[int]) -> Tuple[bool, Dict[str, Dict[str, str]]]:
+        """Check relay pins don't conflict with controller pins and are valid GPIO pins."""
+        if not config.has_section('Relays'):
+            return True, {}
+
+        relay_errors = {}
+        relay_pins = set()
+
+        for key, value in config['Relays'].items():
+            try:
+                pin_val = int(value)
+            except ValueError:
+                continue  # validate_relays() handles format errors
+
+            if pin_val not in cls.VALID_GPIO_PINS:
+                desc = cls.RESERVED_PIN_DESCRIPTIONS.get(pin_val, 'Reserved/Invalid')
+                relay_errors[key] = f"Pin {pin_val} is not a valid GPIO pin ({desc})"
+            elif pin_val in relay_pins:
+                relay_errors[key] = f"Pin {pin_val} is already assigned to another relay"
+            elif pin_val in used_pins:
+                relay_errors[key] = f"Pin {pin_val} conflicts with a controller pin"
+            else:
+                relay_pins.add(pin_val)
+
+        if relay_errors:
+            return False, {'Relays': relay_errors}
+
+        return True, {}
 
     @classmethod
     def validate_relays(cls, config: ConfigParser) -> Tuple[bool, Dict[str, Dict[str, str]], list[str]]:
@@ -487,6 +579,16 @@ class ConfigValidator:
         if not is_valid:
             validation_errors.update(algorithm_errors)
 
+        # Validate camera type
+        is_valid, camera_errors = cls.validate_camera_type(config)
+        if not is_valid:
+            validation_errors.update(camera_errors)
+
+        # Validate sample method
+        is_valid, sample_errors = cls.validate_sample_method(config)
+        if not is_valid:
+            validation_errors.update(sample_errors)
+
         # Validate actuation_mode if present
         if config.has_option('GreenOnGreen', 'actuation_mode'):
             act_mode = config.get('GreenOnGreen', 'actuation_mode').strip().lower()
@@ -536,6 +638,15 @@ class ConfigValidator:
                     section_errors[key] = value + f" - {error_msg}"
             if section_errors:
                 validation_errors[section] = section_errors
+
+        # Validate relay pins against controller pins and GPIO validity
+        is_valid, relay_pin_errors = cls.validate_relay_pin_conflicts(config, used_pins)
+        if not is_valid:
+            for section, errs in relay_pin_errors.items():
+                if section in validation_errors:
+                    validation_errors[section].update(errs)
+                else:
+                    validation_errors[section] = errs
 
         # Validate Sensitivity_* preset sections
         sensitivity_errors = cls.validate_sensitivity_sections(config)

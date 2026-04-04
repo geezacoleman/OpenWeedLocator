@@ -1,6 +1,7 @@
 /* ==========================================================================
    Data Downloads Page Styles — Standalone
    Separate page (not kiosk) — laptop browser for data retrieval
+   Touch-friendly for tractor cab / glove operation
    ========================================================================== */
 
 /* Page container */
@@ -30,15 +31,17 @@
 }
 
 .downloads-back-link {
-    display: inline-block;
-    padding: 8px 16px;
-    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+    padding: 10px 20px;
+    font-size: 15px;
     color: var(--owl-accent, #3498db);
     text-decoration: none;
     border: 1px solid var(--owl-border, #dce1e8);
     border-radius: 6px;
     background: white;
     transition: background 0.15s;
+    min-height: 48px;
 }
 
 .downloads-back-link:hover {
@@ -75,6 +78,18 @@
     padding: 20px;
 }
 
+/* Header actions (summary + refresh) */
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.sessions-summary {
+    font-size: 13px;
+    color: var(--owl-text-light, #7f8c8d);
+}
+
 /* Empty state */
 .list-empty {
     padding: 32px 20px;
@@ -83,12 +98,12 @@
     font-size: 14px;
 }
 
-/* Session rows */
+/* Session rows — larger touch targets */
 .session-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 20px;
+    padding: 18px 20px;
     border-bottom: 1px solid var(--owl-border, #dce1e8);
 }
 
@@ -102,14 +117,14 @@
 }
 
 .session-date {
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 600;
     color: var(--owl-text-dark, #2c3e50);
-    margin-bottom: 2px;
+    margin-bottom: 4px;
 }
 
 .session-meta {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--owl-text-light, #7f8c8d);
     display: flex;
     gap: 12px;
@@ -118,15 +133,15 @@
 
 .session-actions {
     display: flex;
-    gap: 8px;
+    gap: 10px;
     flex-shrink: 0;
     margin-left: 16px;
 }
 
-/* Buttons */
+/* Buttons — glove-friendly sizing */
 .btn-dl {
-    padding: 8px 16px;
-    font-size: 13px;
+    padding: 10px 18px;
+    font-size: 14px;
     font-weight: 500;
     border: 1px solid var(--owl-border, #dce1e8);
     border-radius: 6px;
@@ -135,7 +150,7 @@
     color: var(--owl-text-dark, #2c3e50);
     transition: background 0.15s;
     white-space: nowrap;
-    min-height: 40px;
+    min-height: 48px;
     text-decoration: none;
     display: inline-flex;
     align-items: center;
@@ -180,30 +195,30 @@
 }
 
 .btn-dl.refresh {
-    font-size: 12px;
-    padding: 5px 12px;
-    min-height: auto;
+    font-size: 13px;
+    padding: 6px 14px;
+    min-height: 36px;
 }
 
-/* Storage bar */
+/* Storage bar — taller and more prominent */
 .storage-bar {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 12px;
 }
 
 .storage-bar-track {
     flex: 1;
-    height: 6px;
+    height: 12px;
     background: #e9ecef;
-    border-radius: 3px;
+    border-radius: 6px;
     overflow: hidden;
 }
 
 .storage-bar-fill {
     height: 100%;
     background: var(--owl-accent, #3498db);
-    border-radius: 3px;
+    border-radius: 6px;
     transition: width 0.3s;
 }
 
@@ -216,9 +231,25 @@
 }
 
 .storage-text {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--owl-text-light, #7f8c8d);
     white-space: nowrap;
+}
+
+/* Storage warning text */
+.storage-warning {
+    margin-top: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    min-height: 20px;
+}
+
+.storage-warning.warning {
+    color: #f39c12;
+}
+
+.storage-warning.critical {
+    color: var(--owl-danger, #e74c3c);
 }
 
 /* Session block (clickable row + collapsible preview) */

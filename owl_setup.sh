@@ -47,6 +47,7 @@ STATUS_DASHBOARD=""
 STATUS_GLOBAL_NUMPY=""
 STATUS_NUMPY_COMPAT=""
 STATUS_GOG_DEPS=""
+STATUS_CONTROLLER=""
 
 ERROR_UPGRADE=""
 ERROR_CAMERA=""
@@ -62,6 +63,7 @@ ERROR_DASHBOARD=""
 ERROR_GLOBAL_NUMPY=""
 ERROR_NUMPY_COMPAT=""
 ERROR_GOG_DEPS=""
+ERROR_CONTROLLER=""
 
 # Function to check the exit status of the last executed command
 check_status() {
@@ -105,17 +107,100 @@ install_dashboard_dependencies() {
 }
 
 check_camera_connection() {
-  echo -e "${GREEN}[INFO] Checking for connected Raspberry Pi camera...${NC}"
-  while true; do
-    if rpicam-hello --list-cameras 2>&1 | grep -q "No cameras available"; then
-      echo -e "${RED}[ERROR] No camera detected!${NC}"
-      read -p "Please connect a Raspberry Pi camera and press Enter to retry..." temp
-    else
-      echo -e "${GREEN}[INFO] Camera detected successfully.${NC}"
+  echo -e "${GREEN}[INFO] Checking for connected cameras...${NC}"
+
+  # 1 — Detect Raspberry Pi CSI camera via libcamera
+  if command -v rpicam-hello >/dev/null 2>&1; then
+    if rpicam-hello --list-cameras 2>&1 | grep -qv "No cameras available"; then
+      echo -e "${GREEN}[INFO] Raspberry Pi CSI camera detected.${NC}"
+      CAMERA_MODE="rpi"
       STATUS_CAMERA="${TICK}"
       return 0
     fi
-  done
+  fi
+
+  # 2 — Detect USB camera
+  if command -v v4l2-ctl >/dev/null 2>&1 && [[ -e /dev/video0 ]]; then
+    if v4l2-ctl -d /dev/video0 --all >/dev/null 2>&1; then
+      echo -e "${GREEN}[INFO] USB webcam detected at /dev/video0.${NC}"
+      CAMERA_MODE="usb"
+      STATUS_CAMERA="${TICK}"
+      return 0
+    fi
+  fi
+
+  # 3 — Neither found, warn but continue install
+  echo -e "${RED}[WARNING] No camera detected (no CSI or USB).${NC}"
+  echo -e "${RED}[WARNING] OWL will not run until a camera is present.${NC}"
+  CAMERA_MODE="none"
+  STATUS_CAMERA="${CROSS}"
+  return 0
+}
+
+test_camera_functionality() {
+  local mode="$1"  # "rpi", "usb" or "none"
+  local test_cmd=""
+
+  echo -e "${GREEN}[INFO] Testing camera functionality (mode: ${mode})...${NC}"
+
+  if [[ "$mode" == "none" ]]; then
+    echo -e "${RED}[WARN] Skipping camera test: no camera detected.${NC}"
+    STATUS_CAMERA_TEST="${CROSS}"
+    ERROR_CAMERA_TEST="No camera detected"
+    return
+  fi
+
+  if [[ "$mode" == "usb" ]]; then
+    if ! command -v v4l2-ctl >/dev/null 2>&1; then
+      echo -e "${ORANGE}[WARN] v4l2-ctl not found. Install with: sudo apt install v4l-utils${NC}"
+      STATUS_CAMERA_TEST="${CROSS}"
+      ERROR_CAMERA_TEST="v4l2-ctl missing for USB camera test"
+      return
+    fi
+
+    if [[ ! -e /dev/video0 ]]; then
+      echo -e "${RED}[WARNING] /dev/video0 not found. USB camera not available.${NC}"
+      STATUS_CAMERA_TEST="${CROSS}"
+      ERROR_CAMERA_TEST="No /dev/video0 device"
+      return
+    fi
+
+    # Headless-safe: just query controls / capabilities
+    test_cmd="v4l2-ctl -d /dev/video0 --all"
+  else
+    # Default to Raspberry Pi CSI camera mode
+    if ! command -v rpicam-hello >/dev/null 2>&1; then
+      echo -e "${ORANGE}[WARN] rpicam-hello not found. Skipping Pi camera test.${NC}"
+      STATUS_CAMERA_TEST="${CROSS}"
+      ERROR_CAMERA_TEST="rpicam-hello missing"
+      return
+    fi
+
+    # Headless-safe: no preview, short timeout
+    test_cmd="rpicam-hello --nopreview --timeout 200"
+  fi
+
+  # First test
+  ${test_cmd} > /dev/null 2>&1
+  if [ $? -ne 0 ]; then
+    echo -e "${RED}[WARNING] Camera test failed. Running full system upgrade to resolve potential issues...${NC}"
+    sudo apt full-upgrade -y
+    check_status "Full system upgrade" "FULL_UPGRADE"
+
+    echo -e "${GREEN}[INFO] Retesting camera after full upgrade...${NC}"
+    ${test_cmd} > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+      echo -e "${RED}[CRITICAL ERROR] Camera still not working after full upgrade. Please log an issue: https://github.com/geezacoleman/OpenWeedLocator/issues${NC}"
+      STATUS_CAMERA_TEST="${CROSS}"
+      ERROR_CAMERA_TEST="Camera test failed in mode '${mode}'"
+    else
+      echo -e "${GREEN}[INFO] Camera test passed after full upgrade.${NC}"
+      STATUS_CAMERA_TEST="${TICK}"
+    fi
+  else
+    echo -e "${GREEN}[INFO] Camera is working correctly.${NC}"
+    STATUS_CAMERA_TEST="${TICK}"
+  fi
 }
 
 setup_owl_systemd_service() {
@@ -179,27 +264,7 @@ check_status "System upgrade" "UPGRADE"
 check_camera_connection
 
 # Step 3: Test camera functionality
-echo -e "${GREEN}[INFO] Testing camera functionality...${NC}"
-rpicam-hello > /dev/null 2>&1
-if [ $? -ne 0 ]; then
-  echo -e "${RED}[WARNING] Camera test failed. Running full system upgrade to resolve potential issues...${NC}"
-  sudo apt full-upgrade -y
-  check_status "Full system upgrade" "FULL_UPGRADE"
-
-  echo -e "${GREEN}[INFO] Retesting camera after full upgrade...${NC}"
-  rpicam-hello > /dev/null 2>&1
-  if [ $? -ne 0 ]; then
-    echo -e "${RED}[CRITICAL ERROR] Camera still not working after full upgrade. Please log an issue: https://github.com/geezacoleman/OpenWeedLocator/issues${NC}"
-    STATUS_CAMERA_TEST="${CROSS}"
-    ERROR_CAMERA_TEST="No camera detected"
-  else
-    echo -e "${GREEN}[INFO] Camera test passed after full upgrade.${NC}"
-    STATUS_CAMERA_TEST="${TICK}"
-  fi
-else
-  echo -e "${GREEN}[INFO] Camera is working correctly.${NC}"
-  STATUS_CAMERA_TEST="${TICK}"
-fi
+test_camera_functionality "$CAMERA_MODE"
 
 # Step 4: Free up space
 echo -e "${GREEN}[INFO] Freeing up space by removing unnecessary packages...${NC}"
@@ -414,7 +479,52 @@ chmod +x "$DESKTOP_FILE"
 echo -e "${GREEN}[INFO] Focus OWL desktop icon created at: ${DESKTOP_FILE}${NC}"
 check_status "Creating desktop icon" "DESKTOP_ICON"
 
-# Step 12: Dashboard Setup
+# Step 12: Hardware Controller Setup
+echo -e "${GREEN}[INFO] Hardware controller setup...${NC}"
+echo -e "${GREEN}[INFO] If you have a physical switch panel connected to the GPIO pins,${NC}"
+echo -e "${GREEN}[INFO] select the matching controller type below.${NC}"
+echo ""
+echo "  Controller types:"
+echo "    none     - No hardware controller (dashboard-only control)"
+echo "    ute      - Single toggle switch (recording or detection)"
+echo "               Default pin: BOARD36, purpose: recording"
+echo "    advanced - Multi-switch panel (recording, sensitivity, detection mode)"
+echo "               Default pins: recording=BOARD38, sensitivity=BOARD40,"
+echo "               detection_up=BOARD36, detection_down=BOARD35"
+echo ""
+read -p "Enter controller type [none/ute/advanced] (default: none): " ctrl_choice
+ctrl_choice="${ctrl_choice,,}"  # lowercase
+ctrl_choice="${ctrl_choice:-none}"
+
+case "$ctrl_choice" in
+  none|ute|advanced )
+    echo -e "${GREEN}[INFO] Setting controller_type = ${ctrl_choice}${NC}"
+
+    OWL_CONFIG="${SCRIPT_DIR}/config/GENERAL_CONFIG.ini"
+    if [ -f "$OWL_CONFIG" ]; then
+      # Use awk to update key within the [Controller] section
+      awk -v sect="[Controller]" -v key="controller_type" -v val="$ctrl_choice" '
+        /^\[/ { in_sect = ($0 == sect) }
+        in_sect && index($0, key " = ") == 1 { $0 = key " = " val }
+        { print }
+      ' "$OWL_CONFIG" > "${OWL_CONFIG}.tmp" && mv "${OWL_CONFIG}.tmp" "$OWL_CONFIG"
+
+      echo -e "${TICK} controller_type = ${ctrl_choice} written to GENERAL_CONFIG.ini"
+      STATUS_CONTROLLER="${TICK}"
+    else
+      echo -e "${CROSS} GENERAL_CONFIG.ini not found at ${OWL_CONFIG}"
+      STATUS_CONTROLLER="${CROSS}"
+      ERROR_CONTROLLER="GENERAL_CONFIG.ini not found"
+    fi
+    ;;
+  * )
+    echo -e "${RED}[ERROR] Invalid controller type '${ctrl_choice}'. Keeping current setting.${NC}"
+    STATUS_CONTROLLER="${CROSS}"
+    ERROR_CONTROLLER="Invalid controller type entered"
+    ;;
+esac
+
+# Step 13: Dashboard Setup
 echo -e "${GREEN}[INFO] Dashboard setup available...${NC}"
 read -p "Do you want to add a web dashboard for remote control? (y/n): " dashboard_choice
 case "$dashboard_choice" in
@@ -442,7 +552,7 @@ case "$dashboard_choice" in
     ;;
 esac
 
-# Final Summary
+# Step 14: Final Summary
 echo -e "\n${GREEN}[INFO] Installation Summary:${NC}"
 echo -e "$STATUS_UPGRADE System Upgrade"
 echo -e "$STATUS_CAMERA Camera Detected"
@@ -466,6 +576,7 @@ fi
 
 echo -e "$STATUS_OWL_SERVICE OWL Service (systemd) Started"
 echo -e "$STATUS_DESKTOP_ICON Desktop Icon Created"
+echo -e "$STATUS_CONTROLLER Hardware Controller Configured"
 
 if [[ "$STATUS_DASHBOARD" == "${TICK}" ]]; then
     echo -e "$STATUS_DASHBOARD_DEPS Dashboard Python dependencies installed"
@@ -484,7 +595,7 @@ EOF
 
 echo -e "${GREEN}[COMPLETE] OWL version installed: ${OWL_VERSION}${NC}"
 
-# Step 13: Start OWL focusing
+# Step 15: Start OWL focusing
 read -p "Start OWL focusing? (y/n): " choice
 case "$choice" in
   y|Y ) echo -e "${GREEN}[INFO] Starting focusing...${NC}"; "$FOCUS_WRAPPER" &;;

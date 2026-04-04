@@ -170,6 +170,7 @@ class Owl:
         self.resolution = (self.config.getint('Camera', 'resolution_width'),
                            self.config.getint('Camera', 'resolution_height'))
         self.exp_compensation = self.config.getint('Camera', 'exp_compensation')
+        self.camera_type = self.config.get('Camera', 'camera_type', fallback='auto')
 
         # Relay Dict maps the reference relay number to a boardpin on the embedded device
         self.relay_dict = {}
@@ -451,7 +452,7 @@ class Owl:
         self.frame_height = None
 
         try:
-            self.cam = self.setup_media_source(input_file_or_directory)
+            self.cam = self.setup_media_source(input_file_or_directory, camera_type=self.camera_type)
             self.logger.info('Media source successfully set up...')
             time.sleep(1.0)
 
@@ -1121,12 +1122,13 @@ class Owl:
 
         self.logger.info(f"[INFO] Configuration saved to {new_config_path}")
 
-    def setup_media_source(self, input_file_or_directory):
+    def setup_media_source(self, input_file_or_directory, camera_type='auto'):
         """
         Configure and initialize the appropriate media source (camera or media file/directory).
 
         Args:
             input_file_or_directory: Optional path from CLI args to image/video source
+            camera_type: Camera selection ('auto', 'rpi', 'usb')
 
         Returns:
             VideoStream or FrameReader: Initialized media source
@@ -1173,7 +1175,8 @@ class Owl:
         # Set up camera if no file input specified
         try:
             media_source = VideoStream(resolution=self.resolution,
-                                       exp_compensation=self.exp_compensation)
+                                       exp_compensation=self.exp_compensation,
+                                       camera_type=camera_type)
             media_source.start()
 
             self.frame_width = media_source.frame_width

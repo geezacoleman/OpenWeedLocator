@@ -1,6 +1,7 @@
 /* ==========================================================================
-   Data Downloads Page Styles
+   Data Downloads Page Styles — Networked
    Separate page (not kiosk) — laptop browser for data retrieval
+   Touch-friendly for tractor cab / glove operation
    ========================================================================== */
 
 /* Page container */
@@ -30,15 +31,17 @@
 }
 
 .downloads-back-link {
-    display: inline-block;
-    padding: 8px 16px;
-    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+    padding: 10px 20px;
+    font-size: 15px;
     color: var(--owl-accent, #3498db);
     text-decoration: none;
     border: 1px solid var(--owl-border, #dce1e8);
     border-radius: 6px;
     background: white;
     transition: background 0.15s;
+    min-height: 48px;
 }
 
 .downloads-back-link:hover {
@@ -85,13 +88,13 @@
 .owl-select {
     flex: 1;
     padding: 10px 14px;
-    font-size: 14px;
+    font-size: 15px;
     border: 1px solid var(--owl-border, #dce1e8);
     border-radius: 6px;
     background: white;
     color: var(--owl-text-dark, #2c3e50);
     cursor: pointer;
-    min-height: 44px;
+    min-height: 48px;
 }
 
 /* Empty state */
@@ -102,12 +105,12 @@
     font-size: 14px;
 }
 
-/* Session rows */
+/* Session rows — larger touch targets */
 .session-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 20px;
+    padding: 18px 20px;
     border-bottom: 1px solid var(--owl-border, #dce1e8);
 }
 
@@ -121,14 +124,14 @@
 }
 
 .session-date {
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 600;
     color: var(--owl-text-dark, #2c3e50);
-    margin-bottom: 2px;
+    margin-bottom: 4px;
 }
 
 .session-meta {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--owl-text-light, #7f8c8d);
     display: flex;
     gap: 12px;
@@ -137,7 +140,7 @@
 
 .session-actions {
     display: flex;
-    gap: 8px;
+    gap: 10px;
     flex-shrink: 0;
     margin-left: 16px;
 }
@@ -147,7 +150,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 20px;
+    padding: 18px 20px;
     border-bottom: 1px solid var(--owl-border, #dce1e8);
 }
 
@@ -161,29 +164,29 @@
 }
 
 .file-name {
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 600;
     color: var(--owl-text-dark, #2c3e50);
-    margin-bottom: 2px;
+    margin-bottom: 4px;
     word-break: break-all;
 }
 
 .file-meta {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--owl-text-light, #7f8c8d);
 }
 
 .file-actions {
     display: flex;
-    gap: 8px;
+    gap: 10px;
     flex-shrink: 0;
     margin-left: 16px;
 }
 
-/* Buttons */
+/* Buttons — glove-friendly sizing */
 .btn-dl {
-    padding: 8px 16px;
-    font-size: 13px;
+    padding: 10px 18px;
+    font-size: 14px;
     font-weight: 500;
     border: 1px solid var(--owl-border, #dce1e8);
     border-radius: 6px;
@@ -192,7 +195,10 @@
     color: var(--owl-text-dark, #2c3e50);
     transition: background 0.15s;
     white-space: nowrap;
-    min-height: 40px;
+    min-height: 48px;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
 }
 
 .btn-dl:hover {
@@ -238,35 +244,35 @@
 }
 
 .btn-dl.refresh {
-    font-size: 12px;
-    padding: 5px 12px;
-    min-height: auto;
+    font-size: 13px;
+    padding: 6px 14px;
+    min-height: 36px;
 }
 
 /* Progress bar */
 .transfer-progress {
-    padding: 14px 20px;
+    padding: 18px 20px;
     border-bottom: 1px solid var(--owl-border, #dce1e8);
 }
 
 .transfer-progress-label {
-    font-size: 13px;
+    font-size: 14px;
     color: var(--owl-text-dark, #2c3e50);
-    margin-bottom: 8px;
+    margin-bottom: 10px;
 }
 
 .transfer-progress-track {
     width: 100%;
-    height: 8px;
+    height: 12px;
     background: #e9ecef;
-    border-radius: 4px;
+    border-radius: 6px;
     overflow: hidden;
 }
 
 .transfer-progress-fill {
     height: 100%;
     background: var(--owl-success, #2ecc71);
-    border-radius: 4px;
+    border-radius: 6px;
     transition: width 0.5s;
     width: 0%;
 }
@@ -276,8 +282,8 @@
 }
 
 .transfer-progress-text {
-    margin-top: 6px;
-    font-size: 12px;
+    margin-top: 8px;
+    font-size: 13px;
     color: var(--owl-text-light, #7f8c8d);
     text-align: center;
 }
@@ -287,21 +293,21 @@
     margin-top: 4px;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 12px;
 }
 
 .storage-bar-track {
     flex: 1;
-    height: 4px;
+    height: 12px;
     background: #e9ecef;
-    border-radius: 2px;
+    border-radius: 6px;
     overflow: hidden;
 }
 
 .storage-bar-fill {
     height: 100%;
     background: var(--owl-accent, #3498db);
-    border-radius: 2px;
+    border-radius: 6px;
     transition: width 0.3s;
 }
 
@@ -314,7 +320,7 @@
 }
 
 .storage-text {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--owl-text-light, #7f8c8d);
     white-space: nowrap;
 }

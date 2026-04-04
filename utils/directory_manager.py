@@ -1,10 +1,124 @@
 from datetime import datetime
 import utils.error_manager as errors
 import platform
+import re
 import time
 import os
 
 from utils.log_manager import LogManager
+
+
+# Shared constants for session scanning
+IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png')
+_DATE_PATTERN = re.compile(r'^\d{8}$')
+_SESSION_PATTERN = re.compile(r'^session_\d{6}$')
+
+
+def scan_sessions(save_dir):
+    """Scan save_dir for recording sessions.
+
+    Supports two directory structures:
+    - New: save_dir/YYYYMMDD/session_HHMMSS/ (per-recording sessions)
+    - Legacy: save_dir/YYYYMMDD/ (flat, all images in date dir)
+
+    Returns list of session dicts sorted newest-first, each with:
+        session_id, date, time, image_count, total_size
+    """
+    if not save_dir or not os.path.isdir(save_dir):
+        return []
+
+    sessions = []
+
+    for date_entry in sorted(os.listdir(save_dir), reverse=True):
+        date_path = os.path.join(save_dir, date_entry)
+        if not os.path.isdir(date_path) or not _DATE_PATTERN.match(date_entry):
+            continue
+
+        # Check for session subdirectories (new structure)
+        subdirs = [d for d in os.listdir(date_path)
+                   if os.path.isdir(os.path.join(date_path, d)) and _SESSION_PATTERN.match(d)]
+
+        if subdirs:
+            for sess in sorted(subdirs, reverse=True):
+                sess_path = os.path.join(date_path, sess)
+                image_files = [f for f in os.listdir(sess_path)
+                               if f.lower().endswith(IMAGE_EXTENSIONS)]
+                image_size = sum(
+                    os.path.getsize(os.path.join(sess_path, f))
+                    for f in image_files
+                )
+                sessions.append({
+                    'session_id': f"{date_entry}/{sess}",
+                    'date': date_entry,
+                    'time': sess.replace('session_', ''),
+                    'image_count': len(image_files),
+                    'image_size': image_size,
+                    'total_size': image_size,
+                })
+        else:
+            # Legacy structure: images directly in YYYYMMDD dir
+            image_files = [f for f in os.listdir(date_path)
+                           if f.lower().endswith(IMAGE_EXTENSIONS)]
+            if image_files:
+                image_size = sum(
+                    os.path.getsize(os.path.join(date_path, f))
+                    for f in image_files
+                )
+                sessions.append({
+                    'session_id': date_entry,
+                    'date': date_entry,
+                    'time': '',
+                    'image_count': len(image_files),
+                    'image_size': image_size,
+                    'total_size': image_size,
+                })
+
+    return sessions
+
+
+def collect_session_files(save_dir, session_id):
+    """Collect all image files for a session, ready for zipping.
+
+    session_id can be:
+    - "YYYYMMDD" — all images under that date (legacy flat + all session subdirs)
+    - "YYYYMMDD/session_HHMMSS" — specific session only
+
+    Returns list of (archive_name, full_path) tuples.
+    """
+    if not save_dir or not session_id:
+        return []
+
+    # Validate format
+    if not re.match(r'^\d{8}(/session_\d{6})?$', session_id):
+        return []
+
+    target = os.path.join(save_dir, session_id)
+    if not os.path.isdir(target):
+        return []
+
+    files = []
+
+    if '/' in session_id:
+        # Specific session: YYYYMMDD/session_HHMMSS
+        for f in os.listdir(target):
+            fp = os.path.join(target, f)
+            if os.path.isfile(fp) and f.lower().endswith(IMAGE_EXTENSIONS):
+                files.append((f'images/{f}', fp))
+    else:
+        # Date-level: collect from session subdirs AND flat files
+        for entry in os.listdir(target):
+            entry_path = os.path.join(target, entry)
+            if os.path.isdir(entry_path) and _SESSION_PATTERN.match(entry):
+                # Session subdir — include subdir name in archive path
+                for f in os.listdir(entry_path):
+                    fp = os.path.join(entry_path, f)
+                    if os.path.isfile(fp) and f.lower().endswith(IMAGE_EXTENSIONS):
+                        files.append((f'images/{entry}/{f}', fp))
+            elif os.path.isfile(entry_path) and entry.lower().endswith(IMAGE_EXTENSIONS):
+                # Legacy flat file
+                files.append((f'images/{entry}', entry_path))
+
+    return files
 
 
 class DirectorySetup:

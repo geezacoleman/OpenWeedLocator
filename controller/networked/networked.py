@@ -1847,11 +1847,12 @@ def api_downloads_request():
             return jsonify({'success': False, 'error': 'No data'}), 400
 
         device_id = data.get('device_id')
-        session_date = data.get('session_date')
+        # session_id (YYYYMMDD/session_HHMMSS) preferred; session_date (YYYYMMDD) for legacy
+        session_id = data.get('session_id') or data.get('session_date')
         data_types = data.get('data_types', ['images'])
 
-        if not device_id or not session_date:
-            return jsonify({'success': False, 'error': 'Missing device_id or session_date'}), 400
+        if not device_id or not session_id:
+            return jsonify({'success': False, 'error': 'Missing device_id or session identifier'}), 400
 
         if not controller.mqtt_connected or not controller.mqtt_client:
             return jsonify({'success': False, 'error': 'MQTT not connected'}), 503
@@ -1861,7 +1862,10 @@ def api_downloads_request():
             owl_state = controller.owls_state.get(device_id, {})
             sessions = owl_state.get('data_sessions', [])
 
-        session_info = next((s for s in sessions if s.get('date') == session_date), None)
+        # Match by session_id first, fall back to date match
+        session_info = next((s for s in sessions if s.get('session_id') == session_id), None)
+        if not session_info:
+            session_info = next((s for s in sessions if s.get('date') == session_id), None)
         if session_info:
             session_size_mb = session_info.get('total_size', 0) / (1024 * 1024)
             storage = _get_downloads_storage()
@@ -1880,7 +1884,7 @@ def api_downloads_request():
         topic = f'owl/{device_id}/commands'
         payload = json.dumps({
             'action': 'transfer_session',
-            'session_date': session_date,
+            'session_id': session_id,
             'data_types': data_types,
             'upload_url': upload_url,
         })
@@ -2046,11 +2050,11 @@ def api_downloads_delete_remote():
             return jsonify({'success': False, 'error': 'No data'}), 400
 
         device_id = data.get('device_id')
-        session_date = data.get('session_date')
+        session_id = data.get('session_id') or data.get('session_date')
         data_types = data.get('data_types', ['images'])
 
-        if not device_id or not session_date:
-            return jsonify({'success': False, 'error': 'Missing device_id or session_date'}), 400
+        if not device_id or not session_id:
+            return jsonify({'success': False, 'error': 'Missing device_id or session identifier'}), 400
 
         if not controller.mqtt_connected or not controller.mqtt_client:
             return jsonify({'success': False, 'error': 'MQTT not connected'}), 503
@@ -2058,7 +2062,7 @@ def api_downloads_delete_remote():
         topic = f'owl/{device_id}/commands'
         payload = json.dumps({
             'action': 'delete_session',
-            'session_date': session_date,
+            'session_id': session_id,
             'data_types': data_types,
         })
         result = controller.mqtt_client.publish(topic, payload)

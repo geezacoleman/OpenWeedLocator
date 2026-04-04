@@ -81,38 +81,90 @@
             });
     }
 
+    function formatSessionDate(dateStr, timeStr) {
+        if (!dateStr || dateStr.length !== 8) return dateStr || '';
+
+        var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        var y = dateStr.slice(0, 4);
+        var m = parseInt(dateStr.slice(4, 6), 10);
+        var d = parseInt(dateStr.slice(6, 8), 10);
+        var result = d + ' ' + months[m - 1] + ' ' + y;
+
+        if (timeStr && timeStr.length >= 4) {
+            result += ', ' + timeStr.slice(0, 2) + ':' + timeStr.slice(2, 4);
+        }
+        return result;
+    }
+
     function renderSessions(sessions) {
         if (sessions.length === 0) {
-            sessionsList.innerHTML = '<div class="list-empty">No data sessions found on this OWL</div>';
+            sessionsList.textContent = '';
+            var emptyDiv = document.createElement('div');
+            emptyDiv.className = 'list-empty';
+            emptyDiv.textContent = 'No data sessions found on this OWL';
+            sessionsList.appendChild(emptyDiv);
             return;
         }
 
-        var html = '';
+        // Build DOM elements safely — all user-facing strings go through textContent
+        sessionsList.textContent = '';
         sessions.forEach(function (s) {
             var sizeStr = formatBytes(s.total_size || 0);
-            html += '<div class="session-item">'
-                + '  <div class="session-info">'
-                + '    <div class="session-date">' + escapeHtml(s.date) + '</div>'
-                + '    <div class="session-meta">'
-                + '      <span>' + s.image_count + ' images</span>'
-                + '      <span>' + sizeStr + '</span>'
-                + '    </div>'
-                + '  </div>'
-                + '  <div class="session-actions">'
-                + '    <button class="btn-dl primary" onclick="requestTransfer(\'' + escapeAttr(s.date) + '\')">Transfer</button>'
-                + '    <button class="btn-dl danger" onclick="deleteRemote(\'' + escapeAttr(s.date) + '\')">Delete from OWL</button>'
-                + '  </div>'
-                + '</div>';
-        });
+            var sid = s.session_id || s.date;
+            var dateDisplay = formatSessionDate(s.date, s.time);
 
-        sessionsList.innerHTML = html;
+            var item = document.createElement('div');
+            item.className = 'session-item';
+
+            var info = document.createElement('div');
+            info.className = 'session-info';
+
+            var dateDiv = document.createElement('div');
+            dateDiv.className = 'session-date';
+            dateDiv.textContent = dateDisplay;
+            info.appendChild(dateDiv);
+
+            var meta = document.createElement('div');
+            meta.className = 'session-meta';
+            var imgSpan = document.createElement('span');
+            imgSpan.textContent = s.image_count + ' images';
+            meta.appendChild(imgSpan);
+            var sizeSpan = document.createElement('span');
+            sizeSpan.textContent = sizeStr;
+            meta.appendChild(sizeSpan);
+            info.appendChild(meta);
+
+            item.appendChild(info);
+
+            var actions = document.createElement('div');
+            actions.className = 'session-actions';
+
+            var transferBtn = document.createElement('button');
+            transferBtn.className = 'btn-dl primary';
+            transferBtn.textContent = 'Transfer';
+            transferBtn.addEventListener('click', (function (id) {
+                return function () { requestTransfer(id); };
+            })(sid));
+            actions.appendChild(transferBtn);
+
+            var deleteBtn = document.createElement('button');
+            deleteBtn.className = 'btn-dl danger';
+            deleteBtn.textContent = 'Delete from OWL';
+            deleteBtn.addEventListener('click', (function (id) {
+                return function () { deleteRemote(id); };
+            })(sid));
+            actions.appendChild(deleteBtn);
+
+            item.appendChild(actions);
+            sessionsList.appendChild(item);
+        });
     }
 
     // -----------------------------------------------------------------------
     // Transfer
     // -----------------------------------------------------------------------
 
-    function requestTransfer(sessionDate) {
+    function requestTransfer(sessionId) {
         if (!selectedDeviceId) {
             showToast('No OWL selected', 'error');
             return;
@@ -123,7 +175,7 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 device_id: selectedDeviceId,
-                session_date: sessionDate,
+                session_id: sessionId,
             })
         })
             .then(function (r) { return r.json(); })
@@ -277,20 +329,20 @@
     // Delete from OWL
     // -----------------------------------------------------------------------
 
-    function deleteRemote(sessionDate) {
+    function deleteRemote(sessionId) {
         if (!selectedDeviceId) {
             showToast('No OWL selected', 'error');
             return;
         }
 
-        if (!confirm('Delete session "' + sessionDate + '" from OWL? This removes the images permanently.')) return;
+        if (!confirm('Delete session "' + sessionId + '" from OWL? This removes the images permanently.')) return;
 
         fetch('/api/downloads/delete-remote', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 device_id: selectedDeviceId,
-                session_date: sessionDate,
+                session_id: sessionId,
             })
         })
             .then(function (r) { return r.json(); })

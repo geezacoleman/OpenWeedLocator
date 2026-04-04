@@ -65,6 +65,7 @@ resolution_height = 320
 exp_compensation = -2
 crop_factor_horizontal = 0.02
 crop_factor_vertical = 0.02
+camera_type = auto
 
 [GreenOnGreen]
 model_path = models

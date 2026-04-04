@@ -34,7 +34,8 @@ const CONFIG_FIELD_DEFS = {
         },
         'exp_compensation': { type: 'select', options: ['-4', '-3', '-2', '-1', '0', '1', '2', '3', '4'], help: 'Exposure compensation' },
         'crop_factor_horizontal': { type: 'number', step: 0.01, min: 0, max: 0.5, help: 'Horizontal crop factor' },
-        'crop_factor_vertical': { type: 'number', step: 0.01, min: 0, max: 0.5, help: 'Vertical crop factor' }
+        'crop_factor_vertical': { type: 'number', step: 0.01, min: 0, max: 0.5, help: 'Vertical crop factor' },
+        'camera_type': { type: 'select', options: ['auto', 'rpi', 'usb'], help: 'Camera type (auto detects Pi camera or USB webcam)' }
     },
     'GreenOnBrown': {
         'exg_min': { type: 'number', min: 0, max: 255 },

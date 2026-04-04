@@ -42,17 +42,6 @@
         <a class="downloads-back-link" href="/">Back to Dashboard</a>
     </div>
 
-    <!-- Sessions Card -->
-    <div class="downloads-card">
-        <div class="downloads-card-header">
-            <h2>Recording sessions</h2>
-            <button class="btn-dl refresh" id="refresh-btn">Refresh</button>
-        </div>
-        <div id="sessions-list">
-            <div class="list-empty">Loading sessions...</div>
-        </div>
-    </div>
-
     <!-- Storage Info Card -->
     <div class="downloads-card">
         <div class="downloads-card-header">
@@ -65,6 +54,21 @@
                 </div>
                 <span class="storage-text" id="storage-text">--</span>
             </div>
+            <div class="storage-warning" id="storage-warning"></div>
+        </div>
+    </div>
+
+    <!-- Sessions Card -->
+    <div class="downloads-card">
+        <div class="downloads-card-header">
+            <h2>Recording sessions</h2>
+            <div class="header-actions">
+                <span class="sessions-summary" id="sessions-summary"></span>
+                <button class="btn-dl refresh" id="refresh-btn">Refresh</button>
+            </div>
+        </div>
+        <div id="sessions-list">
+            <div class="list-empty">Loading sessions...</div>
         </div>
     </div>
 </div>

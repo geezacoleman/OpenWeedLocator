@@ -11,6 +11,174 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from utils.directory_manager import scan_sessions, collect_session_files
+
+
+# ---------------------------------------------------------------------------
+# Shared scanner tests (utils/directory_manager.py)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestScanSessions:
+
+    def test_scan_sessions_none_dir(self):
+        assert scan_sessions(None) == []
+
+    def test_scan_sessions_nonexistent_dir(self):
+        assert scan_sessions('/nonexistent/path') == []
+
+    def test_scan_sessions_empty_dir(self, tmp_path):
+        assert scan_sessions(str(tmp_path)) == []
+
+    def test_scan_sessions_flat_structure(self, tmp_path):
+        """Legacy flat structure: images directly in YYYYMMDD/."""
+        d = tmp_path / '20260331'
+        d.mkdir()
+        (d / 'img1.jpg').write_bytes(b'\xff\xd8' * 100)
+        (d / 'img2.png').write_bytes(b'\x89PNG' * 50)
+
+        sessions = scan_sessions(str(tmp_path))
+        assert len(sessions) == 1
+        s = sessions[0]
+        assert s['session_id'] == '20260331'
+        assert s['date'] == '20260331'
+        assert s['time'] == ''
+        assert s['image_count'] == 2
+        assert s['total_size'] > 0
+
+    def test_scan_sessions_subdir_structure(self, tmp_path):
+        """New structure: YYYYMMDD/session_HHMMSS/."""
+        date_dir = tmp_path / '20260331'
+        s1 = date_dir / 'session_143015'
+        s2 = date_dir / 'session_160000'
+        s1.mkdir(parents=True)
+        s2.mkdir(parents=True)
+
+        (s1 / 'img1.jpg').write_bytes(b'\xff\xd8' * 100)
+        (s1 / 'img2.jpg').write_bytes(b'\xff\xd8' * 200)
+        (s2 / 'capture.png').write_bytes(b'\x89PNG' * 50)
+
+        sessions = scan_sessions(str(tmp_path))
+        assert len(sessions) == 2
+
+        # Sorted newest first
+        assert sessions[0]['session_id'] == '20260331/session_160000'
+        assert sessions[0]['time'] == '160000'
+        assert sessions[0]['image_count'] == 1
+
+        assert sessions[1]['session_id'] == '20260331/session_143015'
+        assert sessions[1]['time'] == '143015'
+        assert sessions[1]['image_count'] == 2
+
+    def test_scan_sessions_multiple_dates(self, tmp_path):
+        """Multiple dates, each with sessions."""
+        for date in ['20260328', '20260331']:
+            s = tmp_path / date / 'session_120000'
+            s.mkdir(parents=True)
+            (s / 'img.jpg').write_bytes(b'\xff\xd8' * 50)
+
+        sessions = scan_sessions(str(tmp_path))
+        assert len(sessions) == 2
+        # Newest date first
+        assert sessions[0]['date'] == '20260331'
+        assert sessions[1]['date'] == '20260328'
+
+    def test_scan_sessions_ignores_non_date_dirs(self, tmp_path):
+        """Non-YYYYMMDD directories are ignored."""
+        (tmp_path / 'not_a_date').mkdir()
+        (tmp_path / '123').mkdir()
+        (tmp_path / 'file.txt').write_text('hello')
+        d = tmp_path / '20260331'
+        d.mkdir()
+        (d / 'img.jpg').write_bytes(b'\xff\xd8')
+
+        sessions = scan_sessions(str(tmp_path))
+        assert len(sessions) == 1
+        assert sessions[0]['date'] == '20260331'
+
+    def test_scan_sessions_empty_date_dir(self, tmp_path):
+        """Date dir with no images and no sessions is excluded."""
+        (tmp_path / '20260331').mkdir()
+        assert scan_sessions(str(tmp_path)) == []
+
+    def test_scan_sessions_path_with_spaces(self, tmp_path):
+        """Paths with spaces work correctly."""
+        spaced = tmp_path / '123 GB Storage'
+        s = spaced / '20260331' / 'session_120000'
+        s.mkdir(parents=True)
+        (s / 'img.jpg').write_bytes(b'\xff\xd8' * 100)
+
+        sessions = scan_sessions(str(spaced))
+        assert len(sessions) == 1
+        assert sessions[0]['image_count'] == 1
+
+
+@pytest.mark.unit
+class TestCollectSessionFiles:
+
+    def test_collect_none_inputs(self):
+        assert collect_session_files(None, '20260331') == []
+        assert collect_session_files('/tmp', None) == []
+
+    def test_collect_invalid_session_id(self, tmp_path):
+        assert collect_session_files(str(tmp_path), '../etc') == []
+        assert collect_session_files(str(tmp_path), 'abcd1234') == []
+
+    def test_collect_flat_date(self, tmp_path):
+        """Legacy: collect files from YYYYMMDD/ (flat)."""
+        d = tmp_path / '20260331'
+        d.mkdir()
+        (d / 'img1.jpg').write_bytes(b'\xff\xd8' * 100)
+        (d / 'img2.png').write_bytes(b'\x89PNG' * 50)
+        (d / 'readme.txt').write_text('not an image')
+
+        files = collect_session_files(str(tmp_path), '20260331')
+        assert len(files) == 2
+        arc_names = [f[0] for f in files]
+        assert 'images/img1.jpg' in arc_names
+        assert 'images/img2.png' in arc_names
+
+    def test_collect_specific_session(self, tmp_path):
+        """Collect files from a specific session_HHMMSS."""
+        s = tmp_path / '20260331' / 'session_143015'
+        s.mkdir(parents=True)
+        (s / 'img1.jpg').write_bytes(b'\xff\xd8' * 100)
+        (s / 'img2.jpg').write_bytes(b'\xff\xd8' * 200)
+
+        files = collect_session_files(str(tmp_path), '20260331/session_143015')
+        assert len(files) == 2
+        arc_names = [f[0] for f in files]
+        assert 'images/img1.jpg' in arc_names
+        assert 'images/img2.jpg' in arc_names
+
+    def test_collect_date_with_subdirs(self, tmp_path):
+        """Collect from all sessions under a date."""
+        s1 = tmp_path / '20260331' / 'session_120000'
+        s2 = tmp_path / '20260331' / 'session_140000'
+        s1.mkdir(parents=True)
+        s2.mkdir(parents=True)
+        (s1 / 'img1.jpg').write_bytes(b'\xff\xd8' * 100)
+        (s2 / 'img2.jpg').write_bytes(b'\xff\xd8' * 100)
+
+        files = collect_session_files(str(tmp_path), '20260331')
+        assert len(files) == 2
+        arc_names = [f[0] for f in files]
+        assert 'images/session_120000/img1.jpg' in arc_names
+        assert 'images/session_140000/img2.jpg' in arc_names
+
+    def test_collect_nonexistent_session(self, tmp_path):
+        assert collect_session_files(str(tmp_path), '99990101') == []
+
+    def test_collect_path_with_spaces(self, tmp_path):
+        """Paths with spaces work correctly."""
+        spaced = tmp_path / '123 GB Storage'
+        s = spaced / '20260331' / 'session_120000'
+        s.mkdir(parents=True)
+        (s / 'img.jpg').write_bytes(b'\xff\xd8' * 100)
+
+        files = collect_session_files(str(spaced), '20260331/session_120000')
+        assert len(files) == 1
+
 
 # ---------------------------------------------------------------------------
 # OWL-side tests (mqtt_manager methods)
@@ -68,12 +236,15 @@ class TestListDataSessions:
         assert mqtt_publisher.state['data_sessions'] == []
 
     def test_list_sessions_mixed_content(self, mqtt_publisher, tmp_path):
-        """Only valid YYYYMMDD directories are returned."""
+        """Only valid YYYYMMDD directories with images are returned."""
         save_dir = str(tmp_path / 'save')
         os.makedirs(save_dir)
 
-        # Valid date dir
-        os.makedirs(os.path.join(save_dir, '20260312'))
+        # Valid date dir with an image
+        valid_dir = os.path.join(save_dir, '20260312')
+        os.makedirs(valid_dir)
+        with open(os.path.join(valid_dir, 'img.jpg'), 'wb') as f:
+            f.write(b'\xff\xd8' * 100)
         # Invalid entries
         os.makedirs(os.path.join(save_dir, 'not_a_date'))
         os.makedirs(os.path.join(save_dir, '123'))
@@ -93,6 +264,29 @@ class TestListDataSessions:
         mqtt_publisher._list_data_sessions()
 
         assert mqtt_publisher.state['data_sessions'] == []
+
+    def test_list_sessions_with_subdirs(self, mqtt_publisher, tmp_path):
+        """session_HHMMSS subdirectories are enumerated correctly."""
+        save_dir = str(tmp_path / 'save')
+        date_dir = os.path.join(save_dir, '20260331')
+        s1 = os.path.join(date_dir, 'session_143015')
+        s2 = os.path.join(date_dir, 'session_160000')
+        os.makedirs(s1)
+        os.makedirs(s2)
+
+        with open(os.path.join(s1, 'img1.jpg'), 'wb') as f:
+            f.write(b'\xff\xd8' * 100)
+        with open(os.path.join(s2, 'img2.jpg'), 'wb') as f:
+            f.write(b'\xff\xd8' * 200)
+
+        mqtt_publisher.owl_instance.save_directory = save_dir
+        mqtt_publisher._list_data_sessions()
+
+        sessions = mqtt_publisher.state['data_sessions']
+        assert len(sessions) == 2
+        ids = [s['session_id'] for s in sessions]
+        assert '20260331/session_160000' in ids
+        assert '20260331/session_143015' in ids
 
 
 @pytest.mark.unit
@@ -179,7 +373,82 @@ class TestUploadSession:
             '../etc', ['images'], 'https://controller/api/downloads/receive'
         )
         assert mqtt_publisher.state['data_transfer']['status'] == 'error'
-        assert 'Invalid date' in mqtt_publisher.state['data_transfer']['error']
+        assert 'Invalid' in mqtt_publisher.state['data_transfer']['error']
+
+    def test_upload_session_with_subdirs(self, mqtt_publisher, tmp_path):
+        """Upload works with session_HHMMSS subdirectory structure."""
+        save_dir = str(tmp_path / 'save')
+        s = os.path.join(save_dir, '20260331', 'session_143015')
+        os.makedirs(s)
+        with open(os.path.join(s, 'test.jpg'), 'wb') as f:
+            f.write(b'\xff\xd8' * 100)
+
+        mqtt_publisher.owl_instance.save_directory = save_dir
+
+        received_chunks = []
+
+        def mock_urlopen(req, **kwargs):
+            reader = req.data
+            while True:
+                chunk = reader.read(65536)
+                if not chunk:
+                    break
+                received_chunks.append(chunk)
+            mock_resp = MagicMock()
+            mock_resp.getcode.return_value = 200
+            return mock_resp
+
+        with patch('urllib.request.urlopen', side_effect=mock_urlopen):
+            mqtt_publisher._upload_session(
+                '20260331/session_143015', ['images'],
+                'https://controller/api/downloads/receive'
+            )
+
+        assert mqtt_publisher.state['data_transfer']['status'] == 'complete'
+        zip_data = b''.join(received_chunks)
+        zf = zipfile.ZipFile(io.BytesIO(zip_data))
+        assert 'images/test.jpg' in zf.namelist()
+        zf.close()
+
+    def test_upload_date_level_with_subdirs(self, mqtt_publisher, tmp_path):
+        """Upload a full date collects files from all session subdirs."""
+        save_dir = str(tmp_path / 'save')
+        s1 = os.path.join(save_dir, '20260331', 'session_120000')
+        s2 = os.path.join(save_dir, '20260331', 'session_140000')
+        os.makedirs(s1)
+        os.makedirs(s2)
+        with open(os.path.join(s1, 'a.jpg'), 'wb') as f:
+            f.write(b'\xff\xd8' * 50)
+        with open(os.path.join(s2, 'b.jpg'), 'wb') as f:
+            f.write(b'\xff\xd8' * 50)
+
+        mqtt_publisher.owl_instance.save_directory = save_dir
+
+        received_chunks = []
+
+        def mock_urlopen(req, **kwargs):
+            reader = req.data
+            while True:
+                chunk = reader.read(65536)
+                if not chunk:
+                    break
+                received_chunks.append(chunk)
+            mock_resp = MagicMock()
+            mock_resp.getcode.return_value = 200
+            return mock_resp
+
+        with patch('urllib.request.urlopen', side_effect=mock_urlopen):
+            mqtt_publisher._upload_session(
+                '20260331', ['images'],
+                'https://controller/api/downloads/receive'
+            )
+
+        assert mqtt_publisher.state['data_transfer']['status'] == 'complete'
+        zip_data = b''.join(received_chunks)
+        zf = zipfile.ZipFile(io.BytesIO(zip_data))
+        names = zf.namelist()
+        assert len(names) == 2
+        zf.close()
 
 
 @pytest.mark.unit
@@ -492,7 +761,7 @@ class TestRequestTransfer:
         assert len(calls) == 1
         payload = json.loads(calls[0][0][1])
         assert payload['action'] == 'transfer_session'
-        assert payload['session_date'] == '20260312'
+        assert payload['session_id'] == '20260312'
 
     def test_request_transfer_owl_offline(self, dl_test_client):
         client, mock_ctrl, _ = dl_test_client
@@ -560,7 +829,7 @@ class TestDeleteRemote:
         assert len(calls) == 1
         payload = json.loads(calls[0][0][1])
         assert payload['action'] == 'delete_session'
-        assert payload['session_date'] == '20260312'
+        assert payload['session_id'] == '20260312'
 
 
 @pytest.mark.unit
@@ -635,6 +904,35 @@ def standalone_dl_client(tmp_path):
     return app.test_client(), save_dir
 
 
+@pytest.fixture
+def standalone_dl_client_subdirs(tmp_path):
+    """Standalone client with session_HHMMSS subdirectory structure."""
+    from controller.standalone.standalone import OWLDashboard
+
+    save_dir = tmp_path / 'save'
+    s1 = save_dir / '20260331' / 'session_143015'
+    s2 = save_dir / '20260331' / 'session_160000'
+    s1.mkdir(parents=True)
+    s2.mkdir(parents=True)
+    (s1 / 'img1.jpg').write_bytes(b'\xff\xd8' + b'\x00' * 1000)
+    (s1 / 'img2.jpg').write_bytes(b'\xff\xd8' + b'\x00' * 2000)
+    (s2 / 'capture.png').write_bytes(b'\x89PNG' + b'\x00' * 500)
+
+    dashboard = OWLDashboard.__new__(OWLDashboard)
+    dashboard.logger = MagicMock()
+    dashboard.config = MagicMock()
+    dashboard.mqtt_client = None
+    dashboard._get_save_directory = MagicMock(return_value=str(save_dir))
+
+    from flask import Flask
+    app = Flask(__name__,
+                template_folder=str(Path(__file__).parent.parent / 'controller' / 'standalone' / 'templates'),
+                static_folder=str(Path(__file__).parent.parent / 'controller' / 'standalone' / 'static'))
+    dashboard.app = app
+    dashboard.setup_routes()
+    return app.test_client(), save_dir
+
+
 @pytest.mark.unit
 class TestStandaloneDownloadSessions:
 
@@ -649,6 +947,21 @@ class TestStandaloneDownloadSessions:
         assert sessions[0]['date'] == '20260316'
         assert sessions[1]['date'] == '20260315'
         assert sessions[1]['image_count'] == 2
+
+    def test_list_sessions_with_subdirs(self, standalone_dl_client_subdirs):
+        """Session subdirectories are listed as separate sessions."""
+        client, _ = standalone_dl_client_subdirs
+        resp = client.get('/api/downloads/sessions')
+        assert resp.status_code == 200
+        sessions = resp.get_json()['sessions']
+        assert len(sessions) == 2
+        ids = [s['session_id'] for s in sessions]
+        assert '20260331/session_160000' in ids
+        assert '20260331/session_143015' in ids
+        # Check time is extracted
+        s1 = next(s for s in sessions if s['session_id'] == '20260331/session_143015')
+        assert s1['time'] == '143015'
+        assert s1['image_count'] == 2
 
     def test_list_sessions_includes_storage(self, standalone_dl_client):
         client, _ = standalone_dl_client

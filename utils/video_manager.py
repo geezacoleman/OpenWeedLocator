@@ -4,8 +4,10 @@ from urllib.parse import urlparse
 
 import cv2
 import time
+import platform
 import subprocess
 
+from typing import Optional
 from threading import Thread, Event, Condition, Lock
 from utils.log_manager import LogManager
 from utils.error_manager import CameraNotFoundError
@@ -27,6 +29,26 @@ try:
 
 except Exception as e:
     PICAMERA_VERSION = None
+
+
+def is_raspberry_pi() -> bool:
+    """Check if running on a Raspberry Pi."""
+    try:
+        with open('/proc/device-tree/model', 'r') as f:
+            model = f.read().lower()
+            return 'raspberry pi' in model
+    except (FileNotFoundError, IOError):
+        return False
+
+
+def get_platform_info() -> dict:
+    """Get platform information for camera selection."""
+    return {
+        'system': platform.system(),
+        'is_rpi': is_raspberry_pi(),
+        'picamera_version': PICAMERA_VERSION
+    }
+
 
 class StreamingHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -97,27 +119,46 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
 # class to support webcams
 class WebcamStream:
-    def __init__(self, src=0):
+    def __init__(self, src=0, resolution=(640, 480), framerate=30):
         self.logger = LogManager.get_logger(__name__)
         self.name = "WebcamStream"
         self.logger.info(f'Camera type: {self.name}')
-        self.stream = cv2.VideoCapture(src)
 
-        self.frame_width = self.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
-        self.frame_height = self.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        self.stream = cv2.VideoCapture(src)
 
         # Check if the stream opened successfully
         if not self.stream.isOpened():
             self.stream.release()
             self.logger.error(f'Unable to open video source: {src}')
-            raise ValueError("Unable to open video source:", src)
+            raise ValueError(f'Unable to open video source: {src}')
+
+        target_width, target_height = resolution
+
+        self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, target_width)
+        self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, target_height)
+        self.stream.set(cv2.CAP_PROP_FPS, framerate)
+
+        self.frame_width = int(self.stream.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.frame_height = int(self.stream.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        actual_fps = self.stream.get(cv2.CAP_PROP_FPS)
+
+        if (self.frame_width, self.frame_height) != (target_width, target_height):
+            self.logger.warning(
+                f"Requested resolution {target_width}x{target_height}, "
+                f"but got {self.frame_width}x{self.frame_height} from webcam."
+            )
+
+        if actual_fps != 0 and abs(actual_fps - framerate) > 1:
+            self.logger.warning(
+                f"Requested FPS {framerate}, but webcam reports {actual_fps:.1f}."
+            )
 
         # read the first frame from the stream
         self.grabbed, self.frame = self.stream.read()
         if not self.grabbed:
             self.stream.release()
             self.logger.error(f'Unable to read from video source: {src}')
-            raise ValueError("Unable to read from video source:", src)
+            raise ValueError(f'Unable to read from video source: {src}')
 
         # initialize the thread name, stop event, and the thread itself
         self.stop_event = Event()
@@ -150,7 +191,10 @@ class WebcamStream:
 
     def stop(self):
         self.stop_event.set()
-        self.thread.join()
+        if self.thread.is_alive():
+            self.thread.join(timeout=2.0)
+        if self.stream.isOpened():
+            self.stream.release()
 
 
 class PiCamera2Stream:
@@ -395,43 +439,154 @@ class PiCameraStream:
 
 # overarching class to determine which stream to use
 class VideoStream:
-    def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2, **kwargs):
-        self.CAMERA_VERSION = PICAMERA_VERSION if PICAMERA_VERSION is not None else 'webcam'
+    """
+    Unified video stream interface that automatically selects the appropriate
+    camera backend based on platform and configuration.
+
+    Camera type options:
+        - 'rpi': Force Raspberry Pi camera (PiCamera2 or legacy)
+        - 'usb': Force USB webcam
+        - 'auto': Auto-detect best available camera (Pi camera preferred on RPi)
+
+    On non-Linux systems (Windows/Mac), automatically uses USB webcam regardless
+    of camera_type setting.
+    """
+
+    def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2, camera_type='auto', **kwargs):
         self.logger = LogManager.get_logger(__name__)
+        self.platform_info = get_platform_info()
         self.frame_height = None
         self.frame_width = None
+        self.stream = None
 
-        if self.CAMERA_VERSION == 'legacy':
-            self.stream = PiCameraStream(resolution=resolution, exp_compensation=exp_compensation, **kwargs)
+        # Resolve effective camera type based on platform
+        effective_camera_type = self._resolve_camera_type(camera_type)
+        self.logger.info(
+            f"Camera selection: requested='{camera_type}', effective='{effective_camera_type}', "
+            f"platform={self.platform_info['system']}, is_rpi={self.platform_info['is_rpi']}, "
+            f"picamera_version={self.platform_info['picamera_version']}"
+        )
 
-        elif self.CAMERA_VERSION == 'picamera2':
-            self.stream = PiCamera2Stream(src=src, resolution=resolution, exp_compensation=exp_compensation, **kwargs)
+        # Initialize the appropriate stream
+        init_error = None
 
-        elif self.CAMERA_VERSION == 'webcam':
-            self.stream = WebcamStream(src=src)
+        if effective_camera_type == 'rpi':
+            init_error = self._init_rpi_camera(src, resolution, exp_compensation, **kwargs)
+
+        elif effective_camera_type == 'usb':
+            init_error = self._init_usb_camera(src, resolution)
 
         else:
-            self.logger.error(f"Unsupported camera version: {self.CAMERA_VERSION}")
-            raise ValueError(f"Unsupported camera version: {self.CAMERA_VERSION}")
+            raise ValueError(f"Unsupported camera type: {effective_camera_type}")
 
-        # set the image dimensions directly from the frame streamed
+        # Verify stream was initialized
+        if self.stream is None:
+            error_msg = "Failed to initialize any camera stream"
+            if init_error:
+                error_msg += f": {init_error}"
+            self.logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
+        # Set frame dimensions from the initialized stream
         self.frame_width = self.stream.frame_width
         self.frame_height = self.stream.frame_height
 
+    def _resolve_camera_type(self, camera_type: str) -> str:
+        """
+        Resolve the effective camera type based on platform.
+
+        Note: 'auto' makes a single selection based on platform detection - it does NOT
+        attempt fallback between camera types, as this can cause resource locking issues
+        (e.g., libcamera holding /dev/video* devices after a failed Pi camera init).
+        """
+        camera_type = camera_type.lower().strip()
+
+        # Non-Linux systems always use USB
+        if self.platform_info['system'] != 'Linux':
+            if camera_type == 'rpi':
+                self.logger.warning(
+                    f"RPi camera requested but running on {self.platform_info['system']}. "
+                    f"Using USB webcam instead."
+                )
+            return 'usb'
+
+        # Handle 'auto' - make a single decision, no fallback attempts
+        if camera_type == 'auto':
+            if self.platform_info['is_rpi'] and self.platform_info['picamera_version']:
+                self.logger.info("Auto mode on RPi with picamera available: selecting RPi camera")
+                return 'rpi'
+            else:
+                self.logger.info("Auto mode: selecting USB camera (not RPi or no picamera library)")
+                return 'usb'
+
+        return camera_type
+
+    def _init_rpi_camera(self, src, resolution, exp_compensation, **kwargs) -> Optional[str]:
+        """Initialize Raspberry Pi camera. Returns error message on failure, None on success."""
+        picamera_version = self.platform_info['picamera_version']
+
+        if picamera_version is None:
+            msg = "No PiCamera library available (neither picamera2 nor legacy picamera)"
+            self.logger.error(msg)
+            return msg
+
+        if picamera_version == 'picamera2':
+            try:
+                self.stream = PiCamera2Stream(
+                    src=src,
+                    resolution=resolution,
+                    exp_compensation=exp_compensation,
+                    **kwargs
+                )
+                return None
+            except Exception as e:
+                self.logger.error(f"PiCamera2Stream initialization failed: {e}", exc_info=True)
+                return str(e)
+
+        elif picamera_version == 'legacy':
+            try:
+                self.stream = PiCameraStream(
+                    resolution=resolution,
+                    exp_compensation=exp_compensation,
+                    **kwargs
+                )
+                return None
+            except Exception as e:
+                self.logger.error(f"PiCameraStream initialization failed: {e}", exc_info=True)
+                return str(e)
+
+        return f"Unknown picamera version: {picamera_version}"
+
+    def _init_usb_camera(self, src, resolution) -> Optional[str]:
+        """Initialize USB webcam. Returns error message on failure, None on success."""
+        # Determine video source based on platform
+        if self.platform_info['system'] == 'Linux':
+            video_src = src if isinstance(src, str) else '/dev/video0'
+        else:
+            video_src = src if isinstance(src, int) else 0
+
+        try:
+            self.stream = WebcamStream(src=video_src, resolution=resolution)
+            return None
+        except Exception as e:
+            self.logger.error(f"WebcamStream initialization failed: {e}", exc_info=True)
+            return str(e)
+
     def start(self):
-        # start the threaded video stream
+        """Start the threaded video stream."""
         return self.stream.start()
 
     def update(self):
-        # grab the next frame from the stream
+        """Grab the next frame from the stream."""
         self.stream.update()
 
     def read(self):
-        # return the current frame
+        """Return the current frame."""
         return self.stream.read()
 
     def stop(self):
-        # stop the thread and release any resources
-        self.stream.stop()
+        """Stop the thread and release any resources."""
+        if self.stream:
+            self.stream.stop()
 
 

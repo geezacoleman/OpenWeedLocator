@@ -24,6 +24,7 @@ import urllib.error
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from utils.mqtt_manager import DashMQTTSubscriber
 from utils.input_manager import get_rpi_version
+from utils.directory_manager import scan_sessions
 
 try:
     from flask import Flask, Response, render_template, request, jsonify, send_from_directory, send_file
@@ -740,69 +741,14 @@ class OWLDashboard:
 
         @self.app.route('/api/downloads/sessions')
         def api_downloads_sessions():
-            """List local recording sessions.
-
-            Supports two directory structures:
-            - New: save_dir/YYYYMMDD/session_HHMMSS/ (session per recording cycle)
-            - Legacy: save_dir/YYYYMMDD/ (flat, all images in date dir)
-            """
-            import re
-
+            """List local recording sessions."""
             save_dir = self._get_save_directory()
             if not save_dir or not os.path.isdir(save_dir):
                 return jsonify({'sessions': [], 'storage': None,
                                 'error': 'Save directory not configured or not found'})
 
-            sessions = []
-            date_pattern = re.compile(r'^\d{8}$')
-            session_pattern = re.compile(r'^session_\d{6}$')
-
             try:
-                for date_entry in sorted(os.listdir(save_dir), reverse=True):
-                    date_path = os.path.join(save_dir, date_entry)
-                    if not os.path.isdir(date_path) or not date_pattern.match(date_entry):
-                        continue
-
-                    # Check for session subdirectories (new structure)
-                    subdirs = [d for d in os.listdir(date_path)
-                               if os.path.isdir(os.path.join(date_path, d)) and session_pattern.match(d)]
-
-                    if subdirs:
-                        # New structure: each session_HHMMSS is a separate session
-                        for sess in sorted(subdirs, reverse=True):
-                            sess_path = os.path.join(date_path, sess)
-                            image_files = [f for f in os.listdir(sess_path)
-                                           if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-                            image_size = sum(
-                                os.path.getsize(os.path.join(sess_path, f))
-                                for f in image_files
-                            )
-                            # session_id encodes full path: "YYYYMMDD/session_HHMMSS"
-                            sessions.append({
-                                'session_id': f"{date_entry}/{sess}",
-                                'date': date_entry,
-                                'time': sess.replace('session_', ''),
-                                'image_count': len(image_files),
-                                'image_size': image_size,
-                                'total_size': image_size,
-                            })
-                    else:
-                        # Legacy structure: images directly in YYYYMMDD dir
-                        image_files = [f for f in os.listdir(date_path)
-                                       if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-                        if image_files:
-                            image_size = sum(
-                                os.path.getsize(os.path.join(date_path, f))
-                                for f in image_files
-                            )
-                            sessions.append({
-                                'session_id': date_entry,
-                                'date': date_entry,
-                                'time': '',
-                                'image_count': len(image_files),
-                                'image_size': image_size,
-                                'total_size': image_size,
-                            })
+                sessions = scan_sessions(save_dir)
             except OSError as e:
                 self.logger.error(f"Error scanning sessions: {e}")
                 return jsonify({'sessions': [], 'error': str(e)}), 500
@@ -1676,7 +1622,7 @@ class OWLDashboard:
                 config.read(config_path)
                 config_dir = config.get('DataCollection', 'save_directory', fallback=None)
                 if config_dir and os.path.isdir(config_dir):
-                    return config_dir
+                    return os.path.abspath(config_dir)
         except Exception as e:
             self.logger.warning(f"Could not read save_directory: {e}")
 
