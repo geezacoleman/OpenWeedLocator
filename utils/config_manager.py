@@ -7,12 +7,6 @@ import utils.error_manager as errors
 
 logger = logging.getLogger(__name__)
 
-GREENONBROWN_PARAMS = frozenset({
-    'exg_min', 'exg_max', 'hue_min', 'hue_max',
-    'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
-    'min_detection_area', 'invert_hue',
-})
-
 
 class ConfigValidator:
     """Validates OWL configuration files"""
@@ -63,14 +57,17 @@ class ConfigValidator:
                 }
             }
         },
+        'Visualisation': {
+            'required_keys': {'image_loop_time'},
+            'optional_keys': set()
+        },
         'Camera': {
             'required_keys': {'resolution_width', 'resolution_height'},
-            'optional_keys': {'exp_compensation', 'crop_factor_horizontal', 'crop_factor_vertical', 'camera_type'}
+            'optional_keys': {'exp_compensation', 'camera_type'}
         },
         'GreenOnGreen': {
             'required_keys': {'model_path', 'confidence'},
-            'optional_keys': {'detect_classes', 'actuation_mode', 'min_detection_pixels',
-                            'inference_resolution', 'crop_buffer_px'}
+            'optional_keys': {'class_filter_id'}
         },
         'GreenOnBrown': {
             'required_keys': {
@@ -85,8 +82,11 @@ class ConfigValidator:
             'optional_keys': {'sample_frequency', 'detection_enable', 'log_fps', 'camera_name'}
         },
         'Relays': {
+            # Required keys are dynamically determined by relay_num in [System]
+            # Validation is handled by validate_relays() method
             'required_keys': set(),
-            'optional_keys': {str(i) for i in range(16)}
+            'optional_keys': set(),
+            'dynamic_keys': True  # Flag to indicate keys are validated elsewhere
         }
     }
 
@@ -105,35 +105,25 @@ class ConfigValidator:
         'resolution_width': ('int', 1, None),
         'resolution_height': ('int', 1, None),
         # Camera settings
-        'exp_compensation': ('int', -10, 10),
-        # Detection confidence
+        'exp_compensation': ('float', -10, 10),
+        # Detection settings
         'confidence': ('float', 0, 1),
-        # GreenOnGreen
-        'min_detection_pixels': ('int', 1, None),
-        'inference_resolution': ('int', 160, 1280),
-        'crop_buffer_px': ('int', 0, 50),
-        'actuation_zone': ('int', 1, 100),
+        'min_detection_area': ('int', 1, None),
         # GPIO pins
         'switch_pin': ('pin', 1, 40),
         'detection_mode_pin_up': ('pin', 1, 40),
         'detection_mode_pin_down': ('pin', 1, 40),
         'recording_pin': ('pin', 1, 40),
         'sensitivity_pin': ('pin', 1, 40),
-        # Tracking (ByteTrack params)
-        'track_high_thresh': ('float', 0.01, 0.5),
-        'track_low_thresh': ('float', 0.01, 0.3),
-        'new_track_thresh': ('float', 0.01, 0.5),
-        'track_buffer': ('int', 10, 150),
-        'match_thresh': ('float', 0.1, 0.95),
-        'track_class_window': ('int', 1, 20),
-        'track_crop_persist': ('int', 1, 10),
-        'detection_persist_frames': ('int', 0, 15),
+        # Visualisation
+        'image_loop_time': ('int', 1, None),
+        # DataCollection
+        'sample_frequency': ('int', 1, None),
         # Boolean fields
-        'image_sample_enable': ('bool', None, None),
-        'detection_enable': ('bool', None, None),
+        'sample_images': ('bool', None, None),
+        'disable_detection': ('bool', None, None),
         'log_fps': ('bool', None, None),
         'invert_hue': ('bool', None, None),
-        'tracking_enabled': ('bool', None, None),
     }
 
     VALID_ALGORITHMS = {'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'gog', 'gog-hybrid'}
@@ -150,8 +140,7 @@ class ConfigValidator:
             pass
         return valid
     VALID_CONTROLLER_TYPES = {'none', 'ute', 'advanced'}
-    VALID_SWITCH_PURPOSES = {'recording', 'detection'}
-    VALID_ACTUATION_MODES = {'centre', 'zone'}
+    VALID_SWITCH_PURPOSES = {'recording', 'sensitivity'}
     VALID_CAMERA_TYPES = {'rpi', 'usb', 'auto'}
     VALID_SAMPLE_METHODS = {'bbox', 'square', 'whole'}
     VALID_BOOLEANS = {'true', 'false', '1', '0', 'yes', 'no', 'on', 'off'}
@@ -170,29 +159,6 @@ class ConfigValidator:
         6: 'Ground', 9: 'Ground', 14: 'Ground', 20: 'Ground',
         25: 'Ground', 30: 'Ground', 34: 'Ground', 39: 'Ground',
         27: 'I2C EEPROM (ID_SD)', 28: 'I2C EEPROM (ID_SC)'
-    }
-
-    # Sensitivity preset section keys
-    SENSITIVITY_SECTION_KEYS = {
-        'exg_min', 'exg_max', 'hue_min', 'hue_max',
-        'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
-        'min_detection_area',
-    }
-
-    # Optional top-level sections (not in REQUIRED_CONFIG)
-    OPTIONAL_SECTIONS = {
-        'Visualisation': {
-            'optional_keys': {'image_loop_time'}
-        },
-        'Sensitivity': {
-            'optional_keys': {'active'}
-        },
-        'Tracking': {
-            'optional_keys': {'tracking_enabled', 'track_high_thresh', 'track_low_thresh',
-                              'new_track_thresh', 'track_buffer', 'match_thresh',
-                              'track_class_window', 'track_crop_persist',
-                              'detection_persist_frames'}
-        },
     }
 
     # to check for valid ranges
@@ -256,6 +222,36 @@ class ConfigValidator:
         if algorithm not in valid:
             return False, {'System': {
                 'algorithm': f'Invalid algorithm. Must be one of: {", ".join(sorted(valid))}'
+            }}
+
+        return True, {}
+
+    @classmethod
+    def validate_camera_type(cls, config: ConfigParser) -> Tuple[bool, Dict[str, Dict[str, str]]]:
+        """Validate camera type selection."""
+        if not config.has_option('Camera', 'camera_type'):
+            return True, {}  # Optional field, skip if not present
+
+        camera_type = config.get('Camera', 'camera_type', fallback='').lower()
+
+        if camera_type not in cls.VALID_CAMERA_TYPES:
+            return False, {'Camera': {
+                'camera_type': f'Invalid camera type. Must be one of: {", ".join(sorted(cls.VALID_CAMERA_TYPES))}'
+            }}
+
+        return True, {}
+
+    @classmethod
+    def validate_sample_method(cls, config: ConfigParser) -> Tuple[bool, Dict[str, Dict[str, str]]]:
+        """Validate sample method selection."""
+        if not config.has_option('DataCollection', 'sample_method'):
+            return True, {}  # Will be caught by required key validation
+
+        sample_method = config.get('DataCollection', 'sample_method', fallback='').lower()
+
+        if sample_method not in cls.VALID_SAMPLE_METHODS:
+            return False, {'DataCollection': {
+                'sample_method': f'Invalid sample method. Must be one of: {", ".join(sorted(cls.VALID_SAMPLE_METHODS))}'
             }}
 
         return True, {}
@@ -327,8 +323,29 @@ class ConfigValidator:
         return not bool(threshold_errors), threshold_errors
 
     @classmethod
-    def validate_value(cls, key: str, value: str, used_pins: Set[int]) -> Tuple[bool, str]:
+    def validate_value(cls, key: str, value: str, used_pins: Set[int], relay_pins: Set[int], section: str = '') -> \
+    Tuple[bool, str]:
         """Validate a single config value."""
+
+        # Handle relay pins dynamically (any integer key in Relays section)
+        if section == 'Relays':
+            try:
+                relay_id = int(key)  # Validate key is an integer
+                pin_val = int(value)
+                if pin_val < 1 or pin_val > 40:
+                    return False, f"Relay pin must be between 1 and 40"
+                if pin_val not in cls.VALID_GPIO_PINS:
+                    desc = cls.RESERVED_PIN_DESCRIPTIONS.get(pin_val, 'Reserved/Invalid')
+                    return False, f"Pin {pin_val} is not a valid GPIO pin ({desc})"
+                if pin_val in relay_pins:
+                    return False, f"Pin {pin_val} is already assigned to another relay"
+                if pin_val in used_pins:
+                    return False, f"Pin {pin_val} is already in use by a controller function"
+                relay_pins.add(pin_val)
+                return True, ""
+            except ValueError:
+                return False, f"Relay key must be an integer and pin value must be a valid number"
+
         if key not in cls.VALUE_VALIDATORS:
             return True, ""
 
@@ -363,7 +380,9 @@ class ConfigValidator:
                     desc = cls.RESERVED_PIN_DESCRIPTIONS.get(val, 'Reserved/Invalid')
                     return False, f"Pin {val} is not a valid GPIO pin ({desc})"
                 if val in used_pins:
-                    return False, f"Pin {val} is already in use"
+                    return False, f"Pin {val} is already in use by another controller function"
+                if val in relay_pins:
+                    return False, f"Pin {val} is already in use by a relay"
                 used_pins.add(val)
 
         except ValueError:
@@ -540,7 +559,8 @@ class ConfigValidator:
     def load_and_validate_config(cls, config_path: Path) -> ConfigParser:
         """Load and validate configuration file."""
         config = ConfigParser()
-        used_pins = set()
+        used_pins: Set[int] = set()
+        relay_pins: Set[int] = set()
         validation_errors = {}
 
         # File existence and parsing must still raise immediately
@@ -589,55 +609,44 @@ class ConfigValidator:
         if not is_valid:
             validation_errors.update(sample_errors)
 
-        # Validate actuation_mode if present
-        if config.has_option('GreenOnGreen', 'actuation_mode'):
-            act_mode = config.get('GreenOnGreen', 'actuation_mode').strip().lower()
-            if act_mode and act_mode not in cls.VALID_ACTUATION_MODES:
-                if 'GreenOnGreen' not in validation_errors:
-                    validation_errors['GreenOnGreen'] = {}
-                validation_errors['GreenOnGreen']['actuation_mode'] = (
-                    f'Invalid actuation mode. Must be one of: {", ".join(sorted(cls.VALID_ACTUATION_MODES))}'
-                )
-
         # Threshold validation
         is_valid, threshold_errors = cls.validate_thresholds(config)
         if not is_valid:
             validation_errors.update(threshold_errors)
 
         # Check required sections
-        missing_sections = set(working_config.keys()) - set(config.sections())
+        # Filter out 'type_specific' from Controller when checking sections
+        required_sections = {k for k in working_config.keys() if k != 'type_specific'}
+        missing_sections = required_sections - set(config.sections())
         if missing_sections:
             validation_errors['missing_sections'] = {
                 'sections': f"Missing required sections: {', '.join(missing_sections)}"
             }
 
-        # Determine which controller pin keys are inactive (belong to a different controller type)
-        # so their pin values don't cause false "already in use" conflicts
-        controller_type = config.get('Controller', 'controller_type', fallback='none').strip("'\" ").lower()
-        _UTE_PINS = {'switch_pin'}
-        _ADVANCED_PINS = {'detection_mode_pin_up', 'detection_mode_pin_down', 'recording_pin', 'sensitivity_pin'}
-        if controller_type == 'ute':
-            inactive_pin_keys = _ADVANCED_PINS
-        elif controller_type == 'advanced':
-            inactive_pin_keys = _UTE_PINS
-        else:
-            inactive_pin_keys = _UTE_PINS | _ADVANCED_PINS
-
-        # Validate sections and values
-        for section in config.sections():
-            # Skip Sensitivity_* preset sections — validated separately below
-            if section.startswith('Sensitivity_'):
-                continue
+        # Process Relays section first to collect relay pins before validating controller pins
+        if 'Relays' in config.sections():
             section_errors = {}
-            for key, value in config[section].items():
-                # Skip pin conflict checks for controller pins that aren't active
-                if section == 'Controller' and key in inactive_pin_keys:
-                    continue
-                is_valid, error_msg = cls.validate_value(key, value, used_pins)
+            for key, value in config['Relays'].items():
+                is_valid, error_msg = cls.validate_value(key, value, used_pins, relay_pins, 'Relays')
                 if not is_valid:
                     section_errors[key] = value + f" - {error_msg}"
             if section_errors:
-                validation_errors[section] = section_errors
+                validation_errors['Relays'] = section_errors
+
+        # Validate remaining sections and values
+        for section in config.sections():
+            if section == 'Relays':
+                continue  # Already processed above
+            section_errors = {}
+            for key, value in config[section].items():
+                is_valid, error_msg = cls.validate_value(key, value, used_pins, relay_pins, section)
+                if not is_valid:
+                    section_errors[key] = value + f" - {error_msg}"
+            if section_errors:
+                if section in validation_errors:
+                    validation_errors[section].update(section_errors)
+                else:
+                    validation_errors[section] = section_errors
 
         # Validate relay pins against controller pins and GPIO validity
         is_valid, relay_pin_errors = cls.validate_relay_pin_conflicts(config, used_pins)
@@ -663,14 +672,14 @@ class ConfigValidator:
             logger.warning(warning)
 
         # Check required keys in each section
-        # Merge REQUIRED_CONFIG with OPTIONAL_SECTIONS for key checking
-        all_section_defs = dict(working_config)
-        for sec_name, sec_def in cls.OPTIONAL_SECTIONS.items():
-            if sec_name not in all_section_defs:
-                all_section_defs[sec_name] = {
-                    'required_keys': set(),
-                    'optional_keys': sec_def.get('optional_keys', set()),
-                }
+        for section, requirements in working_config.items():
+            # Skip type_specific as it's not a real section
+            if section == 'type_specific':
+                continue
+            if not isinstance(requirements, dict) or 'required_keys' not in requirements:
+                continue
+            if section not in config.sections():
+                continue  # Skip if section is missing - we've already recorded this error
 
         for section in config.sections():
             # Skip Sensitivity_* — validated separately
@@ -693,6 +702,10 @@ class ConfigValidator:
                 validation_errors[section].update({
                     k: "Required key missing" for k in missing_keys
                 })
+
+            # Skip sections with dynamic keys (like Relays)
+            if requirements.get('dynamic_keys', False):
+                continue
 
             unknown_keys = config_keys - (required_keys | optional_keys)
             if unknown_keys:
