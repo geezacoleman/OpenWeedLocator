@@ -121,7 +121,6 @@ check_camera_connection() {
 
   # 2 — Detect USB camera
   if command -v v4l2-ctl >/dev/null 2>&1 && [[ -e /dev/video0 ]]; then
-    # basic sanity check — camera responds
     if v4l2-ctl -d /dev/video0 --all >/dev/null 2>&1; then
       echo -e "${GREEN}[INFO] USB webcam detected at /dev/video0.${NC}"
       CAMERA_MODE="usb"
@@ -130,7 +129,7 @@ check_camera_connection() {
     fi
   fi
 
-  # 3 — Neither exists, warn but continue install
+  # 3 — Neither found, warn but continue install
   echo -e "${RED}[WARNING] No camera detected (no CSI or USB).${NC}"
   echo -e "${RED}[WARNING] OWL will not run until a camera is present.${NC}"
   CAMERA_MODE="none"
@@ -138,7 +137,6 @@ check_camera_connection() {
   return 0
 }
 
-# check to see if the camera works
 test_camera_functionality() {
   local mode="$1"  # "rpi", "usb" or "none"
   local test_cmd=""
@@ -205,6 +203,56 @@ test_camera_functionality() {
   fi
 }
 
+setup_owl_systemd_service() {
+  echo -e "${GREEN}[INFO] Creating systemd service for OWL...${NC}"
+
+  local SERVICE_FILE="/etc/systemd/system/owl.service"
+  local VENV_BIN="$HOME/.virtualenvs/owl/bin"
+
+  sudo tee "$SERVICE_FILE" > /dev/null <<EOF
+[Unit]
+Description=OpenWeedLocator (OWL) Main Application
+After=network-online.target mosquitto.service NetworkManager-wait-online.service
+Wants=network-online.target mosquitto.service NetworkManager-wait-online.service
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+Group=$(id -g -n $CURRENT_USER)
+WorkingDirectory=$SCRIPT_DIR
+Environment="PATH=$VENV_BIN:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=$VENV_BIN/python -u $SCRIPT_DIR/owl.py
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  sudo systemctl daemon-reload
+  sudo systemctl enable owl.service
+
+  echo -e "${GREEN}[INFO] Starting OWL service...${NC}"
+  sudo systemctl start owl.service
+
+  sleep 2
+
+  if systemctl is-active --quiet owl.service; then
+    echo -e "${TICK} OWL systemd service is active"
+    STATUS_OWL_SERVICE="${TICK}"
+  else
+    echo -e "${CROSS} OWL systemd service failed to start"
+    echo -e "${ORANGE}[INFO] Showing service logs for debugging:${NC}"
+    systemctl status owl.service --no-pager -l || true
+    echo -e "${ORANGE}[INFO] For live logs, run: journalctl -u owl.service -f${NC}"
+    STATUS_OWL_SERVICE="${CROSS}"
+    ERROR_OWL_SERVICE="owl.service failed to start"
+    return 1
+  fi
+}
 
 # Step 1: Perform a normal system update and upgrade
 echo -e "${GREEN}[INFO] Updating and upgrading the system...${NC}"
@@ -216,8 +264,7 @@ check_status "System upgrade" "UPGRADE"
 check_camera_connection
 
 # Step 3: Test camera functionality
-echo -e "${GREEN}[INFO] Testing camera functionality...${NC}"
-
+test_camera_functionality "$CAMERA_MODE"
 
 # Step 4: Free up space
 echo -e "${GREEN}[INFO] Freeing up space by removing unnecessary packages...${NC}"

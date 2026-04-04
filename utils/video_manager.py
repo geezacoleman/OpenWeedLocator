@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 import cv2
 import time
 import platform
+import subprocess
 
 from typing import Optional
 from threading import Thread, Event, Condition, Lock
@@ -12,44 +13,22 @@ from utils.log_manager import LogManager
 from utils.error_manager import CameraNotFoundError
 
 # determine availability of picamera versions
-PICAMERA_VERSION = None
-
 try:
     from picamera.array import PiRGBArray
     from picamera import PiCamera
-
     PICAMERA_VERSION = 'legacy'
-except ImportError:
-    pass
+
+except Exception as e:
+    PICAMERA_VERSION = None
 
 try:
     from picamera2 import Picamera2
     from libcamera import Transform
     import libcamera
-
     PICAMERA_VERSION = 'picamera2'
-except ImportError:
-    pass
 
-
-def is_raspberry_pi() -> bool:
-    """Check if running on a Raspberry Pi."""
-    try:
-        with open('/proc/device-tree/model', 'r') as f:
-            model = f.read().lower()
-            return 'raspberry pi' in model
-    except (FileNotFoundError, IOError):
-        return False
-
-
-def get_platform_info() -> dict:
-    """Get platform information for camera selection."""
-    return {
-        'system': platform.system(),
-        'is_rpi': is_raspberry_pi(),
-        'picamera_version': PICAMERA_VERSION
-    }
-
+except Exception as e:
+    PICAMERA_VERSION = None
 
 
 def is_raspberry_pi() -> bool:
@@ -376,10 +355,7 @@ class PiCamera2Stream:
 
     def stop(self):
         self.stopped.set()
-        with self.condition:
-            self.condition.notify_all()  # Wake up any waiting threads
-        if hasattr(self, 'thread') and self.thread.is_alive():
-            self.thread.join(timeout=2.0)
+        self.thread.join()
         self.camera.stop()
         time.sleep(2)  # Allow time for the camera to be released properly
 
@@ -458,8 +434,7 @@ class PiCameraStream:
         self.stopped.set()
 
         # Wait for the thread to finish
-        if self.thread.is_alive():
-            self.thread.join(timeout=2.0)
+        self.thread.join()
 
 
 # overarching class to determine which stream to use
@@ -502,12 +477,11 @@ class VideoStream:
             init_error = self._init_usb_camera(src, resolution)
 
         else:
-            # This shouldn't happen if _resolve_camera_type works correctly
             raise ValueError(f"Unsupported camera type: {effective_camera_type}")
 
         # Verify stream was initialized
         if self.stream is None:
-            error_msg = f"Failed to initialize any camera stream"
+            error_msg = "Failed to initialize any camera stream"
             if init_error:
                 error_msg += f": {init_error}"
             self.logger.error(error_msg)
@@ -547,7 +521,7 @@ class VideoStream:
 
         return camera_type
 
-    def _init_rpi_camera(self, src, resolution, exp_compensation, **kwargs) -> str | None:
+    def _init_rpi_camera(self, src, resolution, exp_compensation, **kwargs) -> Optional[str]:
         """Initialize Raspberry Pi camera. Returns error message on failure, None on success."""
         picamera_version = self.platform_info['picamera_version']
 
@@ -583,7 +557,7 @@ class VideoStream:
 
         return f"Unknown picamera version: {picamera_version}"
 
-    def _init_usb_camera(self, src, resolution) -> str | None:
+    def _init_usb_camera(self, src, resolution) -> Optional[str]:
         """Initialize USB webcam. Returns error message on failure, None on success."""
         # Determine video source based on platform
         if self.platform_info['system'] == 'Linux':
@@ -614,3 +588,5 @@ class VideoStream:
         """Stop the thread and release any resources."""
         if self.stream:
             self.stream.stop()
+
+
