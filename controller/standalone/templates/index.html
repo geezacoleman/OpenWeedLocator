@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OWL Controller</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="/shared/css/numpad.css">
+
+    <!-- Shared JS utilities (load first) -->
+    <script src="/shared/js/api.js" defer></script>
+    <script src="/shared/js/utils.js" defer></script>
+    <script src="/shared/js/toast.js" defer></script>
+    <script src="/shared/js/config.js" defer></script>
+    <script src="/shared/js/numpad.js" defer></script>
+    <script src="/shared/js/resolution_warning.js" defer></script>
+
+    <!-- App-specific JS modules -->
+    <script src="{{ url_for('static', filename='js/modules/_core.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/modules/_notifications.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/modules/_controls.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/modules/_storage.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/modules/_stats.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/modules/_ai_tab.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/modules/_config_tab.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/modules/_config.js') }}" defer></script>
+    <script src="/shared/js/widgets.js" defer></script>
+    <script>var isStandalone = true;</script>
+    <script src="/shared/js/agent.js" defer></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
+</head>
+<body>
+<div class="header">
+    <div class="header-content">
+        <div class="logo-section">
+            <h1>Dashboard</h1>
+        </div>
+        <div class="status-indicator">
+            <!-- Notification bell -->
+            <div class="notification-bell" id="notificationBell">
+                <svg class="bell-icon" viewBox="0 0 24 24">
+                    <path fill="currentColor" d="M12,2A2,2 0 0,1 14,4V4.5A4,4 0 0,1 18,8.5V14L20,16V17H4V16L6,14V8.5A4,4 0 0,1 10,4.5V4A2,2 0 0,1 12,2M7.5,18A1.5,1.5 0 0,0 9,19.5A1.5,1.5 0 0,0 10.5,18M16.5,18A1.5,1.5 0 0,0 18,19.5A1.5,1.5 0 0,0 19.5,18"/>
+                </svg>
+                <span class="notification-count hidden" id="notificationCount">0</span>
+            </div>
+            <div class="owl-status" id="owlStatus">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Connecting...</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="container">
+    <!-- Navigation Tabs -->
+    <div class="nav-tabs">
+        <div class="nav-tab active" data-tab="dashboard">
+            <span class="tab-text">Dashboard</span>
+        </div>
+        <div class="nav-tab" data-tab="storage">
+            <span class="tab-text">Storage</span>
+        </div>
+        <div class="nav-tab" data-tab="ai">
+            <span class="tab-text">AI</span>
+        </div>
+        <div class="nav-tab" data-tab="config">
+            <span class="tab-text">Config</span>
+        </div>
+        <div class="nav-tab" data-tab="agent">
+            <span class="tab-text">Agent</span>
+        </div>
+    </div>
+
+    <!-- Dashboard Tab -->
+    <div id="dashboard" class="tab-content active">
+        <div class="dashboard-grid">
+
+            <div class="card detection-card" id="cameraControlsCard">
+                <div class="card-title-row">
+                    <div class="title-left">
+                        <h2>Controls</h2>
+                        <span class="status-chip owl-service-status" id="owlStatusChip">
+                            <span class="dot"></span><span id="owlStatusText">Stopped</span>
+                        </span>
+                    </div>
+
+                    <!-- Power button lives here (top-right) -->
+                    <button
+                            id="owlPowerBtn"
+                            class="power-btn"
+                            aria-pressed="false"
+                            title="Start/Stop OWL">
+                        <!-- simple power icon -->
+                        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                            <path fill="currentColor"
+                                  d="M13 3h-2v10h2V3zm4.83 2.17l-1.41 1.41A7 7 0 1 1 7.59 6.6L6.17 5.17A9 9 0 1 0 21 12a8.96 8.96 0 0 0-3.17-6.83z"/>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Big switches -->
+                <div class="controls-stack">
+                    <!-- Detection switch -->
+                    <button class="owl-switch" id="detectSwitch" aria-pressed="false">
+                        <span class="switch-label">
+                            <svg aria-hidden viewBox="0 0 24 24" class="switch-icon">
+                                <path fill="currentColor" d="M16,7V4A2,2 0 0,0 14,2H10A2,2 0 0,0 8,4V7H16M7,9H17A2,2 0 0,1 19,11V20A2,2 0 0,1 17,22H7A2,2 0 0,1 5,20V11A2,2 0 0,1 7,9Z"/>
+                            </svg>
+                            <strong>Detection</strong>
+                        </span>
+                        <span class="switch-state" id="detectSwitchState">OFF</span>
+                    </button>
+
+                    <!-- Tracking switch -->
+                    <button class="owl-switch owl-switch--tracking" id="trackingSwitch" aria-pressed="false">
+                        <span class="switch-label">
+                            <svg aria-hidden viewBox="0 0 24 24" class="switch-icon">
+                                <path fill="currentColor" d="M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8M3.05,13H1V11H3.05C3.5,6.83 6.83,3.5 11,3.05V1H13V3.05C17.17,3.5 20.5,6.83 20.95,11H23V13H20.95C20.5,17.17 17.17,20.5 13,20.95V23H11V20.95C6.83,20.5 3.5,17.17 3.05,13M12,5A7,7 0 0,0 5,12A7,7 0 0,0 12,19A7,7 0 0,0 19,12A7,7 0 0,0 12,5Z"/>
+                            </svg>
+                            <strong>Tracking</strong>
+                        </span>
+                        <span class="switch-state" id="trackingSwitchState">OFF</span>
+                    </button>
+
+                    <!-- Track Stability (shown when tracking enabled) -->
+                    <div class="control-tile" id="track-stability-tile" style="display: none;">
+                        <div class="tile-label">Track stability</div>
+                        <div id="track-stability-buttons" class="segmented segmented--three">
+                            <button class="seg-btn" data-stability="low" onclick="setTrackStability('low')">Low</button>
+                            <button class="seg-btn active" data-stability="medium" onclick="setTrackStability('medium')">Med</button>
+                            <button class="seg-btn" data-stability="high" onclick="setTrackStability('high')">High</button>
+                        </div>
+                    </div>
+
+                    <!-- Recording + Nozzles split row -->
+                    <div class="split-row">
+                        <button class="owl-switch owl-switch--record" id="recordSwitch" aria-pressed="false">
+                            <span class="record-dot" id="recordDot"></span>
+                            <strong>Recording</strong>
+                            <span class="switch-state" id="recordSwitchState"></span>
+                        </button>
+                        <button class="owl-switch owl-switch--nozzles" id="nozzleSwitch" aria-pressed="false">
+                            <strong>All Nozzles</strong>
+                            <span class="switch-state" id="nozzleSwitchState"></span>
+                        </button>
+                    </div>
+
+                    <!-- Session info (collapsible) -->
+                    <div class="session-info" id="sessionInfo">
+                        <button class="session-info-toggle" id="sessionInfoToggle" type="button">
+                            <span>Session info</span>
+                            <svg class="session-chevron" id="sessionChevron" width="16" height="16" viewBox="0 0 24 24">
+                                <path fill="currentColor" d="M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"/>
+                            </svg>
+                        </button>
+                        <div class="session-info-body" id="sessionInfoBody" style="display: none;">
+                            <div class="session-fields">
+                                <div class="session-field">
+                                    <label for="metaFieldName">Field name</label>
+                                    <input type="text" id="metaFieldName" placeholder="e.g., North paddock">
+                                </div>
+                                <div class="session-field">
+                                    <label for="metaCrop">Crop</label>
+                                    <input type="text" id="metaCrop" placeholder="e.g., Wheat, Canola">
+                                </div>
+                                <div class="session-field">
+                                    <label for="metaWeather">Weather</label>
+                                    <input type="text" id="metaWeather" placeholder="e.g., Sunny, 22C">
+                                </div>
+                                <div class="session-field">
+                                    <label for="metaVehicle">Vehicle</label>
+                                    <input type="text" id="metaVehicle" placeholder="e.g., John Deere 6120M">
+                                </div>
+                            </div>
+                            <div class="session-actions-row">
+                                <button class="session-save-btn" id="sessionSaveBtn" onclick="saveSessionMetadata()">Save</button>
+                                <button class="session-edit-btn" id="sessionEditBtn" onclick="editSessionMetadata()" style="display: none;">Edit</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Pipeline Mode Selector -->
+                <div class="mode-selector" id="pipeline-mode-selector">
+                    <button class="mode-btn active" data-mode="gob" onclick="setPipelineMode('gob')">Colour</button>
+                    <button class="mode-btn" data-mode="gog" onclick="setPipelineMode('gog')">AI</button>
+                    <button class="mode-btn" data-mode="hybrid" onclick="setPipelineMode('hybrid')">Hybrid</button>
+                </div>
+
+                <!-- Same-row -->
+                <div class="two-up">
+                    <!-- Sensitivity presets -->
+                    <div class="control-tile">
+                        <div class="tile-label">Sensitivity</div>
+                        <div id="sensitivity-buttons" class="segmented segmented--three">
+                            <button class="seg-btn" data-sens="low">Low</button>
+                            <button class="seg-btn active" data-sens="medium">Med</button>
+                            <button class="seg-btn" data-sens="high">High</button>
+                        </div>
+                    </div>
+
+                    <!-- Fan (Auto / 100%) -->
+                    <div class="control-tile">
+                        <div class="tile-label">Fan</div>
+                        <div class="segmented">
+                            <button class="seg-btn active" data-fan="auto">Auto</button>
+                            <button class="seg-btn" data-fan="100">100%</button>
+                        </div>
+                        <div class="tile-subtle" id="fanRpmReadout">—</div>
+                    </div>
+                </div>
+
+                <!-- AI Confidence (visible in AI/Hybrid mode) -->
+                <div class="config-slider-group dash-confidence-slider" id="dash-confidence-group" style="display:none;">
+                    <div class="slider-header">
+                        <span class="slider-title">AI Confidence</span>
+                        <span class="slider-values">
+                            <span class="slider-val" id="dash-confidence-value">--</span>
+                            <span class="slider-val-sep">%</span>
+                        </span>
+                    </div>
+                    <div class="single-slider" data-param="confidence">
+                        <div class="slider-rail">
+                            <div class="slider-track"><div class="slider-fill"></div></div>
+                            <div class="slider-knob active" data-param="confidence" id="dash-confidence-knob"></div>
+                        </div>
+                    </div>
+                    <div class="slider-fine-tune">
+                        <button class="fine-btn" data-delta="-5">&minus;</button>
+                        <button class="fine-btn" data-delta="5">+</button>
+                    </div>
+                </div>
+
+                <!-- GPS Indicator -->
+                <div class="gps-indicator" id="gpsIndicator">
+                    <svg class="gps-indicator-icon" viewBox="0 0 24 24" width="18" height="18">
+                        <path fill="currentColor" d="M12,2A7,7 0 0,1 19,9C19,14.25 12,22 12,22C12,22 5,14.25 5,9A7,7 0 0,1 12,2M12,4A5,5 0 0,0 7,9C7,10 7,12 12,18.71C17,12 17,10 17,9A5,5 0 0,0 12,4M12,6.5A2.5,2.5 0 0,1 14.5,9A2.5,2.5 0 0,1 12,11.5A2.5,2.5 0 0,1 9.5,9A2.5,2.5 0 0,1 12,6.5"/>
+                    </svg>
+                    <span id="gpsStatusText">GPS Off</span>
+                    <label class="gps-label">
+                        <input type="checkbox" id="gpsToggle">
+                        <span class="gps-toggle-track"></span>
+                    </label>
+                </div>
+
+                <!-- Metrics footer with gradients -->
+                <div class="metrics-row">
+                    <span class="metric-chip cpu" id="chipCpu">CPU  <strong id="cpuChipVal">0%</strong></span>
+                    <span class="metric-chip mem" id="chipMem">Mem  <strong id="memChipVal">0%</strong></span>
+                    <span class="metric-chip temp" id="chipTemp">Temp <strong id="tempChipVal">0°C</strong></span>
+                </div>
+
+                <!-- Video Feed Toggle -->
+                <button class="preview-toggle-btn" id="previewToggle">Video Feed</button>
+                <div class="preview-container hidden" id="previewContainer">
+                    <img id="stream-img" class="preview-stream" src="/video_feed" alt="Camera Feed">
+                    <div id="stream-status-overlay" class="preview-overlay-message hidden">
+                        <p>Stream Unavailable</p>
+                    </div>
+                    <div class="preview-controls">
+                        <button class="icon-btn" id="fullscreenBtn">Fullscreen</button>
+                        <button class="icon-btn" id="downloadFrame">Save Frame</button>
+                    </div>
+                </div>
+
+                <!-- Widget slot: dashboard controls -->
+                <div data-widget-slot="dashboard_controls" class="widget-slot"></div>
+            </div>
+
+            <!-- Widget slot: dashboard footer -->
+            <div data-widget-slot="dashboard_footer" class="widget-slot"></div>
+
+        </div>
+    </div>
+    <!-- Storage Tab -->
+    <div id="storage" class="tab-content">
+        <div class="storage-container">
+            <div class="storage-section">
+                <div class="card">
+                    <h2>USB Storage</h2>
+                    <div class="storage-info" id="usbDevices">
+                        <p>Scanning for USB devices...</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="storage-section">
+                <div class="card">
+                    <h2>Recording Status</h2>
+                    <div class="recording-info">
+                        <div class="info-grid">
+                            <div class="info-item">
+                                <span class="info-label">Save Directory:</span>
+                                <span class="info-value" id="saveDirectory">Not set</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Available Space:</span>
+                                <span class="info-value" id="availableSpace">Unknown</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Total Recordings:</span>
+                                <span class="info-value" id="totalRecordings">0</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="storage-section storage-section-full">
+                <div class="card">
+                    <h2>File Browser</h2>
+                    <div class="file-browser">
+                        <div class="browser-controls">
+                            <button id="refreshFiles" class="btn-secondary">Refresh</button>
+                            <button id="downloadLogs" class="btn-primary">Download Logs</button>
+                        </div>
+                        <div class="file-list" id="fileList">
+                            <p>Click Refresh to browse recordings</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="storage-section storage-section-full" style="text-align: center; padding-top: 0;">
+                <a href="/downloads" class="btn-primary" style="display: inline-block; padding: 12px 24px; text-decoration: none; border-radius: 6px;">
+                    Download sessions as ZIP
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Tab -->
+    <div id="ai" class="tab-content">
+        <div class="ai-panel">
+            <!-- Status banner -->
+            <div class="ai-status-banner disconnected" id="ai-status-banner">
+                <span id="ai-status-text">Connecting...</span>
+            </div>
+
+            <!-- Model selector -->
+            <div class="ai-model-row">
+                <div class="ai-model-selector">
+                    <label for="ai-model-select">Model:</label>
+                    <div class="select-wrapper">
+                        <select class="ai-model-select" id="ai-model-select" onchange="onModelSelected()">
+                            <option value="">No models available</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="ai-model-info" id="ai-model-info"></div>
+            </div>
+
+            <!-- Class grid section -->
+            <div class="ai-classes-section">
+                <div class="ai-classes-header">
+                    <span class="ai-classes-title">Detection Classes</span>
+                    <span class="ai-classes-hint" id="ai-classes-hint">Select classes to detect (empty = all)</span>
+                </div>
+                <div class="ai-classes-grid" id="ai-classes-grid">
+                    <span style="color:var(--text-light);">Load a model to see classes</span>
+                </div>
+            </div>
+
+            <!-- Widget slot: after AI classes -->
+            <div data-widget-slot="ai_after_classes" class="widget-slot"></div>
+
+            <!-- Action bar -->
+            <div class="ai-action-bar">
+                <button class="btn-secondary" onclick="clearAIClassSelection()">Clear Selection</button>
+                <button class="btn-primary" onclick="applyAIClassSelection()">Apply</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Config Tab -->
+    <div id="config" class="tab-content">
+        <div class="config-container">
+
+            <!-- Config Header -->
+            <div class="card config-header-card">
+                <div class="config-header">
+                    <div class="config-title">
+                        <h2>Configuration Editor</h2>
+                        <div class="config-file-info">
+                            <span class="config-path" id="configFilePath">Loading...</span>
+                            <span class="config-badge default" id="activeConfigBadge">Default</span>
+                        </div>
+                    </div>
+                    <div class="config-actions">
+                        <select id="configSelector" class="config-select" title="Switch configuration">
+                            <option>Loading...</option>
+                        </select>
+                        <button id="reloadConfig" class="btn-secondary" title="Reload configuration">
+                            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                            Reload
+                        </button>
+                        <button id="resetDefault" class="btn-secondary" title="Reset to default config">
+                            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+                            Reset Default
+                        </button>
+                        <button id="saveConfig" class="btn-success" title="Save as new config file">
+                            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M17 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V7l-4-4zm2 16H5V5h11.17L19 7.83V19zm-7-7c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3zM6 6h9v4H6V6z"/></svg>
+                            Save As...
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live Slider Controls -->
+            <div class="config-sliders-grid">
+                <!-- ExG Threshold (range) -->
+                <div class="config-slider-group">
+                    <div class="slider-header">
+                        <span class="slider-title">ExG Threshold</span>
+                        <span class="slider-values">
+                            <span class="slider-val" id="exg_min-value">--</span>
+                            <span class="slider-val-sep">&mdash;</span>
+                            <span class="slider-val" id="exg_max-value">--</span>
+                        </span>
+                    </div>
+                    <div class="range-slider" data-param-min="exg_min" data-param-max="exg_max">
+                        <div class="slider-rail">
+                            <div class="slider-track"><div class="slider-fill"></div></div>
+                            <div class="slider-knob active" data-param="exg_min" id="exg_min-knob"></div>
+                            <div class="slider-knob" data-param="exg_max" id="exg_max-knob"></div>
+                        </div>
+                    </div>
+                    <div class="slider-fine-tune">
+                        <button class="fine-btn" data-delta="-1">&minus;</button>
+                        <button class="fine-btn" data-delta="1">+</button>
+                    </div>
+                </div>
+
+                <!-- Hue Range (range) -->
+                <div class="config-slider-group">
+                    <div class="slider-header">
+                        <span class="slider-title">Hue Range</span>
+                        <span class="slider-values">
+                            <span class="slider-val" id="hue_min-value">--</span>
+                            <span class="slider-val-sep">&mdash;</span>
+                            <span class="slider-val" id="hue_max-value">--</span>
+                        </span>
+                    </div>
+                    <div class="range-slider" data-param-min="hue_min" data-param-max="hue_max">
+                        <div class="slider-rail">
+                            <div class="slider-track"><div class="slider-fill"></div></div>
+                            <div class="slider-knob active" data-param="hue_min" id="hue_min-knob"></div>
+                            <div class="slider-knob" data-param="hue_max" id="hue_max-knob"></div>
+                        </div>
+                    </div>
+                    <div class="slider-fine-tune">
+                        <button class="fine-btn" data-delta="-1">&minus;</button>
+                        <button class="fine-btn" data-delta="1">+</button>
+                    </div>
+                </div>
+
+                <!-- Saturation (range) -->
+                <div class="config-slider-group">
+                    <div class="slider-header">
+                        <span class="slider-title">Saturation</span>
+                        <span class="slider-values">
+                            <span class="slider-val" id="saturation_min-value">--</span>
+                            <span class="slider-val-sep">&mdash;</span>
+                            <span class="slider-val" id="saturation_max-value">--</span>
+                        </span>
+                    </div>
+                    <div class="range-slider" data-param-min="saturation_min" data-param-max="saturation_max">
+                        <div class="slider-rail">
+                            <div class="slider-track"><div class="slider-fill"></div></div>
+                            <div class="slider-knob active" data-param="saturation_min" id="saturation_min-knob"></div>
+                            <div class="slider-knob" data-param="saturation_max" id="saturation_max-knob"></div>
+                        </div>
+                    </div>
+                    <div class="slider-fine-tune">
+                        <button class="fine-btn" data-delta="-1">&minus;</button>
+                        <button class="fine-btn" data-delta="1">+</button>
+                    </div>
+                </div>
+
+                <!-- Brightness (range) -->
+                <div class="config-slider-group">
+                    <div class="slider-header">
+                        <span class="slider-title">Brightness</span>
+                        <span class="slider-values">
+                            <span class="slider-val" id="brightness_min-value">--</span>
+                            <span class="slider-val-sep">&mdash;</span>
+                            <span class="slider-val" id="brightness_max-value">--</span>
+                        </span>
+                    </div>
+                    <div class="range-slider" data-param-min="brightness_min" data-param-max="brightness_max">
+                        <div class="slider-rail">
+                            <div class="slider-track"><div class="slider-fill"></div></div>
+                            <div class="slider-knob active" data-param="brightness_min" id="brightness_min-knob"></div>
+                            <div class="slider-knob" data-param="brightness_max" id="brightness_max-knob"></div>
+                        </div>
+                    </div>
+                    <div class="slider-fine-tune">
+                        <button class="fine-btn" data-delta="-1">&minus;</button>
+                        <button class="fine-btn" data-delta="1">+</button>
+                    </div>
+                </div>
+
+                <!-- Min Detection Area (single) -->
+                <div class="config-slider-group">
+                    <div class="slider-header">
+                        <span class="slider-title">Min Detection Area</span>
+                        <span class="slider-values">
+                            <span class="slider-val" id="min_detection_area-value">--</span>
+                        </span>
+                    </div>
+                    <div class="single-slider" data-param="min_detection_area">
+                        <div class="slider-rail">
+                            <div class="slider-track"><div class="slider-fill"></div></div>
+                            <div class="slider-knob active" data-param="min_detection_area" id="min_detection_area-knob"></div>
+                        </div>
+                    </div>
+                    <div class="slider-fine-tune">
+                        <button class="fine-btn" data-delta="-10">&minus;</button>
+                        <button class="fine-btn" data-delta="10">+</button>
+                    </div>
+                </div>
+
+                <!-- AI Confidence (single, hidden when not AI mode) -->
+                <div class="config-slider-group" id="confidence-slider-group" style="display:none;">
+                    <div class="slider-header">
+                        <span class="slider-title">AI Confidence</span>
+                        <span class="slider-values">
+                            <span class="slider-val" id="confidence-value">--</span>
+                            <span class="slider-val-sep">%</span>
+                        </span>
+                    </div>
+                    <div class="single-slider" data-param="confidence">
+                        <div class="slider-rail">
+                            <div class="slider-track"><div class="slider-fill"></div></div>
+                            <div class="slider-knob active" data-param="confidence" id="confidence-knob"></div>
+                        </div>
+                    </div>
+                    <div class="slider-fine-tune">
+                        <button class="fine-btn" data-delta="-5">&minus;</button>
+                        <button class="fine-btn" data-delta="5">+</button>
+                    </div>
+                </div>
+
+                <!-- Crop Buffer (single, hidden when not hybrid mode) -->
+                <div class="config-slider-group" id="crop-buffer-slider-group" style="display:none;">
+                    <div class="slider-header">
+                        <span class="slider-title">Crop Buffer</span>
+                        <span class="slider-values">
+                            <span class="slider-val" id="crop_buffer_px-value">--</span>
+                            <span class="slider-val-sep">px</span>
+                        </span>
+                    </div>
+                    <div class="single-slider" data-param="crop_buffer_px">
+                        <div class="slider-rail">
+                            <div class="slider-track"><div class="slider-fill"></div></div>
+                            <div class="slider-knob active" data-param="crop_buffer_px" id="crop_buffer_px-knob"></div>
+                        </div>
+                    </div>
+                    <div class="slider-fine-tune">
+                        <button class="fine-btn" data-delta="-1">&minus;</button>
+                        <button class="fine-btn" data-delta="1">+</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Widget slot: before advanced settings -->
+            <div data-widget-slot="config_before_advanced" class="widget-slot"></div>
+
+            <!-- Advanced Settings (collapsible INI editor) -->
+            <div class="config-advanced-toggle" id="config-advanced-toggle" onclick="toggleAdvancedSettings()">
+                <span class="config-advanced-arrow">&#9654;</span>
+                <span>Advanced Settings</span>
+            </div>
+            <div class="config-advanced-body" id="config-advanced-body">
+                <!-- Warning Banner -->
+                <div class="config-warning hidden" id="configWarning">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
+                    <span>Changes to MQTT, Network, or Controller settings require an OWL service restart to take effect.</span>
+                </div>
+
+                <!-- Unsaved Changes Banner -->
+                <div class="config-unsaved hidden" id="configUnsaved">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                    <span>You have unsaved changes</span>
+                </div>
+
+                <!-- Info Banner -->
+                <div class="config-info">
+                    <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+                    <span>Default configs are protected. Changes are saved as new files that can be set as the active boot config.</span>
+                </div>
+
+                <!-- Config Sections (full INI editor) -->
+                <div class="config-sections" id="configSections">
+                    <div class="config-loading">
+                        <div class="spinner"></div>
+                        <span>Loading configuration...</span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Agent Tab -->
+    <div id="agent" class="tab-content">
+        <div class="agent-panel">
+            <!-- Setup panel (shown when not connected) -->
+            <div class="agent-setup" id="agentSetup">
+                <div class="agent-setup-title">Connect AI assistant</div>
+                <div class="agent-setup-form">
+                    <div class="agent-field">
+                        <label for="agentProvider">Provider</label>
+                        <select id="agentProvider">
+                            <option value="anthropic">Anthropic (Claude)</option>
+                            <option value="openai">OpenAI (GPT)</option>
+                        </select>
+                    </div>
+                    <div class="agent-field">
+                        <label for="agentApiKey">API key</label>
+                        <input type="password" id="agentApiKey" placeholder="sk-..." autocomplete="off">
+                    </div>
+                    <div class="agent-connect-error" id="agentConnectError"></div>
+                    <button class="agent-connect-btn" id="agentConnectBtn">Connect</button>
+                    <div class="agent-cost-notice">
+                        This uses your API key. Each message costs tokens. You are responsible for usage charges. See your provider's pricing page.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat panel (shown after connected) -->
+            <div class="agent-chat" id="agentChat">
+                <div class="agent-status-bar">
+                    <span class="agent-status-provider" id="agentStatusProvider">Not connected</span>
+                    <span class="agent-status-tokens" id="agentStatusTokens">Tokens: 0 in / 0 out</span>
+                    <button class="agent-status-btn" id="agentHistoryBtn">History</button>
+                    <button class="agent-disconnect-btn" id="agentDisconnectBtn">Disconnect</button>
+                </div>
+                <div class="agent-messages" id="agentMessages"></div>
+                <div class="agent-image-preview" id="agentImagePreview"></div>
+                <div class="agent-input-row">
+                    <button class="agent-media-btn" id="agentAttachBtn" title="Upload image">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+                    </button>
+                    <button class="agent-media-btn" id="agentGrabBtn" title="Grab camera frame">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                    </button>
+                    <input type="text" class="agent-input" id="agentInput"
+                           placeholder="Ask about your OWL settings..." autocomplete="off">
+                    <button class="agent-send-btn" id="agentSendBtn">Send</button>
+                </div>
+                <input type="file" id="agentFileInput" accept="image/*" multiple style="display:none">
+            </div>
+
+            <!-- Slide-out sidebar -->
+            <div class="agent-sidebar" id="agentSidebar">
+                <div class="agent-sidebar-header">
+                    <span class="agent-sidebar-title">Chat history</span>
+                    <button class="agent-sidebar-close" id="agentSidebarClose">&times;</button>
+                </div>
+                <button class="agent-sidebar-new-chat" id="agentNewChatBtn">New chat</button>
+                <div class="agent-session-list" id="agentSessionList"></div>
+            </div>
+        </div>
+    </div>
+</div>
+<footer>
+    <div class="footer-content">
+        <p>OpenWeedLocator © 2025 | <a href="https://github.com/geezacoleman/OpenWeedLocator" target="_blank">GitHub</a></p>
+        <p class="status-timestamp">Last Updated: <span id="statusTimestamp">--</span></p>
+    </div>
+</footer>
+
+<div id="notificationPanel" class="notification-panel hidden">
+    <div class="notification-panel-header">
+        <h3>Notifications</h3>
+        <div class="notification-panel-controls">
+            <button id="clearAllNotifications" class="clear-btn">Clear All</button>
+            <button id="closeNotificationPanel" class="close-btn">×</button>
+        </div>
+    </div>
+    <div class="notification-panel-content" id="notificationList">
+        <p class="no-notifications">No notifications</p>
+    </div>
+</div>
+<div id="notificationOverlay" class="notification-overlay hidden"></div>
+<div id="quickToast" class="quick-toast hidden"></div>
+</body>
+</html>

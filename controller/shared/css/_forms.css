@@ -1,0 +1,301 @@
+/* ==========================================================================
+   OWL Controllers - Shared Form Styles
+   Input, select, textarea, and form layout styles
+   
+   Usage: @import after _toast.css
+   ========================================================================== */
+
+/* -------------------------------------------------------------------------
+   Form Container
+   ------------------------------------------------------------------------- */
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.form-group.full-width {
+    grid-column: 1 / -1;
+}
+
+/* -------------------------------------------------------------------------
+   Labels
+   ------------------------------------------------------------------------- */
+.form-group label,
+.form-label {
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    color: var(--secondary);
+    font-size: 0.9rem;
+}
+
+/* -------------------------------------------------------------------------
+   Text Inputs, Selects, Textareas
+   ------------------------------------------------------------------------- */
+.form-input,
+.form-select,
+.form-textarea,
+input[type="text"],
+input[type="number"],
+input[type="email"],
+input[type="password"],
+input[type="url"],
+input[type="date"],
+select,
+textarea {
+    padding: 0.6rem 0.75rem;
+    border: 2px solid var(--border);
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    background: white;
+    color: var(--text-dark);
+    width: 100%;
+}
+
+.form-input:focus,
+.form-select:focus,
+.form-textarea:focus,
+input:focus,
+select:focus,
+textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+}
+
+.form-input:disabled,
+.form-select:disabled,
+.form-textarea:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+    background: var(--light);
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+/* Invalid state */
+.form-input:invalid,
+.form-input.invalid,
+input:invalid {
+    border-color: var(--danger);
+}
+
+.form-input:invalid:focus,
+input:invalid:focus {
+    box-shadow: 0 0 0 3px rgba(231, 76, 60, 0.1);
+}
+
+/* Modified state (config editor) */
+.form-input.modified,
+input.modified,
+select.modified {
+    border-color: var(--accent);
+    background: #f8fbff;
+}
+
+/* -------------------------------------------------------------------------
+   Textarea
+   ------------------------------------------------------------------------- */
+.form-textarea,
+textarea {
+    resize: vertical;
+    min-height: 80px;
+    font-family: inherit;
+}
+
+/* -------------------------------------------------------------------------
+   Number Input
+   ------------------------------------------------------------------------- */
+input[type="number"] {
+    font-family: 'Segoe UI Mono', 'SF Mono', Monaco, monospace;
+}
+
+/* Remove spin buttons on number inputs (optional) */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+/* -------------------------------------------------------------------------
+   Select
+   ------------------------------------------------------------------------- */
+.form-select,
+select {
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23666' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    padding-right: 2.5rem;
+}
+
+/* -------------------------------------------------------------------------
+   Checkbox & Radio
+   ------------------------------------------------------------------------- */
+input[type="checkbox"],
+input[type="radio"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: var(--accent);
+}
+
+.checkbox-wrapper,
+.radio-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+}
+
+.checkbox-wrapper label,
+.radio-wrapper label {
+    cursor: pointer;
+    margin: 0;
+    font-weight: normal;
+}
+
+/* -------------------------------------------------------------------------
+   Form Help Text
+   ------------------------------------------------------------------------- */
+.form-help,
+.field-help {
+    font-size: 0.75rem;
+    color: #888;
+    margin-top: 0.25rem;
+    font-style: italic;
+}
+
+.form-warning,
+.field-warning {
+    font-size: 0.75rem;
+    color: var(--warning-dark);
+    margin-top: 0.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+/* -------------------------------------------------------------------------
+   Form Divider
+   ------------------------------------------------------------------------- */
+.form-divider {
+    text-align: center;
+    position: relative;
+    margin: 1.5rem 0;
+    font-weight: 600;
+    color: #666;
+}
+
+.form-divider::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--border);
+}
+
+.form-divider span {
+    background: white;
+    padding: 0 1rem;
+    position: relative;
+}
+
+/* -------------------------------------------------------------------------
+   Form Actions
+   ------------------------------------------------------------------------- */
+.form-actions {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+}
+
+.form-actions.right {
+    justify-content: flex-end;
+}
+
+.form-actions.center {
+    justify-content: center;
+}
+
+.form-actions.spread {
+    justify-content: space-between;
+}
+
+/* -------------------------------------------------------------------------
+   Inline Form
+   ------------------------------------------------------------------------- */
+.form-inline {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.form-inline .form-group {
+    flex: 0 0 auto;
+}
+
+/* -------------------------------------------------------------------------
+   Config Field (from config editor)
+   ------------------------------------------------------------------------- */
+.config-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.config-field.full-width {
+    grid-column: 1 / -1;
+}
+
+.config-field label {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #555;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.config-field label .field-key {
+    font-family: monospace;
+    font-size: 0.7rem;
+    color: #888;
+    background: #f5f5f5;
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+}
+
+/* -------------------------------------------------------------------------
+   Responsive
+   ------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+    .form-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .form-actions {
+        flex-direction: column;
+    }
+
+    .form-actions button {
+        width: 100%;
+    }
+
+    .form-inline {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}

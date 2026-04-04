@@ -4,11 +4,20 @@ import sys
 
 import logging
 import argparse
-import platform
 import time
+import threading
+from collections import deque
+
+try:
+    import serial
+except ImportError:
+    serial = None
 from datetime import datetime
 from multiprocessing import Process, Value
 from pathlib import Path
+
+from utils.error_manager import MJPEGStreamError
+
 
 def get_python_env():
     """Get current Python environment status"""
@@ -16,6 +25,7 @@ def get_python_env():
     if venv:
         return f"Virtual environment: {venv}"
     return "No virtual environment active (using system Python)"
+
 
 def setup_basic_logger():
     """Simple startup logger that uses the same file as LogManager"""
@@ -34,63 +44,66 @@ def setup_basic_logger():
 
     return logging.getLogger('owl_startup')
 
+
 logger = setup_basic_logger()
 logger.info("Starting OWL - checking imports...")
 
 try:
-   import utils.error_manager as errors
+    import utils.error_manager as errors
 except ImportError:
-   logger.critical("Cannot import from utils package! Not in correct directory.")
-   logger.critical(f"Current working directory: {os.getcwd()}")
-   print("\nERROR: Cannot import from utils package!")
-   print("This usually means you are not in the correct directory.")
-   print("\nTo fix:")
-   print("1. Ensure owl environment is active: workon owl")
-   print("2. Navigate to owl directory:        cd /home/owl/owl")
-   sys.exit(1)
+    logger.critical("Cannot import from utils package! Not in correct directory.")
+    logger.critical(f"Current working directory: {os.getcwd()}")
+    print("\nERROR: Cannot import from utils package!")
+    print("This usually means you are not in the correct directory.")
+    print("\nTo fix:")
+    print("1. Ensure owl environment is active: workon owl")
+    print("2. Navigate to owl directory:        cd /home/owl/owl")
+    sys.exit(1)
 
 try:
-   import cv2
+    import cv2
 except ImportError as e:
-   logger.error("OpenCV import failed - likely not in `owl` virtual environment")
-   logger.error(f"Error details: {str(e)}")
-   logger.error(f"Python environment: {get_python_env()}")
-   raise errors.OpenCVError(str(e)) from None
+    logger.error("OpenCV import failed - likely not in `owl` virtual environment")
+    logger.error(f"Error details: {str(e)}")
+    logger.error(f"Python environment: {get_python_env()}")
+    raise errors.OpenCVError(str(e)) from None
 
 try:
-   import imutils
-   from imutils.video import FPS
-
-   from utils.input_manager import UteController, AdvancedController, get_rpi_version
-   from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator
-   from utils.directory_manager import DirectorySetup
-   from utils.video_manager import VideoStream
-   from utils.image_sampler import ImageRecorder
-   from utils.algorithms import fft_blur
-   from utils.greenonbrown import GreenOnBrown
-   from utils.frame_reader import FrameReader
-   from utils.config_manager import ConfigValidator
-   from utils.log_manager import LogManager
-   import utils.error_manager as errors
-   from version import SystemInfo, VERSION
+    import numpy as np
+    from utils.input_manager import UteController, AdvancedController, get_rpi_version
+    from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator, GPSStatusLED, GPSLEDState
+    from utils.directory_manager import DirectorySetup
+    from utils.video_manager import VideoStream, StreamingHandler, ThreadedHTTPServer
+    from utils.image_sampler import ImageRecorder
+    from utils.algorithms import fft_blur
+    from utils.greenonbrown import GreenOnBrown
+    from utils.frame_reader import FrameReader
+    from utils.config_manager import ConfigValidator
+    from utils.log_manager import LogManager, MQTTLogHandler
+    from utils.shared_types import Sensitivity
+    import utils.error_manager as errors
+    from utils.gps_manager import GPSState, parse_sentence
+    from version import SystemInfo, VERSION
 
 except ImportError as e:
-   missing_module = str(e).split("'")[1]
-   logger.error(f"Failed to import required module: {missing_module}")
-   logger.error(f"Error details: {str(e)}")
-   logger.error(f"Current virtual env: {os.environ.get('VIRTUAL_ENV', 'None')}")
-   logger.error(f"Current working directory: {os.getcwd()}")
-   raise errors.DependencyError(missing_module, str(e)) from None
+    missing_module = str(e).split("'")[1]
+    logger.error(f"Failed to import required module: {missing_module}")
+    logger.error(f"Error details: {str(e)}")
+    logger.error(f"Current virtual env: {os.environ.get('VIRTUAL_ENV', 'None')}")
+    logger.error(f"Current working directory: {os.getcwd()}")
+    raise errors.DependencyError(missing_module, str(e)) from None
 
 logger.info("All required modules imported successfully")
+
 
 def nothing(x):
     pass
 
+
 class Owl:
     def __init__(self, show_display=False,
                  input_file_or_directory=None,
-                 config_file='config/DAY_SENSITIVITY_2.ini'):
+                 config_file='config/GENERAL_CONFIG.ini'):
         # set up the logger
         log_dir = Path(os.path.join(os.path.dirname(__file__), 'logs'))
         LogManager.setup(log_dir=log_dir, log_level='INFO')
@@ -108,6 +121,7 @@ class Owl:
             raise
 
         self.config.read(self._config_path)
+        self.config.read(Path(__file__).parent / 'config' / 'CONTROLLER.ini')
         self.RPI_VERSION = get_rpi_version()
         self.logger.info(msg=f'Raspberry Pi version: {self.RPI_VERSION}')
 
@@ -126,6 +140,15 @@ class Owl:
         self.saturation_max = self.config.getint('GreenOnBrown', 'saturation_max')
         self.brightness_min = self.config.getint('GreenOnBrown', 'brightness_min')
         self.brightness_max = self.config.getint('GreenOnBrown', 'brightness_max')
+        self.min_detection_area = self.config.getint('GreenOnBrown', 'min_detection_area')
+        self.invert_hue = self.config.getboolean('GreenOnBrown', 'invert_hue')
+
+        # Sensitivity preset manager
+        from utils.sensitivity_manager import SensitivityManager
+        self.sensitivity_manager = SensitivityManager(self.config, self._config_path)
+        active_preset = self.sensitivity_manager.get_active_preset()
+        self.sensitivity_manager.apply_preset(active_preset, self)
+        self.logger.info(f"Sensitivity preset '{active_preset}' applied")
 
         # time spent on each image when looping over a directory
         self.image_loop_time = self.config.getint('Visualisation', 'image_loop_time')
@@ -147,6 +170,7 @@ class Owl:
         self.resolution = (self.config.getint('Camera', 'resolution_width'),
                            self.config.getint('Camera', 'resolution_height'))
         self.exp_compensation = self.config.getint('Camera', 'exp_compensation')
+        self.camera_type = self.config.get('Camera', 'camera_type', fallback='auto')
 
         # Relay Dict maps the reference relay number to a boardpin on the embedded device
         self.relay_dict = {}
@@ -158,113 +182,255 @@ class Owl:
         # instantiate the relay controller - successful start should beep the buzzer
         try:
             self.relay_controller = RelayController(relay_dict=self.relay_dict)
+
         except errors.OWLAlreadyRunningError:
             self.logger.critical("OWL initialization failed: GPIO pin conflict. Another OWL instance may be running.",
                                  exc_info=True)
             raise
 
         ### Data collection only ###
-        # WARNING: initialise option disable detection for data collection
-        self.disable_detection = False
-        self.save_directory = None
+        self.detection_enable = Value('b', self.config.getboolean('DataCollection', 'detection_enable', fallback=False))
+        self.image_sample_enable = Value('b', self.config.getboolean('DataCollection', 'image_sample_enable',
+                                                                     fallback=False))
+
+        # Local cached versions for performance
+        self._detection_enable = self.detection_enable.value
+        self._image_sample_enable = self.image_sample_enable.value
+        self._STATE_CHECK_INTERVAL = 0.1
+        self.stop_state_update = threading.Event()
+
+        ####################### DASHBOARD ############################
+        self.dash = None
+        self.stream_active = None
+        self.latest_stream_frame = None
+        mqtt_enable = self.config.getboolean('MQTT', 'enable', fallback=False)
+
+        broker_ip = self.config.get('MQTT', 'broker_ip', fallback='localhost')
+        broker_port = self.config.getint('MQTT', 'broker_port', fallback=1883)
+        device_id = self.config.get('MQTT', 'device_id', fallback='auto')
+        network_mode = self.config.get('Network', 'mode', fallback=None)
+        static_ip = self.config.get('Network', 'static_ip', fallback=None)
+        client_id = f"client_{device_id}"
+
+        if mqtt_enable:
+            try:
+                from utils.mqtt_manager import OWLMQTTPublisher
+
+                self.dash = OWLMQTTPublisher(
+                    broker_host=broker_ip,
+                    broker_port=broker_port,
+                    client_id=client_id,
+                    device_id=device_id,
+                    network_mode=network_mode,
+                    static_ip=static_ip)
+
+                self.dash.set_owl_instance(self)
+
+                self.dash.start()
+
+                # Enhanced logging
+                mode = 'NETWORKED' if self.dash.networked_mode else 'STANDALONE'
+                self.logger.info(f"MQTT enabled - Mode: {mode}")
+                self.logger.info(f"MQTT Broker: {broker_ip}:{broker_port}")
+                self.logger.info(f"Device ID: {device_id}")
+                self.logger.info(f"Client ID: {client_id}")
+
+                # Only attach log handler if broker is already reachable
+                if self.dash.connected:
+                    LogManager.add_mqtt_handler(
+                        mqtt_client=self.dash.client,
+                        mqtt_error_topic=self.dash.topics['errors']
+                    )
+
+            except Exception as e:
+                self.dash = None
+                self.logger.warning(f"Failed to initialize MQTT: {e}. Dashboard disabled, OWL continues.")
+
+            try:
+                self.stream_lock = threading.Lock()
+                self.start_streaming_server()
+                self.stream_active = True  # IMPORTANT: Set status to True on success
+                self.logger.info("MJPEG video streaming server started successfully")
+
+            except MJPEGStreamError as e:
+                self.logger.warning(f"Could not start MJPEG stream, but core functions will continue: {e}")
+                self.stream_active = False
+
+            if self.dash:
+                self.dash.set_stream_status(self.stream_active)
+
+        # GPS setup
+        self.gps_source = self.config.get('GPS', 'source', fallback='none').lower()
+        self.gps_data = None
+        self._gps_state = None
+        self._gps_serial = None
+        self._gps_running = False
+        self.gps_status_led = None
+
+        if self.gps_source == 'serial':
+            self.gps_port = self.config.get('GPS', 'port', fallback='/dev/ttyUSB1')
+            self.gps_baudrate = self.config.getint('GPS', 'baudrate', fallback=115200)
+
+            if serial is None:
+                self.logger.error("pyserial not installed — serial GPS disabled. Install with: pip install pyserial")
+                # Fall back to dashboard (browser geolocation) if available, otherwise disable
+                if self.dash:
+                    self.gps_source = 'dashboard'
+                    self.logger.info("Falling back to dashboard GPS (browser geolocation)")
+                else:
+                    self.gps_source = 'none'
+            else:
+                self._gps_state = GPSState()
+                self._gps_running = True
+                self.gps_status_led = GPSStatusLED(pin='BOARD38')
+                self._gps_thread = threading.Thread(target=self._serial_gps_reader, daemon=True)
+                self._gps_thread.start()
+                self.logger.info(f"Serial GPS reader started on {self.gps_port} @ {self.gps_baudrate}")
+
+        elif self.gps_source != 'none':
+            # Non-serial, non-none source (e.g. 'tcp') — fall back to dashboard GPS
+            if self.dash:
+                self.gps_source = 'dashboard'
+
+        # Create GPS status LED on hardware setups (UTE/Advanced controller) even if GPS
+        # source is 'none' — the LED shows whether dashboard browser GPS is active.
+        # The LED state is driven by _get_best_gps_data() in the update_state loop.
+        if self.gps_status_led is None:
+            controller_type_check = self.config.get('Controller', 'controller_type', fallback='none').strip("'\" ").lower()
+            if controller_type_check in ('ute', 'advanced'):
+                self.gps_status_led = GPSStatusLED(pin='BOARD38')
 
         # if a controller is connected, sample images must be true to set up directories correctly
         self.controller_type = self.config.get('Controller', 'controller_type').strip("'\" ").lower()
 
         if self.controller_type not in {'none', 'ute', 'advanced'}:
             self.logger.error(f"Invalid controller type: {self.controller_type}")
-            raise errors.ControllerTypeError(self.config.get('Controller', 'controller_type'))
+            raise errors.ControllerTypeError(self.controller_type, valid_types=list({'none', 'ute', 'advanced'}))
 
-        if self.controller_type != 'none':
-            self.sample_images = True
+        # Create status indicator EARLY so it can signal boot errors via LED.
+        # save_directory is set to None for now; updated after storage setup succeeds.
+        if self.controller_type == 'ute':
+            self.status_indicator = UteStatusIndicator(save_directory=None,
+                                                       status_led_pin='BOARD40')
+        elif self.controller_type == 'advanced':
+            self.status_indicator = AdvancedStatusIndicator(save_directory=None,
+                                                            status_led_pin='BOARD40')
         else:
-            self.sample_images = self.config.getboolean('DataCollection', 'sample_images')
+            self.status_indicator = HeadlessStatusIndicator(save_directory=None, no_save=True)
 
-        # if controller is 'none' but sample_images is True, then it will set it up still
-        if self.sample_images:
+        if self.controller_type != 'none' and not self.dash:
+            self.detection_enable = Value('b', False)
+            self.image_sample_enable = Value('b', False)
+            self.sensitivity_level = Value('i', Sensitivity.HIGH.value)
+
+        if self.controller_type != 'none' or self.dash:
+            # Force infrastructure setup (directories, ImageRecorder) so
+            # controller/dashboard can toggle recording when ready.
+            # Actual recording state is set after setup — see below.
+            self._image_sample_enable = True
+
+        # if controller is 'none' but _image_sample_enable is True, then it will set everything up
+        if self._image_sample_enable:
             self.sample_method = self.config.get('DataCollection', 'sample_method')
-            self.disable_detection = self.config.getboolean('DataCollection', 'disable_detection')
             self.sample_frequency = self.config.getint('DataCollection', 'sample_frequency')
             self.save_directory = self.config.get('DataCollection', 'save_directory')
             self.camera_name = self.config.get('DataCollection', 'camera_name')
 
-            self.directory_manager = DirectorySetup(save_directory=self.save_directory)
-            self.save_directory, self.save_subdirectory = self.directory_manager.setup_directories()
+            try:
+                self.directory_manager = DirectorySetup(save_directory=self.save_directory)
+                self.save_directory, self.save_subdirectory = self.directory_manager.setup_directories()
 
-            self.image_recorder = ImageRecorder(save_directory=self.save_subdirectory, mode=self.sample_method)
+                self.image_recorder = ImageRecorder(save_directory=self.save_subdirectory, mode=self.sample_method)
+
+                # Update status indicator with the resolved save_directory for storage monitoring
+                self.status_indicator.save_directory = self.save_directory
+
+            except (errors.NoWritableUSBError, errors.USBMountError, errors.USBWriteError,
+                    errors.StorageSystemError) as e:
+                self.logger.critical(str(e))
+                # Flash both LEDs in sync to signal boot error — process stays alive
+                self.status_indicator.error(6)
+                if self.gps_status_led:
+                    self.gps_status_led.set_state(GPSLEDState.ERROR)
+                self.logger.critical("Both LEDs flashing — storage error. Fix USB drive and restart.")
+                # Block here so LEDs keep flashing (systemd will not restart while process is alive)
+                try:
+                    while True:
+                        time.sleep(5)
+                except KeyboardInterrupt:
+                    self.stop()
+                    raise
+
         ############################
 
         # initialise controller buttons and async management
-        if self.controller_type != 'none':
-            self.detection_state = Value('b', False)
-            self.sample_state = Value('b', False)
-            self.stop_flag = Value('b', False)
+        if self.controller_type == 'ute':
+            # Status indicator already created above — just set up controller
+            self.controller = UteController(
+                detection_state=self.detection_enable,
+                sample_state=self.image_sample_enable,
+                stop_flag=Value('b', False),
+                owl_instance=self,
+                status_indicator=self.status_indicator,
+                switch_purpose=self.config.get('Controller', 'switch_purpose', fallback='recording').strip("'\" ").lower(),
+                switch_board_pin=f"BOARD{self.config.getint('Controller', 'switch_pin', fallback=36)}"
+            )
+            self.controller_process = Process(target=self.controller.run)
+            self.controller_process.start()
 
-            # 'ute controller' that fits in a cupholder. Only one switch to toggle recording OR detection on/off.
-            if self.controller_type == 'ute':
-                self.status_indicator = UteStatusIndicator(
-                    save_directory=self.save_directory,
-                    record_led_pin='BOARD38',
-                    storage_led_pin='BOARD40')
+        elif self.controller_type == 'advanced':
+            if not hasattr(self, 'sensitivity_level'):
+                self.sensitivity_level = Value('i', Sensitivity.HIGH.value)
 
-                self.switch_purpose = self.config.get('Controller', 'switch_purpose').strip("'\" ").lower()
-                self.switch_pin = self.config.getint('Controller', 'switch_pin')
-
-                self.controller = UteController(
-                    detection_state=self.detection_state,
-                    sample_state=self.sample_state,
-                    stop_flag=self.stop_flag,
-                    owl_instance=self,
-                    status_indicator=self.status_indicator,
-                    switch_board_pin=f'BOARD{self.switch_pin}',
-                    switch_purpose=self.switch_purpose
-                )
-
-            # The 'advanced' controller. Controls multiple inputs.
-            elif self.controller_type == 'advanced':
-                self.status_indicator = AdvancedStatusIndicator(save_directory=self.save_directory,
-                                                                status_led_pin='BOARD37')
-
-                self.sensitivity_state = Value('b', False)
-                self.detection_mode_state = Value('i', 1)  # Default to off (1)
-
-                recording_pin = self.config.getint('Controller', 'recording_pin')
-                sensitivity_pin = self.config.getint('Controller', 'sensitivity_pin')
-                detection_mode_pin_up = self.config.getint('Controller', 'detection_mode_pin_up')
-                detection_mode_pin_down = self.config.getint('Controller', 'detection_mode_pin_down')
-                low_sensitivity_config = self.config.get('Controller', 'low_sensitivity_config').strip("'\" ")
-                high_sensitivity_config = self.config.get('Controller', 'high_sensitivity_config').strip("'\" ")
-
-                self.controller = AdvancedController(
-                    recording_state=self.sample_state,
-                    sensitivity_state=self.sensitivity_state,
-                    detection_mode_state=self.detection_mode_state,
-                    stop_flag=self.stop_flag,
-                    owl_instance=self,
-                    status_indicator=self.status_indicator,
-                    low_sensitivity_config=low_sensitivity_config,
-                    high_sensitivity_config=high_sensitivity_config,
-                    recording_bpin=f'BOARD{recording_pin}',
-                    sensitivity_bpin=f'BOARD{sensitivity_pin}',
-                    detection_mode_bpin_up=f'BOARD{detection_mode_pin_up}',
-                    detection_mode_bpin_down=f'BOARD{detection_mode_pin_down}'
-                )
-
-            else:
-                raise ValueError(f"Invalid controller type: {self.controller_type}. "
-                                 f"Select from None, Advanced or Ute in the config file.")
-
+            # Status indicator already created above
+            self.controller = AdvancedController(
+                recording_state=self.image_sample_enable,
+                sensitivity_level=self.sensitivity_level,
+                detection_mode_state=Value('i', 1),
+                stop_flag=Value('b', False),
+                owl_instance=self,
+                status_indicator=self.status_indicator,
+                sensitivity_manager=self.sensitivity_manager,
+                recording_bpin=f"BOARD{self.config.getint('Controller', 'recording_pin', fallback=38)}",
+                sensitivity_bpin=f"BOARD{self.config.getint('Controller', 'sensitivity_pin', fallback=40)}",
+                detection_mode_bpin_up=f"BOARD{self.config.getint('Controller', 'detection_mode_pin_up', fallback=36)}",
+                detection_mode_bpin_down=f"BOARD{self.config.getint('Controller', 'detection_mode_pin_down', fallback=35)}"
+            )
             self.controller_process = Process(target=self.controller.run)
             self.controller_process.start()
 
         else:
             self.controller = None
-            if self.sample_images:
-                self.status_indicator = HeadlessStatusIndicator(save_directory=self.save_directory)
+            # Status indicator already created above; start storage monitoring if recording
+            if self._image_sample_enable:
                 self.status_indicator.start_storage_indicator()
 
-            else:
-                self.status_indicator = HeadlessStatusIndicator(save_directory=None, no_save=True)
+        # Infrastructure is set up. Now set the actual initial recording state.
+        # Dashboard-only (no hardware controller): start OFF — user enables via dashboard.
+        # Hardware controllers: switch position was read during controller init above.
+        if self.dash and self.controller_type == 'none':
+            self._image_sample_enable = False
+            with self.image_sample_enable.get_lock():
+                self.image_sample_enable.value = False
+            self.dash.set_image_sample_enable(False)
+
+        if self.dash or self.controller_type != 'none':
+            threading.Thread(target=self.update_state, daemon=True).start()
+            self.logger.info("State monitoring thread started")
+
+        # Actuation timing — read from [Actuation] (CONTROLLER.ini), fall back to [System]
+        if self.config.has_section('Actuation'):
+            self.actuation_duration = self.config.getfloat('Actuation', 'actuation_duration',
+                                                           fallback=self.config.getfloat('System', 'actuation_duration'))
+            self.delay = self.config.getfloat('Actuation', 'delay',
+                                              fallback=self.config.getfloat('System', 'delay'))
+        else:
+            self.actuation_duration = self.config.getfloat('System', 'actuation_duration')
+            self.delay = self.config.getfloat('System', 'delay')
+
+        # Loop time tracking (30-frame rolling window)
+        self._loop_times = deque(maxlen=30)
+        self._avg_loop_time_ms = 0.0
 
         self.relay_vis = None
 
@@ -277,13 +443,13 @@ class Owl:
             # the older versions of the Pi are known to 'brick' and become unusable if too high resolutions are used.
             self.resolution = (640, 480)
             self.logger.warning(f"Resolution {self.config.getint('Camera', 'resolution_width')}, "
-                                 f"{self.config.getint('Camera', 'resolution_height')} selected is dangerously high. ")
+                                f"{self.config.getint('Camera', 'resolution_height')} selected is dangerously high. ")
         else:
-            self.logger.warning(f'High resolution, expect low framerate. Resolution set to {self.resolution[0]}x{self.resolution[1]}.')
+            self.logger.warning(
+                f'High resolution, expect low framerate. Resolution set to {self.resolution[0]}x{self.resolution[1]}.')
 
         self.frame_width = None
         self.frame_height = None
-        self.camera_type = self.config.get('Camera', 'camera_type')
 
         try:
             self.cam = self.setup_media_source(input_file_or_directory, camera_type=self.camera_type)
@@ -301,78 +467,199 @@ class Owl:
         # add the total number of relays being controlled. This can be changed easily, but the relay_dict and physical relays would need
         # to be updated too. Fairly straightforward, so an opportunity for more precise application
         self.relay_num = self.config.getint('System', 'relay_num')
+        self.actuation_zone = self.config.getint('System', 'actuation_zone', fallback=100)
 
-        # activation region limit - once weed crosses this line, relay is activated
-        self.yAct = int(0.01 * self.frame_height)
-        self.lane_width = self.frame_width / self.relay_num
+        # GreenOnGreen / hybrid config
+        self.inference_resolution = self.config.getint('GreenOnGreen', 'inference_resolution', fallback=320)
+        self.crop_buffer_px = self.config.getint('GreenOnGreen', 'crop_buffer_px', fallback=20)
+        self._pending_algorithm = None
+        self._pending_trackbar_updates = {}
+        self._pending_model = None
+        self._pending_detect_classes = None
+        self._gog_detector = None
 
-        # calculate lane coords and draw on frame
-        for i in range(self.relay_num):
-            laneX = int(i * self.lane_width)
-            self.lane_coords[i] = laneX
+        # Tracking config (ByteTrack + class smoothing + crop mask persistence)
+        self.tracking_enabled = self.config.getboolean('Tracking', 'tracking_enabled', fallback=False)
+        self.track_high_thresh = self.config.getfloat('Tracking', 'track_high_thresh', fallback=0.2)
+        self.track_low_thresh = self.config.getfloat('Tracking', 'track_low_thresh', fallback=0.05)
+        self.new_track_thresh = self.config.getfloat('Tracking', 'new_track_thresh', fallback=0.2)
+        self.track_buffer = self.config.getint('Tracking', 'track_buffer', fallback=60)
+        self.match_thresh = self.config.getfloat('Tracking', 'match_thresh', fallback=0.7)
+        self._track_class_window = self.config.getint('Tracking', 'track_class_window', fallback=5)
+        self._track_crop_persist = self.config.getint('Tracking', 'track_crop_persist', fallback=3)
+        self.detection_persist_frames = self.config.getint(
+            'Tracking', 'detection_persist_frames', fallback=5)
+        self._class_smoother = None
+        self._crop_stabilizer = None
+        if self.tracking_enabled:
+            from utils.tracker import ClassSmoother, CropMaskStabilizer
+            # Both created regardless of algorithm — smoother unused in hybrid mode
+            # but algorithm can change mid-session, so both must be ready
+            self._class_smoother = ClassSmoother(window=self._track_class_window)
+            self._crop_stabilizer = CropMaskStabilizer(max_age=self._track_crop_persist)
+            self.logger.info(f'Tracking enabled: class_window={self._track_class_window}, '
+                             f'crop_persist={self._track_crop_persist}')
 
-        # Precompute the integer lane coordinates for reuse
-        self.lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
+        # Crop factors to reduce edge artifacts (0.1 = 10% crop from each side)
+        self.crop_factor_horizontal = self.config.getfloat('Camera', 'crop_factor_horizontal', fallback=0.1)
+        self.crop_factor_vertical = self.config.getfloat('Camera', 'crop_factor_vertical', fallback=0.1)
+        self.logger.info(f'[INFO] Crop factor: X {self.crop_factor_horizontal} | Y {self.crop_factor_vertical}')
+
+        if self.frame_width and self.frame_height:
+            # Calculate cropped dimensions
+            crop_left = int(self.frame_width * self.crop_factor_horizontal)
+            crop_right = int(self.frame_width - crop_left)
+            crop_top = int(self.frame_height * self.crop_factor_vertical)
+            crop_bottom = int(self.frame_height - crop_top)
+            self.cropped_width = crop_right - crop_left
+            self.cropped_height = crop_bottom - crop_top
+            self.logger.info(f'[INFO] Image cropped to {crop_left}x{crop_right}x{crop_top}x{crop_bottom}.')
+            # Store crop boundaries for slicing
+            self.crop_slice = (slice(crop_top, crop_bottom), slice(crop_left, crop_right))
+
+            # Calculate lane width based on cropped width
+            self.lane_width = self.cropped_width / self.relay_num
+
+            # Calculate actuation zone Y threshold
+            self.actuation_y_thresh = int(self.cropped_height * (1.0 - self.actuation_zone / 100.0))
+
+            # Calculate lane coords relative to cropped frame
+            for i in range(self.relay_num):
+                laneX = int(i * self.lane_width)
+                self.lane_coords[i] = laneX
+
+            # Precompute the integer lane coordinates for reuse
+            self.lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
+
+        else:
+            self.logger.error('[ERROR] No frame width or frame height provided.')
+
+    @property
+    def config_path(self):
+        return self._config_path
 
     def hoot(self):
+        # Signal successful boot with LED blink
+        if hasattr(self, 'status_indicator') and hasattr(self.status_indicator, 'setup_success'):
+            self.status_indicator.setup_success()
+
         self.record_video = False  # Flag to control video recording
         self.video_writer = None
+        image_out = None
 
         algorithm = self.config.get('System', 'algorithm')
         log_fps = self.config.getboolean('DataCollection', 'log_fps')
         if self.controller:
             self.controller.update_state()
 
-        # track FPS and framecount
+        # track framecount
         frame_count = 0
+        last_fps_time = time.time()
+        fps_frame_count = 0
 
-        if log_fps:
-            fps = FPS().start()
+        # GoG shared config (used by both gog and gog-hybrid)
+        self._model_path = self.config.get('GreenOnGreen', 'model_path')
+        self._gog_confidence = self.config.getfloat('GreenOnGreen', 'confidence')
+        detect_classes_str = self.config.get('GreenOnGreen', 'detect_classes', fallback='')
+        self._detect_classes_list = [c.strip() for c in detect_classes_str.split(',') if c.strip()]
+        detect_classes = self._detect_classes_list or None
+        actuation_mode = self.config.get('GreenOnGreen', 'actuation_mode', fallback='centre')
+        min_detection_pixels = self.config.getint('GreenOnGreen', 'min_detection_pixels', fallback=50)
+        _zone_tracking_warned = False
+
+        # GoB shared config — already initialised in __init__() and may have been
+        # updated by SensitivityManager.apply_preset(), so do NOT re-read from config.
+
+        def _create_detector(algo):
+            """Three-way detector factory."""
+            current_classes = self._detect_classes_list or None
+            if algo == 'gog':
+                from utils.greenongreen import GreenOnGreen
+                return GreenOnGreen(
+                    model_path=self._model_path,
+                    confidence=self._gog_confidence,
+                    detect_classes=current_classes,
+                    tracking_enabled=self.tracking_enabled,
+                    detection_persist_frames=self.detection_persist_frames,
+                )
+            elif algo == 'gog-hybrid':
+                from utils.greenongreen import GreenOnGreen
+                return GreenOnGreen(
+                    model_path=self._model_path,
+                    confidence=self._gog_confidence,
+                    detect_classes=current_classes,
+                    hybrid_mode=True,
+                    inference_resolution=self.inference_resolution,
+                    crop_buffer_px=self.crop_buffer_px,
+                    tracking_enabled=self.tracking_enabled,
+                    crop_stabilizer=self._crop_stabilizer,
+                    detection_persist_frames=self.detection_persist_frames,
+                )
+            else:
+                return GreenOnBrown(algorithm=algo)
 
         try:
-            if algorithm == 'gog':
-                from utils.greenongreen import GreenOnGreen
-                model_path = self.config.get('GreenOnGreen', 'model_path')
-                confidence = self.config.getfloat('GreenOnGreen', 'confidence')
-
-                weed_detector = GreenOnGreen(model_path=model_path)
-
-            else:
-                min_detection_area = self.config.getint('GreenOnBrown', 'min_detection_area')
-                invert_hue = self.config.getboolean('GreenOnBrown', 'invert_hue')
-
-                weed_detector = GreenOnBrown(algorithm=algorithm)
-
-        except (ModuleNotFoundError, IndexError, FileNotFoundError, ValueError) as e:
-            algo_error = errors.AlgorithmError(algorithm, e)
-            algo_error.handle(self)
+            weed_detector = _create_detector(algorithm)
+            if algorithm in ('gog', 'gog-hybrid'):
+                self._gog_detector = weed_detector
 
         except Exception as e:
-            algo_error = errors.AlgorithmError(algorithm, e)
-            algo_error.handle(self)
+            self.logger.error(f"[ERROR] Failed to create detector for '{algorithm}': {e}")
+            self.logger.error("[ERROR] OWL will continue running without detection. Change algorithm via dashboard to recover.")
+            weed_detector = None
+            if self.dash:
+                self.dash.state['algorithm_error'] = str(e)
 
         if self.show_display:
             self.relay_vis = self.relay_controller.relay_vis
             self.relay_vis.setup()
             self.relay_controller.vis = True
 
-        try:
-            actuation_duration = self.config.getfloat('System', 'actuation_duration')
-            delay = self.config.getfloat('System', 'delay')
+        prev_detection_enable = False
+        prev_recording_enable = False
 
+        try:
             while True:
+                loop_start = time.time()
                 frame = self.cam.read()
 
                 if frame is None:
-                    if log_fps:
-                        fps.stop()
-                        self.logger.info(f"[INFO] Stopped. Approximate FPS: {fps.fps():.2f}")
-                        self.stop()
-                        break
-                    else:
-                        self.logger.info("[INFO] Frame is None. Stopped.")
-                        self.stop()
-                        break
+                    self.logger.info("[INFO] Frame is None. Stopped.")
+                    self.stop()
+                    break
+
+                # Reset tracker when detection toggled off
+                if prev_detection_enable and not self._detection_enable:
+                    if (self.tracking_enabled and weed_detector
+                            and hasattr(weed_detector, 'reset_tracker')):
+                        weed_detector.reset_tracker()
+                        if self._class_smoother:
+                            self._class_smoother.reset()
+                        self.logger.info("Tracker state reset (detection disabled)")
+                prev_detection_enable = self._detection_enable
+
+                # Create new session directory when recording starts
+                if self._image_sample_enable and not prev_recording_enable:
+                    if hasattr(self, 'save_directory') and self.save_directory:
+                        session_name = f"session_{datetime.now().strftime('%H%M%S')}"
+                        date_dir = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
+                        session_dir = os.path.join(date_dir, session_name)
+                        os.makedirs(session_dir, exist_ok=True)
+
+                        # Stop old ImageRecorder, create new one for this session
+                        if hasattr(self, 'image_recorder') and self.image_recorder:
+                            self.image_recorder.stop()
+                        self.image_recorder = ImageRecorder(
+                            save_directory=session_dir, mode=self.sample_method)
+                        self.logger.info(f"New recording session: {session_dir}")
+                prev_recording_enable = self._image_sample_enable
+
+                # Drain queued trackbar updates from MQTT thread (thread-safe)
+                if self.show_display and self._pending_trackbar_updates:
+                    pending = self._pending_trackbar_updates
+                    self._pending_trackbar_updates = {}
+                    for tb_name, tb_val in pending.items():
+                        cv2.setTrackbarPos(tb_name, self.window_name, tb_val)
 
                 # retrieve the trackbar positions for thresholds
                 if self.show_display:
@@ -385,17 +672,116 @@ class Owl:
                     self.brightness_min = cv2.getTrackbarPos("Bright-Min", self.window_name)
                     self.brightness_max = cv2.getTrackbarPos("Bright-Max", self.window_name)
 
-                # pass image, thresholds to green_on_brown function
-                if not self.disable_detection:
+                # Pre-load detectors/models outside detection guard so they're
+                # ready instantly when the user enables detection.
+                # Live algorithm switching
+                if self._pending_algorithm and (weed_detector is None or self._pending_algorithm != algorithm):
+                    try:
+                        weed_detector = _create_detector(self._pending_algorithm)
+                        algorithm = self._pending_algorithm
+                        if algorithm in ('gog', 'gog-hybrid'):
+                            self._gog_detector = weed_detector
+                        self.logger.info(f"Live algorithm switch to: {algorithm}")
+                        if self.dash:
+                            self.dash.state.pop('algorithm_error', None)
+                    except Exception as e:
+                        self.logger.error(f"Failed to load detector for {self._pending_algorithm}: {e}")
+                        # Revert — keep using current weed_detector and algorithm
+                        if self.dash:
+                            self.dash.state['algorithm'] = algorithm
+                            self.dash.state['algorithm_error'] = str(e)
+                    self._pending_algorithm = None
+
+                # Live model switching
+                if self._pending_model:
+                    new_model = self._pending_model
+                    self._pending_model = None
+                    try:
+                        self._model_path = new_model
+                        weed_detector = _create_detector(algorithm)
+                        if algorithm in ('gog', 'gog-hybrid'):
+                            self._gog_detector = weed_detector
+                        self.logger.info(f"Live model switch to: {new_model}")
+                        if self.dash:
+                            self.dash.state.pop('algorithm_error', None)
+                    except Exception as e:
+                        self.logger.error(f"Failed to switch model: {e}")
+                        if self.dash:
+                            self.dash.state['algorithm_error'] = str(e)
+
+                # Live detect_classes update
+                if self._pending_detect_classes is not None:
+                    new_classes = self._pending_detect_classes
+                    self._pending_detect_classes = None
+                    self._detect_classes_list = new_classes
+                    if weed_detector and hasattr(weed_detector, 'update_detect_classes'):
+                        weed_detector.update_detect_classes(new_classes or None)
+                    self.logger.info(f"detect_classes updated: {new_classes}")
+
+                # Live crop buffer update (hybrid mode only)
+                if (algorithm == 'gog-hybrid'
+                        and weed_detector
+                        and hasattr(weed_detector, 'set_crop_buffer')
+                        and weed_detector.crop_buffer_px != self.crop_buffer_px):
+                    weed_detector.set_crop_buffer(self.crop_buffer_px)
+
+                if self._detection_enable and weed_detector is not None:
+                    cropped_frame = frame[self.crop_slice]
+
+                    return_image_out = self.show_display or bool(self.dash)
+
                     if algorithm == 'gog':
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
-                            frame,
-                            confidence=confidence,
-                            filter_id=63
+                            cropped_frame,
+                            confidence=self._gog_confidence,
+                            show_display=return_image_out,
+                            build_mask=(actuation_mode == 'zone' and not self.tracking_enabled)
+                        )
+                        if (self.tracking_enabled and actuation_mode == 'zone'
+                                and not _zone_tracking_warned):
+                            self.logger.warning(
+                                'Zone actuation disabled while tracking is enabled — '
+                                'using centre-based actuation instead')
+                            _zone_tracking_warned = True
+
+                        # Apply class smoothing: filter to target classes using majority-vote
+                        if (self.tracking_enabled
+                                and self._class_smoother
+                                and weed_detector.last_track_ids):
+                            smoothed = self._class_smoother.update(
+                                weed_detector.last_track_ids,
+                                weed_detector.last_class_ids,
+                                weed_detector.last_confidences,
+                                frame_count=frame_count
+                            )
+                            target_ids = set(weed_detector._detect_class_ids or [])
+                            if target_ids:
+                                filtered_boxes = []
+                                filtered_centres = []
+                                for tid, raw_box in zip(
+                                        weed_detector.last_track_ids,
+                                        weed_detector.last_raw_boxes):
+                                    if smoothed.get(tid, -1) in target_ids:
+                                        x, y, w, h = raw_box
+                                        filtered_centres.append([x + w // 2, y + h // 2])
+                                        filtered_boxes.append(raw_box)
+                                boxes = filtered_boxes
+                                weed_centres = filtered_centres
+
+                    elif algorithm == 'gog-hybrid':
+                        cnts, boxes, weed_centres, image_out = weed_detector.inference(
+                            cropped_frame,
+                            confidence=self._gog_confidence,
+                            show_display=return_image_out,
+                            exg_min=self.exg_min, exg_max=self.exg_max,
+                            hue_min=self.hue_min, hue_max=self.hue_max,
+                            saturation_min=self.saturation_min, saturation_max=self.saturation_max,
+                            brightness_min=self.brightness_min, brightness_max=self.brightness_max,
+                            min_detection_area=self.min_detection_area, invert_hue=self.invert_hue
                         )
                     else:
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
-                            frame,
+                            cropped_frame,
                             exg_min=self.exg_min,
                             exg_max=self.exg_max,
                             hue_min=self.hue_min,
@@ -404,67 +790,178 @@ class Owl:
                             saturation_max=self.saturation_max,
                             brightness_min=self.brightness_min,
                             brightness_max=self.brightness_max,
-                            show_display=self.show_display,
+                            show_display=return_image_out,
                             algorithm=algorithm,
-                            min_detection_area=min_detection_area,
-                            invert_hue=invert_hue,
+                            min_detection_area=self.min_detection_area,
+                            invert_hue=self.invert_hue,
                             label='WEED'
                         )
 
-                    if len(weed_centres) > 0 and self.controller:
-                        self.controller.weed_detect_indicator()
+                    # Merge Kalman-predicted lost tracks into detection output
+                    # Only for pure gog mode — in hybrid, lost_stracks are crops not weeds
+                    if (self.tracking_enabled
+                            and self.detection_persist_frames > 0
+                            and algorithm == 'gog'
+                            and hasattr(weed_detector, 'get_lost_tracks')):
+                        lost = weed_detector.get_lost_tracks(
+                            max_age=self.detection_persist_frames)
+                        target_ids = set(weed_detector._detect_class_ids or [])
+                        persisted_boxes = []
+                        for lt in lost:
+                            smoothed_cls = (self._class_smoother.get_class(lt['track_id'])
+                                            if self._class_smoother else lt['cls'])
+                            if target_ids and smoothed_cls not in target_ids:
+                                continue
+                            x1, y1, x2, y2 = [int(v) for v in lt['xyxy']]
+                            w, h = x2 - x1, y2 - y1
+                            boxes.append([x1, y1, w, h])
+                            weed_centres.append([int((x1 + x2) / 2), int((y1 + y2) / 2)])
+                            cls_name = weed_detector.model.names.get(lt['cls'], 'unknown')
+                            persisted_boxes.append({
+                                'x': x1, 'y': y1, 'w': w, 'h': h,
+                                'track_id': lt['track_id'], 'age': lt['age'],
+                                'conf': lt['score'], 'cls_name': cls_name,
+                            })
 
-                    # loop over the weed centres
-                    for centre in weed_centres:
-                        if centre[1] > self.yAct:
+                        # Draw persisted boxes on image_out with dimmed colour
+                        if persisted_boxes and image_out is not None and return_image_out:
+                            for pb in persisted_boxes:
+                                cv2.rectangle(image_out,
+                                              (pb['x'], pb['y']),
+                                              (pb['x'] + pb['w'], pb['y'] + pb['h']),
+                                              (0, 120, 0), 2)
+                                lbl = (f"ID{pb['track_id']} [{pb['age']}] "
+                                       f"{int(pb['conf'] * 100)}% {pb['cls_name']}")
+                                cv2.putText(image_out, lbl,
+                                            (pb['x'], pb['y'] - 10),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                                            (0, 120, 0), 1)
+
+                    if len(weed_centres) > 0:
+                        if self.dash:
+                            self.dash.weed_detect_indicator()
+                        if self.controller:
+                            self.controller.weed_detect_indicator()
+
+                    # Zone-based actuation (segmentation models with gog/gog-hybrid)
+                    if (algorithm.startswith('gog')
+                            and actuation_mode == 'zone'
+                            and hasattr(weed_detector, 'detection_mask')
+                            and weed_detector.detection_mask is not None):
+                        actuation_time = time.time()
+                        for i in range(self.relay_num):
+                            lane_start = self.lane_coords_int[i]
+                            lane_end = int(lane_start + self.lane_width)
+                            lane_pixels = np.count_nonzero(
+                                weed_detector.detection_mask[self.actuation_y_thresh:, lane_start:lane_end]
+                            )
+                            if lane_pixels >= min_detection_pixels:
+                                self.relay_controller.receive(
+                                    relay=i,
+                                    delay=self.delay,
+                                    time_stamp=actuation_time,
+                                    duration=self.actuation_duration)
+                    else:
+                        # Centre-based actuation (default, works for all model types)
+                        # One timestamp per frame, deduplicated relay calls (at most relay_num)
+                        if weed_centres:
                             actuation_time = time.time()
-                            centre_x = centre[0]
+                            fired = set()
+                            for centre in weed_centres:
+                                if centre[1] >= self.actuation_y_thresh:
+                                    relay_id = min(int(centre[0] / self.lane_width), self.relay_num - 1)
+                                    fired.add(relay_id)
+                            for relay_id in fired:
+                                self.relay_controller.receive(
+                                    relay=relay_id,
+                                    delay=self.delay,
+                                    time_stamp=actuation_time,
+                                    duration=self.actuation_duration)
 
-                            for i in range(self.relay_num):
-                                lane_start = self.lane_coords_int[i]
-                                lane_end = lane_start + self.lane_width
-                                if lane_start <= centre_x < lane_end:
-                                    self.relay_controller.receive(
-                                        relay=i,
-                                        delay=delay,
-                                        time_stamp=actuation_time,
-                                        duration=actuation_duration)
+                ##### Update Dashboard Stream #####
+                if frame_count % 90 == 0:  # Every 90 frames (~3 seconds at 30fps)
+                    if self.dash and hasattr(self.dash, 'update_system_stats'):
+                        try:
+                            stats = self.get_system_stats()
+                            self.dash.update_system_stats(stats)
+                        except Exception as e:
+                            self.logger.debug(f"Error updating system stats: {e}")
+
+                if self.dash and frame_count % 5 == 0:  # send every 5th frame to the streamer to reduce overhead
+                    try:
+                        if self._detection_enable and image_out is not None:
+                            final_frame_to_stream = image_out
+                        else:
+                            final_frame_to_stream = frame
+
+                        if self.actuation_zone < 100:
+                            cv2.line(final_frame_to_stream,
+                                     (0, self.actuation_y_thresh),
+                                     (final_frame_to_stream.shape[1], self.actuation_y_thresh),
+                                     (0, 255, 255), 1)
+
+                        self.set_latest_stream_frame(final_frame_to_stream)
+                    except Exception as e:
+                        self.logger.error(f"Error sending frame to dashboard: {e}")
 
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often
-                if self.sample_images:
-                    # only record every sampleFreq number of frames. If sample_frequency = 60, this will activate every 60th frame
+                if self._image_sample_enable:
+                    # only record every sampleFreq number of frames.
+                    # If sample_frequency = 60, this will activate every 60th frame
                     if frame_count % self.sample_frequency == 0:
-                        if self.sample_method == 'whole':
-                            self.image_recorder.add_frame(frame=frame, frame_id=frame_count, boxes=None, centres=None)
+                        save_boxes = None
+                        save_centres = None
+                        if self.sample_method != 'whole' and self._detection_enable:
+                            save_boxes = boxes
+                            save_centres = weed_centres
 
-                        elif self.sample_method != 'whole' and not self.disable_detection:
-                            self.image_recorder.add_frame(frame=frame, frame_id=frame_count, boxes=boxes,
-                                                          centres=weed_centres)
-                        else:
-                            self.image_recorder.add_frame(frame=frame, frame_id=frame_count, boxes=None, centres=None)
+                        self.image_recorder.add_frame(frame=frame,
+                                                      frame_id=frame_count,
+                                                      boxes=save_boxes,
+                                                      centres=save_centres,
+                                                      gps_data=self.gps_data)
 
                         if self.controller:
                             self.status_indicator.image_write_indicator()
+                        if self.dash:
+                            self.dash.image_write_indicator()
 
                         if self.status_indicator.DRIVE_FULL:
-                            self.sample_images = False
+                            if self.dash:
+                                self.dash.set_image_sample_enable(False)
+                                self.dash.drive_full_indicator()
+                                self.logger.info("Drive full: Image sampling disabled via MQTT")
+                            else:
+                                with self.image_sample_enable.get_lock():
+                                    self.image_sample_enable.value = False
+                                self.logger.info("Drive full: Image sampling disabled locally")
+
+                            self._image_sample_enable = False
+
                             self.image_recorder.stop()
                             self.status_indicator.error(5)
+                            self.logger.info("Drive full: Image sampling disabled permanently due to storage full")
 
-                frame_count = frame_count + 1 if frame_count < 900 else 1
+                frame_count += 1
 
-                if log_fps and frame_count % 900 == 0:
-                    fps.stop()
-                    self.logger.info(f"[INFO] Approximate FPS: {fps.fps():.2f}")
-                    fps = FPS().start()
+                # Loop time tracking
+                loop_time_ms = (time.time() - loop_start) * 1000
+                self._loop_times.append(loop_time_ms)
+                self._avg_loop_time_ms = sum(self._loop_times) / len(self._loop_times)
 
-                # update the framerate counter
+                # FPS logging (time-based, replaces imutils FPS)
                 if log_fps:
-                    fps.update()
+                    fps_frame_count += 1
+                    elapsed = time.time() - last_fps_time
+                    if elapsed >= 30.0:
+                        approx_fps = fps_frame_count / elapsed
+                        self.logger.info(f"[INFO] Approximate FPS: {approx_fps:.2f} | Avg loop: {self._avg_loop_time_ms:.1f}ms")
+                        fps_frame_count = 0
+                        last_fps_time = time.time()
 
                 if self.show_display:
-                    if self.disable_detection:
+                    if not self._detection_enable:
                         image_out = frame.copy()
 
                     if self.record_video:
@@ -482,8 +979,10 @@ class Owl:
                     cv2.putText(image_out, f'OWL-gorithm: {algorithm}', (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
                                 (80, 80, 255), 1)
                     cv2.putText(image_out, f'Press "S" to save {algorithm} thresholds to file.',
-                                (20, int(image_out.shape[1 ] *0.72)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 80, 255), 1)
-                    cv2.imshow("Detection Output", imutils.resize(image_out, width=600))
+                                (20, int(image_out.shape[1] * 0.72)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 80, 255), 1)
+                    h, w = image_out.shape[:2]
+                    display_frame = cv2.resize(image_out, (600, int(h * 600 / w))) if w != 600 else image_out
+                    cv2.imshow("Detection Output", display_frame)
 
                 k = cv2.waitKey(1) & 0xFF
                 if k == ord('s'):
@@ -502,9 +1001,6 @@ class Owl:
                         self.logger.info("[INFO] Stopped video recording.")
 
                 elif k == 27:
-                    if log_fps:
-                        fps.stop()
-                        self.logger.info(f"[INFO] Approximate FPS: {fps.fps():.2f}")
                     if self.show_display:
                         self.relay_controller.relay_vis.close()
 
@@ -513,9 +1009,6 @@ class Owl:
                     break
 
         except KeyboardInterrupt:
-            if log_fps:
-                fps.stop()
-                self.logger.info(f"[INFO] Approximate FPS: {fps.fps():.2f}")
             if self.show_display:
                 self.relay_controller.relay_vis.close()
             self.logger.info("[INFO] Stopped.")
@@ -562,6 +1055,16 @@ class Owl:
             if hasattr(self, 'status_indicator') and self.status_indicator:
                 safe_stop(self.status_indicator, 'status indicator', fallback_to_terminate=False)
 
+            # Stop serial GPS
+            self._gps_running = False
+            if self._gps_serial and self._gps_serial.is_open:
+                try:
+                    self._gps_serial.close()
+                except Exception as e:
+                    self.logger.warning(f"Error closing GPS serial port: {e}")
+            if self.gps_status_led:
+                safe_stop(self.gps_status_led, 'GPS status LED', fallback_to_terminate=False)
+
             # Stop relay controller
             if hasattr(self, 'relay_controller') and self.relay_controller:
                 safe_stop(self.relay_controller, 'relay controller', fallback_to_terminate=False)
@@ -569,6 +1072,17 @@ class Owl:
                     self.relay_controller.relay.all_off()  # Ensure all relays are off
                 except Exception as e:
                     self.logger.warning(f"Failed to turn off relays: {e}")
+
+            # Stop state update thread
+            if hasattr(self, 'stop_state_update'):
+                self.stop_state_update.set()
+
+            # Stop dashboard controller
+            if hasattr(self, 'dash') and self.dash:
+                try:
+                    self.dash.stop()
+                except Exception as e:
+                    self.logger.warning(f"Error stopping dashboard controller: {e}")
 
             # Stop camera
             if hasattr(self, 'cam') and self.cam:
@@ -608,12 +1122,13 @@ class Owl:
 
         self.logger.info(f"[INFO] Configuration saved to {new_config_path}")
 
-    def setup_media_source(self, input_file_or_directory, camera_type='rpi'):
+    def setup_media_source(self, input_file_or_directory, camera_type='auto'):
         """
         Configure and initialize the appropriate media source (camera or media file/directory).
 
         Args:
             input_file_or_directory: Optional path from CLI args to image/video source
+            camera_type: Camera selection ('auto', 'rpi', 'usb')
 
         Returns:
             VideoStream or FrameReader: Initialized media source
@@ -659,9 +1174,6 @@ class Owl:
 
         # Set up camera if no file input specified
         try:
-            if platform.system() != "Linux":
-                camera_type = "windows-usb"
-
             media_source = VideoStream(resolution=self.resolution,
                                        exp_compensation=self.exp_compensation,
                                        camera_type=camera_type)
@@ -673,13 +1185,13 @@ class Owl:
             return media_source
 
         except IndexError as e:
-            self.logger.error("Camera index not found", exc_info=True)
+            self.logger.critical("Camera index not found", exc_info=True)
             self.status_indicator.error(2)
             self.stop()
             raise errors.CameraNotFoundError(error_type="Camera Not Found", original_error=str(e))
 
         except ModuleNotFoundError as e:
-            self.logger.error(e, exc_info=True)
+            self.logger.critical(e, exc_info=True)
             module_name = str(e).split("'")[-2]
             self.status_indicator.error(1)
             self.stop()
@@ -687,10 +1199,288 @@ class Owl:
 
         except Exception as e:
             error_msg = f"[CRITICAL ERROR] Failed to initialize camera: {str(e)}"
-            self.logger.error(error_msg)
+            self.logger.critical(error_msg)
             self.status_indicator.error(1)
             self.stop()
             raise errors.CameraInitError(str(e)) from e
+
+    def start_streaming_server(self):
+        """Initializes and starts the MJPEG streaming server in a background thread."""
+        host = '0.0.0.0'
+        port = 8001
+        try:
+            self.logger.info(f"Starting MJPEG streaming server on port {port}")
+            server_address = (host, port)
+            httpd = ThreadedHTTPServer(server_address, StreamingHandler, owl_instance=self)
+
+            server_thread = threading.Thread(target=httpd.serve_forever)
+            server_thread.daemon = True
+            server_thread.start()
+
+        except OSError as e:
+            self.logger.error(f"Failed to start MJPEG streaming server on port {port}: {e}", exc_info=True)
+            raise errors.MJPEGStreamError(host=host, port=port, original_error=e) from e
+        except Exception as e:
+            self.logger.error(f"An unexpected error occurred while starting MJPEG streaming server: {e}", exc_info=True)
+            raise errors.MJPEGStreamError(host=host, port=port, original_error=e) from e
+
+    def set_latest_stream_frame(self, frame):
+        """Thread-safe method to update the frame for the stream."""
+        with self.stream_lock:
+            self.latest_stream_frame = frame.copy()
+
+    def get_latest_stream_frame(self):
+        """Thread-safe method to get the latest frame for the stream."""
+        with self.stream_lock:
+            return self.latest_stream_frame
+
+    def get_system_stats(self):
+        """
+        Get system statistics with robust error handling.
+        """
+        import subprocess
+        import glob
+        try:
+            import psutil
+        except ImportError:
+            self.logger.warning("psutil not installed - system stats unavailable")
+            return {
+                'cpu_percent': 0,
+                'cpu_temp': 0,
+                'memory_percent': 0,
+                'memory_used': 0,
+                'memory_total': 0,
+                'disk_percent': 0,
+                'disk_used': 0,
+                'disk_total': 0,
+                'fan_status': {'is_rpi5': False, 'mode': 'unavailable', 'rpm': 0},
+                'owl_running': True
+            }
+
+        stats = {
+            'cpu_percent': 0,
+            'cpu_temp': 0,
+            'memory_percent': 0,
+            'memory_used': 0,
+            'memory_total': 0,
+            'disk_percent': 0,
+            'disk_used': 0,
+            'disk_total': 0,
+            'fan_status': {'is_rpi5': False, 'mode': 'unavailable', 'rpm': 0},
+            'owl_running': True
+        }
+
+        try:
+            # Get RPI version
+            from utils.input_manager import get_rpi_version
+            rpi_version = get_rpi_version()
+
+            if rpi_version == 'rpi-5':
+                stats['fan_status']['is_rpi5'] = True
+                stats['fan_status']['mode'] = 'auto'  # or self.fan_state if you track it
+
+                try:
+                    rpm_files = glob.glob('/sys/devices/platform/cooling_fan/hwmon/*/fan1_input')
+                    if rpm_files:
+                        with open(rpm_files[0], 'r') as f:
+                            stats['fan_status']['rpm'] = int(f.read().strip())
+                except Exception as e:
+                    self.logger.debug(f"Could not read fan RPM: {e}")
+
+            # CPU, Memory, Disk
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            memory = psutil.virtual_memory()
+            disk = psutil.disk_usage('/')
+
+            stats.update({
+                'cpu_percent': round(cpu_percent, 1),
+                'memory_percent': round(memory.percent, 1),
+                'memory_used': round(memory.used / (1024 ** 3), 1),
+                'memory_total': round(memory.total / (1024 ** 3), 1),
+                'disk_percent': round(disk.percent, 1),
+                'disk_used': round(disk.used / (1024 ** 3), 1),
+                'disk_total': round(disk.total / (1024 ** 3), 1),
+            })
+
+            # CPU Temperature
+            try:
+                result = subprocess.run(['/usr/bin/vcgencmd', 'measure_temp'],
+                                        capture_output=True, text=True, timeout=1)
+                if result.returncode == 0:
+                    temp_str = result.stdout.replace('temp=', '').replace("'C\n", '').strip()
+                    stats['cpu_temp'] = round(float(temp_str), 1)
+            except Exception as e:
+                self.logger.debug(f"Could not get CPU temp: {e}")
+
+        except Exception as e:
+            self.logger.warning(f"Error getting system stats: {e}")
+
+        stats['avg_loop_time_ms'] = round(self._avg_loop_time_ms, 1)
+        stats['actuation_duration'] = self.actuation_duration
+        stats['delay'] = self.delay
+
+        return stats
+
+    def update_state(self):
+        """Update local state from MQTT server or local hardware controllers"""
+        while not self.stop_state_update.is_set():
+            if self.dash:
+                if self.controller_type != 'none':
+                    # Hardware controller active - push hardware states to existing MQTT methods
+                    if hasattr(self, 'detection_enable'):
+                        with self.detection_enable.get_lock():
+                            hardware_detection = self.detection_enable.value
+                        self.dash.set_detection_enable(hardware_detection)
+                        self._detection_enable = hardware_detection
+
+                    if hasattr(self, 'image_sample_enable'):
+                        with self.image_sample_enable.get_lock():
+                            hardware_recording = self.image_sample_enable.value
+                        self.dash.set_image_sample_enable(hardware_recording)
+                        self._image_sample_enable = hardware_recording
+
+                    if hasattr(self, 'sensitivity_level'):
+                        with self.sensitivity_level.get_lock():
+                            hardware_sensitivity_int = self.sensitivity_level.value
+
+                        hardware_sensitivity_string = Sensitivity(hardware_sensitivity_int).name.lower()
+                        self.dash.set_sensitivity_level(hardware_sensitivity_string)
+                        self._sensitivity_level = hardware_sensitivity_string
+
+                else:
+                    # No hardware controller - normal dashboard control
+                    self._detection_enable = self.dash.get_detection_enable()
+                    self._image_sample_enable = self.dash.get_image_sample_enable()
+                    self._sensitivity_level = self.dash.get_sensitivity_level()
+
+            else:
+                # Hardware only, no dashboard - existing behavior
+                if hasattr(self, 'detection_enable'):
+                    with self.detection_enable.get_lock():
+                        self._detection_enable = self.detection_enable.value
+                if hasattr(self, 'image_sample_enable'):
+                    with self.image_sample_enable.get_lock():
+                        self._image_sample_enable = self.image_sample_enable.value
+                if hasattr(self, 'sensitivity_level'):
+                    with self.sensitivity_level.get_lock():
+                        sensitivity_int = self.sensitivity_level.value
+                    self._sensitivity_level = Sensitivity(sensitivity_int).name.lower()
+
+            # GPS: serial takes priority, then dashboard (browser geolocation)
+            self.gps_data = self._get_best_gps_data()
+
+            time.sleep(self._STATE_CHECK_INTERVAL)
+
+    # Dashboard GPS is stale if no update received for this many seconds.
+    # Browser watchPosition fires every 1-5s when active; 3s gives fast LED feedback
+    # when the farmer closes the browser or switches apps.
+    _GPS_STALE_THRESHOLD = 3
+
+    def _get_best_gps_data(self):
+        """Return GPS data from the best available source. Serial > Dashboard (browser).
+
+        Returns None if no source has fresh data, preventing stale coordinates
+        from being written into image EXIF.
+        """
+        # Try serial GPS first
+        if self._gps_state is not None:
+            snapshot = self._gps_state.get_dict()
+            if snapshot.get('fix_valid') and snapshot.get('latitude') is not None:
+                if self.gps_status_led:
+                    self.gps_status_led.set_state(GPSLEDState.FIX)
+                return {
+                    'latitude': snapshot['latitude'],
+                    'longitude': snapshot['longitude'],
+                    'accuracy': snapshot.get('hdop'),
+                    'timestamp': time.time()
+                }
+
+        # Fallback to dashboard GPS (browser geolocation via MQTT)
+        if self.dash:
+            gps = self.dash.get_gps_data()
+            if gps is not None:
+                age = time.time() - gps.get('timestamp', 0)
+                if age <= self._GPS_STALE_THRESHOLD:
+                    if self.gps_status_led:
+                        self.gps_status_led.set_state(GPSLEDState.FIX)
+                    return gps
+                else:
+                    # Dashboard GPS is stale — phone disconnected or tab backgrounded
+                    if self.gps_status_led:
+                        self.gps_status_led.set_state(GPSLEDState.ERROR)
+                    return None
+
+        # No GPS source available
+        if self.gps_status_led:
+            self.gps_status_led.set_state(GPSLEDState.OFF)
+        return None
+
+    def _serial_gps_reader(self):
+        """Background thread: read NMEA sentences from serial GPS, update self._gps_state."""
+        RECONNECT_DELAY = 5
+
+        while self._gps_running:
+            try:
+                self._gps_serial = serial.Serial(
+                    port=self.gps_port,
+                    baudrate=self.gps_baudrate,
+                    timeout=2
+                )
+                self.logger.info(f"Serial GPS connected: {self.gps_port}")
+
+                while self._gps_running:
+                    try:
+                        raw_line = self._gps_serial.readline().decode('ascii', errors='replace').strip()
+                    except (serial.SerialException, OSError) as e:
+                        self.logger.warning(f"Serial GPS read error: {e}")
+                        if self.gps_status_led:
+                            self.gps_status_led.set_state(GPSLEDState.ERROR)
+                        break
+
+                    if not raw_line:
+                        continue
+
+                    parsed = parse_sentence(raw_line)
+                    if parsed is None:
+                        continue
+
+                    sentence_type = parsed.get('type')
+                    if sentence_type == 'RMC':
+                        self._gps_state.update_from_rmc(parsed)
+                    elif sentence_type == 'GGA':
+                        self._gps_state.update_from_gga(parsed)
+                    elif sentence_type == 'VTG':
+                        self._gps_state.update_from_vtg(parsed)
+                    elif sentence_type == 'GSV':
+                        self._gps_state.update_from_gsv(parsed)
+
+                    # Update GPS LED state
+                    if self.gps_status_led:
+                        snapshot = self._gps_state.get_dict()
+                        if snapshot['fix_valid']:
+                            self.gps_status_led.set_state(GPSLEDState.FIX)
+                        else:
+                            self.gps_status_led.set_state(GPSLEDState.ACQUIRING)
+
+            except (OSError, FileNotFoundError) as e:
+                self.logger.warning(f"Serial GPS connection failed: {e}")
+                if self.gps_status_led:
+                    self.gps_status_led.set_state(GPSLEDState.ERROR)
+            except Exception as e:
+                if serial and isinstance(e, serial.SerialException):
+                    self.logger.warning(f"Serial GPS connection failed: {e}")
+                    if self.gps_status_led:
+                        self.gps_status_led.set_state(GPSLEDState.ERROR)
+                else:
+                    self.logger.error(f"Unexpected error in serial GPS reader: {e}", exc_info=True)
+                    if self.gps_status_led:
+                        self.gps_status_led.set_state(GPSLEDState.ERROR)
+            finally:
+                if self._gps_serial and self._gps_serial.is_open:
+                    self._gps_serial.close()
+
+            if self._gps_running:
+                time.sleep(RECONNECT_DELAY)
 
     def _log_system_info(self):
         """Log system information on startup"""
@@ -740,21 +1530,51 @@ if __name__ == "__main__":
     # opening up the OWL code each time.
     ap = argparse.ArgumentParser()
     ap.add_argument('--show-display', action='store_true', default=False, help='show display windows')
-    ap.add_argument('--focus', action='store_true', default=False, help='(DEPRECATED) launch the focus GUI; please use the desktop icon instead')
+    ap.add_argument('--focus', action='store_true', default=False,
+                    help='(DEPRECATED) launch the focus GUI; please use the desktop icon instead')
     ap.add_argument('--input', type=str, default=None, help='path to image directory, single image or video file')
+    ap.add_argument('--config', type=str, default=None, help='path to config file (overrides active_config.txt)')
 
     args = ap.parse_args()
 
     if args.focus:
-        logger.warning("--focus is deprecated, auto-launching focus GUI; please switch to the desktop icon in the future")
+        logger.warning(
+            "--focus is deprecated, auto-launching focus GUI; please switch to the desktop icon in the future")
         import desktop.focus_gui
 
         desktop.focus_gui.main()
         sys.exit(0)
 
-    # this is where you can change the config file default
+    # Determine which config file to use
+    # Priority: 1) --config argument, 2) active_config.txt pointer, 3) default
+    DEFAULT_CONFIG = 'config/GENERAL_CONFIG.ini'
+    ACTIVE_CONFIG_POINTER = Path(__file__).parent / 'config/active_config.txt'
+
+    config_file = DEFAULT_CONFIG
+
+    if args.config:
+        # Command line argument takes priority
+        config_file = args.config
+        logger.info(f"Using config from command line: {config_file}")
+    elif ACTIVE_CONFIG_POINTER.exists():
+        # Check for active config pointer from dashboard
+        try:
+            active_config = ACTIVE_CONFIG_POINTER.read_text().strip()
+            if active_config:
+                # Verify the config file exists
+                active_path = Path(__file__).parent / active_config
+                if active_path.exists():
+                    config_file = active_config
+                    logger.info(f"Using active config from dashboard: {config_file}")
+                else:
+                    logger.warning(f"Active config not found: {active_config}, using default")
+        except Exception as e:
+            logger.warning(f"Could not read active_config.txt: {e}, using default")
+
+    logger.info(f"Starting OWL with config: {config_file}")
+
     owl = Owl(
-        config_file='config/DAY_SENSITIVITY_2.ini',
+        config_file=config_file,
         show_display=args.show_display,
         input_file_or_directory=args.input
     )

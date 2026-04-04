@@ -1,0 +1,189 @@
+/* ==========================================================================
+   OWL Dashboard - Storage
+   Storage tab, file browser, USB devices, recording info
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Storage Container
+   -------------------------------------------------------------------------- */
+.storage-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.storage-section {
+    /* Individual storage sections */
+}
+
+.storage-section-full {
+    /* Full width section */
+}
+
+/* --------------------------------------------------------------------------
+   Storage Info & Recording Info
+   -------------------------------------------------------------------------- */
+.storage-info,
+.recording-info {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+}
+
+.info-grid {
+    display: flex;
+    flex-direction: column;
+}
+
+/* --------------------------------------------------------------------------
+   USB Device Display
+   -------------------------------------------------------------------------- */
+.usb-device {
+    padding: 1rem;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+}
+
+.usb-device h4 {
+    margin: 0 0 0.5rem 0;
+    color: var(--primary);
+}
+
+.usb-device .device-info {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    font-size: 0.9rem;
+    color: var(--text);
+}
+
+.usb-device .device-info span {
+    display: inline-block;
+}
+
+/* --------------------------------------------------------------------------
+   Browser Controls
+   -------------------------------------------------------------------------- */
+.browser-controls {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+/* --------------------------------------------------------------------------
+   File List & Browser
+   -------------------------------------------------------------------------- */
+.file-browser {
+    /* Container for file browser */
+}
+
+.file-list {
+    background: white;
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    min-height: 200px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.file-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.file-item:hover {
+    background-color: #f8f9fa;
+    transform: translateX(4px);
+}
+
+.file-item:last-child {
+    border-bottom: none;
+}
+
+.file-item .file-icon {
+    margin-right: 0.75rem;
+    font-size: 1.2rem;
+}
+
+.file-item .file-name {
+    flex: 1;
+    font-weight: 500;
+    color: var(--secondary);
+}
+
+.file-item .file-size {
+    color: var(--text);
+    font-size: 0.85rem;
+    margin-left: 1rem;
+}
+
+.file-item .file-date {
+    color: var(--text);
+    font-size: 0.85rem;
+    margin-left: 1rem;
+}
+
+/* --------------------------------------------------------------------------
+   Breadcrumb Navigation
+   -------------------------------------------------------------------------- */
+.breadcrumbs {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    padding: 0.5rem 0;
+    font-size: 0.9rem;
+}
+
+.breadcrumb-item {
+    color: var(--accent);
+    text-decoration: none;
+    transition: color 0.2s;
+}
+
+.breadcrumb-item:hover {
+    text-decoration: underline;
+}
+
+.breadcrumb-item.active {
+    color: var(--secondary);
+    font-weight: 500;
+}
+
+/* --------------------------------------------------------------------------
+   Storage - Responsive
+   -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+    .browser-controls {
+        flex-direction: column;
+    }
+
+    .usb-device .device-info {
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .file-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+
+    .file-item .file-size,
+    .file-item .file-date {
+        margin-left: 0;
+    }
+}

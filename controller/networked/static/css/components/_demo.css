@@ -1,0 +1,224 @@
+/* ==========================================================================
+   Demo Page — Field Day public display
+   Mobile-first (portrait phones), dark theme for outdoor visibility
+   ========================================================================== */
+
+/* Page — override shared reset which sets headings to blue */
+.demo-page {
+    min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(135deg, var(--owl-primary, #022775) 0%, var(--owl-primary-light, #034694) 50%, #0a3a7a 100%);
+    color: #fff;
+    padding: 20px 16px;
+}
+
+.demo-page h1,
+.demo-page h2,
+.demo-page h3,
+.demo-page p,
+.demo-page a {
+    color: #fff;
+}
+
+.demo-page a:hover {
+    color: rgba(255, 255, 255, 0.8);
+}
+
+/* Header */
+.demo-header {
+    text-align: center;
+    margin-bottom: 24px;
+}
+
+.demo-logo {
+    width: 64px;
+    height: auto;
+    margin-bottom: 8px;
+}
+
+.demo-title {
+    font-size: 22px;
+    font-weight: 700;
+    margin: 0 0 4px 0;
+    letter-spacing: 0.5px;
+}
+
+.demo-subtitle {
+    font-size: 15px;
+    font-weight: 400;
+    opacity: 0.8;
+    margin: 0;
+}
+
+/* Glass card panels */
+.demo-card {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: var(--radius-md, 8px);
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+/* About section */
+.demo-about p {
+    font-size: 14px;
+    line-height: 1.5;
+    margin: 0 0 10px 0;
+    opacity: 0.9;
+}
+
+.demo-about p:last-child {
+    margin-bottom: 0;
+}
+
+/* Stat badges row */
+.demo-stats {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.demo-stat {
+    flex: 1;
+    text-align: center;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-sm, 4px);
+    padding: 10px 6px;
+}
+
+.demo-stat-value {
+    font-size: 22px;
+    font-weight: 700;
+    display: block;
+    line-height: 1.2;
+}
+
+.demo-stat-label {
+    font-size: 11px;
+    opacity: 0.7;
+    display: block;
+    margin-top: 2px;
+}
+
+/* Camera grid */
+.demo-section-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0 0 12px 0;
+}
+
+.demo-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+}
+
+.demo-camera-card {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-md, 8px);
+    overflow: hidden;
+}
+
+.demo-camera-img {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    display: block;
+    background: rgba(0, 0, 0, 0.3);
+}
+
+.demo-camera-info {
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.demo-camera-name {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.demo-camera-meta {
+    font-size: 12px;
+    opacity: 0.7;
+}
+
+.demo-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: var(--radius-sm, 4px);
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.demo-badge.detecting {
+    background: rgba(46, 204, 113, 0.25);
+    color: #6dffaa;
+}
+
+.demo-badge.idle {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.5);
+}
+
+/* Empty state */
+.demo-empty {
+    text-align: center;
+    padding: 32px 16px;
+    opacity: 0.6;
+    font-size: 14px;
+}
+
+/* Footer */
+.demo-footer {
+    text-align: center;
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.demo-footer a {
+    color: rgba(255, 255, 255, 0.6);
+    text-decoration: none;
+    font-size: 13px;
+}
+
+.demo-footer a:hover {
+    color: rgba(255, 255, 255, 0.9);
+}
+
+/* Responsive: 2 columns on tablet */
+@media (min-width: 600px) {
+    .demo-page {
+        padding: 28px 24px;
+    }
+
+    .demo-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .demo-logo {
+        width: 80px;
+    }
+
+    .demo-title {
+        font-size: 26px;
+    }
+}
+
+/* Responsive: 3 columns on desktop */
+@media (min-width: 960px) {
+    .demo-page {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 32px;
+    }
+
+    .demo-grid {
+        grid-template-columns: 1fr 1fr 1fr;
+    }
+}

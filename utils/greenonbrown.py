@@ -4,6 +4,8 @@ import numpy as np
 import cv2
 
 
+MAX_DETECTIONS = 50
+
 class GreenOnBrown:
     def __init__(self, algorithm='exg', label_file='models/labels.txt'):
         self.algorithm = algorithm
@@ -19,6 +21,13 @@ class GreenOnBrown:
             'hsv': hsv,
             'gndvi': gndvi
         }
+
+        # Discover custom algorithms (file-isolated, AST-validated)
+        try:
+            from custom_algorithms import discover_custom_algorithms
+            self.algorithms.update(discover_custom_algorithms())
+        except Exception:
+            pass
 
     def inference(self, image,
                   exg_min=30,
@@ -49,30 +58,51 @@ class GreenOnBrown:
                                             brightness_max=brightness_max, saturation_min=saturation_min,
                                             saturation_max=saturation_max, invert_hue=invert_hue)
         else:
-            output = func(image)
+            # Custom algorithms can optionally accept a params dict
+            params = {
+                'exg_min': exg_min, 'exg_max': exg_max,
+                'hue_min': hue_min, 'hue_max': hue_max,
+                'brightness_min': brightness_min, 'brightness_max': brightness_max,
+                'saturation_min': saturation_min, 'saturation_max': saturation_max,
+                'min_detection_area': min_detection_area, 'invert_hue': invert_hue,
+            }
+            try:
+                output = func(image, params)
+            except TypeError:
+                output = func(image)
+            # Custom algorithms may return (image, True) for pre-thresholded output
+            if isinstance(output, tuple):
+                output, threshed_already = output[0], bool(output[1])
 
         weed_centres = []
         boxes = []
 
         if not threshed_already:
-            output = np.clip(output, exg_min, exg_max)
-            output = np.uint8(np.abs(output))
-            if show_display:
-                cv2.imshow("HSV Threshold on ExG", output)
+            np.clip(output, exg_min, exg_max, out=output)
+            output = output.astype(np.uint8)
             threshold_out = cv2.adaptiveThreshold(output, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV,
                                                   31, 2)
-            # threshold_out = cv2.threshold(output, exg_min, exg_max, cv2.THRESH_BINARY)
             threshold_out = cv2.morphologyEx(threshold_out, cv2.MORPH_CLOSE, self.kernel, iterations=1)
         else:
             threshold_out = cv2.morphologyEx(output, cv2.MORPH_CLOSE, self.kernel, iterations=5)
 
         contours, _ = cv2.findContours(threshold_out, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+        # Filter by min area, then keep largest MAX_DETECTIONS
+        valid = []
         for c in contours:
-            if cv2.contourArea(c) > min_detection_area:
-                x, y, w, h = cv2.boundingRect(c)
-                boxes.append([x, y, w, h])
-                weed_centres.append([x + w // 2, y + h // 2])
+            area = cv2.contourArea(c)
+            if area > min_detection_area:
+                valid.append((area, c))
+
+        if len(valid) > MAX_DETECTIONS:
+            valid.sort(key=lambda x: x[0], reverse=True)
+            valid = valid[:MAX_DETECTIONS]
+
+        for area, c in valid:
+            x, y, w, h = cv2.boundingRect(c)
+            boxes.append([x, y, w, h])
+            weed_centres.append([x + w // 2, y + h // 2])
 
         if show_display:
             image_out = image.copy()

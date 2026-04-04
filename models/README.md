@@ -1,100 +1,123 @@
-# Adding Green-on-Green to the OWL (beta)
-Welcome to the first iteration of Green-on-Green or in-crop weed detection with the OWL. This is still an early beta version, so it may require additional troubleshooting. It has been tested and works on both a Raspberry Pi 4, LibreComputer and a Windows desktop computer.
+# Green-on-Green Weed Detection with YOLO
 
-## Stage 1| Hardware/Software - Google Coral Installation
-In addition to the other software installation to get the OpenWeedLocator running, you will also need to install the Google Coral supporting software onto the Raspberry Pi. Simply run `install_coral.sh` from the command line using the instructions below. 
+The OWL supports AI-based weed detection using Ultralytics YOLO models. This enables in-crop (green-on-green) weed recognition, where colour-based detection alone cannot distinguish weeds from crop.
 
-### Step 1
-Assuming you have cloned the OpenWeedLocator repository and renamed it to `owl`, navigate to the `models` directory on the Raspberry Pi with:
+## Supported Model Formats
 
-`owl@raspberrypi:~ $ cd ~/owl/models`
+| Format | Extension | Speed on Pi | Recommended |
+|--------|-----------|------------|-------------|
+| NCNN | directory with `.param` + `.bin` | Fastest | Yes |
+| PyTorch | `.pt` | Slower | For testing only |
 
-### Step 2
-Now run the installation file. This will install the `pycoral` library and other important packages to run the Coral. For full instructions on the installation process, we recommend reading  the Google Coral [documentation](https://coral.ai/docs/accelerator/get-started/).
+**NCNN is the recommended format for Raspberry Pi deployment.** It provides the fastest CPU inference on ARM processors (~68ms for YOLO11n on Pi 5).
 
-During the installation, you will be asked to confirm performance options and connect the Google Coral USB to the USB3.0 ports (blue). 
+## Model Directory Structure
 
-`owl@raspberrypi:~ $ chmod +x install_coral.sh && ./install_coral.sh`.
-
-If you run into errors during the `pycoral` library installation, try running 
+Place your model files in this `models/` directory:
 
 ```
-owl@raspberrypi:~ $ workon owl
-(owl) owl@raspberrypi:~/owl/models$ pip install pycoral
+models/
+├── yolo11n_ncnn_model/    # NCNN format (recommended for Pi)
+│   ├── model.ncnn.param
+│   ├── model.ncnn.bin
+│   └── metadata.yaml
+├── yolo11n.pt             # PyTorch format (slower, for testing)
+├── labels.txt             # Legacy file (YOLO uses metadata.yaml instead)
+└── README.md              # This file
 ```
 
-### Step 3
-The final step is to test the installation.
+The OWL will auto-detect models in this directory:
+1. NCNN subdirectories (highest priority)
+2. `.pt` files (fallback)
 
-Open up a Python terminal by running:
-```
-(owl) owl@raspberrypi:~/owl/models$ python
-```
+You can also specify an exact path in config: `model_path = models/my_model_ncnn_model`
 
-Now try running:
-```
->>> import pycoral
-```
+## Model Types
 
-If this runs successfully then you're ready to move on to the next step and running object detection models with the OWL.
+YOLO supports two task types, both work with the OWL:
 
-## Stage 2 | Model Training/Deployment - Inference with the Coral
-Running weed recognition models on the Google Coral requires the generation of a .tflite model file. The .tflite files are specifically designed to be lightweight and efficient, making them well-suited for deployment on edge devices like the Coral USB TPU. One important thing to note is that .tflite files for the Google Coral are specifically optimized for it, so you cannot simply use any .tflite file. Using a generic .tflite file may result in much slower performance or even failure to run.
+- **Detection models** (`yolo11n.pt`) — output bounding boxes only. Use with `actuation_mode = centre`.
+- **Segmentation models** (`yolo11n-seg.pt`) — output bounding boxes + pixel masks. Use with `actuation_mode = centre` or `actuation_mode = zone`.
 
-This is an overview of the process from the official Google Coral documentation:
-![image](https://user-images.githubusercontent.com/51358498/226113545-9b642d75-f611-4ff5-a613-5e684822e619.png)
+Both model types also work with `gog-hybrid` mode. Segmentation models provide precise crop boundaries; detection models use filled bounding boxes as crop exclusion zones (coarser but functional). The buffer dilation smooths the edges either way.
 
-### Step 1
-To test if the installation has worked, the recommended option is to download a generic model file first from the [Coral model repository](https://coral.ai/models/object-detection/). This will isolate any issues with it running to the OWL or the Google Coral installation, rather than the model training. 
+The task type is auto-detected from the model's `metadata.yaml`.
 
-While still in the `models` directory, run this command to download the appropriate model:
-```
-(owl) owl@raspberrypi:~/owl/models$ wget https://raw.githubusercontent.com/google-coral/test_data/master/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite
-```
+## Exporting to NCNN
 
-Now change back to the `owl` directory and try running `owl.py` and specifying `gog` for the algorithm. If you don't specify a path to the `.tflite` model file, it will automatically select the first model in the directory when sorted alphabetically.
+Export a PyTorch model to NCNN format using the Ultralytics CLI:
 
-**NOTE** If you are testing this inside, the camera settings will likely be too dark (and the image will appear entirely black) so you may also need to specify the `--exp-compensation 4` and `--exp-mode auto`. 
+```bash
+# Install ultralytics with export support
+pip install ultralytics[export]
 
-```
-(owl) owl@raspberrypi:~/owl/models$ cd ..
-(owl) owl@raspberrypi:~/owl$python owl.py --show-display --algorithm gog
+# Export detection model
+yolo export model=yolo11n.pt format=ncnn
+
+# Export segmentation model
+yolo export model=yolo11n-seg.pt format=ncnn
 ```
 
-If this runs correctly, a video feed just like the previous green-on-brown approach should appear with a red box around an 'object', which in this case has been filtered to only detect 'potted plants'. If you would like to detect any of the other COCO categories, simply change the `filter_id=63` to a different category. The full list is [available here](https://tech.amikelive.com/node-718/what-object-categories-labels-are-in-coco-dataset/).
+This creates a directory (e.g., `yolo11n_ncnn_model/`) containing the NCNN files. Copy this directory to `models/` on your Pi.
 
-Once you have confirmed it is working, you will need to start training and deploying your own weed recognition models.
+## Training Custom Models
 
-There are two main ways to generate optimized, weed recognition .tflite files for the Coral. These are detailed below.
+To train a weed detection model on your own data:
 
-### Option 1 | Train a model using Tensorflow
-These instructions by EdjeElectronics provide a step-by-step to a working .tflite Edge TPU model file. 
-* [Google Colab walkthrough](https://colab.research.google.com/github/EdjeElectronics/TensorFlow-Lite-Object-Detection-on-Android-and-Raspberry-Pi/blob/master/Train_TFLite2_Object_Detction_Model.ipynb)
-* [Accompanying YouTube video](https://www.youtube.com/watch?v=XZ7FYAMCc4M&ab_channel=EdjeElectronics)
+1. **Collect and label images** using [Roboflow](https://roboflow.com/) or [Label Studio](https://labelstud.io/)
+2. **Train with Ultralytics:**
+   ```bash
+   yolo detect train data=your_dataset.yaml model=yolo11n.pt epochs=100
+   ```
+3. **Export to NCNN** (see above)
+4. **Deploy:** Copy the NCNN model directory to `models/` on the Pi
 
-There is also the [official Google Colab tutorial](https://colab.research.google.com/github/google-coral/tutorials/blob/master/retrain_ssdlite_mobiledet_qat_tf1.ipynb) from the Coral documentation, that walks you through the entire training process for custom datasets.
+For weed detection datasets, see [Weed-AI](https://weed-ai.sydney.edu.au/).
 
-### Train a YOLO v5/v8 model and export as .tflite 
-** NOTE ** it appears this method isn't currently working consistently. Once this resolves, this will be the recommended approach, given the ease of training for YOLO models and the relatively high performance. You can track one of the issues on the Ultralytics repository [here](https://github.com/ultralytics/ultralytics/issues/1185).
+## Configuration
 
-To train a YOLOv5 model from Weed-AI, check out this notebook we have for [Weed-AI datasets](https://colab.research.google.com/github/Weed-AI/Weed-AI/blob/master/weed_ai_yolov5.ipynb)). Once it is trained, you must export it using either of the following commands:
+Set these parameters in your config INI file under `[GreenOnGreen]`:
 
-#### YOLOv5
-`!python export.py --weights path/to/your/weights/best.pt --include edgetpu`
-#### YOLOv8
-`!yolo export model=path/to/your/weights/best.pt format=edgetpu`
+```ini
+[GreenOnGreen]
+model_path = models                  # Path to model or directory
+confidence = 0.5                     # Detection threshold (0.0-1.0)
+detect_classes =                     # Comma-separated class names (empty = all)
+actuation_mode = centre              # 'centre' or 'zone'
+min_detection_pixels = 50            # Min pixels per lane for zone mode
+inference_resolution = 320           # YOLO input resolution for hybrid mode (160-1280)
+crop_buffer_px = 20                  # Buffer around crop regions in hybrid mode (0-50)
+```
 
-The full explanation for each method is available in the [Ultralytics YOLOv5](https://github.com/ultralytics/yolov5)
-or [Ultralytics YOLOv8](https://github.com/ultralytics/ultralytics) repositories.
+Then set `algorithm = gog` (pure AI detection) or `algorithm = gog-hybrid` (AI crop mask + colour weed detection) in the `[System]` section.
 
-Currently, the `GreenOnGreen` class will simply either load the first (alphabetically) model in the directory if specified with
-`algorithm='gog'` or will load the model specified if `algorithm=path/to/model.tflite`. Importantly, all your classes must
-appear in the `labels.txt` file.
+## Actuation Modes
 
-This is a very early version of the approach, so it is subject to change.
+- **`centre`** (default) — The centre X coordinate of each detection box determines which relay fires. Works with both detection and segmentation models.
+- **`zone`** (segmentation models only) — The frame is divided into lanes (one per relay). If the number of weed pixels in a lane exceeds `min_detection_pixels`, that relay fires. A large weed spanning multiple lanes triggers multiple relays simultaneously.
+
+## Tracking (ByteTrack)
+
+When tracking is enabled (`[Tracking] tracking_enabled = True`), YOLO runs in tracking mode using ByteTrack to maintain consistent weed IDs across frames. This enables:
+
+- **Class smoothing** — noisy per-frame class predictions are stabilised using a majority-vote window (`track_class_window` frames). Reduces flickering between classes.
+- **Crop mask stabilisation** — in `gog-hybrid` mode, crop masks persist for `track_crop_persist` frames after the crop leaves the field of view, preventing false spray triggers at crop boundaries.
+
+Tracking config lives in the `[Tracking]` section of `GENERAL_CONFIG.ini`:
+
+```ini
+[Tracking]
+tracking_enabled = False    # Enable ByteTrack weed tracking
+track_class_window = 5      # Frames for majority-vote class smoothing
+track_crop_persist = 3      # Frames to persist crop mask (hybrid mode only)
+```
+
+## Model Deployment via Dashboard
+
+In networked mode, models can be uploaded to the central controller via the `/models` page and deployed to OWL units over WiFi. NCNN models should be uploaded as `.zip` files (containing `.param` and `.bin` files). The controller stores uploads in `uploads/` and OWLs download deployed models to their local `models/` directory.
 
 ## References
-These are some of the sources used in the development of this aspect of the project.
 
-1. [PyImageSearch](https://pyimagesearch.com/2019/05/13/object-detection-and-image-classification-with-google-coral-usb-accelerator/)
-2. [Google Coral Guides](https://coral.ai/docs/accelerator/get-started/)
+- [Ultralytics YOLO Documentation](https://docs.ultralytics.com/)
+- [NCNN Export Guide](https://docs.ultralytics.com/integrations/ncnn/)
+- [Weed-AI Dataset Repository](https://weed-ai.sydney.edu.au/)

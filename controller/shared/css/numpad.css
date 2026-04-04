@@ -1,0 +1,207 @@
+/* On-screen numpad + keyboard for kiosk (no physical keyboard) */
+
+/* ── Overlay ─────────────────────────────────────────────── */
+
+.numpad-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.45);
+}
+
+/* ── Panel ────────────────────────────────────────────────── */
+
+.numpad-panel {
+    background: #fff;
+    border-radius: var(--radius-md, 8px);
+    border: 1px solid #dce1e8;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    width: 320px;
+    max-width: 95vw;
+    overflow: hidden;
+    user-select: none;
+}
+
+.numpad-panel--keyboard {
+    width: 500px;
+}
+
+/* ── Header (shared) ─────────────────────────────────────── */
+
+.numpad-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid #dce1e8;
+    background: #f7f8fa;
+}
+
+.numpad-label {
+    font-size: 13px;
+    color: #6b7280;
+    margin-bottom: 6px;
+}
+
+.numpad-display {
+    font-size: 28px;
+    font-weight: 600;
+    color: #1a1a2e;
+    min-height: 36px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.numpad-panel--keyboard .numpad-display {
+    font-size: 20px;
+    text-align: left;
+    word-break: break-all;
+    white-space: normal;
+    min-height: 28px;
+}
+
+.numpad-display--empty::after {
+    content: '|';
+    animation: numpad-blink 1s step-end infinite;
+    color: #9ca3af;
+}
+
+@keyframes numpad-blink {
+    50% { opacity: 0; }
+}
+
+/* ── Numpad grid (number inputs) ─────────────────────────── */
+
+.numpad-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    padding: 12px;
+}
+
+.numpad-btn {
+    height: 56px;
+    min-width: 64px;
+    border: 1px solid #dce1e8;
+    border-radius: var(--radius-sm, 6px);
+    background: #fff;
+    font-size: 22px;
+    font-weight: 500;
+    color: #1a1a2e;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.1s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.numpad-btn:active {
+    background: #e5e7eb;
+}
+
+.numpad-btn--backspace {
+    font-size: 18px;
+}
+
+.numpad-btn--dot.numpad-btn--hidden {
+    visibility: hidden;
+}
+
+/* ── Keyboard grid (text inputs) ─────────────────────────── */
+
+.keyboard-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px;
+}
+
+.keyboard-row {
+    display: flex;
+    gap: 4px;
+    justify-content: center;
+}
+
+.keyboard-row--offset {
+    padding: 0 20px;
+}
+
+.keyboard-row--offset2 {
+    padding: 0 10px;
+}
+
+.kb-btn {
+    height: 44px;
+    width: 42px;
+    flex-shrink: 0;
+    border: 1px solid #dce1e8;
+    border-radius: var(--radius-sm, 6px);
+    background: #fff;
+    font-size: 16px;
+    font-weight: 500;
+    color: #1a1a2e;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.1s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.kb-btn:active {
+    background: #e5e7eb;
+}
+
+.kb-btn--wide {
+    width: 64px;
+    font-size: 14px;
+}
+
+.kb-btn--space {
+    flex: 1;
+    width: auto;
+    font-size: 13px;
+    color: #6b7280;
+    letter-spacing: 1px;
+}
+
+/* ── Shared actions ──────────────────────────────────────── */
+
+.numpad-actions {
+    display: flex;
+    gap: 8px;
+    padding: 0 12px 12px;
+}
+
+.numpad-actions button {
+    flex: 1;
+    height: 48px;
+    border: none;
+    border-radius: var(--radius-sm, 6px);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.1s;
+}
+
+.numpad-cancel {
+    background: #f3f4f6;
+    color: #6b7280;
+}
+
+.numpad-cancel:active {
+    background: #e5e7eb;
+}
+
+.numpad-ok {
+    background: var(--primary, #3b82f6);
+    color: #fff;
+}
+
+.numpad-ok:active {
+    background: var(--primary-dark, #2563eb);
+}

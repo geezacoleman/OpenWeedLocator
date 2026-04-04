@@ -1,29 +1,34 @@
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
+from urllib.parse import urlparse
+
 import cv2
 import time
 import platform
+import subprocess
 
+from typing import Optional
 from threading import Thread, Event, Condition, Lock
 from utils.log_manager import LogManager
+from utils.error_manager import CameraNotFoundError
 
 # determine availability of picamera versions
-PICAMERA_VERSION = None
-
 try:
     from picamera.array import PiRGBArray
     from picamera import PiCamera
-
     PICAMERA_VERSION = 'legacy'
-except ImportError:
-    pass
+
+except Exception as e:
+    PICAMERA_VERSION = None
 
 try:
     from picamera2 import Picamera2
     from libcamera import Transform
     import libcamera
-
     PICAMERA_VERSION = 'picamera2'
-except ImportError:
-    pass
+
+except Exception as e:
+    PICAMERA_VERSION = None
 
 
 def is_raspberry_pi() -> bool:
@@ -44,6 +49,73 @@ def get_platform_info() -> dict:
         'picamera_version': PICAMERA_VERSION
     }
 
+
+class StreamingHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        parsed_path = urlparse(self.path)
+        main_path = parsed_path.path
+
+        owl = self.server.owl_instance
+
+        if main_path == '/stream.mjpg':
+            self.send_response(200)
+            self.send_header('Age', 0)
+            self.send_header('Cache-Control', 'no-cache, private')
+            self.send_header('Pragma', 'no-cache')
+            self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=FRAME')
+            self.end_headers()
+            try:
+                while True:
+                    frame = owl.get_latest_stream_frame()
+                    if frame is not None:
+                        ret, buffer = cv2.imencode('.jpg', frame,
+                                                   [cv2.IMWRITE_JPEG_QUALITY, 70])
+                        if not ret:
+                            continue
+                        self.wfile.write(b'--FRAME\r\n')
+                        self.send_header('Content-Type', 'image/jpeg')
+                        self.send_header('Content-Length', len(buffer))
+                        self.end_headers()
+                        self.wfile.write(buffer)
+                        self.wfile.write(b'\r\n')
+
+                    time.sleep(1 / 30)  # Aim for ~30 FPS
+
+            except BrokenPipeError:
+                owl.logger.info(f"Streaming client disconnected (expected): {self.client_address}")
+
+            except Exception as e:
+                owl.logger.warning(f'Removed streaming client {self.client_address}: {e}')
+
+        elif main_path == '/latest_frame.jpg':
+            try:
+                frame = owl.get_latest_stream_frame()
+                if frame is not None:
+                    ret, buffer = cv2.imencode('.jpg', frame,
+                                               [cv2.IMWRITE_JPEG_QUALITY, 95])  # Higher quality for download
+                    if ret:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'image/jpeg')
+                        self.send_header('Content-Length', len(buffer))
+                        self.end_headers()
+                        self.wfile.write(buffer)
+                        return
+
+                self.send_error(404, 'No frame available')
+            except Exception as e:
+                owl.logger.error(f"Could not serve latest_frame.jpg: {e}")
+                self.send_error(500)
+
+        else:
+            self.send_error(404)
+            self.end_headers()
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    """Handle requests in a separate thread and hold a reference to the Owl instance."""
+
+    def __init__(self, server_address, RequestHandlerClass, owl_instance):
+        self.owl_instance = owl_instance
+        super().__init__(server_address, RequestHandlerClass)
 
 # class to support webcams
 class WebcamStream:
@@ -220,19 +292,56 @@ class PiCamera2Stream:
     def update(self):
         try:
             while not self.stopped.is_set():
-                frame = self.camera.capture_array("main")
-                if frame is not None:
-                    with self.lock:
-                        self.frame = frame
-                        self.frame_available = True
+                try:
+                    frame = self.camera.capture_array("main")
 
-                    with self.condition:
-                        self.condition.notify_all()
+                except Exception as e:
+                    try:
+                        dmesg_raw = subprocess.check_output(['dmesg', '-T'], text=True, stderr=subprocess.DEVNULL)
+                        dmesg_tail = "\n".join(dmesg_raw.splitlines()[-50:])
+                    except Exception:
+                        dmesg_tail = "Could not read dmesg output."
+
+                    original = f"Exception during Picamera2.capture_array(): {e}\n\nRecent kernel/libcamera messages (tail 50 lines):\n{dmesg_tail}"
+                    err = CameraNotFoundError(error_type="capture_exception", original_error=original)
+
+                    self.logger.critical(str(err), exc_info=True, extra={'error_code': 'camera_capture_exception'})
+                    raise err
+
+                if frame is None:
+                    try:
+                        dmesg_raw = subprocess.check_output(['dmesg', '-T'], text=True, stderr=subprocess.DEVNULL)
+                        dmesg_tail = "\n".join(dmesg_raw.splitlines()[-50:])
+                    except Exception:
+                        dmesg_tail = "Could not read dmesg output."
+
+                    original = (
+                            "capture_array returned None (no frame). This commonly indicates a camera I/O error.\n\n"
+                            "Recent kernel/libcamera messages (tail 50 lines):\n" + dmesg_tail
+                    )
+                    err = CameraNotFoundError(error_type="no_frame", original_error=original)
+                    self.logger.critical(str(err), extra={'error_code': 'camera_no_frame'})
+
+                    raise err
+
+                with self.lock:
+                    self.frame = frame
+                    self.frame_available = True
+
+                with self.condition:
+                    self.condition.notify_all()
+
+        except CameraNotFoundError:
+            raise
 
         except Exception as e:
             self.logger.error(f"Exception in PiCamera2Stream update loop: {e}", exc_info=True)
+
         finally:
-            self.camera.stop()  # Ensure camera resources are released properly
+            try:
+                self.camera.stop()
+            except Exception:
+                self.logger.debug("Camera stop raised an exception during cleanup.", exc_info=True)
 
     def read(self):
         # return the frame most recently read
@@ -246,10 +355,7 @@ class PiCamera2Stream:
 
     def stop(self):
         self.stopped.set()
-        with self.condition:
-            self.condition.notify_all()  # Wake up any waiting threads
-        if hasattr(self, 'thread') and self.thread.is_alive():
-            self.thread.join(timeout=2.0)
+        self.thread.join()
         self.camera.stop()
         time.sleep(2)  # Allow time for the camera to be released properly
 
@@ -328,8 +434,7 @@ class PiCameraStream:
         self.stopped.set()
 
         # Wait for the thread to finish
-        if self.thread.is_alive():
-            self.thread.join(timeout=2.0)
+        self.thread.join()
 
 
 # overarching class to determine which stream to use
@@ -372,12 +477,11 @@ class VideoStream:
             init_error = self._init_usb_camera(src, resolution)
 
         else:
-            # This shouldn't happen if _resolve_camera_type works correctly
             raise ValueError(f"Unsupported camera type: {effective_camera_type}")
 
         # Verify stream was initialized
         if self.stream is None:
-            error_msg = f"Failed to initialize any camera stream"
+            error_msg = "Failed to initialize any camera stream"
             if init_error:
                 error_msg += f": {init_error}"
             self.logger.error(error_msg)
@@ -417,7 +521,7 @@ class VideoStream:
 
         return camera_type
 
-    def _init_rpi_camera(self, src, resolution, exp_compensation, **kwargs) -> str | None:
+    def _init_rpi_camera(self, src, resolution, exp_compensation, **kwargs) -> Optional[str]:
         """Initialize Raspberry Pi camera. Returns error message on failure, None on success."""
         picamera_version = self.platform_info['picamera_version']
 
@@ -453,7 +557,7 @@ class VideoStream:
 
         return f"Unknown picamera version: {picamera_version}"
 
-    def _init_usb_camera(self, src, resolution) -> str | None:
+    def _init_usb_camera(self, src, resolution) -> Optional[str]:
         """Initialize USB webcam. Returns error message on failure, None on success."""
         # Determine video source based on platform
         if self.platform_info['system'] == 'Linux':
@@ -484,3 +588,5 @@ class VideoStream:
         """Stop the thread and release any resources."""
         if self.stream:
             self.stream.stop()
+
+

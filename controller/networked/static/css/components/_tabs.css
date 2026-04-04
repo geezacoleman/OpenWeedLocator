@@ -1,0 +1,50 @@
+/* ==========================================================================
+   OWL Controller (Networked) - Tab Bar
+   Page-style tabs: active tab lifts, inactive tabs clearly visible
+   ========================================================================== */
+
+.view-toggle {
+    display: flex;
+    background: #dde2e8;
+    padding: 0.4rem 0.75rem 0;
+    gap: 2px;
+}
+
+.view-tab {
+    flex: 0 1 auto;
+    padding: 0.6rem 2rem;
+    border: none;
+    background: #c8ced6;
+    color: #5a6577;
+    font-size: 0.9rem;
+    font-weight: 700;
+
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all var(--transition-normal);
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+.view-tab:hover:not(.active) {
+    background: #d8dde3;
+    color: #3d4a5c;
+}
+
+.view-tab.active {
+    color: var(--primary);
+    background: var(--background);
+}
+
+.view-tab:active {
+    transform: scale(0.98);
+}
+
+/* View panels */
+.view-panel {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+}

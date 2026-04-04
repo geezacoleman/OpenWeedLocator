@@ -1,0 +1,380 @@
+/* ==========================================================================
+   OWL Dashboard (Standalone) - AI Tab
+   Model selection and class filtering for YOLO detection
+   ========================================================================== */
+
+.ai-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+/* Status banner */
+.ai-status-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    border-radius: var(--radius-md, 8px);
+    font-weight: 700;
+    font-size: 1rem;
+    letter-spacing: 0.5px;
+}
+
+.ai-status-banner.connected {
+    background: var(--success);
+    color: white;
+}
+
+.ai-status-banner.no-model {
+    background: var(--warning);
+    color: #1a1a2e;
+}
+
+.ai-status-banner.disconnected {
+    background: #555;
+    color: #aaa;
+}
+
+/* Model selector row */
+.ai-model-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    background: #f5f7fa;
+    border-radius: var(--radius-md, 8px);
+    padding: 0.8rem 1rem;
+}
+
+.ai-model-selector {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.ai-model-row label {
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--secondary);
+    white-space: nowrap;
+}
+
+.select-wrapper {
+    flex: 1;
+    min-width: 0;
+    position: relative;
+}
+
+.select-wrapper::after {
+    content: '';
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid #666;
+    pointer-events: none;
+}
+
+.ai-model-select {
+    width: 100%;
+    padding: 0.6rem 2rem 0.6rem 0.8rem;
+    font-size: 1rem;
+    border: 2px solid #ddd;
+    border-radius: 6px;
+    background: white;
+    color: var(--secondary);
+    cursor: pointer;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+}
+
+.ai-model-select:focus {
+    border-color: var(--primary);
+    outline: none;
+}
+
+.ai-model-info {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.ai-model-badge {
+    display: inline-block;
+    padding: 0.25rem 0.6rem;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    background: #e8edf2;
+    color: var(--text, #6c757d);
+}
+
+.ai-model-badge.seg {
+    background: #d5f5e3;
+    color: #1e8449;
+}
+
+.ai-model-badge.det {
+    background: #d6eaf8;
+    color: #2471a3;
+}
+
+/* Classes section */
+.ai-classes-section {
+    display: flex;
+    flex-direction: column;
+    background: #f5f7fa;
+    border-radius: var(--radius-md, 8px);
+    padding: 0.8rem 1rem;
+}
+
+.ai-classes-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+}
+
+.ai-classes-title {
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--secondary);
+}
+
+.ai-classes-hint {
+    font-size: 0.8rem;
+    color: var(--text, #6c757d);
+}
+
+/* Button grid - glove-friendly */
+.ai-classes-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-content: flex-start;
+    padding: 0.25rem 0;
+}
+
+.ai-class-btn {
+    min-width: 140px;
+    min-height: 56px;
+    padding: 0.5rem 1rem;
+    font-size: 1rem;
+    font-weight: 600;
+    border: 3px solid #ccc;
+    border-radius: var(--radius-md, 8px);
+    background: white;
+    color: var(--secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-transform: capitalize;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.ai-class-btn:active {
+    transform: scale(0.97);
+}
+
+.ai-class-btn.selected {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+    box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
+}
+
+/* Action bar */
+.ai-action-bar {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    padding-top: 0.25rem;
+}
+
+/* --------------------------------------------------------------------------
+   Preview (Dashboard inline stream)
+   -------------------------------------------------------------------------- */
+
+.preview-toggle-btn {
+    display: block;
+    width: 100%;
+    padding: 0.6rem 1rem;
+    margin-top: 0.5rem;
+    border: 2px solid var(--border, #dee2e6);
+    border-radius: 8px;
+    background: #f8f9fa;
+    color: var(--secondary);
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.preview-toggle-btn:hover {
+    background: #e9ecef;
+}
+
+.preview-toggle-btn.active {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+.preview-container {
+    margin-top: 0.5rem;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #000;
+    position: relative;
+}
+
+.preview-stream {
+    width: 100%;
+    display: block;
+}
+
+.preview-overlay-message {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(20, 20, 20, 0.9);
+    color: #f0f0f0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+}
+
+.preview-overlay-message p {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.preview-controls {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    background: rgba(0, 0, 0, 0.6);
+}
+
+.preview-controls .icon-btn {
+    flex: 1;
+    text-align: center;
+}
+
+/* Fullscreen preview */
+.preview-container:fullscreen {
+    display: flex;
+    flex-direction: column;
+    background: #000;
+}
+
+.preview-container:fullscreen .preview-stream {
+    flex: 1;
+    object-fit: contain;
+}
+
+/* --------------------------------------------------------------------------
+   GPS Indicator (Dashboard)
+   -------------------------------------------------------------------------- */
+
+.gps-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.75rem;
+    background: #f0f2f5;
+    border: 1px solid var(--border, #dee2e6);
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--secondary);
+    margin-top: 0.5rem;
+    transition: all 0.2s;
+}
+
+.gps-indicator-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    color: #999;
+    transition: color 0.2s;
+}
+
+.gps-indicator.gps-active .gps-indicator-icon {
+    color: var(--success);
+}
+
+.gps-indicator.gps-good .gps-indicator-icon {
+    color: var(--success);
+}
+
+.gps-indicator.gps-medium .gps-indicator-icon {
+    color: var(--warning);
+}
+
+.gps-indicator.gps-poor .gps-indicator-icon {
+    color: var(--danger, #e74c3c);
+}
+
+.gps-indicator .gps-label {
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+    margin: 0;
+}
+
+.gps-indicator .gps-label input[type="checkbox"] {
+    display: none;
+}
+
+.gps-indicator .gps-toggle-track {
+    position: relative;
+    width: 32px;
+    height: 18px;
+    background: #cfd6de;
+    border-radius: 9px;
+    transition: background 0.2s ease;
+}
+
+.gps-indicator .gps-toggle-track::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s ease;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.gps-indicator .gps-label input:checked + .gps-toggle-track {
+    background: var(--success);
+}
+
+.gps-indicator .gps-label input:checked + .gps-toggle-track::after {
+    transform: translateX(14px);
+}
+
+@media (max-width: 480px) {
+    .ai-model-row {
+        flex-wrap: wrap;
+    }
+    .ai-class-btn {
+        min-width: 110px;
+        min-height: 48px;
+    }
+}

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OWL Model Manager</title>
+    <!-- Shared foundation CSS -->
+    <link rel="stylesheet" href="/shared/css/_variables.css" />
+    <link rel="stylesheet" href="/shared/css/_reset.css" />
+    <!-- Page-specific CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/components/_models.css') }}" />
+    <style>
+        /* Toast (inline — no shared dependency) */
+        .models-toast {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%) translateY(60px);
+            padding: 10px 24px;
+            border-radius: 6px;
+            font-size: 14px;
+            color: white;
+            background: #2c3e50;
+            opacity: 0;
+            transition: opacity 0.3s, transform 0.3s;
+            z-index: 2000;
+            pointer-events: none;
+        }
+        .models-toast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+        .models-toast.success { background: #27ae60; }
+        .models-toast.error { background: #c0392b; }
+    </style>
+</head>
+<body>
+<div class="models-page">
+    <!-- Header -->
+    <div class="models-header">
+        <h1>Model Manager</h1>
+        <a class="models-back-link" href="/">Back to Dashboard</a>
+    </div>
+
+    <!-- Upload Card -->
+    <div class="models-card">
+        <div class="models-card-header">
+            <h2>Upload Model</h2>
+        </div>
+        <div class="models-card-body">
+            <div class="upload-zone" id="upload-zone">
+                <div class="upload-zone-text">Drag and drop .pt or .zip file here</div>
+                <div class="upload-zone-hint">or click to browse (max 200MB)</div>
+                <input type="file" id="upload-input" accept=".pt,.zip" />
+            </div>
+            <div class="progress-bar-container" id="upload-progress">
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill" id="upload-progress-fill"></div>
+                </div>
+                <div class="progress-bar-text" id="upload-progress-text"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Model Library Card -->
+    <div class="models-card">
+        <div class="models-card-header">
+            <h2>Model Library</h2>
+            <button class="btn-model refresh" id="refresh-models-btn">Refresh</button>
+        </div>
+        <div id="model-list">
+            <div class="model-list-empty">Loading...</div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast -->
+<div id="models-toast" class="models-toast"></div>
+
+<!-- JS -->
+<script src="{{ url_for('static', filename='js/modules/_models.js') }}"></script>
+</body>
+</html>

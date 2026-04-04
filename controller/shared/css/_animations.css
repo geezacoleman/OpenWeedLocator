@@ -1,0 +1,159 @@
+/* ==========================================================================
+   OWL Controllers - Shared Keyframe Animations
+   Reusable animations for both standalone and networked controllers
+   
+   Usage: @import after _reset.css
+   ========================================================================== */
+
+/* -------------------------------------------------------------------------
+   Spin Animation
+   Used for: spinners, loading indicators
+   ------------------------------------------------------------------------- */
+@keyframes spin {
+    to { 
+        transform: rotate(360deg); 
+    }
+}
+
+/* -------------------------------------------------------------------------
+   Pulse Animation
+   Used for: status dots, connection indicators, recording lights
+   ------------------------------------------------------------------------- */
+@keyframes pulse {
+    0%, 100% { 
+        opacity: 1; 
+    }
+    50% { 
+        opacity: 0.5; 
+    }
+}
+
+/* -------------------------------------------------------------------------
+   Slide In (from right)
+   Used for: notifications, panels, drawers
+   ------------------------------------------------------------------------- */
+@keyframes slide-in {
+    from { 
+        transform: translateX(100%); 
+        opacity: 0; 
+    }
+    to { 
+        transform: translateX(0); 
+        opacity: 1; 
+    }
+}
+
+/* -------------------------------------------------------------------------
+   Slide Out (to right)
+   Used for: dismissing notifications, closing panels
+   ------------------------------------------------------------------------- */
+@keyframes slide-out {
+    from { 
+        transform: translateX(0); 
+        opacity: 1; 
+    }
+    to { 
+        transform: translateX(100%); 
+        opacity: 0; 
+    }
+}
+
+/* -------------------------------------------------------------------------
+   Slide Up (from bottom)
+   Used for: toasts, modals
+   ------------------------------------------------------------------------- */
+@keyframes slide-up {
+    from { 
+        transform: translateY(100%); 
+        opacity: 0; 
+    }
+    to { 
+        transform: translateY(0); 
+        opacity: 1; 
+    }
+}
+
+/* -------------------------------------------------------------------------
+   Toast Slide Up (centered)
+   Used for: centered toast notifications
+   ------------------------------------------------------------------------- */
+@keyframes toast-slide-up {
+    from {
+        transform: translateX(-50%) translateY(100px);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(-50%) translateY(0);
+        opacity: 1;
+    }
+}
+
+/* -------------------------------------------------------------------------
+   Fade In
+   Used for: overlays, modals, general transitions
+   ------------------------------------------------------------------------- */
+@keyframes fade-in {
+    from { 
+        opacity: 0; 
+    }
+    to { 
+        opacity: 1; 
+    }
+}
+
+/* -------------------------------------------------------------------------
+   Fade Out
+   Used for: dismissing elements
+   ------------------------------------------------------------------------- */
+@keyframes fade-out {
+    from { 
+        opacity: 1; 
+    }
+    to { 
+        opacity: 0; 
+    }
+}
+
+/* -------------------------------------------------------------------------
+   Bell Shake
+   Used for: notification bell attention grabber
+   ------------------------------------------------------------------------- */
+@keyframes bell-shake {
+    0%, 100% { 
+        transform: rotate(0deg); 
+    }
+    25% { 
+        transform: rotate(-10deg); 
+    }
+    75% { 
+        transform: rotate(10deg); 
+    }
+}
+
+/* -------------------------------------------------------------------------
+   Progress Bar Stripes
+   Used for: animated progress bars
+   ------------------------------------------------------------------------- */
+@keyframes progress-stripes {
+    0% { 
+        background-position: 0 0; 
+    }
+    100% { 
+        background-position: 50px 50px; 
+    }
+}
+
+/* -------------------------------------------------------------------------
+   Scale In
+   Used for: buttons, cards on interaction
+   ------------------------------------------------------------------------- */
+@keyframes scale-in {
+    from { 
+        transform: scale(0.95); 
+        opacity: 0; 
+    }
+    to { 
+        transform: scale(1); 
+        opacity: 1; 
+    }
+}

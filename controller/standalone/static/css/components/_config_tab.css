@@ -1,0 +1,196 @@
+/* ==========================================================================
+   OWL Dashboard (Standalone) - Config Tab Sliders
+   Range sliders, drag handling, fine-tune, advanced settings toggle
+   Ported from networked _config_tab.css
+   ========================================================================== */
+
+/* Slider grid - single column on standalone */
+.config-sliders-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+/* Individual slider group card */
+.config-slider-group {
+    background: white;
+    border-radius: var(--radius-md, 8px);
+    border: 2px solid #eef1f5;
+    padding: 0.75rem 1rem;
+}
+
+/* Slider header - title left, values right */
+.slider-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 0.25rem;
+}
+
+.slider-title {
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--secondary);
+}
+
+.slider-values {
+    display: flex;
+    align-items: baseline;
+    gap: 0.3rem;
+}
+
+.slider-val {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--primary);
+    min-width: 2ch;
+    text-align: center;
+}
+
+.slider-val-sep {
+    color: var(--text, #6c757d);
+    font-size: 0.85rem;
+}
+
+/* Range and single slider containers */
+.range-slider,
+.single-slider {
+    position: relative;
+}
+
+/* Rail - positioning context for track + knobs */
+.config-slider-group .slider-rail {
+    position: relative;
+    height: 48px;
+    margin: 0 20px;
+    touch-action: none;
+}
+
+/* Track - thin bar centered in rail */
+.config-slider-group .slider-track {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 6px;
+    background: #dde1e6;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+/* Fill between knobs (range) or from left (single) */
+.config-slider-group .slider-fill {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    background: #9ab3c7;
+    border-radius: 3px;
+    pointer-events: none;
+}
+
+/* Knob - large white draggable circle */
+.config-slider-group .slider-knob {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    transform: translate(-50%, -50%);
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: white;
+    border: 3px solid #c8d1da;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    cursor: grab;
+    touch-action: none;
+    z-index: 2;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.config-slider-group .slider-knob:active {
+    cursor: grabbing;
+}
+
+.config-slider-group .slider-knob.active {
+    border-color: var(--accent, #3498db);
+    box-shadow: 0 0 0 4px rgba(52, 152, 219, 0.15), 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* Fine-tune +/- buttons */
+.slider-fine-tune {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-top: 0.25rem;
+}
+
+.fine-btn {
+    width: 52px;
+    height: 36px;
+    border: 2px solid #c8d1da;
+    background: white;
+    color: var(--secondary);
+    border-radius: var(--radius-md, 8px);
+    font-size: 1.3rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.1s ease;
+    line-height: 1;
+}
+
+.fine-btn:active {
+    background: #f0f2f5;
+    transform: scale(0.95);
+}
+
+/* Advanced settings toggle */
+.config-advanced-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    margin-top: 0.75rem;
+    background: white;
+    border: 2px solid #eef1f5;
+    border-radius: var(--radius-md, 8px);
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--secondary);
+    transition: background 0.15s;
+}
+
+.config-advanced-toggle:hover {
+    background: #f5f7fa;
+}
+
+.config-advanced-arrow {
+    transition: transform 0.2s;
+    font-size: 0.8rem;
+}
+
+.config-advanced-toggle.open .config-advanced-arrow {
+    transform: rotate(90deg);
+}
+
+/* Advanced body - existing INI config editor */
+.config-advanced-body {
+    display: none;
+    margin-top: 0.5rem;
+}
+
+.config-advanced-body.open {
+    display: block;
+}
+
+@media (max-width: 480px) {
+    .config-sliders-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .config-slider-group .slider-knob {
+        width: 36px;
+        height: 36px;
+    }
+}

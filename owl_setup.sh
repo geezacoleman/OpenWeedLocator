@@ -15,16 +15,15 @@ if [ "$SUDO_USER" ]; then
    exit 1
 fi
 
-if pgrep -f "owl.py" > /dev/null; then
-    echo -e "${ORANGE}[WARNING] owl.py is already running from a previous installation."
-    echo -e "${ORANGE}It is unlikely you need to run this script a second time, consider running 'python owl.py --focus or --show-display instead if you just need the display."
-    read -p "Otherwise, please enter 'y' to stop the currently running instance of owl.py to continue: (y/n): " stop_choice
+if systemctl is-active --quiet owl.service; then
+    echo -e "${ORANGE}[WARNING] The owl.service is currently running.${NC}"
+    read -p "Do you want to stop the service to continue with the installation? (y/n): " stop_choice
     if [[ "$stop_choice" =~ ^[Yy]$ ]]; then
-        pkill -f "owl.py"
-        echo -e "${GREEN}[INFO] owl.py process has been stopped. Continuing..."
+        echo -e "${GREEN}[INFO] Stopping owl.service...${NC}"
+        sudo systemctl stop owl.service
         sleep 2
     else
-        echo -e "${RED}[ERROR] Please stop the running owl.py process before running this script."
+        echo -e "${RED}[ERROR] Please stop the owl.service before running this script (sudo systemctl stop owl.service).${NC}"
         exit 1
     fi
 fi
@@ -41,8 +40,14 @@ STATUS_FULL_UPGRADE=""
 STATUS_VENV=""
 STATUS_OPENCV=""
 STATUS_OWL_DEPS=""
-STATUS_BOOT_SCRIPTS=""
+STATUS_OWL_SERVICE=""
 STATUS_DESKTOP_ICON=""
+STATUS_DASHBOARD_DEPS=""
+STATUS_DASHBOARD=""
+STATUS_GLOBAL_NUMPY=""
+STATUS_NUMPY_COMPAT=""
+STATUS_GOG_DEPS=""
+STATUS_CONTROLLER=""
 
 ERROR_UPGRADE=""
 ERROR_CAMERA=""
@@ -51,8 +56,14 @@ ERROR_FULL_UPGRADE=""
 ERROR_VENV=""
 ERROR_OPENCV=""
 ERROR_OWL_DEPS=""
-ERROR_BOOT_SCRIPTS=""
+ERROR_OWL_SERVICE=""
 ERROR_DESKTOP_ICON=""
+ERROR_DASHBOARD_DEPS=""
+ERROR_DASHBOARD=""
+ERROR_GLOBAL_NUMPY=""
+ERROR_NUMPY_COMPAT=""
+ERROR_GOG_DEPS=""
+ERROR_CONTROLLER=""
 
 # Function to check the exit status of the last executed command
 check_status() {
@@ -75,7 +86,26 @@ reload_bashrc() {
     fi
 }
 
-# Function to check if the camera is detected
+install_dashboard_dependencies() {
+  echo -e "${GREEN}[INFO] Installing dashboard Python dependencies...${NC}"
+  source $HOME/.virtualenvs/owl/bin/activate
+  pip install flask gunicorn paho-mqtt psutil boto3 pyserial
+  check_status "Installing dashboard Python dependencies" "DASHBOARD_DEPS"
+
+  echo -e "${GREEN}[INFO] Verifying Python package installations...${NC}"
+  FLASK_VERSION=$(python -c "import flask; print(flask.__version__)" 2>/dev/null)
+  GUNICORN_VERSION=$(python -c "import gunicorn; print(gunicorn.__version__)" 2>/dev/null)
+  PAHO_VERSION=$(python -c "import paho.mqtt.client; print('installed')" 2>/dev/null)
+
+  if [[ -n "$FLASK_VERSION" && -n "$GUNICORN_VERSION" && "$PAHO_VERSION" == "installed" ]]; then
+      echo -e "${TICK} Flask: $FLASK_VERSION, Gunicorn: $GUNICORN_VERSION, Paho-MQTT: installed"
+      check_status "Verifying Python dependencies" "DASHBOARD_DEPS"
+  else
+      echo -e "${CROSS} Some Python packages failed to install"
+      check_status "Verifying Python dependencies" "DASHBOARD_DEPS"
+  fi
+}
+
 check_camera_connection() {
   echo -e "${GREEN}[INFO] Checking for connected cameras...${NC}"
 
@@ -91,7 +121,6 @@ check_camera_connection() {
 
   # 2 — Detect USB camera
   if command -v v4l2-ctl >/dev/null 2>&1 && [[ -e /dev/video0 ]]; then
-    # basic sanity check — camera responds
     if v4l2-ctl -d /dev/video0 --all >/dev/null 2>&1; then
       echo -e "${GREEN}[INFO] USB webcam detected at /dev/video0.${NC}"
       CAMERA_MODE="usb"
@@ -100,7 +129,7 @@ check_camera_connection() {
     fi
   fi
 
-  # 3 — Neither exists, warn but continue install
+  # 3 — Neither found, warn but continue install
   echo -e "${RED}[WARNING] No camera detected (no CSI or USB).${NC}"
   echo -e "${RED}[WARNING] OWL will not run until a camera is present.${NC}"
   CAMERA_MODE="none"
@@ -108,7 +137,6 @@ check_camera_connection() {
   return 0
 }
 
-# check to see if the camera works
 test_camera_functionality() {
   local mode="$1"  # "rpi", "usb" or "none"
   local test_cmd=""
@@ -175,6 +203,56 @@ test_camera_functionality() {
   fi
 }
 
+setup_owl_systemd_service() {
+  echo -e "${GREEN}[INFO] Creating systemd service for OWL...${NC}"
+
+  local SERVICE_FILE="/etc/systemd/system/owl.service"
+  local VENV_BIN="$HOME/.virtualenvs/owl/bin"
+
+  sudo tee "$SERVICE_FILE" > /dev/null <<EOF
+[Unit]
+Description=OpenWeedLocator (OWL) Main Application
+After=network-online.target mosquitto.service NetworkManager-wait-online.service
+Wants=network-online.target mosquitto.service NetworkManager-wait-online.service
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+Group=$(id -g -n $CURRENT_USER)
+WorkingDirectory=$SCRIPT_DIR
+Environment="PATH=$VENV_BIN:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=$VENV_BIN/python -u $SCRIPT_DIR/owl.py
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  sudo systemctl daemon-reload
+  sudo systemctl enable owl.service
+
+  echo -e "${GREEN}[INFO] Starting OWL service...${NC}"
+  sudo systemctl start owl.service
+
+  sleep 2
+
+  if systemctl is-active --quiet owl.service; then
+    echo -e "${TICK} OWL systemd service is active"
+    STATUS_OWL_SERVICE="${TICK}"
+  else
+    echo -e "${CROSS} OWL systemd service failed to start"
+    echo -e "${ORANGE}[INFO] Showing service logs for debugging:${NC}"
+    systemctl status owl.service --no-pager -l || true
+    echo -e "${ORANGE}[INFO] For live logs, run: journalctl -u owl.service -f${NC}"
+    STATUS_OWL_SERVICE="${CROSS}"
+    ERROR_OWL_SERVICE="owl.service failed to start"
+    return 1
+  fi
+}
 
 # Step 1: Perform a normal system update and upgrade
 echo -e "${GREEN}[INFO] Updating and upgrading the system...${NC}"
@@ -186,8 +264,7 @@ check_status "System upgrade" "UPGRADE"
 check_camera_connection
 
 # Step 3: Test camera functionality
-echo -e "${GREEN}[INFO] Testing camera functionality...${NC}"
-
+test_camera_functionality "$CAMERA_MODE"
 
 # Step 4: Free up space
 echo -e "${GREEN}[INFO] Freeing up space by removing unnecessary packages...${NC}"
@@ -224,14 +301,115 @@ check_status "Creating virtual environment 'owl'" "VENV"
 
 sleep 1s
 
+echo -e "${GREEN}[INFO] Checking NumPy consistency (system vs venv) ...${NC}"
+
+# Helper to read "version path" from a given python
+_py_numpy_info() {
+  local py="$1"
+  "$py" - <<'PY' 2>/dev/null || true
+try:
+    import numpy as np
+    print(np.__version__, np.__file__)
+except Exception:
+    print("")
+PY
+}
+
+# is system NumPy present?
+if ! /usr/bin/python3 - <<'PY' >/dev/null 2>&1
+try:
+    import numpy  # noqa
+except Exception:
+    raise SystemExit(1)
+PY
+then
+  echo -e "${ORANGE}[WARN] System NumPy missing. Recommend: sudo apt-get install -y python3-numpy.${NC}"
+  STATUS_GLOBAL_NUMPY="${CROSS}"
+  ERROR_GLOBAL_NUMPY="System NumPy not importable."
+  GLOBAL_NUMPY_VERSION=""
+  GLOBAL_NUMPY_PATH=""
+else
+  SYS_INFO="$(_py_numpy_info /usr/bin/python3)"
+  GLOBAL_NUMPY_VERSION="$(awk '{print $1}' <<<"$SYS_INFO")"
+  GLOBAL_NUMPY_PATH="$(awk '{print $2}' <<<"$SYS_INFO")"
+  if [ -z "$GLOBAL_NUMPY_VERSION" ]; then
+    echo -e "${RED}[ERROR] Could not import system NumPy after check.${NC}"
+    STATUS_GLOBAL_NUMPY="${CROSS}"
+    ERROR_GLOBAL_NUMPY="System NumPy import failed."
+  else
+    echo -e "${GREEN}[OK] System NumPy: ${GLOBAL_NUMPY_VERSION} at ${GLOBAL_NUMPY_PATH}.${NC}"
+    STATUS_GLOBAL_NUMPY="${TICK}"
+  fi
+fi
+
+# venv NumPy (could resolve to system via --system-site-packages)
+VENV_INFO="$(_py_numpy_info "$VIRTUAL_ENV/bin/python")"
+VENV_NUMPY_VERSION="$(awk '{print $1}' <<<"$VENV_INFO")"
+VENV_NUMPY_PATH="$(awk '{print $2}' <<<"$VENV_INFO")"
+
+if [ -z "$VENV_NUMPY_VERSION" ]; then
+  if [ -n "${GLOBAL_NUMPY_VERSION:-}" ]; then
+    echo -e "${ORANGE}[WARN] NumPy not importable inside venv. Installing numpy==${GLOBAL_NUMPY_VERSION} into venv...${NC}"
+    if ! pip install --no-input "numpy==${GLOBAL_NUMPY_VERSION}" >/dev/null 2>&1; then
+      echo -e "${RED}[ERROR] Failed to install numpy==${GLOBAL_NUMPY_VERSION} into venv.${NC}"
+      ERROR_NUMPY_COMPAT="Failed venv numpy install to match system."
+    fi
+    VENV_INFO="$(_py_numpy_info "$VIRTUAL_ENV/bin/python")"
+    VENV_NUMPY_VERSION="$(awk '{print $1}' <<<"$VENV_INFO")"
+    VENV_NUMPY_PATH="$(awk '{print $2}' <<<"$VENV_INFO")"
+  else
+    echo -e "${ORANGE}[WARN] Venv NumPy missing and system version unknown; skipping venv install attempt.${NC}"
+    ERROR_NUMPY_COMPAT="Venv numpy missing; system version unknown."
+  fi
+fi
+
+if [ -z "$VENV_NUMPY_VERSION" ]; then
+  echo -e "${RED}[ERROR] NumPy still not importable inside venv after attempt.${NC}"
+  [ -z "$ERROR_NUMPY_COMPAT" ] && ERROR_NUMPY_COMPAT="Venv numpy import failed."
+else
+  echo -e "${GREEN}[INFO] Venv NumPy: ${VENV_NUMPY_VERSION} at ${VENV_NUMPY_PATH}${NC}"
+
+  # Align versions when both known and differ
+  if [ -n "${GLOBAL_NUMPY_VERSION:-}" ] && [ "$VENV_NUMPY_VERSION" != "$GLOBAL_NUMPY_VERSION" ]; then
+    echo -e "${ORANGE}[WARN] NumPy mismatch detected (venv=${VENV_NUMPY_VERSION}, system=${GLOBAL_NUMPY_VERSION}). Aligning venv to system...${NC}"
+    if ! pip install --no-input "numpy==${GLOBAL_NUMPY_VERSION}" >/dev/null 2>&1; then
+      echo -e "${RED}[ERROR] Failed to align venv numpy to ${GLOBAL_NUMPY_VERSION}.${NC}"
+      ERROR_NUMPY_COMPAT="Failed to align venv numpy to system version."
+    else
+      VENV_INFO="$(_py_numpy_info "$VIRTUAL_ENV/bin/python")"
+      VENV_NUMPY_VERSION="$(awk '{print $1}' <<<"$VENV_INFO")"
+      VENV_NUMPY_PATH="$(awk '{print $2}' <<<"$VENV_INFO")"
+      if [ "$VENV_NUMPY_VERSION" != "$GLOBAL_NUMPY_VERSION" ]; then
+        echo -e "${RED}[ERROR] Post-align mismatch persists (venv=${VENV_NUMPY_VERSION} vs system=${GLOBAL_NUMPY_VERSION}).${NC}"
+        ERROR_NUMPY_COMPAT="Post-align mismatch persists."
+      else
+        echo -e "${GREEN}[OK] Venv NumPy aligned to system: ${VENV_NUMPY_VERSION}${NC}"
+        STATUS_NUMPY_COMPAT="${TICK}"
+      fi
+    fi
+  else
+    if [ -n "${GLOBAL_NUMPY_VERSION:-}" ]; then
+      echo -e "${GREEN}[OK] NumPy versions match: ${VENV_NUMPY_VERSION}${NC}"
+      STATUS_NUMPY_COMPAT="${TICK}"
+    else
+      echo -e "${ORANGE}[WARN] Skipped compatibility check (system NumPy unknown).${NC}"
+    fi
+  fi
+fi
+
+
 # Step 7: Install OpenCV in the virtual environment
-echo -e "${GREEN}[INFO] Installing OpenCV in the 'owl' virtual environment...${NC}"
+echo -e "${GREEN}[INFO] Installing opencv-contrib-python in the 'owl' virtual environment...${NC}"
 source $HOME/.virtualenvs/owl/bin/activate
 sleep 1s
-pip3 install opencv-contrib-python
-check_status "Installing OpenCV" "OPENCV"
+pip install opencv-contrib-python
+check_status "Installing opencv-contrib-python" "OPENCV"
 
-sleep 1s
+# 4) Final runtime check with OpenCV present
+"$VIRTUAL_ENV/bin/python" - <<'PY' || { echo "[ERROR] Post-check import failed."; exit 1; }
+import numpy as np, cv2
+print(f"[OK] Final check: NumPy {np.__version__}, OpenCV {cv2.__version__}")
+PY
 
 # Step 8: Install OWL dependencies
 echo -e "${GREEN}[INFO] Installing the OWL Python dependencies...${NC}"
@@ -239,32 +417,39 @@ cd "$SCRIPT_DIR"
 pip install -r requirements.txt
 check_status "Installing dependencies from requirements.txt" "OWL_DEPS"
 
+# Step 8b: Optional Green-on-Green (YOLO) support
+echo -e "${GREEN}[INFO] Green-on-Green (YOLO) support available...${NC}"
+read -p "Do you want to install Green-on-Green (YOLO) support? This requires ~2GB of additional packages. (y/n): " gog_choice
+case "$gog_choice" in
+  y|Y )
+    echo -e "${GREEN}[INFO] Installing Green-on-Green dependencies...${NC}"
+    pip install -r requirements-gog.txt
+    check_status "Installing GoG dependencies from requirements-gog.txt" "GOG_DEPS"
+    ;;
+  n|N )
+    echo -e "${GREEN}[INFO] Green-on-Green setup skipped.${NC}"
+    STATUS_GOG_DEPS="SKIPPED"
+    ;;
+  * )
+    echo -e "${RED}[ERROR] Invalid input. Green-on-Green setup skipped.${NC}"
+    STATUS_GOG_DEPS="SKIPPED"
+    ;;
+esac
+
 # Step 9: Make scripts executable and set up boot configuration
-echo -e "${GREEN}[INFO] Making scripts executable...${NC}"
+echo -e "${GREEN}[INFO] Setting up OWL to start on boot with systemd...${NC}"
 chmod a+x owl.py
-check_status "Making owl.py executable" "BOOT_SCRIPTS"
 
-chmod a+x owl_boot.sh
-chmod a+x owl_boot_wrapper.sh
-check_status "Making boot scripts executable" "BOOT_SCRIPTS"
+setup_owl_systemd_service
+check_status "Creating OWL systemd service" "OWL_SERVICE"
 
-echo -e "${GREEN}[INFO] Moving boot scripts...${NC}"
-sudo mv owl_boot.sh /usr/local/bin/
-sudo mv owl_boot_wrapper.sh /usr/local/bin/
-check_status "Moving boot scripts" "BOOT_SCRIPTS"
-
-# Add boot script to cron
-echo -e "${GREEN}[INFO] Adding boot script to cron...${NC}"
-(crontab -l 2>/dev/null; echo "@reboot /usr/local/bin/owl_boot_wrapper.sh > /home/launch.log 2>&1") | sudo crontab -
-check_status "Adding boot script to cron" "BOOT_SCRIPTS"
-
-# set desktop background - check for wayland or X11
+# Step 10: Set desktop background - check for wayland or X11
 echo -e "${GREEN}[INFO] Setting desktop background...${NC}"
 pcmanfm --set-wallpaper $SCRIPT_DIR/images/owl-background.png
 check_status "Setting desktop background" "BOOT_SCRIPTS"
 sleep 2
 
-# creating desktop icon for focusing
+# Step 11: creating desktop icon for focusing
 echo -e "${GREEN}[INFO] Creating OWL Focusing desktop icon...${NC}"
 
 FOCUS_WRAPPER="${SCRIPT_DIR}/desktop/focus_owl_desktop.sh"
@@ -294,7 +479,80 @@ chmod +x "$DESKTOP_FILE"
 echo -e "${GREEN}[INFO] Focus OWL desktop icon created at: ${DESKTOP_FILE}${NC}"
 check_status "Creating desktop icon" "DESKTOP_ICON"
 
-# Final Summary
+# Step 12: Hardware Controller Setup
+echo -e "${GREEN}[INFO] Hardware controller setup...${NC}"
+echo -e "${GREEN}[INFO] If you have a physical switch panel connected to the GPIO pins,${NC}"
+echo -e "${GREEN}[INFO] select the matching controller type below.${NC}"
+echo ""
+echo "  Controller types:"
+echo "    none     - No hardware controller (dashboard-only control)"
+echo "    ute      - Single toggle switch (recording or detection)"
+echo "               Default pin: BOARD36, purpose: recording"
+echo "    advanced - Multi-switch panel (recording, sensitivity, detection mode)"
+echo "               Default pins: recording=BOARD38, sensitivity=BOARD40,"
+echo "               detection_up=BOARD36, detection_down=BOARD35"
+echo ""
+read -p "Enter controller type [none/ute/advanced] (default: none): " ctrl_choice
+ctrl_choice="${ctrl_choice,,}"  # lowercase
+ctrl_choice="${ctrl_choice:-none}"
+
+case "$ctrl_choice" in
+  none|ute|advanced )
+    echo -e "${GREEN}[INFO] Setting controller_type = ${ctrl_choice}${NC}"
+
+    OWL_CONFIG="${SCRIPT_DIR}/config/GENERAL_CONFIG.ini"
+    if [ -f "$OWL_CONFIG" ]; then
+      # Use awk to update key within the [Controller] section
+      awk -v sect="[Controller]" -v key="controller_type" -v val="$ctrl_choice" '
+        /^\[/ { in_sect = ($0 == sect) }
+        in_sect && index($0, key " = ") == 1 { $0 = key " = " val }
+        { print }
+      ' "$OWL_CONFIG" > "${OWL_CONFIG}.tmp" && mv "${OWL_CONFIG}.tmp" "$OWL_CONFIG"
+
+      echo -e "${TICK} controller_type = ${ctrl_choice} written to GENERAL_CONFIG.ini"
+      STATUS_CONTROLLER="${TICK}"
+    else
+      echo -e "${CROSS} GENERAL_CONFIG.ini not found at ${OWL_CONFIG}"
+      STATUS_CONTROLLER="${CROSS}"
+      ERROR_CONTROLLER="GENERAL_CONFIG.ini not found"
+    fi
+    ;;
+  * )
+    echo -e "${RED}[ERROR] Invalid controller type '${ctrl_choice}'. Keeping current setting.${NC}"
+    STATUS_CONTROLLER="${CROSS}"
+    ERROR_CONTROLLER="Invalid controller type entered"
+    ;;
+esac
+
+# Step 13: Dashboard Setup
+echo -e "${GREEN}[INFO] Dashboard setup available...${NC}"
+read -p "Do you want to add a web dashboard for remote control? (y/n): " dashboard_choice
+case "$dashboard_choice" in
+  y|Y )
+    echo -e "${GREEN}[INFO] Setting up OWL Dashboard...${NC}"
+    if [ -f "${SCRIPT_DIR}/controller/shared/setup.sh" ]; then
+      install_dashboard_dependencies
+      chmod +x "${SCRIPT_DIR}/controller/shared/setup.sh"
+      cd "$SCRIPT_DIR"  # Ensure we're in the right directory
+      sudo "${SCRIPT_DIR}/controller/shared/setup.sh"
+      check_status "Dashboard setup" "DASHBOARD"
+    else
+      echo -e "${RED}[ERROR] setup.sh not found in ${SCRIPT_DIR}/controller/shared/${NC}"
+      STATUS_DASHBOARD="${CROSS}"
+      ERROR_DASHBOARD="controller/shared/setup.sh not found"
+    fi
+    ;;
+  n|N )
+    echo -e "${GREEN}[INFO] Dashboard setup skipped.${NC}"
+    STATUS_DASHBOARD="SKIPPED"
+    ;;
+  * )
+    echo -e "${RED}[ERROR] Invalid input. Dashboard setup skipped.${NC}"
+    STATUS_DASHBOARD="SKIPPED"
+    ;;
+esac
+
+# Step 14: Final Summary
 echo -e "\n${GREEN}[INFO] Installation Summary:${NC}"
 echo -e "$STATUS_UPGRADE System Upgrade"
 echo -e "$STATUS_CAMERA Camera Detected"
@@ -305,10 +563,29 @@ if [[ -n "$STATUS_FULL_UPGRADE" ]]; then
 fi
 
 echo -e "$STATUS_VENV Virtual Environment Created"
+echo -e "$STATUS_GLOBAL_NUMPY Global NumPy Version Detected"
 echo -e "$STATUS_OPENCV OpenCV Installed"
+echo -e "$STATUS_NUMPY_COMPAT NumPy Versions Aligned"
 echo -e "$STATUS_OWL_DEPS OWL Dependencies Installed"
-echo -e "$STATUS_BOOT_SCRIPTS Boot Scripts Moved"
+
+if [[ "$STATUS_GOG_DEPS" == "${TICK}" ]]; then
+    echo -e "$STATUS_GOG_DEPS Green-on-Green (YOLO) Dependencies"
+elif [[ "$STATUS_GOG_DEPS" == "SKIPPED" ]]; then
+    echo -e "${ORANGE}[SKIPPED]${NC} Green-on-Green (YOLO) Dependencies"
+fi
+
+echo -e "$STATUS_OWL_SERVICE OWL Service (systemd) Started"
 echo -e "$STATUS_DESKTOP_ICON Desktop Icon Created"
+echo -e "$STATUS_CONTROLLER Hardware Controller Configured"
+
+if [[ "$STATUS_DASHBOARD" == "${TICK}" ]]; then
+    echo -e "$STATUS_DASHBOARD_DEPS Dashboard Python dependencies installed"
+    echo -e "$STATUS_DASHBOARD Web Dashboard Configured"
+elif [[ "$STATUS_DASHBOARD" == "SKIPPED" ]]; then
+    echo -e "${ORANGE}[SKIPPED]${NC} Web Dashboard"
+else
+    echo -e "$STATUS_DASHBOARD Web Dashboard"
+fi
 
 OWL_VERSION=$(python3 - <<EOF
 import version
@@ -316,20 +593,12 @@ print(version.VERSION)
 EOF
 )
 
-echo -e "${GREEN}[COMPLETE] OWL version installed: ${NEW_VERSION}${NC}"
+echo -e "${GREEN}[COMPLETE] OWL version installed: ${OWL_VERSION}${NC}"
 
-# Step 10: Start OWL focusing
+# Step 15: Start OWL focusing
 read -p "Start OWL focusing? (y/n): " choice
 case "$choice" in
   y|Y ) echo -e "${GREEN}[INFO] Starting focusing...${NC}"; "$FOCUS_WRAPPER" &;;
   n|N ) echo -e "${GREEN}[INFO] Focusing skipped. Double click the desktop icon to focus the OWL later.${NC}";;
-  * ) echo -e "${RED}[ERROR] Invalid input. Please enter y or n.${NC}";;
-esac
-
-# Step 11: Launch OWL
-read -p "Launch OWL? (y/n): " choice
-case "$choice" in
-  y|Y ) echo -e "${GREEN}[INFO] Launching OWL...${NC}"; ./owl.py --show-display;;
-  n|N ) echo -e "${GREEN}[INFO] Skipped. Run './owl.py --show-display' to launch OWL later.${NC}";;
   * ) echo -e "${RED}[ERROR] Invalid input. Please enter y or n.${NC}";;
 esac

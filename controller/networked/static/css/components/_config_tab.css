@@ -1,0 +1,513 @@
+/* ==========================================================================
+   OWL Controller (Networked) - Config Tab
+   Full-width config tab with toolbar, slider grid, live preview, action bar
+   ========================================================================== */
+
+/* Config Tab Content - fills the main container */
+.config-tab-content {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* Toolbar - device selector, load, preview toggle, active badge */
+.config-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 1rem;
+    background: var(--light);
+    border-bottom: 2px solid #dfe6e9;
+    flex-shrink: 0;
+}
+
+.config-toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.config-toolbar-spacer {
+    flex: 1;
+}
+
+.config-toolbar .config-action-btn {
+    flex: 0 0 auto;
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+}
+
+/* Preview device selector in toolbar */
+#config-preview-device {
+    padding: 0.4rem 0.6rem;
+    border: 2px solid #bdc3c7;
+    border-radius: var(--radius-md);
+    font-size: 0.85rem;
+    font-weight: 600;
+    background: white;
+    min-width: 120px;
+    max-width: 180px;
+}
+
+.config-toolbar .config-badge {
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+
+.config-toolbar .config-unsaved {
+    font-size: 0.75rem;
+    color: var(--warning);
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+/* Detection mode bar */
+.config-mode-bar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.4rem 1rem;
+    background: white;
+    border-bottom: 1px solid #dfe6e9;
+    flex-shrink: 0;
+}
+
+.config-mode-label {
+    font-weight: 700;
+    font-size: 0.85rem;
+    color: var(--text-light);
+    white-space: nowrap;
+}
+
+.config-mode-buttons {
+    display: flex;
+    gap: 0.4rem;
+}
+
+.config-mode-buttons .mode-btn {
+    padding: 0.4rem 1.2rem;
+    font-size: 0.85rem;
+}
+
+/* Split body - sliders left, preview right */
+.config-split {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    min-height: 0;
+}
+
+/* Sliders column */
+.config-sliders-col {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 0.75rem 1rem;
+}
+
+/* When preview is hidden, sliders get full width */
+.config-split:not(.preview-active) .config-sliders-col {
+    max-width: 100%;
+}
+
+/* When preview is active, sliders column narrows */
+.config-split.preview-active .config-sliders-col {
+    flex: 0 0 450px;
+    max-width: 450px;
+}
+
+/* Slider grid - 2 columns by default, 1 when preview active */
+.config-sliders-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.75rem;
+}
+
+.config-split.preview-active .config-sliders-grid {
+    grid-template-columns: 1fr;
+}
+
+/* Individual slider group card */
+.config-slider-group {
+    background: white;
+    border-radius: var(--radius-md);
+    border: 2px solid var(--light);
+    padding: 0.75rem 1rem;
+}
+
+/* Slider header - title left, values right */
+.slider-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 0.25rem;
+}
+
+.slider-title {
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--dark);
+}
+
+.slider-values {
+    display: flex;
+    align-items: baseline;
+    gap: 0.3rem;
+}
+
+.slider-val {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--primary);
+    min-width: 2ch;
+    text-align: center;
+}
+
+.slider-val-sep {
+    color: var(--text-light);
+    font-size: 0.85rem;
+}
+
+/* Range and single slider containers */
+.range-slider,
+.single-slider {
+    position: relative;
+}
+
+/* Rail - positioning context for track + knobs, padded for knob overflow */
+.slider-rail {
+    position: relative;
+    height: 48px;
+    margin: 0 20px;
+    touch-action: none;
+}
+
+/* Track - thin bar centered in rail */
+.slider-track {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 6px;
+    background: #dde1e6;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+/* Fill between knobs (range) or from left (single) */
+.slider-fill {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    background: #9ab3c7;
+    border-radius: 3px;
+    pointer-events: none;
+}
+
+/* Knob - large white draggable circle */
+.slider-knob {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    transform: translate(-50%, -50%);
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: white;
+    border: 3px solid #c8d1da;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    cursor: grab;
+    touch-action: none;
+    z-index: 2;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.slider-knob:active {
+    cursor: grabbing;
+}
+
+.slider-knob.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px rgba(52, 152, 219, 0.15), 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* Fine-tune +/- buttons */
+.slider-fine-tune {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-top: 0.25rem;
+}
+
+.fine-btn {
+    width: 52px;
+    height: 36px;
+    border: 2px solid #c8d1da;
+    background: white;
+    color: var(--text-dark);
+    border-radius: var(--radius-md);
+    font-size: 1.3rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.1s ease;
+    line-height: 1;
+}
+
+.fine-btn:active {
+    background: var(--light);
+    transform: scale(0.95);
+}
+
+/* Advanced settings toggle */
+.config-advanced-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    margin-top: 0.75rem;
+    background: white;
+    border: 2px solid var(--light);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--text-dark);
+    transition: background var(--transition-fast);
+}
+
+.config-advanced-toggle:hover {
+    background: var(--light);
+}
+
+.config-advanced-arrow {
+    transition: transform var(--transition-normal);
+    font-size: 0.8rem;
+}
+
+.config-advanced-toggle.open .config-advanced-arrow {
+    transform: rotate(90deg);
+}
+
+/* Advanced body - full config editor sections */
+.config-advanced-body {
+    display: none;
+    margin-top: 0.5rem;
+}
+
+.config-advanced-body.open {
+    display: block;
+}
+
+.config-advanced-body .config-editor-content {
+    max-height: none;
+    overflow: visible;
+}
+
+/* Preview column */
+.config-preview-col {
+    display: none;
+    flex: 1;
+    min-width: 0;
+    padding: 0.75rem;
+    background: #1a1a2e;
+    border-left: 2px solid #2c3e50;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+.config-split.preview-active .config-preview-col {
+    display: flex;
+}
+
+.config-preview-label {
+    position: absolute;
+    top: 0.5rem;
+    left: 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.7);
+    z-index: 1;
+}
+
+.config-preview-img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: var(--radius-md);
+    background: #000;
+}
+
+.config-preview-placeholder {
+    color: #7f8c8d;
+    font-size: 1rem;
+    text-align: center;
+}
+
+/* Action bar - bottom of config tab */
+.config-action-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: var(--light);
+    border-top: 2px solid #dfe6e9;
+    flex-shrink: 0;
+}
+
+.config-action-bar .config-action-btn {
+    flex: 0 0 auto;
+    padding: 0.6rem 1rem;
+    font-size: 0.85rem;
+}
+
+.config-action-bar-spacer {
+    flex: 1;
+}
+
+.config-action-bar select {
+    padding: 0.5rem 0.75rem;
+    border: 2px solid #bdc3c7;
+    border-radius: var(--radius-md);
+    font-size: 0.85rem;
+    font-weight: 600;
+    background: white;
+    min-width: 140px;
+}
+
+/* Config action button styles (kept from drawer) */
+.config-action-btn {
+    padding: 0.8rem 1rem;
+    border: none;
+    border-radius: var(--radius-md);
+    font-weight: 700;
+    cursor: pointer;
+    font-size: 0.95rem;
+
+    transition: all var(--transition-normal);
+}
+
+.config-action-btn:active {
+    transform: scale(0.98);
+}
+
+.config-action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.config-action-btn.primary {
+    background: linear-gradient(135deg, var(--success) 0%, var(--success-dark) 100%);
+    color: white;
+    box-shadow: 0 2px 8px rgba(46, 204, 113, 0.3);
+}
+
+.config-action-btn.secondary {
+    background: white;
+    color: var(--text-light);
+    border: 2px solid #bdc3c7;
+}
+
+.config-action-btn.danger {
+    background: linear-gradient(135deg, var(--danger) 0%, var(--danger-dark) 100%);
+    color: white;
+    flex: 0 0 auto;
+    min-width: 50px;
+}
+
+.config-action-btn.save-as {
+    background: linear-gradient(135deg, var(--accent) 0%, #2980b9 100%);
+    color: white;
+    box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
+}
+
+.config-action-btn.preview {
+    background: linear-gradient(135deg, #8e44ad 0%, #6c3483 100%);
+    color: white;
+}
+
+.config-action-btn.preview.active {
+    background: linear-gradient(135deg, #6c3483 0%, #4a235a 100%);
+}
+
+.config-action-btn.send {
+    background: linear-gradient(135deg, var(--success) 0%, var(--success-dark) 100%);
+    color: white;
+    box-shadow: 0 2px 8px rgba(46, 204, 113, 0.3);
+}
+
+.config-action-btn.save {
+    background: linear-gradient(135deg, var(--accent) 0%, #2980b9 100%);
+    color: white;
+    box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
+}
+
+/* Target badge — replaces device selector in toolbar */
+.config-target-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.4rem 0.9rem;
+    background: #eafaf1;
+    border: 2px solid var(--success);
+    border-radius: var(--radius-md);
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--success-dark);
+    white-space: nowrap;
+}
+
+/* Config mismatch warning badge */
+.config-mismatch-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.35rem 0.75rem;
+    background: #fef5e7;
+    border: 2px solid var(--warning);
+    border-radius: var(--radius-md);
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #b7791f;
+    white-space: nowrap;
+}
+
+.config-mismatch-badge.hidden {
+    display: none;
+}
+
+/* Device bar inside Advanced Settings */
+.config-advanced-device-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    background: var(--light);
+    border: 2px solid #dfe6e9;
+    border-radius: var(--radius-md);
+}
+
+.config-advanced-hint {
+    font-size: 0.8rem;
+    color: var(--text-light);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.config-advanced-device-bar select {
+    padding: 0.5rem 0.75rem;
+    border: 2px solid #bdc3c7;
+    border-radius: var(--radius-md);
+    font-size: 0.9rem;
+    font-weight: 600;
+    background: white;
+    min-width: 140px;
+}
+
+.config-advanced-device-bar .config-action-btn {
+    flex: 0 0 auto;
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+}

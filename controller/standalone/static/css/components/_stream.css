@@ -1,0 +1,350 @@
+/* ==========================================================================
+   OWL Dashboard - Stream
+   Video stream, zoom controls, GPS overlay
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Stream Card
+   -------------------------------------------------------------------------- */
+.stream-card {
+    background: white;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--border);
+}
+
+.stream-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.stream-header h2 {
+    margin: 0;
+    color: var(--primary);
+    font-size: 1.1rem;
+}
+
+/* --------------------------------------------------------------------------
+   Stream Controls
+   -------------------------------------------------------------------------- */
+.stream-controls {
+    display: flex;
+    flex-direction: row;
+    gap: 0.5rem;
+    flex-wrap: nowrap;
+}
+
+.stream-controls .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--primary);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 600;
+    transition: all 0.2s;
+    white-space: nowrap;
+    min-width: auto;
+}
+
+.stream-controls .icon-btn:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+    transform: translateY(-1px);
+}
+
+/* --------------------------------------------------------------------------
+   Stream Container & Image
+   -------------------------------------------------------------------------- */
+.stream-container {
+    position: relative;
+    background: #000;
+}
+
+.zoom-container {
+    position: relative;
+    overflow: hidden;
+}
+
+.stream {
+    width: 100%;
+    display: block;
+    border-radius: 0;
+}
+
+.zoom-image {
+    width: 100%;
+    transform-origin: center center;
+    transition: transform 0.3s ease;
+}
+
+/* --------------------------------------------------------------------------
+   Stream Overlay
+   -------------------------------------------------------------------------- */
+.stream-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding: 0.75rem;
+}
+
+.overlay-item {
+    pointer-events: auto;
+    border-radius: 20px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+/* Stream Status Overlay Message */
+.stream-overlay-message {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(20, 20, 20, 0.9);
+    color: #f0f0f0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    z-index: 10;
+}
+
+.stream-overlay-message p {
+    font-size: 1.5rem;
+    font-weight: bold;
+    margin: 0;
+}
+
+.stream-overlay-message small {
+    font-size: 0.9rem;
+    margin-top: 0.5rem;
+    color: #aaa;
+}
+
+/* --------------------------------------------------------------------------
+   GPS Status (Floating pill - bottom left)
+   -------------------------------------------------------------------------- */
+.gps-status {
+    position: absolute;
+    bottom: 0.75rem;
+    left: 0.75rem;
+    top: auto;
+    right: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.75rem;
+    background: rgba(0, 0, 0, 0.6);
+    color: white;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.gps-status.gps-disabled {
+    opacity: 0.6;
+}
+
+.gps-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.gps-icon.gps-good {
+    color: var(--success);
+}
+
+.gps-icon.gps-medium {
+    color: var(--warning);
+}
+
+.gps-icon.gps-poor {
+    color: var(--danger);
+}
+
+#gps-accuracy {
+    font-size: 0.8rem;
+    min-width: 50px;
+}
+
+/* --------------------------------------------------------------------------
+   GPS Toggle Switch
+   -------------------------------------------------------------------------- */
+.gps-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    margin: 0;
+}
+
+.gps-label input[type="checkbox"] {
+    display: none;
+}
+
+.gps-toggle-track {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 10px;
+    transition: background 0.2s ease;
+}
+
+.gps-toggle-track::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s ease;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.gps-label input[type="checkbox"]:checked + .gps-toggle-track {
+    background: var(--success);
+}
+
+.gps-label input[type="checkbox"]:checked + .gps-toggle-track::after {
+    transform: translateX(16px);
+}
+
+/* --------------------------------------------------------------------------
+   Zoom Controls (Floating pill - bottom right)
+   -------------------------------------------------------------------------- */
+.zoom-controls {
+    position: absolute;
+    bottom: 0.75rem;
+    right: 0.75rem;
+    top: auto;
+    left: auto;
+    display: inline-flex;
+    gap: 0.25rem;
+    padding: 0.25rem;
+    background: rgba(0, 0, 0, 0.6);
+}
+
+.zoom-btn {
+    padding: 0.4rem 0.6rem;
+    border: none;
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
+    border-radius: 14px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.85rem;
+    min-width: 36px;
+    transition: all 0.15s ease;
+}
+
+.zoom-btn:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.zoom-btn:active {
+    transform: scale(0.95);
+}
+
+/* --------------------------------------------------------------------------
+   Stream - Responsive
+   -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+    .stream-controls {
+        flex-direction: row;
+        gap: 0.35rem;
+        flex-wrap: nowrap;
+    }
+
+    .stream-controls .icon-btn {
+        padding: 0.4rem 0.5rem;
+        font-size: 0.75rem;
+    }
+
+    .gps-status,
+    .zoom-controls {
+        position: absolute;
+        top: auto;
+        bottom: 0.5rem;
+    }
+
+    .gps-status {
+        left: 0.5rem;
+        right: auto;
+        padding: 0.35rem 0.6rem;
+        font-size: 0.75rem;
+    }
+
+    .zoom-controls {
+        right: 0.5rem;
+        left: auto;
+    }
+
+    .zoom-btn {
+        padding: 0.35rem 0.5rem;
+        min-width: 32px;
+        font-size: 0.8rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .stream-header {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        text-align: left;
+        padding: 0.5rem 0.75rem;
+    }
+
+    .stream-header h2 {
+        font-size: 1rem;
+        flex: 1;
+        min-width: 120px;
+    }
+
+    .stream-controls {
+        flex-direction: row;
+        flex-wrap: nowrap;
+    }
+}
+
+@media (max-width: 400px) {
+    .stream-controls .icon-btn {
+        padding: 0.35rem 0.4rem;
+        font-size: 0.7rem;
+    }
+
+    .gps-status {
+        padding: 0.3rem 0.5rem;
+        font-size: 0.7rem;
+    }
+
+    .zoom-btn {
+        padding: 0.3rem 0.4rem;
+        min-width: 28px;
+        font-size: 0.75rem;
+    }
+}

@@ -1,0 +1,312 @@
+/* ==========================================================================
+   OWL Controller (Networked) - Action Buttons & Mode Selector
+   Kiosk-specific: extra large touch targets, clean design
+   ========================================================================== */
+
+.action-buttons {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    justify-content: center;
+}
+
+.action-button {
+    width: 340px;
+    height: 64px;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 1.3rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all var(--transition-normal);
+
+    letter-spacing: 1px;
+    color: white;
+}
+
+.action-button:active {
+    transform: scale(0.98);
+    filter: brightness(0.95);
+}
+
+.action-button.btn-detection {
+    background: #27ae60;
+    box-shadow: 0 3px 0 #1e8449, 0 4px 12px rgba(39, 174, 96, 0.25);
+}
+
+.action-button.btn-detection.off {
+    background: #d63031;
+    box-shadow: 0 3px 0 #b71c1c, 0 4px 12px rgba(214, 48, 49, 0.25);
+}
+
+.action-button.btn-recording {
+    background: #7f8fa6;
+    box-shadow: 0 3px 0 #6b7a8d, 0 4px 12px rgba(127, 143, 166, 0.25);
+}
+
+.action-button.btn-recording.active {
+    background: #d63031 !important;
+    box-shadow: 0 3px 0 #b71c1c, 0 4px 12px rgba(214, 48, 49, 0.25) !important;
+}
+
+/* Hero split row (Recording + All Nozzles side by side) */
+.hero-split-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.6rem;
+}
+
+.hero-split-row .action-button {
+    width: auto;
+}
+
+.action-button.btn-nozzles {
+    background: #7f8fa6;
+    box-shadow: 0 3px 0 #6b7a8d, 0 4px 12px rgba(127, 143, 166, 0.25);
+}
+
+.action-button.btn-nozzles.active {
+    background: #e67e22;
+    box-shadow: 0 3px 0 #c0670a, 0 4px 12px rgba(230, 126, 34, 0.25);
+}
+
+.action-button.btn-tracking {
+    background: #7f8fa6;
+    box-shadow: 0 3px 0 #6b7a8d, 0 4px 12px rgba(127, 143, 166, 0.25);
+    font-size: 1rem;
+    height: 44px;
+}
+
+.action-button.btn-tracking.active {
+    background: #2980b9;
+    box-shadow: 0 3px 0 #1f6fa0, 0 4px 12px rgba(41, 128, 185, 0.25);
+}
+
+/* ==========================================================================
+   Pipeline Mode Selector
+   Three-way: COLOUR / AI / HYBRID
+   ========================================================================== */
+
+.mode-selector {
+    display: inline-flex;
+    gap: 0;
+    align-items: center;
+    justify-content: center;
+    background: #d5dbe3;
+    border-radius: var(--radius-md);
+    padding: 4px;
+}
+
+.mode-btn {
+    min-height: 52px;
+    min-width: 140px;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all var(--transition-normal);
+    background: transparent;
+    color: #5a6577;
+
+    letter-spacing: 1px;
+    padding: 0 1.5rem;
+}
+
+.mode-btn:hover:not(.active):not(.disabled) {
+    color: #3d4a5c;
+    background: rgba(255, 255, 255, 0.5);
+}
+
+.mode-btn:active:not(.disabled) {
+    transform: scale(0.98);
+}
+
+.mode-btn.active {
+    background: var(--primary);
+    color: white;
+    box-shadow: 0 2px 8px rgba(2, 39, 117, 0.3);
+}
+
+.mode-btn.disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.mode-btn.loading {
+    position: relative;
+    pointer-events: none;
+    color: transparent;
+}
+
+.mode-btn.loading::after {
+    content: '';
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    top: 50%;
+    left: 50%;
+    margin: -12px 0 0 -12px;
+    border: 3px solid rgba(255,255,255,0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: mode-spin 0.8s linear infinite;
+}
+
+@keyframes mode-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ==========================================================================
+   Power Button & Shutdown Overlay
+   ========================================================================== */
+
+.section-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+}
+
+.power-btn {
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: #7f8fa6;
+    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-normal);
+    flex-shrink: 0;
+}
+
+.power-btn:hover {
+    background: #d63031;
+}
+
+.power-btn:active {
+    transform: scale(0.95);
+}
+
+.power-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* Overlay sits over the card list area */
+.shutdown-overlay {
+    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.97);
+    z-index: 10;
+    border-radius: var(--radius-md);
+    align-items: center;
+    justify-content: center;
+}
+
+.shutdown-overlay.visible {
+    display: flex;
+}
+
+.shutdown-overlay-content {
+    text-align: center;
+    padding: 1.5rem;
+}
+
+.shutdown-warning {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #2d3436;
+    margin-bottom: 0.5rem;
+}
+
+.shutdown-subtext {
+    font-size: 0.85rem;
+    color: #636e72;
+    margin-bottom: 1.5rem;
+}
+
+.shutdown-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+}
+
+.btn-confirm-shutdown {
+    min-width: 120px;
+    height: 44px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: #d63031;
+    color: white;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all var(--transition-normal);
+}
+
+.btn-confirm-shutdown:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-confirm-shutdown:not(:disabled):active {
+    transform: scale(0.97);
+}
+
+.btn-cancel-shutdown {
+    min-width: 100px;
+    height: 44px;
+    border: 1px solid #dce1e8;
+    border-radius: var(--radius-md);
+    background: white;
+    color: #2d3436;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-normal);
+}
+
+.btn-cancel-shutdown:active {
+    transform: scale(0.97);
+}
+
+/* ==========================================================================
+   Fix Screen Button (bottom of OWL column)
+   ========================================================================== */
+
+.btn-fix-screen {
+    flex-shrink: 0;
+    width: 100%;
+    height: 40px;
+    border: 1px solid #dce1e8;
+    border-radius: var(--radius-md);
+    background: #f5f6fa;
+    color: #636e72;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-normal);
+    margin-top: 0.5rem;
+}
+
+.btn-fix-screen:hover {
+    background: #dfe6e9;
+    color: #2d3436;
+}
+
+.btn-fix-screen:active {
+    transform: scale(0.98);
+}
+
+.btn-fix-screen:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}

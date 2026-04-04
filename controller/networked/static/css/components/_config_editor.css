@@ -1,0 +1,61 @@
+/* ==========================================================================
+   OWL Controller (Networked) - Config Editor (Advanced Settings)
+   Styles for the full INI editor content
+   ========================================================================== */
+
+.config-editor-content {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    min-height: 0;
+}
+
+.config-editor-content .config-sections {
+    gap: 0.75rem;
+}
+
+.config-editor-content .config-section-header {
+    padding: 0.75rem 1rem;
+}
+
+.config-editor-content .config-section-body {
+    padding: 0.75rem 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 0.75rem;
+}
+
+/* Active config badge */
+
+.config-badge {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    border-radius: var(--radius-pill);
+    font-size: 0.75rem;
+    font-weight: 700;
+    background: #e8f4fd;
+    color: var(--accent);
+
+    letter-spacing: 0.5px;
+}
+
+/* MQTT section warning banner */
+.config-section-warning {
+    background: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffc107;
+    border-radius: var(--radius-md);
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+/* Locked config field */
+.config-field-locked {
+    opacity: 0.6;
+}
+
+.config-field-locked input,
+.config-field-locked select {
+    cursor: not-allowed;
+}

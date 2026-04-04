@@ -203,61 +203,8 @@ class HeadlessStatusIndicator(BaseStatusIndicator):
             self.DRIVE_FULL = True
 
 
-class UteStatusIndicator(BaseStatusIndicator):
-    def __init__(self, save_directory, record_led_pin='BOARD38', storage_led_pin='BOARD40'):
-        super().__init__(save_directory)
-        LED_class = LED if not testing else TestLED
-        self.record_LED = LED_class(pin=record_led_pin)
-        self.storage_LED = LED_class(pin=storage_led_pin)
-
-    def _update_storage_indicator(self, percent_full):
-        if percent_full >= 0.90:
-            self.DRIVE_FULL = True
-            self.storage_LED.on()
-            self.record_LED.off()
-        elif percent_full >= 0.85:
-            self.storage_LED.blink(on_time=0.2, off_time=0.2, n=None, background=True)
-        elif percent_full >= 0.80:
-            self.storage_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
-        elif percent_full >= 0.75:
-            self.storage_LED.blink(on_time=0.5, off_time=1.5, n=None, background=True)
-        elif percent_full >= 0.5:
-            self.storage_LED.blink(on_time=0.5, off_time=3.0, n=None, background=True)
-        else:
-            self.storage_LED.blink(on_time=0.5, off_time=4.5, n=None, background=True)
-
-    def setup_success(self):
-        self.storage_LED.blink(on_time=0.1, off_time=0.2, n=3)
-        self.record_LED.blink(on_time=0.1, off_time=0.2, n=3)
-
-    def image_write_indicator(self):
-        self.record_LED.blink(on_time=0.1, n=1, background=True)
-
-    def alert_flash(self):
-        self.storage_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
-        self.record_LED.blink(on_time=0.5, off_time=0.5, n=None, background=True)
-
-    def error(self, error_code):
-        self.error_code = error_code
-        if self.flashing_thread is None or not self.flashing_thread.is_alive():
-            self.flashing_thread = Thread(target=self._flash_error_code)
-            self.flashing_thread.start()
-
-    def _flash_error_code(self):
-        while self.running:
-            for _ in range(self.error_code):
-                self._blink_leds()
-                self.storage_LED.blink(on_time=0.2, n=1, background=False)  # Flash storage LED
-                self.record_LED.blink(on_time=0.2, n=1, background=False)  # Flash record LED
-                time.sleep(0.2)  # Interval between flashes
-            time.sleep(2)  # Pause after each sequence
-
-    def stop(self):
-        super().stop()
-        if self.flashing_thread and self.flashing_thread.is_alive():
-            self.flashing_thread.join()
-        self.storage_LED.off()
-        self.record_LED.off()
+# UteStatusIndicator is defined after AdvancedStatusIndicator (below)
+# as it inherits from it. See line ~343.
 
 
 class AdvancedIndicatorState(Enum):
@@ -270,7 +217,7 @@ class AdvancedIndicatorState(Enum):
 
 
 class AdvancedStatusIndicator(BaseStatusIndicator):
-    def __init__(self, save_directory, status_led_pin='BOARD37'):
+    def __init__(self, save_directory, status_led_pin='BOARD40'):
         super().__init__(save_directory)
         LED_class = LED if not testing else TestLED
         self.led = LED_class(pin=status_led_pin)
@@ -390,6 +337,68 @@ class AdvancedStatusIndicator(BaseStatusIndicator):
         self.led.off()
 
 
+# Re-define UteStatusIndicator as a thin wrapper around AdvancedStatusIndicator.
+# Both now use a single status LED — UteStatusIndicator just changes the default pin.
+class UteStatusIndicator(AdvancedStatusIndicator):
+    def __init__(self, save_directory, status_led_pin='BOARD40'):
+        super().__init__(save_directory, status_led_pin=status_led_pin)
+
+
+class GPSLEDState(Enum):
+    OFF = 0
+    ACQUIRING = 1
+    FIX = 2
+    ERROR = 3
+
+
+class GPSStatusLED:
+    """Standalone GPS status LED indicator with its own daemon thread.
+
+    LED patterns:
+        OFF       — GPS disabled
+        ACQUIRING — regular flashing (data received but no fix)
+        FIX       — solid ON (valid GPS lock)
+        ERROR     — double short flash + pause (serial failed / no data)
+    """
+
+    def __init__(self, pin='BOARD38'):
+        LED_class = LED if not testing else TestLED
+        self.led = LED_class(pin=pin)
+        self._state = GPSLEDState.OFF
+        self._lock = Lock()
+        self._running = True
+        self._thread = Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def set_state(self, state):
+        with self._lock:
+            self._state = state
+
+    def _run(self):
+        while self._running:
+            with self._lock:
+                state = self._state
+
+            if state == GPSLEDState.OFF:
+                self.led.off()
+                time.sleep(0.5)
+            elif state == GPSLEDState.FIX:
+                self.led.on()
+                time.sleep(0.5)
+            elif state == GPSLEDState.ACQUIRING:
+                self.led.blink(on_time=0.15, off_time=0.85, n=1, background=False)
+            elif state == GPSLEDState.ERROR:
+                # Double short flash then pause
+                self.led.blink(on_time=0.1, off_time=0.1, n=2, background=False)
+                time.sleep(1.5)
+
+    def stop(self):
+        self._running = False
+        if self._thread.is_alive():
+            self._thread.join(timeout=2)
+        self.led.off()
+
+
 # control class for the relay board
 class RelayControl:
     def __init__(self, relay_dict):
@@ -403,14 +412,19 @@ class RelayControl:
         self.field_data_recording = False
 
         if not self.testing:
-            try:
-                self.buzzer = Buzzer(pin='BOARD7')
-
-            except Exception as e:
-                if isinstance(e, lgpioERROR) and 'GPIO busy' in str(e):
-                    raise OWLAlreadyRunningError("OWL instance may already be running.") from e
-                else:
-                    raise
+            # Skip buzzer if BOARD7 (GPIO4) is needed by a relay
+            buzzer_pin_used = 7 in self.relay_dict.values()
+            if buzzer_pin_used:
+                logger.warning("Buzzer pin (BOARD7/GPIO4) allocated to relay — buzzer disabled")
+                self.buzzer = TestBuzzer()
+            else:
+                try:
+                    self.buzzer = Buzzer(pin='BOARD7')
+                except Exception as e:
+                    if isinstance(e, lgpioERROR) and 'GPIO busy' in str(e):
+                        raise OWLAlreadyRunningError("OWL instance may already be running.") from e
+                    else:
+                        raise
 
             for relay, board_pin in self.relay_dict.items():
                 self.relay_dict[relay] = OutputDevice(pin=f'BOARD{board_pin}')
@@ -570,16 +584,27 @@ if __name__ == "__main__":
     headless_indicator.show_error(3)  # Show an error with 3 flashes
     headless_indicator.stop()
 
-    # Test UteStatusIndicator
+    # Test UteStatusIndicator (single LED, inherits AdvancedStatusIndicator)
     print("\nTesting UteStatusIndicator...")
-    ute_indicator = UteStatusIndicator(save_directory="output", record_led_pin='BOARD38', storage_led_pin='BOARD40')
-    ute_indicator.show_error(4)  # Show an error with 4 flashes
+    ute_indicator = UteStatusIndicator(save_directory="output", status_led_pin='BOARD40')
+    ute_indicator.error(4)
     ute_indicator.stop()
 
     # Test AdvancedStatusIndicator
     print("\nTesting AdvancedStatusIndicator...")
-    advanced_indicator = AdvancedStatusIndicator(save_directory="output", status_led_pin='BOARD37')
-    advanced_indicator.show_error(2)  # Show an error with 2 flashes
+    advanced_indicator = AdvancedStatusIndicator(save_directory="output", status_led_pin='BOARD40')
+    advanced_indicator.error(2)
     advanced_indicator.stop()
+
+    # Test GPSStatusLED
+    print("\nTesting GPSStatusLED...")
+    gps_led = GPSStatusLED(pin='BOARD38')
+    gps_led.set_state(GPSLEDState.ACQUIRING)
+    time.sleep(2)
+    gps_led.set_state(GPSLEDState.FIX)
+    time.sleep(2)
+    gps_led.set_state(GPSLEDState.ERROR)
+    time.sleep(2)
+    gps_led.stop()
 
     print("\nTest complete.")

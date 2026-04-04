@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenWeedLocator Demo</title>
+    <!-- Shared foundation CSS -->
+    <link rel="stylesheet" href="/shared/css/_variables.css" />
+    <link rel="stylesheet" href="/shared/css/_reset.css" />
+    <!-- Page-specific CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/components/_demo.css') }}" />
+</head>
+<body>
+<div class="demo-page">
+
+    <!-- Header -->
+    <div class="demo-header">
+        <img class="demo-logo" src="/shared/images/owl-logo-wht.png" alt="OWL" />
+        <h1 class="demo-title">OpenWeedLocator</h1>
+        <p class="demo-subtitle">VegOWL</p>
+    </div>
+
+    <!-- About -->
+    <div class="demo-card demo-about">
+        <p>Open-source weed detection built on Raspberry Pi. Each camera identifies weeds in real time and triggers spot spraying, reducing herbicide use. Working with the Warren Cauliflower Group for precision application in brassica crops.</p>
+        <p>Using hybrid detection: a neural network identifies the crop, then colour-based algorithms detect everything else that's green as a weed. Better field data means better models — help us improve by contributing imagery from your region.</p>
+        <div class="demo-stats">
+            <div class="demo-stat">
+                <span class="demo-stat-value" id="stat-owls">--</span>
+                <span class="demo-stat-label">OWL units</span>
+            </div>
+            <div class="demo-stat">
+                <span class="demo-stat-value" id="stat-speed">--</span>
+                <span class="demo-stat-label">Speed</span>
+            </div>
+            <div class="demo-stat">
+                <span class="demo-stat-value" id="stat-detecting">--</span>
+                <span class="demo-stat-label">Detecting</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Camera feeds -->
+    <div class="demo-card">
+        <h2 class="demo-section-title">Live cameras</h2>
+        <div class="demo-grid" id="demo-grid">
+            <div class="demo-empty">Connecting...</div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="demo-footer">
+        <a href="https://openweedlocator.org" target="_blank" rel="noopener">openweedlocator.org</a>
+    </div>
+
+</div>
+
+<!-- JS -->
+<script src="{{ url_for('static', filename='js/modules/_demo.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,222 @@
+/* ==========================================================================
+   OWL Dashboard - Layout
+   Header, Container, Footer, Navigation Tabs
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Header — compact single-row bar matching networked controller
+   -------------------------------------------------------------------------- */
+.header {
+    background: var(--primary);
+    color: white;
+    padding: 0 1rem;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    width: 100%;
+    height: 48px;
+    display: flex;
+    align-items: center;
+}
+
+.header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: 1200px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+.logo-section {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.logo {
+    height: 28px;
+    margin-right: 8px;
+}
+
+.header h1 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0;
+    white-space: nowrap;
+    color: white;
+}
+
+.status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-shrink: 0;
+}
+
+.owl-status {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+}
+
+/* --------------------------------------------------------------------------
+   Status Dot (Header)
+   -------------------------------------------------------------------------- */
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: var(--danger);
+    animation: pulse 2s infinite;
+}
+
+.status-dot.connected {
+    background-color: var(--success);
+    animation: none;
+}
+
+.status-dot.booting,
+.status-dot.stopping {
+    background-color: var(--warning);
+    animation: pulse 1s infinite;
+}
+
+/* --------------------------------------------------------------------------
+   Main Container
+   -------------------------------------------------------------------------- */
+body {
+    overflow-x: hidden;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 1rem;
+    flex-grow: 1;
+    width: 100%;
+    overflow-x: hidden;
+}
+
+/* --------------------------------------------------------------------------
+   Navigation Tabs
+   -------------------------------------------------------------------------- */
+.nav-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1rem;
+    width: 100%;
+    overflow-x: auto;
+    background: white;
+    border-radius: 8px 8px 0 0;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.nav-tab {
+    flex: 1;
+    min-width: 0;
+    padding: 0.75rem 0.5rem;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    font-weight: 500;
+    transition: all 0.2s;
+    text-align: center;
+    white-space: nowrap;
+    background: white;
+    color: var(--text);
+}
+
+.nav-tab:hover {
+    color: var(--accent);
+    background: #f8f9fa;
+}
+
+.nav-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    background: white;
+}
+
+.nav-tab.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.tab-text {
+    font-size: 0.9rem;
+    display: block;
+}
+
+/* --------------------------------------------------------------------------
+   Tab Content
+   -------------------------------------------------------------------------- */
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+/* --------------------------------------------------------------------------
+   Footer
+   -------------------------------------------------------------------------- */
+footer {
+    background: linear-gradient(135deg, var(--light) 0%, #dee2e6 100%);
+    color: var(--secondary);
+    padding: 1.5rem;
+    text-align: center;
+    font-size: 0.9rem;
+    margin-top: auto;
+    border-top: 1px solid var(--border);
+}
+
+.footer-content {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.footer-content a {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.footer-content a:hover {
+    text-decoration: underline;
+}
+
+.status-timestamp {
+    margin-top: 0.5rem;
+    opacity: 0.8;
+}
+
+/* --------------------------------------------------------------------------
+   Layout - Responsive
+   -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+    .nav-tab {
+        padding: 0.6rem 0.25rem;
+    }
+
+    .tab-text {
+        font-size: 0.85rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .container {
+        padding: 0.5rem;
+    }
+
+    .header h1 {
+        font-size: 1rem;
+    }
+
+    .nav-tab {
+        padding: 0.5rem 0.1rem;
+    }
+
+    .tab-text {
+        font-size: 0.8rem;
+    }
+}

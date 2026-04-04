@@ -1,0 +1,51 @@
+/* ==========================================================================
+   OWL Controller (Networked) - Main Stylesheet
+   1280x800px Landscape Touchscreen Kiosk (EDATEC HMI3010)
+
+   This file imports shared foundation styles and kiosk-specific components.
+
+   IMPORT ORDER MATTERS:
+   1. Shared foundation (variables, reset, animations, utilities)
+   2. Shared components (buttons, status, modal, toast, forms, config)
+   3. App-specific components (layout, controls, owls, etc.)
+
+   Path: controller/networked/static/css/style.css
+   Shared: controller/shared/css/
+   ========================================================================== */
+
+/* -------------------------------------------------------------------------
+   Shared Foundation
+   These provide the base design tokens, reset, and utilities
+   ------------------------------------------------------------------------- */
+@import '../../../shared/css/_variables.css';
+@import '../../../shared/css/_reset.css';
+@import '../../../shared/css/_animations.css';
+@import '../../../shared/css/_utilities.css';
+
+/* -------------------------------------------------------------------------
+   Shared Components
+   Common UI components used across both controllers
+   ------------------------------------------------------------------------- */
+@import '../../../shared/css/_buttons.css';
+@import '../../../shared/css/_status.css';
+@import '../../../shared/css/_modal.css';
+@import '../../../shared/css/_toast.css';
+@import '../../../shared/css/_forms.css';
+@import '../../../shared/css/_config.css';
+
+/* -------------------------------------------------------------------------
+   App-Specific Components
+   Networked controller kiosk-specific styles
+   ------------------------------------------------------------------------- */
+@import 'components/_layout.css';
+@import 'components/_controls.css';
+@import 'components/_owls.css';
+@import 'components/_config_tab.css';
+@import 'components/_video.css';
+@import 'components/_tabs.css';
+@import 'components/_gps.css';
+@import 'components/_config_editor.css';
+@import 'components/_actuation.css';
+@import 'components/_ai_tab.css';
+@import '../../../shared/css/_widgets.css';
+@import '../../../shared/css/_agent.css';

@@ -1,0 +1,184 @@
+/* ==========================================================================
+   OWL Controllers - Shared Toast Notifications
+   Toast/snackbar notifications displayed at screen edges
+   
+   Usage: @import after _modal.css
+   ========================================================================== */
+
+/* -------------------------------------------------------------------------
+   Toast Container (fixed position)
+   ------------------------------------------------------------------------- */
+#notifications,
+.toast-container {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    z-index: 2500;
+    max-width: 350px;
+}
+
+/* -------------------------------------------------------------------------
+   Individual Toast
+   ------------------------------------------------------------------------- */
+.toast {
+    position: fixed;
+    bottom: 2rem;
+    left: 50%;
+    transform: translateX(-50%) translateY(150px);
+    background: var(--dark);
+    color: white;
+    padding: 1rem 2rem;
+    border-radius: var(--radius-md);
+    font-weight: 600;
+    font-size: 1rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    z-index: 9999;
+    opacity: 0;
+    transition: all var(--transition-slow);
+}
+
+.toast.show {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+}
+
+/* Toast variants */
+.toast.success {
+    background: var(--success);
+}
+
+.toast.error {
+    background: var(--danger);
+}
+
+.toast.warning {
+    background: var(--warning);
+}
+
+.toast.info {
+    background: var(--accent);
+}
+
+/* -------------------------------------------------------------------------
+   Quick Toast (Bottom center, pill-shaped)
+   Used by standalone dashboard
+   ------------------------------------------------------------------------- */
+.quick-toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.85);
+    color: white;
+    padding: 0.75rem 1.5rem;
+    border-radius: var(--radius-pill);
+    font-size: 0.9rem;
+    z-index: 2500;
+    backdrop-filter: blur(10px);
+    animation: toast-slide-up 0.3s ease-out;
+    max-width: 90vw;
+    text-align: center;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.quick-toast.success {
+    background: rgba(46, 204, 113, 0.9);
+}
+
+.quick-toast.error {
+    background: rgba(231, 76, 60, 0.9);
+}
+
+.quick-toast.warning {
+    background: rgba(243, 156, 18, 0.9);
+}
+
+.quick-toast.info {
+    background: rgba(52, 152, 219, 0.9);
+}
+
+/* -------------------------------------------------------------------------
+   Legacy Notification (Slide-in cards)
+   Used by standalone notification panel
+   ------------------------------------------------------------------------- */
+.notification {
+    padding: 1rem;
+    background-color: white;
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+    margin-bottom: 0.75rem;
+    animation: slide-in 0.3s ease-out forwards;
+    position: relative;
+    border-left: 4px solid var(--accent);
+}
+
+.notification.success {
+    border-color: var(--success);
+}
+
+.notification.error {
+    border-color: var(--danger);
+}
+
+.notification.warning {
+    border-color: var(--warning);
+}
+
+.notification .notification-title {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    padding-right: 1.5rem;
+}
+
+.notification .notification-message {
+    font-size: 0.9rem;
+    color: var(--secondary);
+}
+
+.notification-close {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+    background: none;
+    border: none;
+    color: var(--secondary);
+    cursor: pointer;
+    font-size: 1.2rem;
+    font-weight: bold;
+    padding: 0;
+    line-height: 1;
+}
+
+.notification-close:hover {
+    color: var(--danger);
+}
+
+/* -------------------------------------------------------------------------
+   Responsive
+   ------------------------------------------------------------------------- */
+@media (max-width: 480px) {
+    #notifications,
+    .toast-container {
+        left: 1rem;
+        right: 1rem;
+        max-width: none;
+    }
+
+    .toast {
+        left: 1rem;
+        right: 1rem;
+        transform: translateY(150px);
+        width: auto;
+    }
+
+    .toast.show {
+        transform: translateY(0);
+    }
+
+    .quick-toast {
+        left: 1rem;
+        right: 1rem;
+        transform: none;
+        max-width: none;
+    }
+}
