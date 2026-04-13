@@ -1663,8 +1663,15 @@ class OWLDashboard:
                 config = configparser.ConfigParser()
                 config.read(config_path)
                 config_dir = config.get('DataCollection', 'save_directory', fallback=None)
-                if config_dir and os.path.isdir(config_dir):
-                    return os.path.abspath(config_dir)
+                if config_dir:
+                    # Resolve relative paths against project root (where owl.py lives),
+                    # not the standalone directory
+                    if not os.path.isabs(config_dir):
+                        project_root = os.path.normpath(
+                            os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
+                        config_dir = os.path.join(project_root, config_dir)
+                    if os.path.isdir(config_dir):
+                        return os.path.abspath(config_dir)
         except Exception as e:
             self.logger.warning(f"Could not read save_directory: {e}")
 

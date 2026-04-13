@@ -29,7 +29,15 @@
         fetch('/api/downloads/sessions')
             .then(function (r) { return r.json(); })
             .then(function (data) {
-                renderSessions(data.sessions || []);
+                if (data.error) {
+                    sessionsList.textContent = '';
+                    var errDiv = document.createElement('div');
+                    errDiv.className = 'list-empty';
+                    errDiv.textContent = data.error;
+                    sessionsList.appendChild(errDiv);
+                } else {
+                    renderSessions(data.sessions || []);
+                }
                 if (data.storage) {
                     renderStorage(data.storage);
                 }
