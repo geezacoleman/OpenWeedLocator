@@ -685,7 +685,7 @@ function updateHardwareLockUI() {
     // Show/hide switch purpose toggle (only for Ute)
     var switchPurposeIndicator = document.getElementById('switchPurposeIndicator');
     if (switchPurposeIndicator) {
-        switchPurposeIndicator.style.display = (controllerType === 'ute') ? 'inline-flex' : 'none';
+        switchPurposeIndicator.style.display = (controllerType === 'ute') ? '' : 'none';
         syncSwitchPurposeToggle();
     }
 
@@ -739,13 +739,31 @@ function removeLockIcon(element) {
    -------------------------------------------------------------------------- */
 
 function initSwitchPurposeToggle() {
-    var toggle = document.getElementById('switchPurposeToggle');
-    if (toggle) {
-        toggle.addEventListener('change', function() {
-            var newPurpose = toggle.checked ? 'detection' : 'recording';
-            setSwitchPurpose(newPurpose);
+    var container = document.getElementById('switch-purpose-buttons');
+    if (!container) return;
+    container.querySelectorAll('.seg-btn[data-purpose]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var newPurpose = btn.dataset.purpose;
+            if (newPurpose === switchPurpose) return;
+
+            // Immediately highlight the clicked button
+            var allBtns = container.querySelectorAll('.seg-btn[data-purpose]');
+            setSegActive(allBtns, btn);
+
+            // Show restart confirmation
+            showConfigConfirmModal(
+                'Restart required',
+                'Changing switch purpose requires an OWL restart. Restart now?'
+            ).then(function(confirmed) {
+                if (confirmed) {
+                    setSwitchPurpose(newPurpose);
+                } else {
+                    // Revert button highlight
+                    syncSwitchPurposeToggle();
+                }
+            });
         });
-    }
+    });
 }
 
 function setSwitchPurpose(purpose) {
@@ -756,30 +774,30 @@ function setSwitchPurpose(purpose) {
     })
         .then(function(r) { return r.json(); })
         .then(function(d) {
-            if (d.success) {
-                switchPurpose = purpose;
-                showNotification('Switch Purpose', d.message || 'Restart OWL to apply', 'info', 6000);
-                updateHardwareLockUI();
-            } else {
-                throw new Error(d.error || 'Failed to set switch purpose');
-            }
+            if (!d.success) throw new Error(d.error || 'Failed to set switch purpose');
+            switchPurpose = purpose;
+            updateHardwareLockUI();
+            // Restart OWL
+            stopOwl().then(function() {
+                setTimeout(function() {
+                    startOwl();
+                    showNotification('Switch Purpose',
+                        'Switch set to ' + purpose + '. OWL restarting...', 'info', 6000);
+                }, 1000);
+            });
         })
         .catch(function(err) {
             showNotification('Error', err.message || 'Failed to set switch purpose', 'error');
-            // Revert toggle
             syncSwitchPurposeToggle();
         });
 }
 
 function syncSwitchPurposeToggle() {
-    var toggle = document.getElementById('switchPurposeToggle');
-    var label = document.getElementById('switchPurposeText');
-    if (toggle) {
-        toggle.checked = (switchPurpose === 'detection');
-    }
-    if (label) {
-        label.textContent = switchPurpose === 'detection' ? 'Detection' : 'Recording';
-    }
+    var container = document.getElementById('switch-purpose-buttons');
+    if (!container) return;
+    container.querySelectorAll('.seg-btn[data-purpose]').forEach(function(btn) {
+        btn.classList.toggle('active', btn.dataset.purpose === switchPurpose);
+    });
 }
 
 /* --------------------------------------------------------------------------
