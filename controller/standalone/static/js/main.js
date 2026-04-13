@@ -62,6 +62,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initGPS();
     initNotifications();
     initHardwareControllerCheck();
+    initSwitchPurposeToggle();
     initDashboardControls();
     initSessionMetadata();
     initConfigEditor();

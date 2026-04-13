@@ -15,6 +15,7 @@ let zoomLevel = 1;
 let updateInterval = null;
 let hardwareControllerActive = false;
 let controllerType = 'none';
+let switchPurpose = 'recording';
 let lastResWidth = 0;
 let lastResHeight = 0;
 

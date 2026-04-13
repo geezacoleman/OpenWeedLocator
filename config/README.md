@@ -148,21 +148,30 @@ Controls the optional hardware input controller (physical switches on the OWL un
 |-----|---------|---------------------|-------------|
 | `controller_type` | `none` | `none`, `ute`, `advanced` | Hardware controller type. `none` = no physical switches |
 
+**Shared LED pins** (used by both Ute and Advanced controllers):
+
+| Key | Default | Range / Valid values | Description |
+|-----|---------|---------------------|-------------|
+| `status_led_pin` | `40` | 1--40 (BOARD pin) | Status indicator LED (boot, detection, recording states) |
+| `gps_led_pin` | `38` | 1--40 (BOARD pin) | GPS status LED (solid = fix, flash = acquiring, double-flash = error) |
+
 **Ute controller** (`controller_type = ute`) -- a single toggle switch:
 
 | Key | Default | Range / Valid values | Description |
 |-----|---------|---------------------|-------------|
-| `switch_pin` | `37` | 1--40 (BCM pin) | GPIO pin for the toggle switch |
+| `switch_pin` | `36` | 1--40 (BOARD pin) | GPIO pin for the toggle switch |
 | `switch_purpose` | `recording` | `recording`, `detection` | What the switch controls. `recording` toggles image saving, `detection` toggles weed detection |
 
 **Advanced controller** (`controller_type = advanced`) -- multiple switches for full field control:
 
 | Key | Default | Range / Valid values | Description |
 |-----|---------|---------------------|-------------|
-| `detection_mode_pin_up` | `36` | 1--40 (BCM pin) | Switch pin for detection mode up |
-| `detection_mode_pin_down` | `35` | 1--40 (BCM pin) | Switch pin for detection mode down |
-| `recording_pin` | `38` | 1--40 (BCM pin) | Switch pin to toggle image recording |
-| `sensitivity_pin` | `40` | 1--40 (BCM pin) | Switch pin to cycle sensitivity presets (low/high toggle) |
+| `detection_mode_pin_up` | `36` | 1--40 (BOARD pin) | Switch pin for detection mode up |
+| `detection_mode_pin_down` | `35` | 1--40 (BOARD pin) | Switch pin for detection mode down |
+| `recording_pin` | `33` | 1--40 (BOARD pin) | Switch pin to toggle image recording |
+| `sensitivity_pin` | `32` | 1--40 (BOARD pin) | Switch pin to cycle sensitivity presets (low/high toggle) |
+
+> **Note:** All pin values use BOARD numbering (physical pin position on the header). Ute and Advanced controllers are mutually exclusive — only pins for the active controller type are used.
 
 The hardware switch cycles between the Low and High sensitivity presets (two-position toggle). The web dashboard supports all three levels (low/medium/high) via MQTT. Both use the `SensitivityManager` which reads from the `[Sensitivity_*]` sections.
 

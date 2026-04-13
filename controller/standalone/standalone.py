@@ -938,20 +938,46 @@ class OWLDashboard:
                     config = configparser.ConfigParser()
                     config.read(config_path)
                     controller_type = config.get('Controller', 'controller_type', fallback='none').strip("'\" ").lower()
+                    switch_purpose = config.get('Controller', 'switch_purpose', fallback='recording').strip("'\" ").lower()
                 else:
                     controller_type = 'none'
+                    switch_purpose = 'recording'
 
                 return jsonify({
                     'controller_type': controller_type,
-                    'hardware_active': controller_type not in ('none', '')
+                    'hardware_active': controller_type not in ('none', ''),
+                    'switch_purpose': switch_purpose
                 })
             except Exception as e:
                 self.logger.error(f"Error reading controller config: {e}")
                 return jsonify({
                     'controller_type': 'none',
                     'hardware_active': False,
+                    'switch_purpose': 'recording',
                     'error': str(e)
                 })
+
+        @self.app.route('/api/controller/switch_purpose', methods=['POST'])
+        def set_switch_purpose():
+            """Set the Ute controller switch purpose (recording or detection).
+            Requires OWL restart to take effect."""
+            try:
+                data = request.get_json() or {}
+                purpose = data.get('purpose', '').strip().lower()
+                if purpose not in ('recording', 'detection'):
+                    return jsonify({
+                        'success': False,
+                        'error': f'Invalid switch_purpose: {purpose}. Must be "recording" or "detection".'
+                    }), 400
+
+                self._persist_config_change('Controller', 'switch_purpose', purpose)
+                return jsonify({
+                    'success': True,
+                    'message': f'Switch purpose set to {purpose}. Restart OWL to apply.'
+                })
+            except Exception as e:
+                self.logger.error(f"Error setting switch_purpose: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
 
         @self.app.route('/api/fan/set', methods=['POST'])
         def set_fan_mode():
@@ -1580,11 +1606,26 @@ class OWLDashboard:
 
         return 'none'
 
+    def _get_switch_purpose(self):
+        """Read switch_purpose fresh from the active config file."""
+        try:
+            active_config = self._get_active_config_path()
+            config_path = self._resolve_config_path(active_config)
+
+            if os.path.exists(config_path):
+                config = configparser.ConfigParser()
+                config.read(config_path)
+                return config.get('Controller', 'switch_purpose', fallback='recording').strip("'\" ").lower()
+        except Exception as e:
+            self.logger.warning(f"Could not read switch_purpose: {e}")
+
+        return 'recording'
+
     def _is_hardware_locked(self, control):
         """Check if a control is hardware-locked for the current controller type.
 
-        UTE: only 'recording' is hardware-controlled.
-        Advanced: 'recording', 'detection', 'sensitivity' are hardware-controlled.
+        UTE: the single switch controls either 'recording' or 'detection' (based on switch_purpose).
+        Advanced: 'recording', 'detection', 'sensitivity' are all hardware-controlled.
         Nozzles, tracking, fan: never locked.
         """
         controller_type = self._get_controller_type()
@@ -1592,7 +1633,8 @@ class OWLDashboard:
             return False
 
         if controller_type == 'ute':
-            return control == 'recording'
+            switch_purpose = self._get_switch_purpose()
+            return control == switch_purpose
         elif controller_type == 'advanced':
             return control in ('recording', 'detection', 'sensitivity')
 
