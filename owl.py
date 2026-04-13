@@ -282,7 +282,9 @@ class Owl:
             else:
                 self._gps_state = GPSState()
                 self._gps_running = True
-                self.gps_status_led = GPSStatusLED(pin='BOARD38')
+                gps_led_raw = self.config.get('Controller', 'gps_led_pin', fallback='38').strip("'\" ").lower()
+                if gps_led_raw not in ('', 'none'):
+                    self.gps_status_led = GPSStatusLED(pin=f"BOARD{int(gps_led_raw)}")
                 self._gps_thread = threading.Thread(target=self._serial_gps_reader, daemon=True)
                 self._gps_thread.start()
                 self.logger.info(f"Serial GPS reader started on {self.gps_port} @ {self.gps_baudrate}")
@@ -298,10 +300,13 @@ class Owl:
         if self.gps_status_led is None:
             controller_type_check = self.config.get('Controller', 'controller_type', fallback='none').strip("'\" ").lower()
             if controller_type_check in ('ute', 'advanced'):
-                self.gps_status_led = GPSStatusLED(pin='BOARD38')
+                gps_led_raw = self.config.get('Controller', 'gps_led_pin', fallback='38').strip("'\" ").lower()
+                if gps_led_raw not in ('', 'none'):
+                    self.gps_status_led = GPSStatusLED(pin=f"BOARD{int(gps_led_raw)}")
 
         # if a controller is connected, sample images must be true to set up directories correctly
         self.controller_type = self.config.get('Controller', 'controller_type').strip("'\" ").lower()
+        self.switch_purpose = self.config.get('Controller', 'switch_purpose', fallback='recording').strip("'\" ").lower()
 
         if self.controller_type not in {'none', 'ute', 'advanced'}:
             self.logger.error(f"Invalid controller type: {self.controller_type}")
@@ -309,12 +314,15 @@ class Owl:
 
         # Create status indicator EARLY so it can signal boot errors via LED.
         # save_directory is set to None for now; updated after storage setup succeeds.
+        # status_led_pin can be 'none' or empty to disable the LED.
+        status_led_raw = self.config.get('Controller', 'status_led_pin', fallback='40').strip("'\" ").lower()
+        status_led_pin = f"BOARD{int(status_led_raw)}" if status_led_raw not in ('', 'none') else None
         if self.controller_type == 'ute':
             self.status_indicator = UteStatusIndicator(save_directory=None,
-                                                       status_led_pin='BOARD40')
+                                                       status_led_pin=status_led_pin)
         elif self.controller_type == 'advanced':
             self.status_indicator = AdvancedStatusIndicator(save_directory=None,
-                                                            status_led_pin='BOARD40')
+                                                            status_led_pin=status_led_pin)
         else:
             self.status_indicator = HeadlessStatusIndicator(save_directory=None, no_save=True)
 
@@ -1322,11 +1330,36 @@ class Owl:
         return stats
 
     def update_state(self):
-        """Update local state from MQTT server or local hardware controllers"""
+        """Update local state from MQTT server or local hardware controllers.
+
+        Ute controller has ONE switch that controls either recording or detection
+        (based on switch_purpose). The other control comes from the dashboard.
+        Advanced controller manages recording, detection mode, and sensitivity.
+        """
         while not self.stop_state_update.is_set():
             if self.dash:
-                if self.controller_type != 'none':
-                    # Hardware controller active - push hardware states to existing MQTT methods
+                if self.controller_type == 'ute':
+                    # Ute has one switch — only override the control it manages.
+                    # The other control + sensitivity come from MQTT (dashboard).
+                    if self.switch_purpose == 'recording':
+                        # Hardware controls recording; detection from dashboard
+                        with self.image_sample_enable.get_lock():
+                            hardware_recording = self.image_sample_enable.value
+                        self.dash.set_image_sample_enable(hardware_recording)
+                        self._image_sample_enable = hardware_recording
+                        self._detection_enable = self.dash.get_detection_enable()
+                    else:
+                        # Hardware controls detection; recording from dashboard
+                        with self.detection_enable.get_lock():
+                            hardware_detection = self.detection_enable.value
+                        self.dash.set_detection_enable(hardware_detection)
+                        self._detection_enable = hardware_detection
+                        self._image_sample_enable = self.dash.get_image_sample_enable()
+                    # Sensitivity always from dashboard for Ute
+                    self._sensitivity_level = self.dash.get_sensitivity_level()
+
+                elif self.controller_type == 'advanced':
+                    # Advanced controller manages all three
                     if hasattr(self, 'detection_enable'):
                         with self.detection_enable.get_lock():
                             hardware_detection = self.detection_enable.value
@@ -1342,7 +1375,6 @@ class Owl:
                     if hasattr(self, 'sensitivity_level'):
                         with self.sensitivity_level.get_lock():
                             hardware_sensitivity_int = self.sensitivity_level.value
-
                         hardware_sensitivity_string = Sensitivity(hardware_sensitivity_int).name.lower()
                         self.dash.set_sensitivity_level(hardware_sensitivity_string)
                         self._sensitivity_level = hardware_sensitivity_string
@@ -1354,7 +1386,7 @@ class Owl:
                     self._sensitivity_level = self.dash.get_sensitivity_level()
 
             else:
-                # Hardware only, no dashboard - existing behavior
+                # Hardware only, no dashboard
                 if hasattr(self, 'detection_enable'):
                     with self.detection_enable.get_lock():
                         self._detection_enable = self.detection_enable.value

@@ -219,8 +219,12 @@ class AdvancedIndicatorState(Enum):
 class AdvancedStatusIndicator(BaseStatusIndicator):
     def __init__(self, save_directory, status_led_pin='BOARD40'):
         super().__init__(save_directory)
-        LED_class = LED if not testing else TestLED
-        self.led = LED_class(pin=status_led_pin)
+        if status_led_pin is None:
+            # No physical LED — use no-op stub
+            self.led = TestLED(pin='disabled')
+        else:
+            LED_class = LED if not testing else TestLED
+            self.led = LED_class(pin=status_led_pin)
         self.state = AdvancedIndicatorState.IDLE
         self.error_queue = deque()
         self.state_lock = Lock()

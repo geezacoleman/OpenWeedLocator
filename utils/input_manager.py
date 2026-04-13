@@ -51,11 +51,11 @@ class UteController:
         self.stop_flag = stop_flag
 
         # Set up a single handler for both press and release
-        self.switch.when_pressed = self.toggle_state
-        self.switch.when_released = self.toggle_state
-
-        # Initialize state based on initial switch position
-        self.update_state()
+        if self.switch:
+            self.switch.when_pressed = self.toggle_state
+            self.switch.when_released = self.toggle_state
+            # Initialize state based on initial switch position
+            self.update_state()
 
     def update_state(self):
         is_active = self.switch.is_pressed if self.switch else False

@@ -29,6 +29,8 @@ class ConfigValidator:
             # Base requirements for all controller types
             'required_keys': {'controller_type'},
             'optional_keys': {
+                'status_led_pin',
+                'gps_led_pin',
                 'detection_mode_pin_up',
                 'detection_mode_pin_down',
                 'recording_pin',

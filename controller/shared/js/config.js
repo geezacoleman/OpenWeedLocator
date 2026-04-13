@@ -69,12 +69,14 @@ const CONFIG_FIELD_DEFS = {
     },
     'Controller': {
         'controller_type': { type: 'select', options: ['none', 'ute', 'advanced', 'networked'] },
+        'status_led_pin': { type: 'text', help: 'BOARD pin for status LED (1-40 or none to disable)' },
+        'gps_led_pin': { type: 'text', help: 'BOARD pin for GPS LED (1-40 or none to disable)' },
         'switch_purpose': { type: 'select', options: ['recording', 'detection'], help: 'Physical switch function' },
-        'switch_pin': { type: 'number', min: 1, max: 40, help: 'GPIO BCM pin for switch' },
-        'detection_mode_pin_up': { type: 'number', min: 1, max: 40, help: 'GPIO BCM pin for detection mode up' },
-        'detection_mode_pin_down': { type: 'number', min: 1, max: 40, help: 'GPIO BCM pin for detection mode down' },
-        'recording_pin': { type: 'number', min: 1, max: 40, help: 'GPIO BCM pin for recording switch' },
-        'sensitivity_pin': { type: 'number', min: 1, max: 40, help: 'GPIO BCM pin for sensitivity switch' }
+        'switch_pin': { type: 'number', min: 1, max: 40, help: 'BOARD pin for Ute switch' },
+        'detection_mode_pin_up': { type: 'number', min: 1, max: 40, help: 'BOARD pin for detection mode up' },
+        'detection_mode_pin_down': { type: 'number', min: 1, max: 40, help: 'BOARD pin for detection mode down' },
+        'recording_pin': { type: 'number', min: 1, max: 40, help: 'BOARD pin for recording switch' },
+        'sensitivity_pin': { type: 'number', min: 1, max: 40, help: 'BOARD pin for sensitivity switch' }
     },
     'GPS': {
         'source': { type: 'select', options: ['none', 'dashboard', 'hat'], help: 'GPS data source for owl.py' },

@@ -201,7 +201,8 @@ function isHardwareLocked(control) {
     if (!hardwareControllerActive) return false;
 
     if (controllerType === 'ute') {
-        return control === 'recording';
+        // Ute has one switch — it locks only the control it manages
+        return control === switchPurpose;
     } else if (controllerType === 'advanced') {
         return ['recording', 'detection', 'sensitivity'].includes(control);
     }
@@ -638,6 +639,7 @@ function checkHardwareControllerStatus() {
             const wasActive = hardwareControllerActive;
             hardwareControllerActive = data.hardware_active;
             controllerType = data.controller_type;
+            switchPurpose = data.switch_purpose || 'recording';
 
             updateHardwareLockUI();
 
@@ -662,6 +664,7 @@ function checkHardwareControllerStatus() {
         .catch(error => {
             hardwareControllerActive = false;
             controllerType = 'none';
+            switchPurpose = 'recording';
             updateHardwareLockUI();
         });
 }
@@ -679,14 +682,21 @@ function updateHardwareLockUI() {
         notice.style.display = hardwareControllerActive ? 'flex' : 'none';
     }
 
+    // Show/hide switch purpose toggle (only for Ute)
+    var switchPurposeIndicator = document.getElementById('switchPurposeIndicator');
+    if (switchPurposeIndicator) {
+        switchPurposeIndicator.style.display = (controllerType === 'ute') ? 'inline-flex' : 'none';
+        syncSwitchPurposeToggle();
+    }
+
     if (!hardwareControllerActive) return;
 
     // Controller-type-selective locking:
-    // UTE: only the recording switch (or detection, based on switch_purpose)
+    // UTE: lock only the switch matching switch_purpose (recording OR detection)
     // Advanced: recording, detection, sensitivity
     // Fan, tracking, track stability, nozzles: NEVER locked
     if (controllerType === 'ute') {
-        lockSwitch('recordSwitch');
+        lockSwitch(switchPurpose === 'detection' ? 'detectSwitch' : 'recordSwitch');
     } else if (controllerType === 'advanced') {
         lockSwitch('recordSwitch');
         lockSwitch('detectSwitch');
@@ -722,6 +732,54 @@ function addLockIcon(element) {
 function removeLockIcon(element) {
     const lockIcon = element.querySelector('.lock-icon');
     if (lockIcon) lockIcon.remove();
+}
+
+/* --------------------------------------------------------------------------
+   Switch Purpose Toggle (Ute controller: recording vs detection)
+   -------------------------------------------------------------------------- */
+
+function initSwitchPurposeToggle() {
+    var toggle = document.getElementById('switchPurposeToggle');
+    if (toggle) {
+        toggle.addEventListener('change', function() {
+            var newPurpose = toggle.checked ? 'detection' : 'recording';
+            setSwitchPurpose(newPurpose);
+        });
+    }
+}
+
+function setSwitchPurpose(purpose) {
+    apiRequest('/api/controller/switch_purpose', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ purpose: purpose })
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.success) {
+                switchPurpose = purpose;
+                showNotification('Switch Purpose', d.message || 'Restart OWL to apply', 'info', 6000);
+                updateHardwareLockUI();
+            } else {
+                throw new Error(d.error || 'Failed to set switch purpose');
+            }
+        })
+        .catch(function(err) {
+            showNotification('Error', err.message || 'Failed to set switch purpose', 'error');
+            // Revert toggle
+            syncSwitchPurposeToggle();
+        });
+}
+
+function syncSwitchPurposeToggle() {
+    var toggle = document.getElementById('switchPurposeToggle');
+    var label = document.getElementById('switchPurposeText');
+    if (toggle) {
+        toggle.checked = (switchPurpose === 'detection');
+    }
+    if (label) {
+        label.textContent = switchPurpose === 'detection' ? 'Detection' : 'Recording';
+    }
 }
 
 /* --------------------------------------------------------------------------
