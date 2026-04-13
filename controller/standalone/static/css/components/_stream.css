@@ -233,28 +233,7 @@
     transform: translateX(16px);
 }
 
-/* --------------------------------------------------------------------------
-   Switch Purpose Toggle (Ute controller: recording vs detection)
-   -------------------------------------------------------------------------- */
-.switch-purpose-indicator {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.4rem 0.75rem;
-    background: #f0f2f5;
-    border-radius: 6px;
-    font-size: 0.8rem;
-    font-weight: 500;
-    color: var(--secondary);
-    margin-top: 0.5rem;
-}
 
-.switch-purpose-icon {
-    width: 18px;
-    height: 18px;
-    flex-shrink: 0;
-    color: #999;
-}
 
 /* --------------------------------------------------------------------------
    Zoom Controls (Floating pill - bottom right)

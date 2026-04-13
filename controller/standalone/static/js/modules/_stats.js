@@ -154,9 +154,9 @@ function updateSystemStats() {
  */
 function normalizeSensitivity(data) {
     if (data && typeof data.sensitivity_level === 'string') {
-        return data.sensitivity_level.toLowerCase() === 'high' ? 'High' : 'Low';
+        return data.sensitivity_level.toLowerCase();
     }
-    return 'High';
+    return 'medium';
 }
 
 /**
