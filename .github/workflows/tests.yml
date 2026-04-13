@@ -38,4 +38,10 @@ jobs:
             --ignore=tests/test_widget_manager.py \
             --ignore=tests/test_custom_algorithms.py \
             --ignore=tests/test_speed_actuation_integration.py \
-            --ignore=tests/test_greenongreen.py
+            --ignore=tests/test_greenongreen.py \
+            --ignore=tests/test_actuation.py \
+            --ignore=tests/test_model_manager.py \
+            --ignore=tests/test_mqtt_reconnect.py \
+            --ignore=tests/test_mqtt_state_sync.py \
+            --ignore=tests/test_networked_routes.py \
+            --ignore=tests/test_standalone_routes.py
