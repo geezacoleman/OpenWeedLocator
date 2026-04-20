@@ -947,8 +947,8 @@ source = ${GPS_SOURCE}
 port = ${GPS_SERIAL_DEV}
 baudrate = ${GPS_SERIAL_BAUD}
 
-# TCP listener (only when source = tcp). `enable` is a deprecated back-compat
-# alias for source=tcp.
+# TCP listener (only when source = tcp).
+# The 'enable' key is a deprecated back-compat alias for source=tcp.
 enable = False
 nmea_port = 8500
 boom_width = ${GPS_BOOM_WIDTH}

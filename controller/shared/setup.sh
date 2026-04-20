@@ -569,8 +569,9 @@ source = none
 port = /dev/ttyACM0
 baudrate = 9600
 
-# TCP listener (only when source = tcp). `enable` is a deprecated back-compat
-# alias for source=tcp; prefer setting `source` directly on new installs.
+# TCP listener (only when source = tcp).
+# The 'enable' key is a deprecated back-compat alias for source=tcp;
+# prefer setting 'source' directly on new installs.
 enable = False
 nmea_port = 8500
 boom_width = 12.0
