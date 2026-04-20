@@ -278,6 +278,10 @@ function buildOWLCard(deviceId, owl) {
     else if (temp > 60) tempClass = ' style="color:#d4820a"';
 
     const disAttr = isOnline ? '' : 'disabled';
+    const ctrlType = owl.controller_type || 'none';
+    const hwWarning = (ctrlType !== 'none')
+        ? '<div class="device-warning-badge">Hardware controller (' + ctrlType + ') — use standalone dashboard</div>'
+        : '';
 
     return `
         <div class="owl-card-compact ${onlineClass}">
@@ -287,6 +291,7 @@ function buildOWLCard(deviceId, owl) {
                     <span class="badge-dot"></span>
                     ${isOnline ? 'Online' : 'Offline'}
                 </span>
+                ${hwWarning}
             </div>
             <div class="owl-compact-stats">
                 <div class="owl-compact-stat"><strong${tempClass}>${temp.toFixed(0)}°C</strong> CPU</div>

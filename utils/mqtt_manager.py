@@ -256,6 +256,12 @@ class OWLMQTTPublisher:
             # Save directory (runtime-resolved — may differ from config if USB path changed)
             self.state['save_directory'] = getattr(self.owl_instance, 'save_directory', '')
 
+            # Hardware controller info (for networked controller to detect incompatible setups)
+            ct = getattr(self.owl_instance, 'controller_type', None)
+            self.state['controller_type'] = ct if isinstance(ct, str) else 'none'
+            sp = getattr(self.owl_instance, 'switch_purpose', None)
+            self.state['switch_purpose'] = sp if isinstance(sp, str) else 'recording'
+
             # Camera resolution
             res = getattr(self.owl_instance, 'resolution', (0, 0))
             self.state['resolution_width'] = res[0]

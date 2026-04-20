@@ -40,6 +40,7 @@ function switchToGPSTab() {
     aiTabActive = false;
     startGPSPolling();
     stopConfigPreview();
+    if (typeof window.gpsMapShow === 'function') window.gpsMapShow();
 }
 
 function switchToConfigTab() {
@@ -72,6 +73,7 @@ function stopGPSPolling() {
         clearInterval(gpsPollingInterval);
         gpsPollingInterval = null;
     }
+    if (typeof window.gpsMapHide === 'function') window.gpsMapHide();
 }
 
 async function pollGPS() {
@@ -100,14 +102,19 @@ function updateGPSDisplay(data) {
     const conn = data.connection || {};
     const session = data.session || {};
 
-    updateGPSConnectionStatus(conn.tcp_connected, fix.fix_valid);
+    updateGPSConnectionStatus(conn.gps_connected, fix.fix_valid);
     updateSpeedDisplay(fix.fix_valid ? fix.speed_kmh : null);
     updateCompass(fix.fix_valid ? fix.heading : null);
     updateAccuracyBar(fix.hdop, fix.satellites);
     updateSessionStats(session);
+
+    // Notify the map module of a fresh fix so it can update the marker.
+    try {
+        window.dispatchEvent(new CustomEvent('gps:update', { detail: data }));
+    } catch (e) { /* CustomEvent unsupported — ignore */ }
 }
 
-function updateGPSConnectionStatus(tcpConnected, fixValid) {
+function updateGPSConnectionStatus(gpsConnected, fixValid) {
     const banner = document.getElementById('gps-status-banner');
     const text = document.getElementById('gps-status-text');
 
@@ -115,7 +122,7 @@ function updateGPSConnectionStatus(tcpConnected, fixValid) {
 
     banner.classList.remove('connected', 'searching', 'disconnected');
 
-    if (!tcpConnected) {
+    if (!gpsConnected) {
         banner.classList.add('disconnected');
         text.textContent = 'GPS Disconnected';
     } else if (!fixValid) {

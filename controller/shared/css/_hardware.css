@@ -1,0 +1,85 @@
+/* ==========================================================================
+   Hardware Controller Locking Styles (Shared)
+
+   Visual indicators for controls managed by physical hardware switches.
+   Used by: standalone dashboard, networked dashboard
+   ========================================================================== */
+
+/* Hardware Notice Banner */
+.hardware-notice {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+    border: 1px solid var(--warning);
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+    font-size: 0.8rem;
+    color: #856404;
+}
+
+.hardware-notice svg {
+    flex-shrink: 0;
+    fill: #f0ad4e;
+}
+
+.hardware-notice-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.hardware-notice-text {
+    flex: 1;
+}
+
+/* Segmented controls hardware locked */
+.segmented.hardware-locked {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.control-tile.hardware-locked .tile-label {
+    color: var(--secondary);
+}
+
+.control-tile.hardware-locked .tile-label::after {
+    content: ' \00b7  Hardware';
+    font-size: 0.7rem;
+    color: #999;
+    font-weight: 400;
+}
+
+/* Owl switches hardware disabled */
+.owl-switch.hardware-locked {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+/* Lock icon in switch state */
+.lock-icon {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+
+.lock-icon svg {
+    fill: #999;
+}
+
+/* Warning badge for incompatible hardware controller in networked mode */
+.device-warning-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.2rem 0.5rem;
+    background: #fff3cd;
+    border: 1px solid var(--warning);
+    border-radius: 4px;
+    font-size: 0.7rem;
+    color: #856404;
+    margin-top: 0.25rem;
+}

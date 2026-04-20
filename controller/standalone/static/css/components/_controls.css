@@ -669,72 +669,7 @@
     }
 }
 
-/* Hardware Notice Banner */
-.hardware-notice {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
-    background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
-    border: 1px solid var(--warning);
-    border-radius: 8px;
-    margin-bottom: 0.75rem;
-    font-size: 0.8rem;
-    color: #856404;
-}
-
-.hardware-notice svg {
-    flex-shrink: 0;
-    fill: #f0ad4e;
-}
-
-.hardware-notice-icon {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-}
-
-.hardware-notice-text {
-    flex: 1;
-}
-
-/* Segmented controls hardware locked */
-.segmented.hardware-locked {
-    opacity: 0.5;
-    pointer-events: none;
-}
-
-.control-tile.hardware-locked .tile-label {
-    color: var(--secondary);
-}
-
-.control-tile.hardware-locked .tile-label::after {
-    content: ' · Hardware';
-    font-size: 0.7rem;
-    color: #999;
-    font-weight: 400;
-}
-
-/* Owl switches hardware disabled */
-.owl-switch.hardware-locked {
-    opacity: 0.5;
-    cursor: not-allowed;
-    pointer-events: none;
-}
-
-/* Lock icon in switch state */
-.lock-icon {
-    display: inline-flex;
-    align-items: center;
-    margin-right: 4px;
-    vertical-align: middle;
-}
-
-.lock-icon svg {
-    fill: #999;
-}
-
-/* Lock icon is injected by JS only — no CSS ::before pseudo-element needed */
+/* Hardware lock styles moved to /shared/css/_hardware.css */
 
 /* --------------------------------------------------------------------------
    Pipeline Mode Selector

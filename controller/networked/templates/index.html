@@ -4,8 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=1280, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>OWL Controller</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='lib/leaflet/leaflet.css') }}" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
     <link rel="stylesheet" href="/shared/css/numpad.css" />
+    <script src="{{ url_for('static', filename='lib/leaflet/leaflet.js') }}"></script>
 </head>
 <body>
 <!-- Header -->
@@ -233,53 +235,53 @@
     <!-- GPS View -->
     <div id="view-gps" class="view-panel" style="display:none;">
         <div class="gps-panel">
-            <!-- Status banner -->
-            <div class="gps-status-banner disconnected" id="gps-status-banner">
+            <!-- Map fills the whole panel; dials are overlaid on top. -->
+            <div class="gps-map" id="gps-map"></div>
+
+            <!-- Status banner (top, full width) -->
+            <div class="gps-status-banner disconnected gps-overlay-top" id="gps-status-banner">
                 <span class="gps-status-icon" id="gps-status-icon"></span>
                 <span id="gps-status-text">GPS Disconnected</span>
             </div>
 
-            <!-- 3-column grid -->
-            <div class="gps-grid">
-                <!-- LEFT: Compass -->
-                <div class="gps-compass-col">
-                    <div class="compass-ring">
-                        <span class="compass-label compass-n">N</span>
-                        <span class="compass-label compass-e">E</span>
-                        <span class="compass-label compass-s">S</span>
-                        <span class="compass-label compass-w">W</span>
-                        <div class="compass-arrow" id="compass-arrow"></div>
-                    </div>
-                    <div class="compass-heading" id="compass-heading">--°</div>
+            <!-- Compact compass (top-left overlay) -->
+            <div class="gps-compass-mini gps-overlay">
+                <div class="compass-ring">
+                    <span class="compass-label compass-n">N</span>
+                    <span class="compass-label compass-e">E</span>
+                    <span class="compass-label compass-s">S</span>
+                    <span class="compass-label compass-w">W</span>
+                    <div class="compass-arrow" id="compass-arrow"></div>
                 </div>
+                <div class="compass-heading" id="compass-heading">--°</div>
+            </div>
 
-                <!-- CENTER: Giant speed -->
-                <div class="gps-speed-col">
-                    <div class="speed-value" id="gps-speed">--</div>
-                    <div class="speed-unit">km/h</div>
+            <!-- Speed readout (top-right overlay) -->
+            <div class="gps-speed-mini gps-overlay">
+                <div class="speed-value" id="gps-speed">--</div>
+                <div class="speed-unit">km/h</div>
+            </div>
+
+            <!-- Stats strip (bottom overlay) -->
+            <div class="gps-stats-strip gps-overlay">
+                <div class="gps-stat-block">
+                    <div class="gps-stat-label">Satellites</div>
+                    <div class="gps-accuracy-bar">
+                        <div class="gps-accuracy-fill" id="gps-accuracy-fill"></div>
+                    </div>
+                    <div class="gps-stat-value" id="gps-satellites">--</div>
                 </div>
-
-                <!-- RIGHT: Stats -->
-                <div class="gps-stats-col">
-                    <div class="gps-stat-block">
-                        <div class="gps-stat-label">Satellites</div>
-                        <div class="gps-accuracy-bar">
-                            <div class="gps-accuracy-fill" id="gps-accuracy-fill"></div>
-                        </div>
-                        <div class="gps-stat-value" id="gps-satellites">--</div>
-                    </div>
-                    <div class="gps-stat-block">
-                        <div class="gps-stat-label">Distance</div>
-                        <div class="gps-stat-value" id="gps-distance">0.00 km</div>
-                    </div>
-                    <div class="gps-stat-block">
-                        <div class="gps-stat-label">Time</div>
-                        <div class="gps-stat-value" id="gps-time">0:00:00</div>
-                    </div>
-                    <div class="gps-stat-block">
-                        <div class="gps-stat-label">Area</div>
-                        <div class="gps-stat-value" id="gps-area">0.00 ha</div>
-                    </div>
+                <div class="gps-stat-block">
+                    <div class="gps-stat-label">Distance</div>
+                    <div class="gps-stat-value" id="gps-distance">0.00 km</div>
+                </div>
+                <div class="gps-stat-block">
+                    <div class="gps-stat-label">Time</div>
+                    <div class="gps-stat-value" id="gps-time">0:00:00</div>
+                </div>
+                <div class="gps-stat-block">
+                    <div class="gps-stat-label">Area</div>
+                    <div class="gps-stat-value" id="gps-area">0.00 ha</div>
                 </div>
             </div>
         </div>
@@ -661,6 +663,7 @@
 <!-- Toast Notification -->
 <div id="toast" class="toast"></div>
 <!-- Shared JS utilities -->
+<script src="/shared/js/hardware.js"></script>
 <script src="/shared/js/api.js"></script>
 <script src="/shared/js/utils.js"></script>
 <script src="/shared/js/toast.js"></script>
@@ -676,6 +679,7 @@
 <script src="{{ url_for('static', filename='js/modules/_video.js') }}"></script>
 <script src="{{ url_for('static', filename='js/modules/_config_editor.js') }}"></script>
 <script src="{{ url_for('static', filename='js/modules/_gps.js') }}"></script>
+<script src="{{ url_for('static', filename='js/modules/_gps_map.js') }}"></script>
 <script src="{{ url_for('static', filename='js/modules/_actuation.js') }}"></script>
 <script src="{{ url_for('static', filename='js/modules/_ai_tab.js') }}"></script>
 <script src="/shared/js/widgets.js"></script>

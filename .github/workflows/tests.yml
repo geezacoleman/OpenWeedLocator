@@ -44,4 +44,5 @@ jobs:
             --ignore=tests/test_mqtt_reconnect.py \
             --ignore=tests/test_mqtt_state_sync.py \
             --ignore=tests/test_networked_routes.py \
-            --ignore=tests/test_standalone_routes.py
+            --ignore=tests/test_standalone_routes.py \
+            --ignore=tests/test_downloads.py

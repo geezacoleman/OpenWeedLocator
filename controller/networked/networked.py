@@ -245,15 +245,22 @@ class CentralController:
 
         # GPS Manager (optional)
         self.gps_manager = None
-        if self.config.getboolean('GPS', 'enable', fallback=False):
+        gps_source = self.config.get('GPS', 'source', fallback='none').strip().lower()
+        # Back-compat: old configs used `enable = True` for TCP
+        if gps_source in ('', 'none') and self.config.getboolean('GPS', 'enable', fallback=False):
+            gps_source = 'tcp'
+        if gps_source not in ('', 'none'):
             try:
                 from utils.gps_manager import GPSManager
                 self.gps_manager = GPSManager(
+                    source=gps_source,
                     port=self.config.getint('GPS', 'nmea_port', fallback=8500),
+                    serial_device=self.config.get('GPS', 'port', fallback='/dev/ttyACM0'),
+                    baudrate=self.config.getint('GPS', 'baudrate', fallback=9600),
                     boom_width=self.config.getfloat('GPS', 'boom_width', fallback=12.0),
                     track_dir=self.config.get('GPS', 'track_save_directory', fallback='tracks')
                 )
-                logger.info("GPS Manager initialized")
+                logger.info(f"GPS Manager initialized (source={gps_source})")
             except Exception as e:
                 logger.error(f"Failed to initialize GPS Manager: {e}")
 
@@ -2126,6 +2133,22 @@ def api_gps_track_download(filename):
         return jsonify({'error': 'Track not found'}), 404
 
     return send_from_directory(track_dir, filename, mimetype='application/geo+json')
+
+
+@app.route('/api/gps/breadcrumbs')
+def api_gps_breadcrumbs():
+    """Live in-memory breadcrumb points for the GPS tab map.
+
+    Returns the recorder's current [lon, lat] buffer without touching disk.
+    Frontend polls this while the GPS tab is visible to render a live polyline.
+    """
+    if not controller.gps_manager:
+        return jsonify({'coordinates': [], 'recording': False}), 200
+    recorder = controller.gps_manager.recorder
+    return jsonify({
+        'coordinates': recorder.coordinates,
+        'recording': recorder.recording,
+    })
 
 
 @app.route('/api/gps/config', methods=['POST'])

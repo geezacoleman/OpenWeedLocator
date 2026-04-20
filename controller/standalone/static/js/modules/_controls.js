@@ -199,14 +199,7 @@ function stopOwl() {
  */
 function isHardwareLocked(control) {
     if (!hardwareControllerActive) return false;
-
-    if (controllerType === 'ute') {
-        // Ute has one switch — it locks only the control it manages
-        return control === switchPurpose;
-    } else if (controllerType === 'advanced') {
-        return ['recording', 'detection', 'sensitivity'].includes(control);
-    }
-    return false;
+    return isControlHardwareLocked(control, controllerType, switchPurpose);
 }
 
 /* --------------------------------------------------------------------------
@@ -723,10 +716,11 @@ function lockSegmented(segId) {
 }
 
 function addLockIcon(element) {
-    const lockSpan = document.createElement('span');
-    lockSpan.className = 'lock-icon';
-    lockSpan.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24"><path d="M12,17A2,2 0 0,0 14,15C14,13.89 13.1,13 12,13A2,2 0 0,0 10,15A2,2 0 0,0 12,17M18,8A2,2 0 0,1 20,10V20A2,2 0 0,1 18,22H6A2,2 0 0,1 4,20V10C4,8.89 4.9,8 6,8H7V6A5,5 0 0,1 12,1A5,5 0 0,1 17,6V8H18M12,3A3,3 0 0,0 9,6V8H15V6A3,3 0 0,0 12,3Z"/></svg>`;
-    element.insertBefore(lockSpan, element.firstChild);
+    // Uses shared createLockIconHTML() from hardware.js
+    // SVG is a static trusted string, not user input
+    var wrapper = document.createElement('div');
+    wrapper.innerHTML = createLockIconHTML(); // eslint-disable-line no-unsanitized/property
+    element.insertBefore(wrapper.firstChild, element.firstChild);
 }
 
 function removeLockIcon(element) {

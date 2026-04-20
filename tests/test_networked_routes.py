@@ -495,3 +495,90 @@ class TestSystemReboot:
         assert data['success'] is True
         mock_threading.Thread.assert_called_once()
         mock_threading.Thread.return_value.start.assert_called_once()
+
+
+@pytest.mark.unit
+class TestGPSBreadcrumbs:
+    """Tests for GET /api/gps/breadcrumbs (live track polyline data)."""
+
+    def test_returns_empty_when_gps_disabled(self, networked_test_client):
+        client, mock_ctrl = networked_test_client
+        mock_ctrl.gps_manager = None
+
+        resp = client.get('/api/gps/breadcrumbs')
+        data = resp.get_json()
+
+        assert resp.status_code == 200
+        assert data['coordinates'] == []
+        assert data['recording'] is False
+
+    def test_returns_coordinates_when_recording(self, networked_test_client):
+        client, mock_ctrl = networked_test_client
+
+        fake_coords = [[151.2093, -33.8688], [151.2110, -33.8700]]
+        recorder = MagicMock()
+        # `coordinates` is a property on TrackRecorder — expose as attribute on mock
+        recorder.coordinates = list(fake_coords)
+        recorder.recording = True
+        mock_ctrl.gps_manager = MagicMock()
+        mock_ctrl.gps_manager.recorder = recorder
+
+        resp = client.get('/api/gps/breadcrumbs')
+        data = resp.get_json()
+
+        assert resp.status_code == 200
+        assert data['coordinates'] == fake_coords
+        assert data['recording'] is True
+
+    def test_returns_empty_list_when_not_recording(self, networked_test_client):
+        client, mock_ctrl = networked_test_client
+
+        recorder = MagicMock()
+        recorder.coordinates = []
+        recorder.recording = False
+        mock_ctrl.gps_manager = MagicMock()
+        mock_ctrl.gps_manager.recorder = recorder
+
+        resp = client.get('/api/gps/breadcrumbs')
+        data = resp.get_json()
+
+        assert resp.status_code == 200
+        assert data['coordinates'] == []
+        assert data['recording'] is False
+
+
+@pytest.mark.unit
+class TestGPSStateSchema:
+    """Tests that /api/gps emits the new connection schema (gps_connected + source)."""
+
+    def test_schema_includes_source_and_gps_connected(self, networked_test_client):
+        client, mock_ctrl = networked_test_client
+
+        fake_state = {
+            'fix': {'latitude': -33.8688, 'longitude': 151.2093, 'fix_valid': True,
+                    'speed_kmh': 5.0, 'heading': 180.0, 'satellites': 8,
+                    'hdop': 1.1, 'altitude': 45.0, 'age_seconds': 0.5},
+            'connection': {'gps_connected': True, 'gps_enabled': True, 'source': 'serial'},
+            'session': {'active': True, 'distance_km': 0.1,
+                        'time_active_s': 60, 'area_hectares': 0.0, 'boom_width_m': 12.0},
+        }
+        mock_ctrl.gps_manager = MagicMock()
+        mock_ctrl.gps_manager.get_state.return_value = fake_state
+
+        resp = client.get('/api/gps')
+        data = resp.get_json()
+
+        assert resp.status_code == 200
+        assert 'tcp_connected' not in data['connection']
+        assert data['connection']['gps_connected'] is True
+        assert data['connection']['source'] == 'serial'
+
+    def test_returns_gps_disabled_when_no_manager(self, networked_test_client):
+        client, mock_ctrl = networked_test_client
+        mock_ctrl.gps_manager = None
+
+        resp = client.get('/api/gps')
+        data = resp.get_json()
+
+        assert resp.status_code == 200
+        assert data['connection']['gps_enabled'] is False
