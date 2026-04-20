@@ -508,7 +508,7 @@ setup_python_venv() {
     check_status "Creating virtual environment" "PYTHON_VENV"
 
     echo -e "${GREEN}[INFO] Installing Python dependencies...${NC}"
-    sudo -u $CURRENT_USER bash -c "source ${VENV_PATH}/bin/activate && pip install --upgrade pip && pip install flask==2.2.2 werkzeug==2.2.3 gunicorn==23.0.0 paho-mqtt==2.1.0 psutil==5.9.4 boto3==1.39.13 requests"
+    sudo -u $CURRENT_USER bash -c "source ${VENV_PATH}/bin/activate && pip install --upgrade pip && pip install flask==2.2.2 werkzeug==2.2.3 gunicorn==23.0.0 paho-mqtt==2.1.0 psutil==5.9.4 boto3==1.39.13 requests pyserial==3.5"
     check_status "Installing Python dependencies" "PYTHON_VENV"
 }
 
@@ -978,6 +978,29 @@ EOF
     check_status "CONTROLLER.ini creation" "CONTROLLER_INI"
 }
 
+# Step 11c-pre: Grant serial device access to the service user
+# Required for GPS_SOURCE=serial (pyserial opens /dev/ttyACM* or /dev/ttyUSB*)
+# and GPS_SOURCE=gpsd (gpsd itself runs as root, but the user may want to
+# run gpsmon/cgps interactively without sudo).
+grant_serial_access() {
+    if [[ "$GPS_SOURCE" != "serial" && "$GPS_SOURCE" != "gpsd" ]]; then
+        return 0
+    fi
+
+    if id -nG "$CURRENT_USER" | tr ' ' '\n' | grep -qx dialout; then
+        echo -e "${TICK} ${CURRENT_USER} is already in the dialout group"
+        return 0
+    fi
+
+    echo -e "${GREEN}[INFO] Adding ${CURRENT_USER} to the dialout group for serial GPS access...${NC}"
+    if usermod -aG dialout "$CURRENT_USER"; then
+        echo -e "${TICK} ${CURRENT_USER} added to dialout"
+        echo -e "${ORANGE}[INFO] Group membership takes effect after reboot.${NC}"
+    else
+        echo -e "${CROSS} Failed to add ${CURRENT_USER} to dialout — serial GPS may fail with PermissionError"
+    fi
+}
+
 # Step 11c: Install and configure gpsd (only when source = gpsd)
 configure_gpsd() {
     if [[ "$GPS_INSTALL_GPSD" != "yes" ]]; then
@@ -1146,6 +1169,9 @@ main() {
 
     # Step 11b: Configure sudoers for dashboard
     configure_sudoers
+
+    # Step 11c-pre: Grant dialout group for serial GPS access
+    grant_serial_access
 
     # Step 11c: Configure gpsd (only when source = gpsd)
     configure_gpsd
