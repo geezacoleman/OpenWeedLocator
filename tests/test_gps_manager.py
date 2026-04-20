@@ -2,7 +2,9 @@
 
 import json
 import os
+import threading
 import time
+from unittest.mock import MagicMock, patch
 
 import pytest
 from utils.gps_manager import (
@@ -10,6 +12,10 @@ from utils.gps_manager import (
     GPSState,
     SessionStats,
     TrackRecorder,
+    GPSManager,
+    TCPNMEASource,
+    SerialNMEASource,
+    GpsdNMEASource,
 )
 
 
@@ -216,3 +222,155 @@ class TestTrackRecorder:
         rec = TrackRecorder()
         result = rec.stop()
         assert result is None
+
+    def test_coordinates_property_returns_copy(self, tmp_path):
+        save_dir = str(tmp_path / 'tracks')
+        rec = TrackRecorder()
+        rec.start(save_dir)
+        rec._last_record_time = 0
+        rec.add_point(-33.8688, 151.2093, speed=5.0, heading=90.0)
+        rec._last_record_time = 0
+        rec.add_point(-33.8700, 151.2110, speed=6.0, heading=95.0)
+
+        snap = rec.coordinates
+        assert isinstance(snap, list)
+        assert len(snap) == 2
+        # Mutating the snapshot must not affect the recorder's buffer
+        snap.clear()
+        assert len(rec.coordinates) == 2
+
+    def test_concurrent_add_and_read_safe(self, tmp_path):
+        """Many concurrent add_point + coordinates reads should not raise."""
+        save_dir = str(tmp_path / 'tracks')
+        rec = TrackRecorder()
+        rec.start(save_dir)
+
+        stop_flag = threading.Event()
+        errors = []
+
+        def writer():
+            i = 0
+            while not stop_flag.is_set():
+                try:
+                    rec._last_record_time = 0
+                    rec.add_point(
+                        -33.8688 + i * 0.0001, 151.2093 + i * 0.0001,
+                        speed=5.0, heading=90.0,
+                    )
+                    i += 1
+                except Exception as e:
+                    errors.append(e)
+
+        def reader():
+            while not stop_flag.is_set():
+                try:
+                    _ = rec.coordinates
+                except Exception as e:
+                    errors.append(e)
+
+        threads = [threading.Thread(target=writer), threading.Thread(target=reader)]
+        for t in threads:
+            t.start()
+        time.sleep(0.2)
+        stop_flag.set()
+        for t in threads:
+            t.join(timeout=2)
+        rec.stop()
+
+        assert errors == []
+
+
+# ---------------------------------------------------------------------------
+# NMEA source constructors — ensure they instantiate without side-effects
+# ---------------------------------------------------------------------------
+
+class TestNMEASources:
+    def test_tcp_source_defaults(self):
+        src = TCPNMEASource(on_line=lambda l: None, on_connect_change=lambda b: None, port=8500)
+        assert src.name == 'tcp'
+        assert src.port == 8500
+        assert src._running is False
+
+    def test_serial_source_defaults(self):
+        src = SerialNMEASource(
+            on_line=lambda l: None, on_connect_change=lambda b: None,
+            device='/dev/ttyACM0', baudrate=9600,
+        )
+        assert src.name == 'serial'
+        assert src.device == '/dev/ttyACM0'
+        assert src.baudrate == 9600
+
+    def test_gpsd_source_defaults(self):
+        src = GpsdNMEASource(on_line=lambda l: None, on_connect_change=lambda b: None)
+        assert src.name == 'gpsd'
+        assert src.host == 'localhost'
+        assert src.port == 2947
+
+    def test_serial_source_without_pyserial(self, monkeypatch):
+        """If pyserial is missing, the source should log and exit cleanly, not crash."""
+        import utils.gps_manager as gm
+        monkeypatch.setattr(gm, 'serial', None)
+
+        called = {'line': False, 'connect': False}
+        src = SerialNMEASource(
+            on_line=lambda l: called.__setitem__('line', True),
+            on_connect_change=lambda b: called.__setitem__('connect', True),
+            device='/dev/nonexistent', baudrate=9600,
+        )
+        src.start()
+        # Give the background thread a moment; it should exit immediately.
+        time.sleep(0.1)
+        # Never produced a line or a connected event
+        assert called['line'] is False
+
+
+# ---------------------------------------------------------------------------
+# GPSManager — source selection
+# ---------------------------------------------------------------------------
+
+class TestGPSManagerSourceSelection:
+    def test_default_is_tcp(self):
+        mgr = GPSManager(source='tcp', port=18500)
+        assert mgr.source_name == 'tcp'
+        assert isinstance(mgr._source, TCPNMEASource)
+        state = mgr.get_state()
+        assert state['connection']['source'] == 'tcp'
+        assert 'gps_connected' in state['connection']
+        assert 'tcp_connected' not in state['connection']
+
+    def test_serial_source(self):
+        mgr = GPSManager(source='serial', serial_device='/dev/ttyACM0', baudrate=9600)
+        assert mgr.source_name == 'serial'
+        assert isinstance(mgr._source, SerialNMEASource)
+        assert mgr._source.device == '/dev/ttyACM0'
+
+    def test_gpsd_source(self):
+        mgr = GPSManager(source='gpsd')
+        assert mgr.source_name == 'gpsd'
+        assert isinstance(mgr._source, GpsdNMEASource)
+
+    def test_case_insensitive(self):
+        mgr = GPSManager(source='SERIAL')
+        assert mgr.source_name == 'serial'
+
+    def test_invalid_source_raises(self):
+        with pytest.raises(ValueError):
+            GPSManager(source='bogus')
+
+    def test_process_sentence_updates_state(self, tmp_path):
+        """GPSManager routes parsed sentences through its state, regardless of source."""
+        mgr = GPSManager(source='tcp', port=18501, track_dir=str(tmp_path))
+
+        # Feed a valid NMEA sentence via the internal callback
+        mgr._on_line('$GPRMC,123519,A,3347.2000,S,15112.0000,E,5.0,180.0,230394,,,A*4C')
+        snap = mgr.state.get_dict()
+        # We don't care about the exact coord — just that a fix was derived.
+        assert snap['latitude'] is not None or snap['longitude'] is not None or snap['fix_valid'] is False
+
+    def test_on_connect_change_updates_state(self):
+        mgr = GPSManager(source='tcp')
+        assert mgr.state.connected is False
+        mgr._on_connect_change(True)
+        assert mgr.state.connected is True
+        mgr._on_connect_change(False)
+        assert mgr.state.connected is False

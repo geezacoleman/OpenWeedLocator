@@ -154,7 +154,7 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    overflow: hidden;
+    overflow-y: auto;
     min-height: 0;
 }
 
@@ -508,4 +508,35 @@
     .owls-column { order: 0; }
 
     .controls-panel { flex: none; }
+}
+
+/* ---------------------------------------------------------------------------
+   Short screens (7" kiosk @ 1024x600, etc.) — shrink dials and tighten gaps
+   so all three columns fit without cutting off the sensitivity dial.
+   --------------------------------------------------------------------------- */
+@media (max-height: 700px) {
+    .owl-status-layout {
+        grid-template-columns: 240px 200px 1fr;
+        gap: 0.5rem;
+    }
+    .gauges-panel,
+    .sensitivity-panel,
+    .controls-panel,
+    .owls-column {
+        padding: 0.5rem;
+    }
+    .gauge-svg {
+        width: 84px;
+        height: 55px;
+    }
+    .sensitivity-svg {
+        width: 130px;
+        height: 76px;
+    }
+    .sensitivity-level-text {
+        font-size: 0.9rem;
+    }
+    .gauge-value {
+        font-size: 0.95rem;
+    }
 }

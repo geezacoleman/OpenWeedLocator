@@ -20,6 +20,11 @@ import threading
 import time
 from datetime import datetime, timezone
 
+try:
+    import serial  # pyserial — optional, only needed for source=serial
+except ImportError:
+    serial = None
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -438,6 +443,7 @@ class TrackRecorder:
     MIN_DISTANCE_M = 0.5   # Min meters to record (skip GPS drift)
 
     def __init__(self):
+        self._lock = threading.Lock()
         self._recording = False
         self._filepath = None
         self._coordinates = []
@@ -452,19 +458,26 @@ class TrackRecorder:
     def recording(self):
         return self._recording
 
+    @property
+    def coordinates(self):
+        """Snapshot of recorded [lon, lat, (alt)] points. Safe for cross-thread reads."""
+        with self._lock:
+            return list(self._coordinates)
+
     def start(self, save_dir):
         """Start a new track recording."""
         os.makedirs(save_dir, exist_ok=True)
         timestamp = datetime.now().strftime('%Y-%m-%d_%H%M%S')
-        self._filepath = os.path.join(save_dir, f'track_{timestamp}.geojson')
-        self._coordinates = []
-        self._speeds = []
-        self._headings = []
-        self._timestamps = []
-        self._start_time = datetime.now(timezone.utc)
-        self._last_record_time = 0
-        self._last_point = None
-        self._recording = True
+        with self._lock:
+            self._filepath = os.path.join(save_dir, f'track_{timestamp}.geojson')
+            self._coordinates = []
+            self._speeds = []
+            self._headings = []
+            self._timestamps = []
+            self._start_time = datetime.now(timezone.utc)
+            self._last_record_time = 0
+            self._last_point = None
+            self._recording = True
         logger.info(f"Track recording started: {self._filepath}")
 
     def add_point(self, lat, lon, speed, heading, timestamp=None, altitude=None):
@@ -474,33 +487,32 @@ class TrackRecorder:
 
         now = time.time()
 
-        # Check minimum interval
-        if now - self._last_record_time < self.MIN_INTERVAL_S:
-            return
-
-        # Check minimum distance (skip GPS drift when stationary)
-        if self._last_point is not None:
-            dist_km = haversine(self._last_point[0], self._last_point[1], lat, lon)
-            if dist_km * 1000 < self.MIN_DISTANCE_M:
+        should_flush = False
+        with self._lock:
+            if now - self._last_record_time < self.MIN_INTERVAL_S:
                 return
 
-        self._last_record_time = now
-        self._last_point = (lat, lon)
+            if self._last_point is not None:
+                dist_km = haversine(self._last_point[0], self._last_point[1], lat, lon)
+                if dist_km * 1000 < self.MIN_DISTANCE_M:
+                    return
 
-        # GeoJSON coordinates: [lon, lat, alt]
-        coord = [round(lon, 7), round(lat, 7)]
-        if altitude is not None:
-            coord.append(round(altitude, 1))
-        self._coordinates.append(coord)
+            self._last_record_time = now
+            self._last_point = (lat, lon)
 
-        self._speeds.append(round(speed, 1) if speed is not None else None)
-        self._headings.append(round(heading, 1) if heading is not None else None)
+            coord = [round(lon, 7), round(lat, 7)]
+            if altitude is not None:
+                coord.append(round(altitude, 1))
+            self._coordinates.append(coord)
+            self._speeds.append(round(speed, 1) if speed is not None else None)
+            self._headings.append(round(heading, 1) if heading is not None else None)
 
-        ts = timestamp or datetime.now(timezone.utc).isoformat()
-        self._timestamps.append(ts)
+            ts = timestamp or datetime.now(timezone.utc).isoformat()
+            self._timestamps.append(ts)
 
-        # Flush periodically (every 100 points)
-        if len(self._coordinates) % 100 == 0:
+            should_flush = (len(self._coordinates) % 100 == 0)
+
+        if should_flush:
             self._flush()
 
     def stop(self):
@@ -510,21 +522,30 @@ class TrackRecorder:
 
         self._recording = False
         filepath = self._flush()
-        logger.info(f"Track recording stopped: {filepath} ({len(self._coordinates)} points)")
+        with self._lock:
+            point_count = len(self._coordinates)
+        logger.info(f"Track recording stopped: {filepath} ({point_count} points)")
         return filepath
 
     def _flush(self):
         """Write current track data to the GeoJSON file."""
-        if not self._filepath or not self._coordinates:
-            return self._filepath
+        with self._lock:
+            if not self._filepath or not self._coordinates:
+                return self._filepath
+
+            filepath = self._filepath
+            coords_copy = list(self._coordinates)
+            speeds_copy = list(self._speeds)
+            headings_copy = list(self._headings)
+            timestamps_copy = list(self._timestamps)
+            start_time = self._start_time
 
         end_time = datetime.now(timezone.utc)
 
-        # Calculate total distance from coordinates
         total_dist = 0.0
-        for i in range(1, len(self._coordinates)):
-            c1 = self._coordinates[i - 1]
-            c2 = self._coordinates[i]
+        for i in range(1, len(coords_copy)):
+            c1 = coords_copy[i - 1]
+            c2 = coords_copy[i]
             total_dist += haversine(c1[1], c1[0], c2[1], c2[0])
 
         geojson = {
@@ -533,78 +554,328 @@ class TrackRecorder:
                 'type': 'Feature',
                 'geometry': {
                     'type': 'LineString',
-                    'coordinates': self._coordinates,
+                    'coordinates': coords_copy,
                 },
                 'properties': {
-                    'name': f"OWL Session {self._start_time.strftime('%Y-%m-%d %H:%M') if self._start_time else 'unknown'}",
-                    'start_time': self._start_time.isoformat() if self._start_time else None,
+                    'name': f"OWL Session {start_time.strftime('%Y-%m-%d %H:%M') if start_time else 'unknown'}",
+                    'start_time': start_time.isoformat() if start_time else None,
                     'end_time': end_time.isoformat(),
                     'distance_km': round(total_dist, 3),
-                    'point_count': len(self._coordinates),
-                    'speeds_kmh': self._speeds,
-                    'headings_deg': self._headings,
-                    'timestamps': self._timestamps,
+                    'point_count': len(coords_copy),
+                    'speeds_kmh': speeds_copy,
+                    'headings_deg': headings_copy,
+                    'timestamps': timestamps_copy,
                 },
             }],
         }
 
         try:
-            with open(self._filepath, 'w') as f:
+            with open(filepath, 'w') as f:
                 json.dump(geojson, f)
         except IOError as e:
             logger.warning(f"Failed to write track file: {e}")
 
-        return self._filepath
+        return filepath
 
 
 # ---------------------------------------------------------------------------
-# GPSManager — main coordinator with TCP server
+# NMEA sources — pluggable transports for the GPSManager
 # ---------------------------------------------------------------------------
 
-class GPSManager:
-    """Manages GPS data from a Teltonika router via TCP NMEA forwarding.
+class NMEASource:
+    """Base for NMEA line producers. Subclasses own a background thread."""
 
-    Args:
-        port: TCP port to listen on (default 8500)
-        boom_width: Boom width in metres for area calculation
-        track_dir: Directory to save GeoJSON track files
-    """
+    name = 'base'
 
-    def __init__(self, port=8500, boom_width=12.0, track_dir='tracks/'):
-        self.port = port
-        self.track_dir = track_dir
-
-        self.state = GPSState()
-        self.session = SessionStats(boom_width_m=boom_width)
-        self.recorder = TrackRecorder()
-
+    def __init__(self, on_line, on_connect_change):
+        self._on_line = on_line
+        self._on_connect_change = on_connect_change
         self._running = False
-        self._server_thread = None
-        self._server_socket = None
+        self._thread = None
 
     def start(self):
-        """Start the TCP server thread to receive NMEA data."""
         if self._running:
             return
-
         self._running = True
-        self._server_thread = threading.Thread(target=self._tcp_server_loop, daemon=True)
-        self._server_thread.start()
-        logger.info(f"GPS Manager started on port {self.port}")
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
 
     def stop(self):
-        """Shut down the GPS manager cleanly."""
         self._running = False
 
+    def _run(self):
+        raise NotImplementedError
+
+
+class TCPNMEASource(NMEASource):
+    """Listens for NMEA pushed over TCP (e.g. Teltonika RUTX14)."""
+
+    name = 'tcp'
+
+    def __init__(self, on_line, on_connect_change, port=8500):
+        super().__init__(on_line, on_connect_change)
+        self.port = port
+        self._server_socket = None
+
+    def stop(self):
+        super().stop()
         if self._server_socket:
             try:
                 self._server_socket.close()
             except Exception:
                 pass
 
+    def _run(self):
+        try:
+            self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self._server_socket.settimeout(2.0)
+            self._server_socket.bind(('0.0.0.0', self.port))
+            self._server_socket.listen(1)
+            logger.info(f"GPS TCP server listening on 0.0.0.0:{self.port}")
+        except OSError as e:
+            logger.error(f"GPS TCP server failed to start: {e}")
+            self._running = False
+            return
+
+        while self._running:
+            try:
+                conn, addr = self._server_socket.accept()
+                logger.debug(f"GPS client connected from {addr}")
+                self._on_connect_change(True)
+                self._handle_client(conn)
+            except socket.timeout:
+                continue
+            except OSError:
+                if self._running:
+                    logger.warning("GPS TCP server socket error")
+                break
+
+        try:
+            self._server_socket.close()
+        except Exception:
+            pass
+
+    def _handle_client(self, conn):
+        conn.settimeout(30.0)
+        buffer = ''
+        try:
+            while self._running:
+                try:
+                    data = conn.recv(4096)
+                except socket.timeout:
+                    logger.warning("GPS client timeout (30s no data)")
+                    break
+                if not data:
+                    break
+                buffer += data.decode('ascii', errors='replace')
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    line = line.strip()
+                    if line:
+                        self._on_line(line)
+        except Exception as e:
+            logger.warning(f"GPS client error: {e}")
+        finally:
+            self._on_connect_change(False)
+            try:
+                conn.close()
+            except Exception:
+                pass
+            logger.debug("GPS client disconnected")
+
+
+class SerialNMEASource(NMEASource):
+    """Reads NMEA from a USB or UART serial device (e.g. Ublox dongle)."""
+
+    name = 'serial'
+    RECONNECT_DELAY_S = 5
+
+    def __init__(self, on_line, on_connect_change, device='/dev/ttyACM0', baudrate=9600):
+        super().__init__(on_line, on_connect_change)
+        self.device = device
+        self.baudrate = baudrate
+        self._serial = None
+
+    def stop(self):
+        super().stop()
+        if self._serial:
+            try:
+                self._serial.close()
+            except Exception:
+                pass
+
+    def _run(self):
+        if serial is None:
+            logger.error("pyserial not installed — serial GPS disabled. Install with: pip install pyserial")
+            self._running = False
+            return
+
+        while self._running:
+            try:
+                self._serial = serial.Serial(port=self.device, baudrate=self.baudrate, timeout=2)
+                logger.info(f"Serial GPS connected: {self.device} @ {self.baudrate}")
+                self._on_connect_change(True)
+
+                while self._running:
+                    try:
+                        raw_line = self._serial.readline().decode('ascii', errors='replace').strip()
+                    except (serial.SerialException, OSError) as e:
+                        logger.warning(f"Serial GPS read error: {e}")
+                        break
+                    if not raw_line:
+                        continue
+                    self._on_line(raw_line)
+
+            except (OSError, FileNotFoundError) as e:
+                logger.warning(f"Serial GPS connection failed ({self.device}): {e}")
+            except Exception as e:
+                if serial and isinstance(e, serial.SerialException):
+                    logger.warning(f"Serial GPS connection failed: {e}")
+                else:
+                    logger.error(f"Unexpected error in serial GPS reader: {e}", exc_info=True)
+            finally:
+                self._on_connect_change(False)
+                if self._serial is not None:
+                    try:
+                        if self._serial.is_open:
+                            self._serial.close()
+                    except Exception:
+                        pass
+                    self._serial = None
+
+            if self._running:
+                time.sleep(self.RECONNECT_DELAY_S)
+
+
+class GpsdNMEASource(NMEASource):
+    """Reads NMEA from a local gpsd daemon via its TCP socket (localhost:2947)."""
+
+    name = 'gpsd'
+    RECONNECT_DELAY_S = 5
+
+    def __init__(self, on_line, on_connect_change, host='localhost', port=2947):
+        super().__init__(on_line, on_connect_change)
+        self.host = host
+        self.port = port
+        self._sock = None
+
+    def stop(self):
+        super().stop()
+        if self._sock:
+            try:
+                self._sock.close()
+            except Exception:
+                pass
+
+    def _run(self):
+        while self._running:
+            try:
+                self._sock = socket.create_connection((self.host, self.port), timeout=5)
+                self._sock.settimeout(5.0)
+                # Ask gpsd to stream raw NMEA.
+                self._sock.sendall(b'?WATCH={"enable":true,"nmea":true,"raw":1}\n')
+                logger.info(f"GPS gpsd source connected: {self.host}:{self.port}")
+                self._on_connect_change(True)
+
+                buffer = ''
+                while self._running:
+                    try:
+                        data = self._sock.recv(4096)
+                    except socket.timeout:
+                        continue
+                    if not data:
+                        break
+                    buffer += data.decode('ascii', errors='replace')
+                    while '\n' in buffer:
+                        line, buffer = buffer.split('\n', 1)
+                        line = line.strip()
+                        # gpsd echoes JSON responses on the control channel;
+                        # only forward lines that look like NMEA.
+                        if line.startswith('$'):
+                            self._on_line(line)
+
+            except (OSError, socket.error) as e:
+                logger.warning(f"gpsd connection failed ({self.host}:{self.port}): {e}")
+            except Exception as e:
+                logger.error(f"Unexpected error in gpsd source: {e}", exc_info=True)
+            finally:
+                self._on_connect_change(False)
+                if self._sock is not None:
+                    try:
+                        self._sock.close()
+                    except Exception:
+                        pass
+                    self._sock = None
+
+            if self._running:
+                time.sleep(self.RECONNECT_DELAY_S)
+
+
+# ---------------------------------------------------------------------------
+# GPSManager — coordinator: owns parser state + a pluggable NMEASource
+# ---------------------------------------------------------------------------
+
+class GPSManager:
+    """Coordinates GPS state, session stats, track recording, and one NMEA source.
+
+    Args:
+        source: 'tcp' | 'serial' | 'gpsd' (default 'tcp' for back-compat)
+        port: TCP port to listen on when source='tcp'
+        serial_device: path to serial device when source='serial'
+        baudrate: serial baud rate when source='serial'
+        boom_width: boom width in metres for area calculation
+        track_dir: directory to save GeoJSON track files
+    """
+
+    VALID_SOURCES = ('tcp', 'serial', 'gpsd')
+
+    def __init__(self, source='tcp', port=8500, serial_device='/dev/ttyACM0',
+                 baudrate=9600, boom_width=12.0, track_dir='tracks/'):
+        source = (source or 'tcp').lower()
+        if source not in self.VALID_SOURCES:
+            raise ValueError(f"Unknown GPS source '{source}'. Valid: {self.VALID_SOURCES}")
+
+        self.source_name = source
+        self.port = port
+        self.serial_device = serial_device
+        self.baudrate = baudrate
+        self.track_dir = track_dir
+
+        self.state = GPSState()
+        self.session = SessionStats(boom_width_m=boom_width)
+        self.recorder = TrackRecorder()
+
+        self._source = self._build_source(source)
+
+    def _build_source(self, source):
+        if source == 'tcp':
+            return TCPNMEASource(self._on_line, self._on_connect_change, port=self.port)
+        if source == 'serial':
+            return SerialNMEASource(
+                self._on_line, self._on_connect_change,
+                device=self.serial_device, baudrate=self.baudrate,
+            )
+        if source == 'gpsd':
+            return GpsdNMEASource(self._on_line, self._on_connect_change)
+        raise ValueError(f"Unknown GPS source: {source}")
+
+    def _on_line(self, line):
+        self._process_sentence(line)
+
+    def _on_connect_change(self, connected):
+        self.state.connected = bool(connected)
+
+    def start(self):
+        """Start the underlying NMEA source."""
+        self._source.start()
+        logger.info(f"GPS Manager started (source={self.source_name})")
+
+    def stop(self):
+        """Shut down the GPS manager cleanly."""
+        self._source.stop()
         if self.recorder.recording:
             self.recorder.stop()
-
         logger.info("GPS Manager stopped")
 
     @property
@@ -629,81 +900,12 @@ class GPSManager:
         return {
             'fix': fix,
             'connection': {
-                'tcp_connected': self.state.connected,
+                'gps_connected': self.state.connected,
                 'gps_enabled': True,
+                'source': self.source_name,
             },
             'session': self.session.to_dict(),
         }
-
-    def _tcp_server_loop(self):
-        """TCP server loop — accepts connections from the Teltonika router."""
-        try:
-            self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self._server_socket.settimeout(2.0)  # Allow periodic shutdown check
-            self._server_socket.bind(('0.0.0.0', self.port))
-            self._server_socket.listen(1)
-            logger.info(f"GPS TCP server listening on 0.0.0.0:{self.port}")
-        except OSError as e:
-            logger.error(f"GPS TCP server failed to start: {e}")
-            self._running = False
-            return
-
-        while self._running:
-            try:
-                conn, addr = self._server_socket.accept()
-                logger.debug(f"GPS client connected from {addr}")
-                self.state.connected = True
-                self._handle_client(conn)
-            except socket.timeout:
-                continue
-            except OSError:
-                if self._running:
-                    logger.warning("GPS TCP server socket error")
-                break
-
-        try:
-            self._server_socket.close()
-        except Exception:
-            pass
-
-    def _handle_client(self, conn):
-        """Handle a single TCP client connection (NMEA stream)."""
-        conn.settimeout(30.0)
-        buffer = ''
-
-        try:
-            while self._running:
-                try:
-                    data = conn.recv(4096)
-                except socket.timeout:
-                    # No data for 30s — connection probably dead
-                    logger.warning("GPS client timeout (30s no data)")
-                    break
-
-                if not data:
-                    break
-
-                raw = data.decode('ascii', errors='replace')
-                logger.debug(f"GPS raw data ({len(data)} bytes): {raw[:120]!r}")
-                buffer += raw
-
-                # Process complete lines (NMEA uses \r\n)
-                while '\n' in buffer:
-                    line, buffer = buffer.split('\n', 1)
-                    line = line.strip()
-                    if line:
-                        self._process_sentence(line)
-
-        except Exception as e:
-            logger.warning(f"GPS client error: {e}")
-        finally:
-            self.state.connected = False
-            try:
-                conn.close()
-            except Exception:
-                pass
-            logger.debug("GPS client disconnected")
 
     def _process_sentence(self, line):
         """Parse a single NMEA sentence and update all state."""
@@ -712,7 +914,6 @@ class GPSManager:
             return
 
         sentence_type = parsed.get('type')
-
         if sentence_type == 'RMC':
             self.state.update_from_rmc(parsed)
         elif sentence_type == 'GGA':
@@ -722,7 +923,6 @@ class GPSManager:
         elif sentence_type == 'GSV':
             self.state.update_from_gsv(parsed)
 
-        # Feed session stats and track recorder with latest position
         snapshot = self.state.get_dict()
         if snapshot['fix_valid'] and snapshot['latitude'] is not None:
             self.session.update(snapshot['latitude'], snapshot['longitude'])

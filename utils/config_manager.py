@@ -229,6 +229,17 @@ class ConfigValidator:
                 controller_errors['Controller'][
                     'switch_purpose'] = f'Must be one of: {", ".join(sorted(cls.VALID_SWITCH_PURPOSES))}'
 
+        # Hardware controllers (ute/advanced) should not be used with networked mode
+        if controller_type in ('ute', 'advanced'):
+            network_mode = config.get('Network', 'mode', fallback='').strip("'\" ").lower()
+            if network_mode == 'networked':
+                if 'Controller' not in controller_errors:
+                    controller_errors['Controller'] = {}
+                controller_errors['Controller']['controller_type'] = (
+                    f'Hardware controllers ({controller_type}) cannot be used with networked mode. '
+                    f'Use the standalone dashboard instead.'
+                )
+
         return not bool(controller_errors), controller_errors
 
     @classmethod

@@ -1,47 +1,69 @@
 /* ==========================================================================
    OWL Controller (Networked) - GPS Panel
-   Dark background for reduced cab glare
+   Map-first layout: Leaflet fills the tab; compact dials overlay on top.
    ========================================================================== */
 
 .gps-panel {
+    position: relative;
     width: 100%;
     height: 100%;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    padding: 1rem 2rem;
+    overflow: hidden;
 }
 
-/* Status banner */
-.gps-status-banner {
+/* Leaflet map fills the panel behind all overlays */
+.gps-map {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    background: #1a1a2e;
+}
+
+/* Shared: dim-box style + high stack order for every overlay */
+.gps-overlay {
+    position: absolute;
+    z-index: 10;
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid #dce1e8;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+    border-radius: var(--radius-md);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    pointer-events: none; /* taps fall through to the map */
+}
+
+/* Status banner — top full-width */
+.gps-overlay-top.gps-status-banner {
+    top: 0.75rem;
+    left: 0.75rem;
+    right: 0.75rem;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    padding: 0.6rem 1rem;
-    border-radius: var(--radius-md);
+    padding: 0.45rem 1rem;
     font-weight: 700;
-    font-size: 1rem;
-
+    font-size: 0.95rem;
     letter-spacing: 1px;
+    border-radius: var(--radius-md);
 }
 
 .gps-status-banner.connected {
-    background: var(--success);
+    background: rgba(39, 174, 96, 0.92);
     color: white;
+    border-color: rgba(39, 174, 96, 0.6);
 }
-
 .gps-status-banner.searching {
-    background: var(--warning);
+    background: rgba(243, 156, 18, 0.92);
     color: #1a1a2e;
+    border-color: rgba(243, 156, 18, 0.6);
 }
-
 .gps-status-banner.disconnected {
-    background: #555;
-    color: #aaa;
+    background: rgba(85, 85, 85, 0.88);
+    color: #cbd5e0;
+    border-color: rgba(0, 0, 0, 0.3);
 }
 
-/* GPS icon pulse */
+/* GPS status icon dot */
 .gps-status-icon::before {
     content: '';
     display: inline-block;
@@ -51,76 +73,72 @@
     background: currentColor;
 }
 
-/* 3-column grid */
-.gps-grid {
-    flex: 1;
-    display: grid;
-    grid-template-columns: 250px 1fr 280px;
-    gap: 1.5rem;
-    align-items: center;
-    min-height: 0;
-}
-
-/* --- Compass column --- */
-.gps-compass-col {
+/* Compact compass — top-left */
+.gps-compass-mini {
+    top: 3.5rem;
+    left: 0.75rem;
+    padding: 0.5rem 0.75rem 0.4rem;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.25rem;
+    width: 140px;
 }
 
-.compass-ring {
-    width: 200px;
-    height: 200px;
+.gps-compass-mini .compass-ring {
+    width: 110px;
+    height: 110px;
     border-radius: 50%;
-    border: 4px solid #3498db;
+    border: 3px solid #3498db;
     position: relative;
     background: #1a1a2e;
 }
 
-.compass-label {
+.gps-compass-mini .compass-label {
     position: absolute;
     font-weight: 900;
-    font-size: 1.1rem;
+    font-size: 0.7rem;
     color: #7f8c8d;
 }
+.gps-compass-mini .compass-label.compass-n { top: 4px; left: 50%; transform: translateX(-50%); color: #e74c3c; }
+.gps-compass-mini .compass-label.compass-s { bottom: 4px; left: 50%; transform: translateX(-50%); }
+.gps-compass-mini .compass-label.compass-e { right: 6px; top: 50%; transform: translateY(-50%); }
+.gps-compass-mini .compass-label.compass-w { left: 6px; top: 50%; transform: translateY(-50%); }
 
-.compass-label.compass-n { top: 8px; left: 50%; transform: translateX(-50%); color: #e74c3c; }
-.compass-label.compass-s { bottom: 8px; left: 50%; transform: translateX(-50%); }
-.compass-label.compass-e { right: 10px; top: 50%; transform: translateY(-50%); }
-.compass-label.compass-w { left: 10px; top: 50%; transform: translateY(-50%); }
-
-.compass-arrow {
+.gps-compass-mini .compass-arrow {
     position: absolute;
     top: 50%;
     left: 50%;
     width: 0;
     height: 0;
-    border-left: 10px solid transparent;
-    border-right: 10px solid transparent;
-    border-bottom: 80px solid #3498db;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-bottom: 44px solid #3498db;
     transform-origin: center bottom;
     transform: translate(-50%, -100%) rotate(0deg);
     transition: transform 0.5s ease;
 }
 
-.compass-heading {
-    font-size: 2rem;
+.gps-compass-mini .compass-heading {
+    font-size: 0.95rem;
     font-weight: 900;
     color: var(--text-dark);
     text-align: center;
 }
 
-/* --- Speed column (giant readout) --- */
-.gps-speed-col {
+/* Compact speed — top-right */
+.gps-speed-mini {
+    top: 3.5rem;
+    right: 0.75rem;
+    padding: 0.5rem 1rem 0.6rem;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    min-width: 140px;
 }
 
-.speed-value {
-    font-size: 10rem;
+.gps-speed-mini .speed-value {
+    font-size: 3.5rem;
     font-weight: 900;
     line-height: 1;
     color: var(--text-dark);
@@ -128,57 +146,104 @@
     font-variant-numeric: tabular-nums;
 }
 
-.speed-unit {
-    font-size: 2rem;
-    font-weight: 600;
+.gps-speed-mini .speed-unit {
+    font-size: 0.9rem;
+    font-weight: 700;
     color: var(--text-light);
-
     letter-spacing: 2px;
+    text-transform: lowercase;
+    margin-top: 0.1rem;
 }
 
-/* --- Stats column --- */
-.gps-stats-col {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
+/* Stats strip — bottom full-width */
+.gps-stats-strip {
+    bottom: 0.75rem;
+    left: 0.75rem;
+    right: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.5rem;
 }
 
 .gps-stat-block {
-    background: #f5f7fa;
+    background: rgba(245, 247, 250, 0.85);
     border-radius: var(--radius-md);
-    padding: 0.8rem 1rem;
+    padding: 0.45rem 0.75rem;
+    min-height: 56px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
 }
 
 .gps-stat-label {
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     font-weight: 700;
     color: var(--text-light);
-
     letter-spacing: 1px;
-    margin-bottom: 0.25rem;
+    margin-bottom: 0.15rem;
 }
 
 .gps-stat-value {
-    font-size: 1.8rem;
+    font-size: 1.35rem;
     font-weight: 900;
     color: var(--text-dark);
     font-variant-numeric: tabular-nums;
+    line-height: 1.1;
 }
 
-/* Accuracy bar (satellite signal quality) */
+/* Accuracy bar */
 .gps-accuracy-bar {
     width: 100%;
-    height: 8px;
+    height: 5px;
     background: #ddd;
-    border-radius: 4px;
-    margin: 0.3rem 0;
+    border-radius: 3px;
+    margin-top: 0.15rem;
+    margin-bottom: 0.1rem;
     overflow: hidden;
 }
 
 .gps-accuracy-fill {
     height: 100%;
-    border-radius: 4px;
+    border-radius: 3px;
     background: var(--success);
     width: 0%;
     transition: width 0.5s ease, background 0.5s ease;
 }
+
+/* Short-screen (7" kiosk) — further tighten overlays */
+@media (max-height: 700px) {
+    .gps-compass-mini { width: 110px; top: 3rem; }
+    .gps-compass-mini .compass-ring { width: 82px; height: 82px; }
+    .gps-compass-mini .compass-arrow { border-bottom-width: 32px; }
+    .gps-compass-mini .compass-heading { font-size: 0.8rem; }
+
+    .gps-speed-mini { top: 3rem; min-width: 110px; padding: 0.35rem 0.75rem; }
+    .gps-speed-mini .speed-value { font-size: 2.4rem; }
+    .gps-speed-mini .speed-unit { font-size: 0.75rem; }
+
+    .gps-stats-strip { padding: 0.35rem 0.5rem; gap: 0.35rem; }
+    .gps-stat-block { min-height: 48px; padding: 0.3rem 0.5rem; }
+    .gps-stat-value { font-size: 1.1rem; }
+    .gps-stat-label { font-size: 0.62rem; }
+}
+
+/* Leaflet controls sit above the tile pane but below our overlays.
+   Ensure zoom/attribution stay interactive even when overlays exist. */
+.leaflet-control-container { z-index: 5; }
+.leaflet-control-attribution { font-size: 0.65rem; opacity: 0.8; }
+
+/* Custom centre/fit-all buttons */
+.gps-map-btn {
+    background: white;
+    border: 1px solid #dce1e8;
+    border-radius: var(--radius-md);
+    padding: 0.4rem 0.7rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--text-dark);
+    cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+}
+.gps-map-btn:hover { background: #f5f7fa; }
+.gps-map-btn + .gps-map-btn { margin-top: 0.4rem; }

@@ -563,13 +563,14 @@ static_ip = ${NET_STATIC_IP}
 controller_ip = ${NET_CONTROLLER_IP}
 
 [GPS]
-# GPS data source for owl.py (none / serial / tcp)
+# GPS data source (none / serial / tcp / gpsd)
 source = none
 # Serial GPS settings (only when source = serial)
-port = /dev/ttyUSB0
+port = /dev/ttyACM0
 baudrate = 9600
 
-# Networked controller GPS server (not used by OWL units)
+# TCP listener (only when source = tcp). `enable` is a deprecated back-compat
+# alias for source=tcp; prefer setting `source` directly on new installs.
 enable = False
 nmea_port = 8500
 boom_width = 12.0

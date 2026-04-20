@@ -327,22 +327,83 @@ collect_user_input() {
         echo -e "${GREEN}[INFO] Screen resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}${NC}"
     fi
 
-    # GPS Configuration (Teltonika router)
+    # GPS Configuration — select source (none / serial / tcp / gpsd)
     echo ""
     echo -e "${GREEN}[INFO] GPS Configuration${NC}"
-    echo -e "  The controller can receive GPS data from a Teltonika router"
-    echo -e "  via NMEA-over-TCP on port 8500. This enables speed-adaptive"
-    echo -e "  actuation and track recording."
+    echo -e "  Select a GPS source for the controller. This enables"
+    echo -e "  speed-adaptive actuation and track recording."
     echo ""
-    read -p "Enable GPS from Teltonika router? (y/n, default: n): " GPS_ENABLE
-    GPS_ENABLE=${GPS_ENABLE:-n}
+    echo -e "    1) None           — no GPS (default)"
+    echo -e "    2) USB serial     — a Ublox or similar USB dongle on /dev/ttyACM* or /dev/ttyUSB*"
+    echo -e "    3) Teltonika TCP  — NMEA forwarded by a router to port 8500"
+    echo -e "    4) gpsd           — read from the local gpsd daemon (localhost:2947)"
+    echo ""
 
+    GPS_SOURCE="none"
     GPS_BOOM_WIDTH="12.0"
-    if [[ "$GPS_ENABLE" =~ ^[Yy]$ ]]; then
-        read -p "Enter boom width in metres (default: 12.0): " GPS_BOOM_WIDTH
-        GPS_BOOM_WIDTH=${GPS_BOOM_WIDTH:-12.0}
-        echo -e "${GREEN}[INFO] GPS enabled: Teltonika NMEA on port 8500, boom ${GPS_BOOM_WIDTH}m${NC}"
+    GPS_SERIAL_DEV="/dev/ttyACM0"
+    GPS_SERIAL_BAUD="9600"
+    GPS_INSTALL_GPSD="no"
+
+    while true; do
+        read -p "Select GPS source (1-4, default 1): " gps_choice
+        gps_choice=${gps_choice:-1}
+        case "$gps_choice" in
+            1) GPS_SOURCE="none"; break ;;
+            2) GPS_SOURCE="serial"; break ;;
+            3) GPS_SOURCE="tcp"; break ;;
+            4) GPS_SOURCE="gpsd"; GPS_INSTALL_GPSD="yes"; break ;;
+            *) echo -e "${RED}[ERROR] Invalid selection. Choose 1-4.${NC}" ;;
+        esac
+    done
+
+    if [[ "$GPS_SOURCE" == "serial" ]]; then
+        # Auto-probe common serial devices and offer the first we find
+        DETECTED_DEV=""
+        for cand in /dev/ttyACM0 /dev/ttyACM1 /dev/ttyUSB0 /dev/ttyUSB1; do
+            if [ -e "$cand" ]; then
+                DETECTED_DEV="$cand"
+                break
+            fi
+        done
+        if [ -n "$DETECTED_DEV" ]; then
+            echo -e "${GREEN}[INFO] Detected serial device: ${DETECTED_DEV}${NC}"
+            GPS_SERIAL_DEV="$DETECTED_DEV"
+        fi
+        read -p "Serial device path (default: ${GPS_SERIAL_DEV}): " _tmp
+        GPS_SERIAL_DEV="${_tmp:-$GPS_SERIAL_DEV}"
+        read -p "Serial baud rate (default: ${GPS_SERIAL_BAUD}): " _tmp
+        GPS_SERIAL_BAUD="${_tmp:-$GPS_SERIAL_BAUD}"
     fi
+
+    if [[ "$GPS_SOURCE" == "gpsd" ]]; then
+        # gpsd needs a device hint for its own config
+        DETECTED_DEV=""
+        for cand in /dev/ttyACM0 /dev/ttyACM1 /dev/ttyUSB0 /dev/ttyUSB1; do
+            if [ -e "$cand" ]; then
+                DETECTED_DEV="$cand"
+                break
+            fi
+        done
+        if [ -n "$DETECTED_DEV" ]; then
+            echo -e "${GREEN}[INFO] gpsd will be configured for detected device: ${DETECTED_DEV}${NC}"
+            GPS_SERIAL_DEV="$DETECTED_DEV"
+        fi
+        read -p "Device for gpsd to read (default: ${GPS_SERIAL_DEV}): " _tmp
+        GPS_SERIAL_DEV="${_tmp:-$GPS_SERIAL_DEV}"
+    fi
+
+    if [[ "$GPS_SOURCE" != "none" ]]; then
+        read -p "Enter boom width in metres (default: 12.0): " _tmp
+        GPS_BOOM_WIDTH="${_tmp:-12.0}"
+    fi
+
+    case "$GPS_SOURCE" in
+        none)   echo -e "${GREEN}[INFO] GPS disabled${NC}" ;;
+        serial) echo -e "${GREEN}[INFO] GPS: USB serial on ${GPS_SERIAL_DEV} @ ${GPS_SERIAL_BAUD}, boom ${GPS_BOOM_WIDTH}m${NC}" ;;
+        tcp)    echo -e "${GREEN}[INFO] GPS: Teltonika NMEA on port 8500, boom ${GPS_BOOM_WIDTH}m${NC}" ;;
+        gpsd)   echo -e "${GREEN}[INFO] GPS: gpsd daemon (${GPS_SERIAL_DEV}), boom ${GPS_BOOM_WIDTH}m${NC}" ;;
+    esac
 
     # Display Summary
     echo -e ""
@@ -357,11 +418,12 @@ collect_user_input() {
     if [[ "$KIOSK_MODE" =~ ^[Yy]$ ]]; then
         echo -e "Screen Resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}"
     fi
-    if [[ "$GPS_ENABLE" =~ ^[Yy]$ ]]; then
-        echo -e "GPS: Enabled (Teltonika, boom ${GPS_BOOM_WIDTH}m)"
-    else
-        echo -e "GPS: Disabled"
-    fi
+    case "$GPS_SOURCE" in
+        none)   echo -e "GPS: Disabled" ;;
+        serial) echo -e "GPS: USB serial (${GPS_SERIAL_DEV} @ ${GPS_SERIAL_BAUD}, boom ${GPS_BOOM_WIDTH}m)" ;;
+        tcp)    echo -e "GPS: Teltonika TCP (port 8500, boom ${GPS_BOOM_WIDTH}m)" ;;
+        gpsd)   echo -e "GPS: gpsd daemon (${GPS_SERIAL_DEV}, boom ${GPS_BOOM_WIDTH}m)" ;;
+    esac
     echo -e ""
     echo -e "Access Information:"
     echo -e "  Dashboard: https://${HOSTNAME}.local/ or https://${STATIC_IP}/"
@@ -817,14 +879,15 @@ static_ip = ${STATIC_IP}
 controller_ip = localhost
 
 [GPS]
-# GPS data source for owl.py (none / serial / tcp)
-source = none
-# Serial GPS settings (only when source = serial)
-port = /dev/ttyUSB0
-baudrate = 9600
+# GPS data source (none / serial / tcp / gpsd)
+source = ${GPS_SOURCE}
+# Serial GPS settings (only when source = serial or gpsd)
+port = ${GPS_SERIAL_DEV}
+baudrate = ${GPS_SERIAL_BAUD}
 
-# Networked controller GPS server (Teltonika NMEA-over-TCP)
-enable = $(if [[ "$GPS_ENABLE" =~ ^[Yy]$ ]]; then echo "True"; else echo "False"; fi)
+# TCP listener (only when source = tcp). `enable` is a deprecated back-compat
+# alias for source=tcp.
+enable = False
 nmea_port = 8500
 boom_width = ${GPS_BOOM_WIDTH}
 track_save_directory = tracks
@@ -844,12 +907,42 @@ EOF
     echo -e "${TICK} CONTROLLER.ini written to ${CTRL_INI}"
     echo -e "${GREEN}[INFO]   MQTT: broker=localhost:1883 (this controller IS the broker)${NC}"
     echo -e "${GREEN}[INFO]   Network: mode=networked, static_ip=${STATIC_IP}${NC}"
-    if [[ "$GPS_ENABLE" =~ ^[Yy]$ ]]; then
-        echo -e "${GREEN}[INFO]   GPS: enabled (Teltonika NMEA on port 8500, boom ${GPS_BOOM_WIDTH}m)${NC}"
-    else
-        echo -e "${GREEN}[INFO]   GPS: disabled — edit enable=True in CONTROLLER.ini to activate${NC}"
-    fi
+    case "$GPS_SOURCE" in
+        none)   echo -e "${GREEN}[INFO]   GPS: disabled — re-run setup or edit CONTROLLER.ini to enable${NC}" ;;
+        serial) echo -e "${GREEN}[INFO]   GPS: USB serial on ${GPS_SERIAL_DEV} @ ${GPS_SERIAL_BAUD}${NC}" ;;
+        tcp)    echo -e "${GREEN}[INFO]   GPS: Teltonika TCP on port 8500${NC}" ;;
+        gpsd)   echo -e "${GREEN}[INFO]   GPS: gpsd daemon reading ${GPS_SERIAL_DEV}${NC}" ;;
+    esac
     check_status "CONTROLLER.ini creation" "CONTROLLER_INI"
+}
+
+# Step 11c: Install and configure gpsd (only when source = gpsd)
+configure_gpsd() {
+    if [[ "$GPS_INSTALL_GPSD" != "yes" ]]; then
+        return 0
+    fi
+    echo -e "${GREEN}[INFO] Installing gpsd (selected as GPS source)...${NC}"
+    apt-get install -y gpsd gpsd-clients
+    if [ $? -ne 0 ]; then
+        echo -e "${CROSS} gpsd install failed; GPS will not work until this is resolved"
+        return 1
+    fi
+
+    # Seed /etc/default/gpsd with the chosen device so the daemon auto-starts
+    local GPSD_DEFAULT="/etc/default/gpsd"
+    if [ -f "$GPSD_DEFAULT" ]; then
+        cp "$GPSD_DEFAULT" "${GPSD_DEFAULT}.bak.$(date +%s)" 2>/dev/null || true
+    fi
+    tee "$GPSD_DEFAULT" > /dev/null <<EOF
+# Managed by OWL in-cab_controller_setup.sh
+START_DAEMON="true"
+GPSD_OPTIONS="-n"
+DEVICES="${GPS_SERIAL_DEV}"
+USBAUTO="false"
+EOF
+
+    systemctl enable --now gpsd.socket gpsd 2>/dev/null || systemctl enable --now gpsd
+    echo -e "${TICK} gpsd configured for ${GPS_SERIAL_DEV}"
 }
 
 # Step 14: Create configuration summary file
@@ -977,6 +1070,9 @@ main() {
     # Step 11b: Configure sudoers for dashboard
     configure_sudoers
 
+    # Step 11c: Configure gpsd (only when source = gpsd)
+    configure_gpsd
+
     # Step 12: Configure kiosk mode
     configure_kiosk_mode
 
@@ -1045,16 +1141,29 @@ main() {
     echo -e "3. Enter this controller's IP: ${STATIC_IP}"
     echo -e "4. OWLs will automatically connect to this controller"
     echo -e ""
-    if [[ "$GPS_ENABLE" =~ ^[Yy]$ ]]; then
-        echo -e "${GREEN}[INFO] GPS Configuration:${NC}"
-        echo -e "  GPS enabled in CONTROLLER.ini (Teltonika NMEA on port 8500)"
-        echo -e "  Boom width: ${GPS_BOOM_WIDTH}m"
-        echo -e "  Configure your Teltonika router to forward NMEA to ${STATIC_IP}:8500"
-    else
-        echo -e "${GREEN}[INFO] GPS Setup (optional):${NC}"
-        echo -e "  Edit config/CONTROLLER.ini and set [GPS] enable = True"
-        echo -e "  Configure your Teltonika router to forward NMEA to ${STATIC_IP}:8500"
-    fi
+    case "$GPS_SOURCE" in
+        none)
+            echo -e "${GREEN}[INFO] GPS Setup (optional):${NC}"
+            echo -e "  GPS disabled. Re-run setup or edit [GPS] source in CONTROLLER.ini."
+            ;;
+        serial)
+            echo -e "${GREEN}[INFO] GPS Configuration:${NC}"
+            echo -e "  Source: USB serial on ${GPS_SERIAL_DEV} @ ${GPS_SERIAL_BAUD}"
+            echo -e "  Boom width: ${GPS_BOOM_WIDTH}m"
+            ;;
+        tcp)
+            echo -e "${GREEN}[INFO] GPS Configuration:${NC}"
+            echo -e "  Source: Teltonika NMEA on port 8500"
+            echo -e "  Boom width: ${GPS_BOOM_WIDTH}m"
+            echo -e "  Configure your router to forward NMEA to ${STATIC_IP}:8500"
+            ;;
+        gpsd)
+            echo -e "${GREEN}[INFO] GPS Configuration:${NC}"
+            echo -e "  Source: gpsd daemon (device: ${GPS_SERIAL_DEV})"
+            echo -e "  Boom width: ${GPS_BOOM_WIDTH}m"
+            echo -e "  Check gpsd status: sudo systemctl status gpsd"
+            ;;
+    esac
 
     # Check overall success
     if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_PYTHON_VENV" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "$STATUS_NGINX_CONFIG" == "${TICK}" && "$STATUS_SSL_CERT" == "${TICK}" && "$STATUS_AVAHI_CONFIG" == "${TICK}" && "$STATUS_UFW_CONFIG" == "${TICK}" && "$STATUS_DASHBOARD_SERVICE" == "${TICK}" && "$STATUS_CONTROLLER_INI" == "${TICK}" && "$STATUS_SERVICES" == "${TICK}" ]]; then
@@ -1068,9 +1177,11 @@ main() {
         echo -e "  • Dashboard will be available at https://${STATIC_IP}/"
         echo -e "  • MQTT broker will be running on port 1883"
 
-        if [[ "$GPS_ENABLE" =~ ^[Yy]$ ]]; then
-            echo -e "  • GPS listener will accept Teltonika NMEA on port 8500"
-        fi
+        case "$GPS_SOURCE" in
+            serial) echo -e "  • GPS: reading NMEA from ${GPS_SERIAL_DEV} @ ${GPS_SERIAL_BAUD}" ;;
+            tcp)    echo -e "  • GPS: listener will accept Teltonika NMEA on port 8500" ;;
+            gpsd)   echo -e "  • GPS: reading from gpsd daemon (${GPS_SERIAL_DEV})" ;;
+        esac
 
         if [[ "$STATUS_KIOSK_MODE" == "${TICK}" ]]; then
             echo -e "  • Kiosk mode will launch automatically on boot"
