@@ -607,7 +607,7 @@ class OWLDashboard:
                     pass
 
             return Response(generate(),
-                            mimetype='multipart/x-mixed-replace; boundary=frame')
+                            mimetype='multipart/x-mixed-replace; boundary=FRAME')
 
         @self.app.route('/static/<path:filename>')
         def static_files(filename):
@@ -1914,14 +1914,14 @@ class OWLDashboard:
                 'disk_total': round(disk.total / (1024 ** 3), 1),
             })
 
-            try:
-                result = subprocess.run(['/usr/bin/vcgencmd', 'measure_temp'], capture_output=True, text=True)
-                if result.returncode == 0:
-                    stats['cpu_temp'] = round(float(result.stdout.replace('temp=', '').replace("'C\n", '')), 1)
-
-            except Exception as e:
-                self.logger.warning(f"Temp. retrieval error: {e}")
-                pass
+            vcgencmd_bin = '/usr/bin/vcgencmd'
+            if os.path.exists(vcgencmd_bin):
+                try:
+                    result = subprocess.run([vcgencmd_bin, 'measure_temp'], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        stats['cpu_temp'] = round(float(result.stdout.replace('temp=', '').replace("'C\n", '')), 1)
+                except Exception as e:
+                    self.logger.debug(f"Temp retrieval skipped: {e}")
 
             # USB devices
             usb_devices = []
