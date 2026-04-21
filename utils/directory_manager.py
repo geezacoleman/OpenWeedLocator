@@ -122,6 +122,13 @@ def collect_session_files(save_dir, session_id):
 
 
 class DirectorySetup:
+    def _is_raspberry_pi(self):
+        try:
+            with open('/proc/device-tree/model', 'r') as f:
+                return 'raspberry pi' in f.read().lower()
+        except Exception:
+            return False
+
     def __init__(self, save_directory):
         self.logger = LogManager.get_logger(__name__)
         self.save_directory = save_directory
@@ -139,15 +146,24 @@ class DirectorySetup:
 
     def _try_setup_directories(self):
         self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
-        if not os.path.ismount(self.save_directory):
-            return self._handle_mount_error()
 
-        os.makedirs(self.save_subdirectory, exist_ok=True)
-        if not self.test_file_write():
-            raise errors.USBWriteError("Failed to write test file")
+        if os.path.ismount(self.save_directory):
+            os.makedirs(self.save_subdirectory, exist_ok=True)
+            if not self.test_file_write():
+                raise errors.USBWriteError("Failed to write test file")
+            self.logger.info(f"[SUCCESS] Directory setup complete: {self.save_subdirectory}")
+            return self.save_directory, self.save_subdirectory
 
-        self.logger.info(f"[SUCCESS] Directory setup complete: {self.save_subdirectory}")
-        return self.save_directory, self.save_subdirectory
+        # Non-Raspberry Linux boards (e.g., Orange Pi) may use local storage instead of /media USB mounts.
+        # Keep strict USB-mount behavior on Raspberry Pi, but allow local writable directories elsewhere.
+        if platform.system() == 'Linux' and not self._is_raspberry_pi():
+            os.makedirs(self.save_subdirectory, exist_ok=True)
+            if not self.test_file_write():
+                raise errors.USBWriteError("Failed to write test file")
+            self.logger.info(f"[SUCCESS] Local directory setup complete: {self.save_subdirectory}")
+            return self.save_directory, self.save_subdirectory
+
+        return self._handle_mount_error()
 
     def _handle_mount_error(self):
         """

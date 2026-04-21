@@ -16,8 +16,11 @@ logger = logging.getLogger(__name__)
 
 def get_platform_config() -> tuple[bool, Optional[Exception]]:
     """Determine platform and return testing status and lgpio error type"""
-    system_platform = platform.platform().lower()
-    is_raspberry_pi = 'rpi' in system_platform or 'aarch' in system_platform
+    try:
+        with open('/proc/device-tree/model', 'r') as f:
+            is_raspberry_pi = 'raspberry pi' in f.read().lower()
+    except (FileNotFoundError, OSError):
+        is_raspberry_pi = False
 
     if is_raspberry_pi:
         from gpiozero import Buzzer, OutputDevice, LED
