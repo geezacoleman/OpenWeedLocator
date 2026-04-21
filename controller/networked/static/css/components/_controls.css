@@ -63,6 +63,8 @@
 .action-button.btn-nozzles {
     background: #7f8fa6;
     box-shadow: 0 3px 0 #6b7a8d, 0 4px 12px rgba(127, 143, 166, 0.25);
+    font-size: 1rem;
+    height: 44px;
 }
 
 .action-button.btn-nozzles.active {

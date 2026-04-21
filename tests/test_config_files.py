@@ -524,3 +524,55 @@ class TestTrackingConfig:
                     f"Preset '{level}' {key}={value} out of validator "
                     f"range [{min_val}, {max_val}]"
                 )
+
+
+@pytest.mark.unit
+class TestSessionMetadataFlow:
+    """Guard the session-metadata flow on the networked controller.
+
+    The flow is: Start Recording click -> modal collects
+    {field_name, crop, weather, vehicle} -> JS sendCommand('set_session_metadata')
+    -> networked.py send_command() publishes MQTT -> OWL-side handler in
+    utils/mqtt_manager.py writes session_metadata.json. A break in any layer
+    silently loses metadata, so we pin the key names at each boundary.
+    """
+
+    METADATA_KEYS = ['field_name', 'crop', 'weather', 'vehicle']
+    HTML_INPUT_IDS = ['meta-field-name', 'meta-crop', 'meta-weather', 'meta-vehicle']
+
+    def test_networked_template_has_metadata_modal(self):
+        html = (PROJECT_ROOT / 'controller' / 'networked' / 'templates' / 'index.html').read_text(encoding='utf-8')
+        assert 'id="session-metadata-modal"' in html, "Modal element missing from index.html"
+        for input_id in self.HTML_INPUT_IDS:
+            assert f'id="{input_id}"' in html, f"Input #{input_id} missing from modal"
+
+    def test_networked_controls_js_references_modal(self):
+        js = (PROJECT_ROOT / 'controller' / 'networked' / 'static' / 'js' / 'modules' / '_controls.js').read_text(encoding='utf-8')
+        assert 'openSessionMetadataModal' in js
+        assert 'closeSessionMetadataModal' in js
+        # Modal interception must be on the path into recording-on, not bypassed.
+        assert 'openSessionMetadataModal(btn)' in js, (
+            "toggleMainRecording must call openSessionMetadataModal instead of _doToggleRecordingOn directly"
+        )
+        for input_id in self.HTML_INPUT_IDS:
+            assert input_id in js, f"JS does not reference input #{input_id}"
+
+    def test_networked_send_command_has_metadata_case(self):
+        """networked.py send_command must explicitly spread the four fields
+        into the MQTT payload — the fallback handler nests value={} which
+        the OWL handler won't read."""
+        py = (PROJECT_ROOT / 'controller' / 'networked' / 'networked.py').read_text(encoding='utf-8')
+        assert "action == 'set_session_metadata'" in py, (
+            "networked.py send_command missing explicit set_session_metadata branch"
+        )
+        for key in self.METADATA_KEYS:
+            assert f"'{key}'" in py, f"networked.py metadata payload missing key {key!r}"
+
+    def test_owl_handler_reads_same_keys(self):
+        """utils/mqtt_manager.py must read the same four keys it's sent."""
+        py = (PROJECT_ROOT / 'utils' / 'mqtt_manager.py').read_text(encoding='utf-8')
+        assert "action == 'set_session_metadata'" in py
+        for key in self.METADATA_KEYS:
+            assert f"command.get('{key}'" in py, (
+                f"mqtt_manager.py handler does not read key {key!r} from command"
+            )

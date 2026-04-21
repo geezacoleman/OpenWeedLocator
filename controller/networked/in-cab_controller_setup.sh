@@ -770,8 +770,15 @@ configure_kiosk_mode() {
     sudo -u "$CURRENT_USER" mkdir -p /home/"$CURRENT_USER"/.config/labwc
 
     tee /home/"$CURRENT_USER"/.config/labwc/autostart > /dev/null <<'EOF'
-# Wait for owl-controller service before launching browser
-while ! curl -sk https://localhost/ > /dev/null 2>&1; do
+# Wait for owl-controller (gunicorn) to actually serve a 2xx — not nginx's
+# 502 Bad Gateway while gunicorn is still importing. Without -f, curl
+# exits 0 on any HTTP response (including 502) and the kiosk loads an
+# unstyled error page. With -f we only break out once the backend is up.
+for _ in $(seq 1 90); do
+    if systemctl is-active --quiet owl-controller \
+       && curl -sfk --max-time 3 https://localhost/ > /dev/null 2>&1; then
+        break
+    fi
     sleep 2
 done
 

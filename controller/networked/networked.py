@@ -885,6 +885,16 @@ class CentralController:
                 'params': value.get('params')
             }
 
+        elif action == 'set_session_metadata':
+            md = value or {}
+            payload = {
+                'action': 'set_session_metadata',
+                'field_name': str(md.get('field_name', '')),
+                'crop':       str(md.get('crop', '')),
+                'weather':    str(md.get('weather', '')),
+                'vehicle':    str(md.get('vehicle', '')),
+            }
+
         elif action == 'save_config':
             payload = {
                 'action': 'save_config',

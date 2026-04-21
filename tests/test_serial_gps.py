@@ -350,7 +350,11 @@ class TestSerialGPSReader:
 
         d = state.get_dict()
         assert d['fix_valid'] is True
-        assert d['satellites'] == 14
+        # GGA's "satellites used in fix" wins over GSV's "in view" count.
+        # GSV intentionally does not touch self.satellites because multi-GNSS
+        # receivers interleave per-constellation GSV sentences and a trailing
+        # BeiDou-0-in-view clobbers the displayed count to 0.
+        assert d['satellites'] == 12
         assert d['hdop'] == 0.8
         assert d['altitude'] == 100.5
         led.stop()
