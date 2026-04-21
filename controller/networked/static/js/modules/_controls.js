@@ -62,13 +62,13 @@ function toggleMainRecording() {
                     });
                 },
                 function onContinue() {
-                    _doToggleRecordingOn(btn);
+                    openSessionMetadataModal(btn);
                 }
             );
             return;
         }
 
-        _doToggleRecordingOn(btn);
+        openSessionMetadataModal(btn);
     }
 }
 
@@ -78,6 +78,74 @@ function _doToggleRecordingOn(btn) {
     globalRecordingEnabled = true;
     sendCommand('all', 'toggle_recording', true);
     showToast('Recording started on all OWLs', 'success');
+}
+
+// ============================================
+// SESSION METADATA MODAL
+// Ports the standalone session-info flow. OWL-side handler
+// (`set_session_metadata` in utils/mqtt_manager.py) writes
+// session_metadata.json into the active session directory.
+// ============================================
+
+var _pendingRecordingBtn = null;
+
+function openSessionMetadataModal(btn) {
+    var modal = document.getElementById('session-metadata-modal');
+    if (!modal) {
+        // Fallback: no modal rendered — start recording without metadata
+        _doToggleRecordingOn(btn);
+        return;
+    }
+
+    _pendingRecordingBtn = btn;
+
+    // Reset inputs each open — no pre-fill (N-OWL, last-used is ambiguous).
+    var ids = ['meta-field-name', 'meta-crop', 'meta-weather', 'meta-vehicle'];
+    for (var i = 0; i < ids.length; i++) {
+        var el = document.getElementById(ids[i]);
+        if (el) el.value = '';
+    }
+
+    // Save disabled until Field name has non-empty trimmed value.
+    // Using .oninput overwrites any prior listener, so this stays idempotent
+    // across repeated opens without DOM cloning (which would temporarily
+    // detach the input from Numpad's focusin delegation).
+    var saveBtn = document.getElementById('session-metadata-save-btn');
+    var fieldNameEl = document.getElementById('meta-field-name');
+    if (saveBtn) saveBtn.disabled = true;
+    if (fieldNameEl) {
+        fieldNameEl.oninput = function () {
+            if (saveBtn) saveBtn.disabled = fieldNameEl.value.trim().length === 0;
+        };
+    }
+
+    // Do NOT auto-focus — we don't want the on-screen keyboard popping up
+    // unrequested. User taps the field they want to fill; Numpad auto-attaches
+    // via data-numpad and opens its own keyboard overlay on focusin.
+    modal.classList.add('show');
+}
+
+function closeSessionMetadataModal(didSave) {
+    var modal = document.getElementById('session-metadata-modal');
+    if (modal) modal.classList.remove('show');
+
+    var btn = _pendingRecordingBtn;
+    _pendingRecordingBtn = null;
+    if (!btn) return;
+
+    if (didSave) {
+        var meta = {
+            field_name: (document.getElementById('meta-field-name') || {}).value || '',
+            crop:       (document.getElementById('meta-crop') || {}).value || '',
+            weather:    (document.getElementById('meta-weather') || {}).value || '',
+            vehicle:    (document.getElementById('meta-vehicle') || {}).value || '',
+        };
+        // Fire metadata first so it's on the OWL when recording begins. Fan-out
+        // publishes to every connected OWL; the OWL handler writes session_metadata.json.
+        sendCommand('all', 'set_session_metadata', meta);
+    }
+
+    _doToggleRecordingOn(btn);
 }
 
 /**

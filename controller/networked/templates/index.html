@@ -131,17 +131,17 @@
                         <button class="action-button btn-detection" id="main-detection-btn" onclick="toggleMainDetection()">
                             Start Detection
                         </button>
+                        <button class="action-button btn-recording" id="main-recording-btn" onclick="toggleMainRecording()">
+                            Start Recording
+                        </button>
                         <div class="hero-split-row">
-                            <button class="action-button btn-recording" id="main-recording-btn" onclick="toggleMainRecording()">
-                                Start Recording
-                            </button>
                             <button class="action-button btn-nozzles" id="main-nozzles-btn" onclick="toggleAllNozzles()">
                                 All Nozzles
                             </button>
+                            <button class="action-button btn-tracking" id="main-tracking-btn" onclick="toggleTracking()">
+                                Tracking
+                            </button>
                         </div>
-                        <button class="action-button btn-tracking" id="main-tracking-btn" onclick="toggleTracking()">
-                            Tracking
-                        </button>
                     </div>
                     <div class="mode-panel" id="track-stability-panel" style="display: none;">
                         <div class="mode-panel-title">Track stability</div>
@@ -645,6 +645,50 @@
         </div>
         <div class="modal-body">
             <img id="video-feed-img" src="" alt="Video Feed" style="width:100%;height:auto;" />
+        </div>
+    </div>
+</div>
+
+<!-- Session Metadata Modal (opens when Start Recording is clicked) -->
+<!-- Landscape layout for kiosk: 2x2 grid of big inputs. Each input auto-opens -->
+<!-- the shared on-screen QWERTY keyboard (Numpad.init) via data-numpad. -->
+<div id="session-metadata-modal" class="modal session-metadata-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Session info</h3>
+            <button class="modal-close" onclick="closeSessionMetadataModal(false)">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p class="session-metadata-hint">Tap a field to open the on-screen keyboard.</p>
+            <div class="session-metadata-grid">
+                <div class="session-metadata-field">
+                    <label for="meta-field-name">Field name <span class="required-marker">*</span></label>
+                    <input type="text" id="meta-field-name" placeholder="e.g. North paddock"
+                           autocomplete="off" data-numpad="true" data-label="Field name">
+                </div>
+                <div class="session-metadata-field">
+                    <label for="meta-crop">Crop</label>
+                    <input type="text" id="meta-crop" placeholder="e.g. Wheat, Canola"
+                           autocomplete="off" data-numpad="true" data-label="Crop">
+                </div>
+                <div class="session-metadata-field">
+                    <label for="meta-weather">Weather</label>
+                    <input type="text" id="meta-weather" placeholder="e.g. Sunny, 22C"
+                           autocomplete="off" data-numpad="true" data-label="Weather">
+                </div>
+                <div class="session-metadata-field">
+                    <label for="meta-vehicle">Vehicle</label>
+                    <input type="text" id="meta-vehicle" placeholder="e.g. John Deere 6120M"
+                           autocomplete="off" data-numpad="true" data-label="Vehicle">
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer session-metadata-footer">
+            <button class="session-metadata-btn session-metadata-btn--cancel"
+                    onclick="closeSessionMetadataModal(false)">Skip</button>
+            <button class="session-metadata-btn session-metadata-btn--save"
+                    id="session-metadata-save-btn"
+                    onclick="closeSessionMetadataModal(true)" disabled>Save &amp; Start</button>
         </div>
     </div>
 </div>

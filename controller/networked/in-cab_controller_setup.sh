@@ -33,7 +33,7 @@ echo -e "  • Install all required system packages"
 echo -e "  • Create a Python virtual environment"
 echo -e "  • Configure MQTT broker for OWL communication"
 echo -e "  • Set up Nginx web server with SSL"
-echo -e "  • Configure WiFi with static IP"
+echo -e "  • Configure WiFi or Ethernet with static IP"
 echo -e "  • Optional: Enable kiosk mode for display"
 echo -e ""
 
@@ -221,29 +221,62 @@ collect_user_input() {
     echo -e "${GREEN}[INFO] Controller Configuration${NC}"
     echo -e "${GREEN}=======================================${NC}"
 
-    # WiFi Settings
-    read -p "Enter your WiFi network name (SSID): " WIFI_SSID
-    while [ -z "$WIFI_SSID" ]; do
-        echo -e "${RED}[ERROR] SSID cannot be empty.${NC}"
-        read -p "Enter your WiFi network name (SSID): " WIFI_SSID
-    done
+    # Connection type — ask BEFORE any WiFi-specific questions so we can skip
+    # SSID/password entirely on wired installs.
+    echo -e "${GREEN}[INFO] Select network connection type:${NC}"
+    echo "  1) WiFi     - Connect to an existing WiFi network"
+    echo "  2) Ethernet - Use a wired LAN connection (eth0)"
+    echo ""
 
-    # WiFi Password with confirmation
+    NET_INTERFACE=""
+    WIFI_SSID=""
+    WIFI_PASSWORD=""
+
     while true; do
-        read_password_masked "Enter WiFi password: "
-        WIFI_PASSWORD="$REPLY"
-        if [ -z "$WIFI_PASSWORD" ]; then
-            echo -e "${RED}[ERROR] Password cannot be empty.${NC}"
-            continue
+        read -p "Select connection type (1 or 2, default: 1): " conn_choice
+        conn_choice=${conn_choice:-1}
+        if [[ "$conn_choice" == "1" ]]; then
+            NET_INTERFACE="wifi"
+            echo -e "${GREEN}[INFO] WiFi connection selected${NC}"
+            break
+        elif [[ "$conn_choice" == "2" ]]; then
+            NET_INTERFACE="ethernet"
+            echo -e "${GREEN}[INFO] Ethernet connection selected${NC}"
+            break
+        else
+            echo -e "${RED}[ERROR] Invalid selection. Please enter 1 or 2.${NC}"
         fi
-        read_password_masked "Re-enter WiFi password to confirm: "
-        WIFI_PASSWORD_CONFIRM="$REPLY"
-        if [ "$WIFI_PASSWORD" != "$WIFI_PASSWORD_CONFIRM" ]; then
-            echo -e "${RED}[ERROR] Passwords do not match. Please try again.${NC}"
-            continue
-        fi
-        break
     done
+    echo ""
+
+    if [[ "$NET_INTERFACE" == "wifi" ]]; then
+        # WiFi Settings
+        read -p "Enter your WiFi network name (SSID): " WIFI_SSID
+        while [ -z "$WIFI_SSID" ]; do
+            echo -e "${RED}[ERROR] SSID cannot be empty.${NC}"
+            read -p "Enter your WiFi network name (SSID): " WIFI_SSID
+        done
+
+        # WiFi Password with confirmation
+        while true; do
+            read_password_masked "Enter WiFi password: "
+            WIFI_PASSWORD="$REPLY"
+            if [ -z "$WIFI_PASSWORD" ]; then
+                echo -e "${RED}[ERROR] Password cannot be empty.${NC}"
+                continue
+            fi
+            read_password_masked "Re-enter WiFi password to confirm: "
+            WIFI_PASSWORD_CONFIRM="$REPLY"
+            if [ "$WIFI_PASSWORD" != "$WIFI_PASSWORD_CONFIRM" ]; then
+                echo -e "${RED}[ERROR] Passwords do not match. Please try again.${NC}"
+                continue
+            fi
+            break
+        done
+    else
+        echo -e "${GREEN}[INFO] Ethernet selected — skipping WiFi credentials.${NC}"
+        echo -e "${GREEN}[INFO] Make sure the Ethernet cable is connected to eth0 before rebooting.${NC}"
+    fi
 
     # Network Configuration (with validation)
     while :; do
@@ -409,8 +442,12 @@ collect_user_input() {
     echo -e ""
     echo -e "${GREEN}[INFO] Configuration Summary:${NC}"
     echo -e "======================================="
-    echo -e "WiFi SSID: ${WIFI_SSID}"
-    echo -e "WiFi Password: [HIDDEN]"
+    if [[ "$NET_INTERFACE" == "wifi" ]]; then
+        echo -e "Connection: WiFi (${WIFI_SSID})"
+        echo -e "WiFi Password: [HIDDEN]"
+    else
+        echo -e "Connection: Ethernet (eth0)"
+    fi
     echo -e "Static IP: ${STATIC_IP}"
     echo -e "Gateway: ${GATEWAY_IP}"
     echo -e "Hostname: ${HOSTNAME}"
@@ -471,7 +508,7 @@ setup_python_venv() {
     check_status "Creating virtual environment" "PYTHON_VENV"
 
     echo -e "${GREEN}[INFO] Installing Python dependencies...${NC}"
-    sudo -u $CURRENT_USER bash -c "source ${VENV_PATH}/bin/activate && pip install --upgrade pip && pip install flask==2.2.2 werkzeug==2.2.3 gunicorn==23.0.0 paho-mqtt==2.1.0 psutil==5.9.4 boto3==1.39.13 requests"
+    sudo -u $CURRENT_USER bash -c "source ${VENV_PATH}/bin/activate && pip install --upgrade pip && pip install flask==2.2.2 werkzeug==2.2.3 gunicorn==23.0.0 paho-mqtt==2.1.0 psutil==5.9.4 boto3==1.39.13 requests pyserial==3.5"
     check_status "Installing Python dependencies" "PYTHON_VENV"
 }
 
@@ -733,8 +770,15 @@ configure_kiosk_mode() {
     sudo -u "$CURRENT_USER" mkdir -p /home/"$CURRENT_USER"/.config/labwc
 
     tee /home/"$CURRENT_USER"/.config/labwc/autostart > /dev/null <<'EOF'
-# Wait for owl-controller service before launching browser
-while ! curl -sk https://localhost/ > /dev/null 2>&1; do
+# Wait for owl-controller (gunicorn) to actually serve a 2xx — not nginx's
+# 502 Bad Gateway while gunicorn is still importing. Without -f, curl
+# exits 0 on any HTTP response (including 502) and the kiosk loads an
+# unstyled error page. With -f we only break out once the backend is up.
+for _ in $(seq 1 90); do
+    if systemctl is-active --quiet owl-controller \
+       && curl -sfk --max-time 3 https://localhost/ > /dev/null 2>&1; then
+        break
+    fi
     sleep 2
 done
 
@@ -758,32 +802,57 @@ EOF
 }
 
 
-# Step 11: Configure WiFi with NetworkManager
+# Step 11: Configure network with NetworkManager (WiFi or Ethernet)
 configure_network() {
-    echo -e "${GREEN}[INFO] Configuring WiFi connection: ${WIFI_SSID}...${NC}"
+    if [[ "$NET_INTERFACE" == "wifi" ]]; then
+        echo -e "${GREEN}[INFO] Configuring WiFi connection: ${WIFI_SSID}...${NC}"
 
-    # Delete any existing connection with the same name
-    nmcli con delete "${WIFI_SSID}" 2>/dev/null || true
+        # Delete any existing connection with the same name
+        nmcli con delete "${WIFI_SSID}" 2>/dev/null || true
 
-    # Add new WiFi connection
-    nmcli con add type wifi con-name "${WIFI_SSID}" ifname wlan0 ssid "${WIFI_SSID}"
+        # Add new WiFi connection
+        nmcli con add type wifi con-name "${WIFI_SSID}" ifname wlan0 ssid "${WIFI_SSID}"
 
-    # Configure WiFi security
-    nmcli con modify "${WIFI_SSID}" wifi-sec.key-mgmt wpa-psk
-    nmcli con modify "${WIFI_SSID}" wifi-sec.psk "${WIFI_PASSWORD}"
+        # Configure WiFi security
+        nmcli con modify "${WIFI_SSID}" wifi-sec.key-mgmt wpa-psk
+        nmcli con modify "${WIFI_SSID}" wifi-sec.psk "${WIFI_PASSWORD}"
 
-    # Configure static IP
-    nmcli con modify "${WIFI_SSID}" ipv4.addresses ${STATIC_IP}/24
-    nmcli con modify "${WIFI_SSID}" ipv4.gateway ${GATEWAY_IP}
-    nmcli con modify "${WIFI_SSID}" ipv4.dns "8.8.8.8 8.8.4.4"
-    nmcli con modify "${WIFI_SSID}" ipv4.method manual
+        # Configure static IP
+        nmcli con modify "${WIFI_SSID}" ipv4.addresses ${STATIC_IP}/24
+        nmcli con modify "${WIFI_SSID}" ipv4.gateway ${GATEWAY_IP}
+        nmcli con modify "${WIFI_SSID}" ipv4.dns "8.8.8.8 8.8.4.4"
+        nmcli con modify "${WIFI_SSID}" ipv4.method manual
 
-    # Set as default connection
-    nmcli con modify "${WIFI_SSID}" connection.autoconnect yes
-    nmcli con modify "${WIFI_SSID}" connection.autoconnect-priority 100
+        # Set as default connection
+        nmcli con modify "${WIFI_SSID}" connection.autoconnect yes
+        nmcli con modify "${WIFI_SSID}" connection.autoconnect-priority 100
 
-    nmcli con up "${WIFI_SSID}" || true
-    check_status "WiFi configuration" "WIFI_CONNECT"
+        nmcli con up "${WIFI_SSID}" || true
+        check_status "WiFi configuration" "WIFI_CONNECT"
+    else
+        echo -e "${GREEN}[INFO] Configuring Ethernet (eth0) with static IP ${STATIC_IP}...${NC}"
+
+        local CON_NAME="owl-controller-ethernet"
+
+        # Delete any existing OWL controller ethernet connection
+        nmcli con delete "${CON_NAME}" 2>/dev/null || true
+
+        # Add new ethernet connection
+        nmcli con add type ethernet con-name "${CON_NAME}" ifname eth0
+
+        # Configure static IP
+        nmcli con modify "${CON_NAME}" ipv4.addresses ${STATIC_IP}/24
+        nmcli con modify "${CON_NAME}" ipv4.gateway ${GATEWAY_IP}
+        nmcli con modify "${CON_NAME}" ipv4.dns "8.8.8.8 8.8.4.4"
+        nmcli con modify "${CON_NAME}" ipv4.method manual
+
+        # Set as default connection
+        nmcli con modify "${CON_NAME}" connection.autoconnect yes
+        nmcli con modify "${CON_NAME}" connection.autoconnect-priority 100
+
+        nmcli con up "${CON_NAME}" || true
+        check_status "Ethernet configuration" "WIFI_CONNECT"
+    fi
 }
 
 # Step 11b: Configure sudoers for passwordless shutdown/reboot/apt
@@ -885,8 +954,8 @@ source = ${GPS_SOURCE}
 port = ${GPS_SERIAL_DEV}
 baudrate = ${GPS_SERIAL_BAUD}
 
-# TCP listener (only when source = tcp). `enable` is a deprecated back-compat
-# alias for source=tcp.
+# TCP listener (only when source = tcp).
+# The 'enable' key is a deprecated back-compat alias for source=tcp.
 enable = False
 nmea_port = 8500
 boom_width = ${GPS_BOOM_WIDTH}
@@ -914,6 +983,29 @@ EOF
         gpsd)   echo -e "${GREEN}[INFO]   GPS: gpsd daemon reading ${GPS_SERIAL_DEV}${NC}" ;;
     esac
     check_status "CONTROLLER.ini creation" "CONTROLLER_INI"
+}
+
+# Step 11c-pre: Grant serial device access to the service user
+# Required for GPS_SOURCE=serial (pyserial opens /dev/ttyACM* or /dev/ttyUSB*)
+# and GPS_SOURCE=gpsd (gpsd itself runs as root, but the user may want to
+# run gpsmon/cgps interactively without sudo).
+grant_serial_access() {
+    if [[ "$GPS_SOURCE" != "serial" && "$GPS_SOURCE" != "gpsd" ]]; then
+        return 0
+    fi
+
+    if id -nG "$CURRENT_USER" | tr ' ' '\n' | grep -qx dialout; then
+        echo -e "${TICK} ${CURRENT_USER} is already in the dialout group"
+        return 0
+    fi
+
+    echo -e "${GREEN}[INFO] Adding ${CURRENT_USER} to the dialout group for serial GPS access...${NC}"
+    if usermod -aG dialout "$CURRENT_USER"; then
+        echo -e "${TICK} ${CURRENT_USER} added to dialout"
+        echo -e "${ORANGE}[INFO] Group membership takes effect after reboot.${NC}"
+    else
+        echo -e "${CROSS} Failed to add ${CURRENT_USER} to dialout — serial GPS may fail with PermissionError"
+    fi
 }
 
 # Step 11c: Install and configure gpsd (only when source = gpsd)
@@ -949,14 +1041,20 @@ EOF
 create_config_summary() {
     echo -e "${GREEN}[INFO] Creating configuration summary...${NC}"
 
+    local CONN_SUMMARY
+    if [[ "$NET_INTERFACE" == "wifi" ]]; then
+        CONN_SUMMARY="WiFi (SSID: ${WIFI_SSID}, Password: [HIDDEN])"
+    else
+        CONN_SUMMARY="Ethernet (eth0)"
+    fi
+
     tee /opt/owl-controller-config.txt > /dev/null <<EOF
 OWL Controller Configuration
 ============================
 Hostname: ${HOSTNAME}
 Static IP: ${STATIC_IP}
 Gateway: ${GATEWAY_IP}
-WiFi SSID: ${WIFI_SSID}
-WiFi Password: [HIDDEN]
+Connection: ${CONN_SUMMARY}
 Kiosk Mode: ${KIOSK_MODE}
 Screen Resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}
 
@@ -1011,12 +1109,21 @@ final_validation() {
 
     # Test network connectivity if connected
     echo -e "${GREEN}[INFO] Testing network connectivity...${NC}"
-    nmcli con show --active | grep "${WIFI_SSID}" > /dev/null 2>&1
+    local CON_NAME IFACE
+    if [[ "$NET_INTERFACE" == "wifi" ]]; then
+        CON_NAME="${WIFI_SSID}"
+        IFACE="wlan0"
+    else
+        CON_NAME="owl-controller-ethernet"
+        IFACE="eth0"
+    fi
+
+    nmcli con show --active | grep -F "${CON_NAME}" > /dev/null 2>&1
     if [ $? -eq 0 ]; then
-        echo -e "${TICK} Connected to ${WIFI_SSID}"
+        echo -e "${TICK} Connected via ${CON_NAME}"
 
         # Check if we have the static IP
-        ip addr show wlan0 | grep "${STATIC_IP}" > /dev/null 2>&1
+        ip addr show "${IFACE}" | grep "${STATIC_IP}" > /dev/null 2>&1
         if [ $? -eq 0 ]; then
             echo -e "${TICK} Static IP ${STATIC_IP} configured"
             STATUS_STATIC_IP="${TICK}"
@@ -1025,7 +1132,7 @@ final_validation() {
             STATUS_STATIC_IP="${ORANGE}[WARN]${NC}"
         fi
     else
-        echo -e "${ORANGE}[INFO] WiFi connection will be activated on next boot${NC}"
+        echo -e "${ORANGE}[INFO] ${NET_INTERFACE} connection will be activated on next boot${NC}"
     fi
 }
 
@@ -1069,6 +1176,9 @@ main() {
 
     # Step 11b: Configure sudoers for dashboard
     configure_sudoers
+
+    # Step 11c-pre: Grant dialout group for serial GPS access
+    grant_serial_access
 
     # Step 11c: Configure gpsd (only when source = gpsd)
     configure_gpsd
@@ -1114,7 +1224,11 @@ main() {
         echo -e "${ORANGE}[SKIPPED]${NC} Kiosk Mode"
     fi
 
-    echo -e "$STATUS_WIFI_CONNECT WiFi Configuration"
+    if [[ "$NET_INTERFACE" == "wifi" ]]; then
+        echo -e "$STATUS_WIFI_CONNECT WiFi Configuration"
+    else
+        echo -e "$STATUS_WIFI_CONNECT Ethernet Configuration"
+    fi
     echo -e "$STATUS_STATIC_IP Static IP Configuration"
 
     echo -e "\n${GREEN}[INFO] Controller Access Information:${NC}"
@@ -1173,7 +1287,11 @@ main() {
         echo -e "\nA reboot is recommended to ensure all services start properly."
         echo -e ""
         echo -e "After reboot:"
-        echo -e "  • Controller will connect to WiFi '${WIFI_SSID}'"
+        if [[ "$NET_INTERFACE" == "wifi" ]]; then
+            echo -e "  • Controller will connect to WiFi '${WIFI_SSID}'"
+        else
+            echo -e "  • Controller will come up on Ethernet (eth0) with static IP ${STATIC_IP}"
+        fi
         echo -e "  • Dashboard will be available at https://${STATIC_IP}/"
         echo -e "  • MQTT broker will be running on port 1883"
 
@@ -1211,7 +1329,13 @@ main() {
         if [[ -n "$ERROR_DASHBOARD_SERVICE" ]]; then echo -e "${RED}[ERROR] Dashboard Service: $ERROR_DASHBOARD_SERVICE${NC}"; fi
         if [[ -n "$ERROR_SERVICES" ]]; then echo -e "${RED}[ERROR] Services: $ERROR_SERVICES${NC}"; fi
         if [[ -n "$ERROR_KIOSK_MODE" ]]; then echo -e "${RED}[ERROR] Kiosk Mode: $ERROR_KIOSK_MODE${NC}"; fi
-        if [[ -n "$ERROR_WIFI_CONNECT" ]]; then echo -e "${RED}[ERROR] WiFi: $ERROR_WIFI_CONNECT${NC}"; fi
+        if [[ -n "$ERROR_WIFI_CONNECT" ]]; then
+            if [[ "$NET_INTERFACE" == "wifi" ]]; then
+                echo -e "${RED}[ERROR] WiFi: $ERROR_WIFI_CONNECT${NC}"
+            else
+                echo -e "${RED}[ERROR] Ethernet: $ERROR_WIFI_CONNECT${NC}"
+            fi
+        fi
 
         echo -e "\n${RED}[ERROR] Please fix the above issues and try again.${NC}"
         exit 1

@@ -23,6 +23,10 @@ eggs/
 .eggs/
 lib/
 lib64/
+# The Python "lib/" ignore above also matches frontend vendor directories;
+# re-include bundled JS libraries (Leaflet, etc.) that are served as static assets.
+!controller/networked/static/lib/
+!controller/networked/static/lib/**
 parts/
 sdist/
 var/

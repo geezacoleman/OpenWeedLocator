@@ -330,10 +330,16 @@ class GPSState:
                 self.heading = data['heading_true']
 
     def update_from_gsv(self, data):
-        """Update state from a parsed GSV sentence."""
-        with self._lock:
-            if data.get('satellites_in_view') is not None:
-                self.satellites = data['satellites_in_view']
+        """Update state from a parsed GSV sentence.
+
+        Intentionally does NOT update `self.satellites` — GGA's "satellites
+        used in the fix" is the correct number to display. Multi-GNSS
+        receivers interleave per-constellation GSV sentences (GP/GL/GA/GB),
+        and whichever arrives last would otherwise overwrite the GGA count
+        (observed: BeiDou GSV reporting 0-in-view clobbering the displayed
+        satellite count to 0).
+        """
+        _ = data  # reserved for future per-constellation breakdown
 
     def get_dict(self):
         """Return a snapshot of the current state as a dict."""

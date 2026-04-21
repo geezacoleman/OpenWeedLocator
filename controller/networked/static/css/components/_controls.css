@@ -63,6 +63,8 @@
 .action-button.btn-nozzles {
     background: #7f8fa6;
     box-shadow: 0 3px 0 #6b7a8d, 0 4px 12px rgba(127, 143, 166, 0.25);
+    font-size: 1rem;
+    height: 44px;
 }
 
 .action-button.btn-nozzles.active {
@@ -309,4 +311,138 @@
 .btn-fix-screen:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+/* ==========================================================================
+   Session Metadata Modal
+   Landscape 2x2 grid for glove-friendly kiosk input. Inputs auto-open the
+   shared on-screen keyboard via data-numpad.
+   Target display: 1280x800 (EDATEC HMI3010).
+   ========================================================================== */
+
+.session-metadata-modal .modal-content {
+    width: 880px;
+    max-width: 92vw;
+    max-height: 88vh;
+}
+
+.session-metadata-modal .modal-header h3 {
+    font-size: 1.4rem;
+}
+
+.session-metadata-modal .modal-body {
+    padding: 1.25rem 1.75rem 1.5rem;
+}
+
+.session-metadata-hint {
+    margin: 0 0 1rem;
+    color: #636e72;
+    font-size: 0.95rem;
+}
+
+.session-metadata-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.1rem 1.5rem;
+}
+
+.session-metadata-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.session-metadata-field label {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #2d3436;
+}
+
+.session-metadata-field .required-marker {
+    color: #d63031;
+    font-weight: 700;
+    margin-left: 0.25rem;
+}
+
+.session-metadata-field input {
+    height: 60px;
+    padding: 0 1rem;
+    border: 1px solid #dce1e8;
+    border-radius: var(--radius-md);
+    background: #f8f9fa;
+    font-size: 1.15rem;
+    font-weight: 500;
+    color: #2d3436;
+    transition: all var(--transition-fast);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.session-metadata-field input:hover {
+    background: #ffffff;
+    border-color: #b2bec3;
+}
+
+.session-metadata-field input:focus {
+    outline: none;
+    background: #ffffff;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(2, 39, 117, 0.15);
+}
+
+.session-metadata-field input::placeholder {
+    color: #95a5a6;
+    font-weight: 400;
+}
+
+.session-metadata-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+    padding: 1.25rem 1.75rem;
+    background: #f8f9fa;
+    border-top: 1px solid var(--border);
+}
+
+.session-metadata-btn {
+    min-width: 160px;
+    height: 56px;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 1.05rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all var(--transition-normal);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.session-metadata-btn:active:not(:disabled) {
+    transform: scale(0.98);
+}
+
+.session-metadata-btn--cancel {
+    background: #dfe4ea;
+    color: #2d3436;
+    border: 1px solid #c8d0d8;
+}
+
+.session-metadata-btn--cancel:hover {
+    background: #c8d0d8;
+}
+
+.session-metadata-btn--save {
+    background: #27ae60;
+    color: white;
+    box-shadow: 0 2px 0 #1e8449, 0 4px 12px rgba(39, 174, 96, 0.25);
+}
+
+.session-metadata-btn--save:hover:not(:disabled) {
+    filter: brightness(1.05);
+}
+
+.session-metadata-btn--save:disabled {
+    background: #b2bec3;
+    color: #ffffff;
+    box-shadow: none;
+    cursor: not-allowed;
+    opacity: 0.7;
 }
