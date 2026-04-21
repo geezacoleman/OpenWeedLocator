@@ -107,20 +107,21 @@ function openSessionMetadataModal(btn) {
     }
 
     // Save disabled until Field name has non-empty trimmed value.
+    // Using .oninput overwrites any prior listener, so this stays idempotent
+    // across repeated opens without DOM cloning (which would temporarily
+    // detach the input from Numpad's focusin delegation).
     var saveBtn = document.getElementById('session-metadata-save-btn');
     var fieldNameEl = document.getElementById('meta-field-name');
     if (saveBtn) saveBtn.disabled = true;
     if (fieldNameEl) {
-        // Replace any previous listener by cloning (simple idempotent wiring).
-        var clone = fieldNameEl.cloneNode(true);
-        fieldNameEl.parentNode.replaceChild(clone, fieldNameEl);
-        clone.addEventListener('input', function () {
-            if (saveBtn) saveBtn.disabled = clone.value.trim().length === 0;
-        });
-        // Autofocus so the soft keyboard opens on kiosk.
-        setTimeout(function () { clone.focus(); }, 50);
+        fieldNameEl.oninput = function () {
+            if (saveBtn) saveBtn.disabled = fieldNameEl.value.trim().length === 0;
+        };
     }
 
+    // Do NOT auto-focus — we don't want the on-screen keyboard popping up
+    // unrequested. User taps the field they want to fill; Numpad auto-attaches
+    // via data-numpad and opens its own keyboard overlay on focusin.
     modal.classList.add('show');
 }
 
