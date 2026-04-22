@@ -782,8 +782,13 @@ for _ in $(seq 1 90); do
     sleep 2
 done
 
+# Fresh profile every boot prevents a cached copy of old JS/CSS surviving a
+# software update. Without this, `git pull` + service restart would leave
+# Chromium serving the previous bundle from disk cache — half the UI loads,
+# tabs stop responding, etc. --incognito guarantees no disk persistence.
 chromium https://localhost/ \
   --kiosk \
+  --incognito \
   --noerrdialogs \
   --disable-infobars \
   --no-first-run \
