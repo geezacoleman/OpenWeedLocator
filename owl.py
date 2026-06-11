@@ -444,14 +444,26 @@ class Owl:
 
         # Check which Raspberry Pi is being used and adjust the resolution accordingly.
         # Use `cat /proc-device-tree/model` to check the model of the Raspberry Pi.
+        # Capture the requested (config) resolution BEFORE any clamp so the dashboard
+        # can detect a silent clamp and prompt the user to opt in via the override flag.
+        self.requested_resolution = self.resolution
+        self.resolution_clamped = False
         total_pixels = self.resolution[0] * self.resolution[1]
+        allow_high_resolution = self.config.getboolean('Camera', 'allow_high_resolution', fallback=False)
 
-        if (self.RPI_VERSION in ['rpi-3', 'rpi-4']) and total_pixels > (832 * 640):
-            # change here if you want to test higher resolutions, but be warned, backup your current image!
+        if (self.RPI_VERSION in ['rpi-3', 'rpi-4']) and total_pixels > (832 * 640) and not allow_high_resolution:
             # the older versions of the Pi are known to 'brick' and become unusable if too high resolutions are used.
+            # Set [Camera] allow_high_resolution = True to override this clamp once you have verified your hardware.
             self.resolution = (640, 480)
-            self.logger.warning(f"Resolution {self.config.getint('Camera', 'resolution_width')}, "
-                                f"{self.config.getint('Camera', 'resolution_height')} selected is dangerously high. ")
+            self.resolution_clamped = True
+            self.logger.warning(
+                f"Resolution {self.requested_resolution[0]}x{self.requested_resolution[1]} is above the safe "
+                f"limit for {self.RPI_VERSION}. Clamped to 640x480. "
+                f"Set [Camera] allow_high_resolution = True to override.")
+        elif allow_high_resolution and self.RPI_VERSION in ['rpi-3', 'rpi-4'] and total_pixels > (832 * 640):
+            self.logger.warning(
+                f'High-res override active on {self.RPI_VERSION} at {self.resolution[0]}x{self.resolution[1]} '
+                f'- expect low framerate and verify camera stability.')
         else:
             self.logger.warning(
                 f'High resolution, expect low framerate. Resolution set to {self.resolution[0]}x{self.resolution[1]}.')
@@ -581,6 +593,15 @@ class Owl:
         def _create_detector(algo):
             """Three-way detector factory."""
             current_classes = self._detect_classes_list or None
+            # [Tracking] INI values are the runtime source of truth — the
+            # tracker yaml only bootstraps ByteTrack before these apply.
+            tracker_params = {
+                'track_high_thresh': self.track_high_thresh,
+                'track_low_thresh': self.track_low_thresh,
+                'new_track_thresh': self.new_track_thresh,
+                'track_buffer': self.track_buffer,
+                'match_thresh': self.match_thresh,
+            }
             if algo == 'gog':
                 from utils.greenongreen import GreenOnGreen
                 return GreenOnGreen(
@@ -589,6 +610,7 @@ class Owl:
                     detect_classes=current_classes,
                     tracking_enabled=self.tracking_enabled,
                     detection_persist_frames=self.detection_persist_frames,
+                    tracker_params=tracker_params,
                 )
             elif algo == 'gog-hybrid':
                 from utils.greenongreen import GreenOnGreen
@@ -602,6 +624,7 @@ class Owl:
                     tracking_enabled=self.tracking_enabled,
                     crop_stabilizer=self._crop_stabilizer,
                     detection_persist_frames=self.detection_persist_frames,
+                    tracker_params=tracker_params,
                 )
             else:
                 return GreenOnBrown(algorithm=algo)

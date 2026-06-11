@@ -124,7 +124,6 @@ async function loadConfigDefaults() {
         }
 
         console.log(`Loaded ${loadedCount} config parameters from API`);
-        showToast(`Loaded ${loadedCount} config defaults`, 'success');
     } catch (err) {
         console.error('Failed to load config defaults:', err);
         showToast('Warning: Using fallback config values', 'warning');
@@ -177,6 +176,9 @@ async function updateDashboard() {
             }
             if (typeof updateModeAvailability === 'function') {
                 updateModeAvailability(!!firstOwl.model_available);
+            }
+            if (typeof setHighResContextBadge === 'function' && firstOwl.rpi_version) {
+                setHighResContextBadge(firstOwl.rpi_version);
             }
             // Sync slider values from OWL state so dashboard matches device
             syncConfigFromOWLState(firstOwl);

@@ -1,0 +1,15 @@
+{
+  "type": "select",
+  "id": "preset_selector_main",
+  "name": "preset_selector_main",
+  "label": "Sensitivity Preset",
+  "options": [
+    "low",
+    "medium",
+    "high",
+    "blue_sponge"
+  ],
+  "default": "medium",
+  "slot": "dashboard_controls",
+  "action": "set_sensitivity"
+}

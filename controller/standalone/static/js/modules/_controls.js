@@ -280,6 +280,48 @@ function startRecording() {
         return Promise.resolve();
     }
 
+    // If the OWL silently clamped its configured resolution at startup (Pi 3/4
+    // safety limit), surface that mismatch and offer to override + restart.
+    // We check the explicit resolution_clamped flag from heartbeat, not the
+    // running resolution, because by the time the user sees the dashboard the
+    // running resolution IS the clamped value and looks fine.
+    if (typeof isClampActive === 'function' &&
+        isClampActive({
+            allow_high_resolution: lastAllowHighResolution,
+            resolution_clamped: lastResolutionClamped
+        })) {
+        return new Promise(function(resolve) {
+            showHighResWarningModal(
+                lastRpiVersion,
+                lastRequestedResWidth, lastRequestedResHeight,
+                lastResWidth, lastResHeight,
+                function onCancel() {
+                    resolve();
+                },
+                function onOverride() {
+                    apiRequest('/api/camera/set_allow_high_resolution', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({value: true})
+                    })
+                    .then(function() { return stopOwl(); })
+                    .then(function() {
+                        setTimeout(function() {
+                            startOwl();
+                            showNotification('Info',
+                                'High-resolution override saved — OWL restarting. Start recording when it is back online.',
+                                'info', 8000);
+                        }, 1000);
+                    })
+                    .catch(function(err) {
+                        showNotification('Error', err.message || 'Failed to save override', 'error');
+                    });
+                    resolve();
+                }
+            );
+        });
+    }
+
     // Check resolution before starting recording
     if (typeof isResolutionBelowMax === 'function' && isResolutionBelowMax(lastResWidth, lastResHeight)) {
         return new Promise(function(resolve) {
@@ -409,10 +451,12 @@ function stopTracking() {
    Track Stability
    -------------------------------------------------------------------------- */
 
+// match_thresh is a cost limit on (1 - IoU): HIGHER = more lenient matching.
+// Must stay in sync with GreenOnGreen.TRACK_STABILITY_PRESETS (utils/greenongreen.py).
 var TRACK_STABILITY_PRESETS = {
-    low:    { track_high_thresh: 0.3,  track_low_thresh: 0.15, new_track_thresh: 0.3,  track_buffer: 30, match_thresh: 0.8 },
-    medium: { track_high_thresh: 0.2,  track_low_thresh: 0.05, new_track_thresh: 0.2,  track_buffer: 60, match_thresh: 0.7 },
-    high:   { track_high_thresh: 0.15, track_low_thresh: 0.05, new_track_thresh: 0.15, track_buffer: 90, match_thresh: 0.6 }
+    low:    { track_high_thresh: 0.3,  track_low_thresh: 0.15, new_track_thresh: 0.3,  track_buffer: 30, match_thresh: 0.7 },
+    medium: { track_high_thresh: 0.2,  track_low_thresh: 0.05, new_track_thresh: 0.2,  track_buffer: 60, match_thresh: 0.8 },
+    high:   { track_high_thresh: 0.15, track_low_thresh: 0.05, new_track_thresh: 0.15, track_buffer: 90, match_thresh: 0.9 }
 };
 
 function setTrackStability(level) {

@@ -67,7 +67,8 @@ class ConfigValidator:
         },
         'Camera': {
             'required_keys': {'resolution_width', 'resolution_height'},
-            'optional_keys': {'exp_compensation', 'crop_factor_horizontal', 'crop_factor_vertical', 'camera_type'}
+            'optional_keys': {'exp_compensation', 'crop_factor_horizontal', 'crop_factor_vertical', 'camera_type',
+                              'allow_high_resolution'}
         },
         'GreenOnGreen': {
             'required_keys': {'model_path', 'confidence'},

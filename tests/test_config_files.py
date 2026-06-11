@@ -439,6 +439,105 @@ class TestFrontendBackendConfigSync:
 
 
 @pytest.mark.unit
+class TestHighResolutionOverride:
+    """Pi 3/4 silently clamp resolutions above 832x640 to 640x480 unless the
+    user opts in via [Camera] allow_high_resolution. These tests guard the
+    contract between the clamp, the config validator, the heartbeat field,
+    and the warning modal."""
+
+    def test_clamp_reads_allow_high_resolution_flag(self):
+        """owl.py clamp must honour the allow_high_resolution config flag."""
+        owl_source = (PROJECT_ROOT / 'owl.py').read_text()
+        assert 'allow_high_resolution' in owl_source, (
+            "owl.py must read [Camera] allow_high_resolution — otherwise the "
+            "user has no way to opt out of the Pi 3/4 resolution clamp."
+        )
+        assert 'not allow_high_resolution' in owl_source, (
+            "owl.py clamp condition must include 'not allow_high_resolution' "
+            "so that True bypasses the clamp."
+        )
+
+    def test_general_config_has_allow_high_resolution(self):
+        """GENERAL_CONFIG.ini must declare allow_high_resolution under [Camera]."""
+        cfg = configparser.ConfigParser()
+        cfg.read(PROJECT_ROOT / 'config' / 'GENERAL_CONFIG.ini')
+        assert cfg.has_option('Camera', 'allow_high_resolution'), (
+            "GENERAL_CONFIG.ini [Camera] must include allow_high_resolution. "
+            "Without it, the frontend cross-validation test will fail."
+        )
+        # Default must be safety-on (False)
+        assert not cfg.getboolean('Camera', 'allow_high_resolution'), (
+            "Default [Camera] allow_high_resolution must be False — the "
+            "clamp is a safety default."
+        )
+
+    def test_validator_lists_allow_high_resolution(self):
+        """ConfigValidator must list allow_high_resolution in [Camera] optional_keys
+        so it doesn't emit a spurious 'unknown key' warning at startup."""
+        from utils.config_manager import ConfigValidator
+        camera = ConfigValidator.REQUIRED_CONFIG['Camera']
+        assert 'allow_high_resolution' in camera['optional_keys'], (
+            "allow_high_resolution missing from Camera optional_keys — "
+            "ConfigValidator will warn at startup."
+        )
+
+    def test_heartbeat_publishes_rpi_version_and_flag(self):
+        """OWLMQTTPublisher heartbeat must publish rpi_version and
+        allow_high_resolution so the controllers can decide whether to show
+        the warning modal."""
+        mqtt_source = (PROJECT_ROOT / 'utils' / 'mqtt_manager.py').read_text()
+        assert "'rpi_version'" in mqtt_source, (
+            "rpi_version missing from OWLMQTTPublisher state dict — the "
+            "warning modal cannot detect Pi 3/4 OWLs."
+        )
+        assert "'allow_high_resolution'" in mqtt_source, (
+            "allow_high_resolution missing from heartbeat — the warning "
+            "modal cannot detect when override is already active."
+        )
+
+    def test_heartbeat_publishes_requested_resolution_and_clamp_flag(self):
+        """OWLMQTTPublisher must publish both the requested (config) resolution
+        and a resolution_clamped flag. Without these, the dashboard sees only
+        the post-clamp resolution and can't detect that a silent clamp happened."""
+        mqtt_source = (PROJECT_ROOT / 'utils' / 'mqtt_manager.py').read_text()
+        for field in ("'requested_resolution_width'", "'requested_resolution_height'", "'resolution_clamped'"):
+            assert field in mqtt_source, (
+                f"{field} missing from heartbeat — modal cannot detect silent clamps."
+            )
+
+    def test_owl_captures_requested_resolution(self):
+        """owl.py must record self.requested_resolution + self.resolution_clamped
+        so the heartbeat can report them."""
+        owl_source = (PROJECT_ROOT / 'owl.py').read_text()
+        assert 'self.requested_resolution' in owl_source, (
+            "owl.py must capture requested_resolution before any clamp logic."
+        )
+        assert 'self.resolution_clamped' in owl_source, (
+            "owl.py must set resolution_clamped to signal the dashboard."
+        )
+
+    def test_high_res_warning_js_exists(self):
+        """The shared high_res_warning.js must exist."""
+        js_path = PROJECT_ROOT / 'controller' / 'shared' / 'js' / 'high_res_warning.js'
+        assert js_path.exists(), (
+            "controller/shared/js/high_res_warning.js not found"
+        )
+
+    def test_high_res_warning_js_loaded_in_both_templates(self):
+        """high_res_warning.js must be included in both controller templates."""
+        templates = [
+            PROJECT_ROOT / 'controller' / 'standalone' / 'templates' / 'index.html',
+            PROJECT_ROOT / 'controller' / 'networked' / 'templates' / 'index.html',
+        ]
+        for template_path in templates:
+            source = template_path.read_text()
+            assert 'high_res_warning.js' in source, (
+                f"high_res_warning.js not included in {template_path.name}. "
+                f"The Pi 3/4 high-resolution warning will not appear."
+            )
+
+
+@pytest.mark.unit
 class TestTrackingConfig:
     """Validate ByteTrack tracking parameters in config, validators, and frontend."""
 

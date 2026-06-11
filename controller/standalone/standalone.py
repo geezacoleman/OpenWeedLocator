@@ -524,6 +524,12 @@ class OWLDashboard:
                 # Camera resolution
                 'resolution_width': mqtt_state.get('resolution_width', 0),
                 'resolution_height': mqtt_state.get('resolution_height', 0),
+                'requested_resolution_width': mqtt_state.get('requested_resolution_width', 0),
+                'requested_resolution_height': mqtt_state.get('requested_resolution_height', 0),
+                'resolution_clamped': mqtt_state.get('resolution_clamped', False),
+                'allow_high_resolution': mqtt_state.get('allow_high_resolution', False),
+                # Hardware
+                'rpi_version': mqtt_state.get('rpi_version', 'unknown'),
             })
 
             return jsonify(stats)
@@ -563,6 +569,26 @@ class OWLDashboard:
                 })
             except Exception as e:
                 self.logger.error(f"Error setting max resolution: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/camera/set_allow_high_resolution', methods=['POST'])
+        def set_allow_high_resolution():
+            """Persist [Camera] allow_high_resolution to config (copy-on-write safe).
+
+            Used by the high-res warning modal to bypass the Pi 3/4 safety
+            clamp before restarting OWL. Does NOT update runtime state —
+            caller must restart OWL for the change to take effect.
+            """
+            try:
+                data = request.get_json(silent=True) or {}
+                value = bool(data.get('value', True))
+                self._persist_config_change('Camera', 'allow_high_resolution', 'True' if value else 'False')
+                return jsonify({
+                    'success': True,
+                    'message': f'allow_high_resolution set to {value}. Restart OWL to apply.'
+                })
+            except Exception as e:
+                self.logger.error(f"Error setting allow_high_resolution: {e}")
                 return jsonify({'success': False, 'error': str(e)}), 500
 
         @self.app.route('/api/download_frame', methods=['POST'])

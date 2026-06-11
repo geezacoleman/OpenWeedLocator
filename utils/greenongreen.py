@@ -22,12 +22,16 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Resolved relative to this file so tracking works regardless of cwd
+# (systemd sets WorkingDirectory, but manual/script launches may not).
+TRACKER_YAML = str(Path(__file__).resolve().parent.parent / 'config' / 'bytetrack_owl.yaml')
+
 
 class GreenOnGreen:
     def __init__(self, model_path='models', confidence=0.5, detect_classes=None,
                  hybrid_mode=False, inference_resolution=320, crop_buffer_px=20,
                  tracking_enabled=False, crop_stabilizer=None,
-                 detection_persist_frames=0):
+                 detection_persist_frames=0, tracker_params=None):
         """
         Args:
             model_path: Path to NCNN model dir, .pt file, or parent dir containing models.
@@ -60,6 +64,9 @@ class GreenOnGreen:
         self.tracking_enabled = tracking_enabled
         self._crop_stabilizer = crop_stabilizer
         self.detection_persist_frames = detection_persist_frames
+        # ByteTrack params from config — the tracker object only exists after
+        # the first model.track() call, so these are applied lazily.
+        self._pending_tracker_params = dict(tracker_params) if tracker_params else None
         # Raw detection attributes (populated each frame when tracking enabled)
         self.last_track_ids = []
         self.last_raw_boxes = []
@@ -187,30 +194,68 @@ class GreenOnGreen:
                     cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
         return mask
 
-    # Track stability presets — map user-facing names to ByteTrack params
+    # Track stability presets — map user-facing names to ByteTrack params.
+    # Higher stability = lower association thresholds (keep matching weak
+    # detections), longer buffer, and HIGHER match_thresh. match_thresh is a
+    # cost limit on (1 - IoU): higher = more lenient matching, which keeps
+    # IDs alive through camera vibration on small boxes.
     TRACK_STABILITY_PRESETS = {
         'low': {
             'track_high_thresh': 0.3,
             'track_low_thresh': 0.15,
             'new_track_thresh': 0.3,
             'track_buffer': 30,
-            'match_thresh': 0.8,
+            'match_thresh': 0.7,
         },
         'medium': {
             'track_high_thresh': 0.2,
             'track_low_thresh': 0.05,
             'new_track_thresh': 0.2,
             'track_buffer': 60,
-            'match_thresh': 0.7,
+            'match_thresh': 0.8,
         },
         'high': {
             'track_high_thresh': 0.15,
             'track_low_thresh': 0.05,
             'new_track_thresh': 0.15,
             'track_buffer': 90,
-            'match_thresh': 0.6,
+            'match_thresh': 0.9,
         },
     }
+
+    def _set_tracker_args(self, params):
+        """Set ByteTrack params on live trackers. Returns True if applied.
+
+        BYTETracker reads thresholds from tracker.args (an
+        IterableSimpleNamespace built from the tracker yaml), not from
+        attributes on the tracker instance itself. track_buffer additionally
+        feeds max_time_lost, computed once in __init__, so it must be set
+        explicitly. Tracks are NOT reset — params take effect from the next
+        frame without losing existing IDs.
+        """
+        if not (hasattr(self.model, 'predictor') and self.model.predictor):
+            return False
+        trackers = getattr(self.model.predictor, 'trackers', [])
+        if not trackers:
+            return False
+
+        for tracker in trackers:
+            for key, value in params.items():
+                if hasattr(tracker.args, key):
+                    setattr(tracker.args, key, value)
+                # max_time_lost = frame_rate/30 * track_buffer with the
+                # frame_rate=30 ultralytics hardcodes for model.track()
+                if key == 'track_buffer':
+                    tracker.max_time_lost = int(value)
+        return True
+
+    def _apply_pending_tracker_params(self):
+        """Apply queued ByteTrack params once trackers exist."""
+        if not self._pending_tracker_params:
+            return
+        if self._set_tracker_args(self._pending_tracker_params):
+            logger.info(f'Applied tracker params: {self._pending_tracker_params}')
+            self._pending_tracker_params = None
 
     def update_tracker_params(self, stability_level):
         """Update ByteTrack params at runtime from a stability preset.
@@ -222,41 +267,23 @@ class GreenOnGreen:
         if not preset:
             logger.warning(f"Unknown track stability level: {stability_level}")
             return
-
-        if not hasattr(self.model, 'predictor') or self.model.predictor is None:
-            logger.info(f"Track stability set to '{stability_level}' (will apply on next track call)")
-            return
-
-        for tracker in getattr(self.model.predictor, 'trackers', []):
-            for key, value in preset.items():
-                if hasattr(tracker, key):
-                    setattr(tracker, key, value)
-                # track_buffer sets max_time_lost in BYTETracker
-                if key == 'track_buffer' and hasattr(tracker, 'max_time_lost'):
-                    tracker.max_time_lost = value
-            tracker.reset()
-
-        logger.info(f"Track stability updated to '{stability_level}': {preset}")
+        self.update_tracker_params_direct(preset)
 
     def update_tracker_params_direct(self, params):
         """Update ByteTrack params at runtime from a dict of individual values.
 
+        If the tracker doesn't exist yet (no track call made), params are
+        queued and applied right after the first model.track() call.
+
         Args:
             params: dict with keys like 'track_high_thresh', 'match_thresh', etc.
         """
-        if not hasattr(self.model, 'predictor') or self.model.predictor is None:
+        if self._set_tracker_args(params):
+            logger.info(f"Tracker params updated: {params}")
+        else:
+            self._pending_tracker_params = {**(self._pending_tracker_params or {}),
+                                            **params}
             logger.info(f"Tracker params queued (will apply on next track call): {params}")
-            return
-
-        for tracker in getattr(self.model.predictor, 'trackers', []):
-            for key, value in params.items():
-                if hasattr(tracker, key):
-                    setattr(tracker, key, value)
-                if key == 'track_buffer' and hasattr(tracker, 'max_time_lost'):
-                    tracker.max_time_lost = int(value)
-            tracker.reset()
-
-        logger.info(f"Tracker params updated directly: {params}")
 
     def get_lost_tracks(self, max_age=None):
         """Read Kalman-predicted positions for lost tracks from ByteTrack.
@@ -369,10 +396,11 @@ class GreenOnGreen:
                 source=image,
                 conf=confidence,
                 persist=True,
-                tracker='config/bytetrack_owl.yaml',
+                tracker=TRACKER_YAML,
                 verbose=False,
                 device='cpu'
             )
+            self._apply_pending_tracker_params()
         else:
             results = self.model.predict(
                 source=image,
@@ -393,6 +421,19 @@ class GreenOnGreen:
             has_ids = (self.tracking_enabled
                        and result.boxes.id is not None
                        and len(result.boxes.id) > 0)
+
+            # Zero-track frames: ultralytics keeps the RAW unfiltered
+            # detections when ByteTrack returns no activated tracks
+            # (track.py: `if len(tracks) == 0: continue`). Since tracking
+            # mode runs without a classes= filter, non-target classes
+            # (e.g. crop) must be dropped here or they reach actuation.
+            if (self.tracking_enabled and not has_ids
+                    and self._detect_class_ids is not None
+                    and len(result.boxes) > 0):
+                keep = [j for j in range(len(result.boxes))
+                        if int(result.boxes.cls[j]) in self._detect_class_ids]
+                if len(keep) < len(result.boxes):
+                    result = result[keep]
 
             # Process bounding boxes (works for both detect and segment)
             for i, box in enumerate(result.boxes):
@@ -499,11 +540,12 @@ class GreenOnGreen:
                 conf=confidence,
                 classes=self._detect_class_ids,
                 persist=True,
-                tracker='config/bytetrack_owl.yaml',
+                tracker=TRACKER_YAML,
                 imgsz=self.inference_resolution,
                 verbose=False,
                 device='cpu'
             )
+            self._apply_pending_tracker_params()
         else:
             results = self.model.predict(
                 source=image,

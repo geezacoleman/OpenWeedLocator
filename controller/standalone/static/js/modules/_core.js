@@ -18,6 +18,11 @@ let controllerType = 'none';
 let switchPurpose = 'recording';
 let lastResWidth = 0;
 let lastResHeight = 0;
+let lastRequestedResWidth = 0;
+let lastRequestedResHeight = 0;
+let lastResolutionClamped = false;
+let lastRpiVersion = 'unknown';
+let lastAllowHighResolution = false;
 
 /* --------------------------------------------------------------------------
    Constants

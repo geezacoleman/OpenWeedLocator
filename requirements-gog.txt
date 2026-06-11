@@ -1,5 +1,10 @@
 ## Green-on-Green (YOLO) dependencies ##
 # Install with: pip install -r requirements-gog.txt
 # Requires ~2GB additional disk space (includes PyTorch)
-ultralytics>=8.0.0
+# Pinned to 8.4.x: tracking (get_lost_tracks) relies on ultralytics internals
+# (predictor.trackers, lost_stracks, STrack.xyxy) verified against 8.4.6.
+ultralytics>=8.4,<8.5
 ncnn
+# Required by ByteTrack matching — without it ultralytics attempts a runtime
+# pip install on first tracked frame, which fails offline in the field.
+lap>=0.5.12

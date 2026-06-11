@@ -41,6 +41,40 @@ function toggleMainRecording() {
         sendCommand('all', 'toggle_recording', false);
         showToast('Recording stopped on all OWLs', 'info');
     } else {
+        // Check if any connected OWL is silently clamping its configured
+        // resolution (Pi 3/4 safety limit). Override + restart only the OWLs
+        // that are actually being clamped — don't push the flag to Pi 5s that
+        // never had a clamp to bypass.
+        var clampedOwls = _findClampedOWLs();
+        if (clampedOwls.length > 0 && typeof showHighResWarningModal === 'function') {
+            var first = clampedOwls[0];
+            showHighResWarningModal(
+                first.rpi,
+                first.requestedW, first.requestedH,
+                first.actualW, first.actualH,
+                function onCancel() { /* recording stays off */ },
+                function onOverride() {
+                    var ids = clampedOwls.map(function(o) { return o.deviceId; });
+                    var pending = ids.map(function(id) {
+                        return sendCommand(id, 'set_config_section', {
+                                section: 'Camera',
+                                params: {allow_high_resolution: 'True'}
+                            })
+                            .then(function() { return sendCommand(id, 'save_config', {}); })
+                            .then(function() { return restartOWL(id); });
+                    });
+                    Promise.all(pending).then(function() {
+                        showToast(
+                            'High-resolution override saved on ' + ids.join(', ') +
+                            ' — restarting. Start recording when back online.',
+                            'info'
+                        );
+                    });
+                }
+            );
+            return;
+        }
+
         // Check if any connected OWL has resolution below max
         var lowResOwl = _findLowResolutionOWL();
         if (lowResOwl && typeof showResolutionWarningModal === 'function') {
@@ -149,6 +183,31 @@ function closeSessionMetadataModal(didSave) {
 }
 
 /**
+ * Find all connected OWLs whose configured resolution is being silently
+ * clamped at startup (Pi 3/4 safety limit). Returns an array of
+ * {rpi, requestedW, requestedH, actualW, actualH, deviceId}.
+ */
+function _findClampedOWLs() {
+    if (typeof isClampActive !== 'function') return [];
+    var result = [];
+    for (var id in owlsData) {
+        var owl = owlsData[id];
+        if (!owl || !owl.connected) continue;
+        if (isClampActive(owl)) {
+            result.push({
+                rpi: owl.rpi_version || 'unknown',
+                requestedW: owl.requested_resolution_width || owl.resolution_width || 0,
+                requestedH: owl.requested_resolution_height || owl.resolution_height || 0,
+                actualW: owl.resolution_width || 0,
+                actualH: owl.resolution_height || 0,
+                deviceId: id
+            });
+        }
+    }
+    return result;
+}
+
+/**
  * Find the first connected OWL with resolution below maximum.
  * Returns {w, h} or null if all are at max (or resolution unknown).
  */
@@ -231,10 +290,12 @@ function toggleTracking() {
 // TRACK STABILITY
 // ============================================
 
+// match_thresh is a cost limit on (1 - IoU): HIGHER = more lenient matching.
+// Must stay in sync with GreenOnGreen.TRACK_STABILITY_PRESETS (utils/greenongreen.py).
 var TRACK_STABILITY_PRESETS = {
-    low:    { track_high_thresh: 0.3,  track_low_thresh: 0.15, new_track_thresh: 0.3,  track_buffer: 30, match_thresh: 0.8 },
-    medium: { track_high_thresh: 0.2,  track_low_thresh: 0.05, new_track_thresh: 0.2,  track_buffer: 60, match_thresh: 0.7 },
-    high:   { track_high_thresh: 0.15, track_low_thresh: 0.05, new_track_thresh: 0.15, track_buffer: 90, match_thresh: 0.6 }
+    low:    { track_high_thresh: 0.3,  track_low_thresh: 0.15, new_track_thresh: 0.3,  track_buffer: 30, match_thresh: 0.7 },
+    medium: { track_high_thresh: 0.2,  track_low_thresh: 0.05, new_track_thresh: 0.2,  track_buffer: 60, match_thresh: 0.8 },
+    high:   { track_high_thresh: 0.15, track_low_thresh: 0.05, new_track_thresh: 0.15, track_buffer: 90, match_thresh: 0.9 }
 };
 
 function setTrackStability(level) {

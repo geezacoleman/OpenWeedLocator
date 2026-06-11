@@ -140,6 +140,12 @@ class OWLMQTTPublisher:
             # Camera resolution
             'resolution_width': 0,
             'resolution_height': 0,
+            'requested_resolution_width': 0,
+            'requested_resolution_height': 0,
+            'resolution_clamped': False,
+            'allow_high_resolution': False,
+            # Hardware
+            'rpi_version': 'unknown',
             # Model download state
             'model_download': {
                 'status': 'idle',
@@ -262,10 +268,34 @@ class OWLMQTTPublisher:
             sp = getattr(self.owl_instance, 'switch_purpose', None)
             self.state['switch_purpose'] = sp if isinstance(sp, str) else 'recording'
 
-            # Camera resolution
+            # Camera resolution (actual, post-clamp) + requested + clamp flag.
+            # Each field is type-guarded because owl_instance may be a Mock in
+            # tests — bare getattr would leak MagicMock objects into the state
+            # dict and break json.dumps in _publish_state.
             res = getattr(self.owl_instance, 'resolution', (0, 0))
-            self.state['resolution_width'] = res[0]
-            self.state['resolution_height'] = res[1]
+            if isinstance(res, tuple) and len(res) == 2 and all(isinstance(v, int) for v in res):
+                self.state['resolution_width'] = res[0]
+                self.state['resolution_height'] = res[1]
+            else:
+                res = (0, 0)
+            requested = getattr(self.owl_instance, 'requested_resolution', res)
+            if isinstance(requested, tuple) and len(requested) == 2 and all(isinstance(v, int) for v in requested):
+                self.state['requested_resolution_width'] = requested[0]
+                self.state['requested_resolution_height'] = requested[1]
+            else:
+                self.state['requested_resolution_width'] = self.state['resolution_width']
+                self.state['requested_resolution_height'] = self.state['resolution_height']
+            clamped = getattr(self.owl_instance, 'resolution_clamped', False)
+            self.state['resolution_clamped'] = clamped if isinstance(clamped, bool) else False
+            rpi_version = getattr(self.owl_instance, 'RPI_VERSION', 'unknown')
+            self.state['rpi_version'] = rpi_version if isinstance(rpi_version, str) else 'unknown'
+            owl_config = getattr(self.owl_instance, 'config', None)
+            if isinstance(owl_config, configparser.ConfigParser):
+                try:
+                    self.state['allow_high_resolution'] = owl_config.getboolean(
+                        'Camera', 'allow_high_resolution', fallback=False)
+                except Exception:
+                    self.state['allow_high_resolution'] = False
 
             # Check model availability (any NCNN dirs or .pt files in models/)
             self.state['model_available'] = self._check_model_available()
