@@ -46,6 +46,12 @@ MANIFEST
 pip-log.txt
 pip-delete-this-directory.txt
 
+# owl_update.sh artifacts
+.update_status.json
+.update_lock
+.update_backup/
+logs/updates/
+
 # Unit test / coverage reports
 htmlcov/
 .tox/
@@ -163,6 +169,10 @@ agent/sessions/
 # Custom algorithms (user-generated via agent)
 custom_algorithms/
 
+# model files unless explicitly excluded
+/models/*.pt
+/models/*.zip
+
 # Internal design docs (not for public repo)
 claude_docs/
 .claude/
@@ -173,3 +183,8 @@ tmpclaude-*
 /agent_sessions/
 /docs/
 /examples/
+/config/DESKTOP_TEST.ini
+/benchmarks/results/
+.idea
+/tests/e2e/screenshots/
+

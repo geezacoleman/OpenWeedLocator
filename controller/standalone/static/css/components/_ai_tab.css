@@ -240,6 +240,42 @@
     display: block;
 }
 
+/* Geometry editing — shrink-wrap the feed (so the drag overlay aligns to the
+   image, not the container) and cap its height so the controls panel below
+   stays reachable on a phone. */
+.preview-container.geo-host-active {
+    text-align: center;
+    background: #1a1a2e;
+}
+.preview-container.geo-host-active .config-preview-frame {
+    display: inline-block;
+    max-height: 46vh;
+}
+.preview-container.geo-host-active .preview-stream {
+    width: auto;
+    max-width: 100%;
+    max-height: 46vh;
+}
+
+/* Active config indicator — subtle line under the feed (not a metric chip). */
+.active-config-line {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0.5rem 0 0;
+    padding: 0 0.15rem;
+    font-size: 0.82rem;
+    color: var(--text-light, #5a6b7b);
+}
+.active-config-line strong {
+    color: var(--text, #2c3e50);
+    font-weight: 700;
+}
+.active-config-icon {
+    color: #f1c40f;
+    font-size: 0.9rem;
+}
+
 .preview-overlay-message {
     position: absolute;
     top: 0;

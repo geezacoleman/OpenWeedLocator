@@ -254,6 +254,27 @@
     height: 16px;
 }
 
+.config-modal-hint {
+    margin: 0.75rem 0 0 0;
+    font-size: 0.8rem;
+    color: var(--text-light);
+    line-height: 1.4;
+}
+
+/* Save-dialog Update/Save-as-new radio lines (shared) */
+.radio-line {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.35rem;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+.radio-line input[type="radio"] {
+    width: 20px;
+    height: 20px;
+}
+
 /* -------------------------------------------------------------------------
    Modal Sizes
    ------------------------------------------------------------------------- */

@@ -196,22 +196,32 @@ class TestGPSStateIntegration:
         assert d['age_seconds'] > 10
 
     def test_gps_data_dict_format_matches_exif(self):
-        """GPS data dict must have 'latitude' and 'longitude' keys for add_gps_exif()."""
+        """GPS data dict must carry the keys build_exif_bytes() maps to GPS tags."""
         state = GPSState()
         parsed = parse_sentence(make_rmc())
         state.update_from_rmc(parsed)
         d = state.get_dict()
 
-        # Simulate what _get_best_gps_data returns
+        # Simulate what _get_best_gps_data returns (serial branch)
         gps_data = {
             'latitude': d['latitude'],
             'longitude': d['longitude'],
             'accuracy': d.get('hdop'),
+            'hdop': d.get('hdop'),
+            'altitude': d.get('altitude'),
+            'speed_kmh': d.get('speed_kmh'),
+            'heading': d.get('heading'),
+            'satellites': d.get('satellites'),
+            'utc_time': d.get('utc_time'),
+            'utc_date': d.get('utc_date'),
             'timestamp': time.time()
         }
-        assert 'latitude' in gps_data
-        assert 'longitude' in gps_data
         assert gps_data['latitude'] is not None
+        assert gps_data['longitude'] is not None
+        # get_dict() must expose every key the serial branch passes through
+        for key in ('hdop', 'altitude', 'speed_kmh', 'heading',
+                    'satellites', 'utc_time', 'utc_date'):
+            assert key in d
 
 
 # ---------------------------------------------------------------------------

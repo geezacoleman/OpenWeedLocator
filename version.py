@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 import platform
 import sys
 import subprocess
@@ -49,15 +50,19 @@ class SystemInfo:
             return None
 
     @staticmethod
-    def get_git_info() -> Optional[dict]:
+    def get_git_info(cwd: Optional[Path] = None) -> Optional[dict]:
+        # Default to the repo this file lives in, not the process CWD —
+        # services may start with an unrelated working directory.
+        if cwd is None:
+            cwd = Path(__file__).parent
         try:
-            # Check if git is available first
-            if subprocess.call(['which', 'git'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0:
-                raise FileNotFoundError("Git not available")
-
-            commit = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD']).decode('ascii').strip()
-            branch = subprocess.check_output(['git', 'rev-parse', '--abbrev-ref', 'HEAD']).decode('ascii').strip()
+            commit = subprocess.check_output(
+                ['git', 'rev-parse', '--short', 'HEAD'],
+                cwd=cwd, stderr=subprocess.DEVNULL).decode('ascii').strip()
+            branch = subprocess.check_output(
+                ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                cwd=cwd, stderr=subprocess.DEVNULL).decode('ascii').strip()
             return {'commit': commit, 'branch': branch}
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError) as e:
             SystemInfo.logger.warning("Git information could not be retrieved: %s", e)
             return None

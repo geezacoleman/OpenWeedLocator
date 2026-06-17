@@ -74,8 +74,19 @@ function setupEventListeners() {
 
     // Config action buttons — broadcast to all OWLs
     document.getElementById('apply-all-btn')?.addEventListener('click', sendAllToDevice);
-    document.getElementById('save-all-btn')?.addEventListener('click', saveToAll);
+    document.getElementById('save-all-btn')?.addEventListener('click', openSaveModal);
     document.getElementById('load-preset-btn')?.addEventListener('click', loadPresetToDevice);
+    document.getElementById('set-default-btn')?.addEventListener('click', setDefaultConfig);
+
+    // Save dialog
+    document.getElementById('config-save-cancel')?.addEventListener('click', closeSaveModal);
+    document.getElementById('config-save-confirm')?.addEventListener('click', confirmSaveToAll);
+
+    // Restart-required notice
+    document.getElementById('config-restart-btn')?.addEventListener('click', () => {
+        sendCommand('all', 'restart_service');
+        showToast('Restarting OWLs…', 'info');
+    });
 
     // Advanced Settings — send to single device
     document.getElementById('send-to-single-device-btn')?.addEventListener('click', sendToSingleDevice);

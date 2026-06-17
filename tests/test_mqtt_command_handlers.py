@@ -875,3 +875,352 @@ class TestShutdown:
         with patch('subprocess.Popen', side_effect=OSError('not found')):
             # Should not raise — error is caught and logged
             mqtt_publisher._handle_command({'action': 'shutdown'})
+
+
+# ---------------------------------------------------------------------------
+# update_software
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestUpdateSoftware:
+    """Tests for the update_software command handler (remote git update)."""
+
+    def _expected_argv(self, mqtt_publisher, ref, request_id):
+        import getpass
+        from pathlib import Path
+        user = getpass.getuser()
+        repo_dir = Path(mqtt_publisher._update_status_path).parent
+        return [
+            'sudo', '-n', '/usr/bin/systemd-run',
+            '--unit=owl-update', '--collect',
+            '--property=RuntimeMaxSec=1800',
+            f'--uid={user}', f'--gid={user}',
+            '/bin/bash', str(repo_dir / 'owl_update.sh'),
+            '--unattended', '--ref', ref,
+            '--request-id', request_id,
+            '--status-file', str(mqtt_publisher._update_status_path),
+        ]
+
+    def test_valid_ref_launches_systemd_run(self, mqtt_publisher, mock_owl):
+        with patch('subprocess.Popen') as mock_popen:
+            mqtt_publisher._handle_command({
+                'action': 'update_software', 'ref': 'main', 'request_id': 'req-1'
+            })
+        mock_popen.assert_called_once()
+        argv = mock_popen.call_args[0][0]
+        assert argv == self._expected_argv(mqtt_publisher, 'main', 'req-1')
+
+    def test_seeds_starting_state_with_request_id(self, mqtt_publisher, mock_owl):
+        with patch('subprocess.Popen'):
+            mqtt_publisher._handle_command({
+                'action': 'update_software', 'ref': 'main', 'request_id': 'req-2'
+            })
+        su = mqtt_publisher.state['software_update']
+        assert su['status'] == 'starting'
+        assert su['request_id'] == 'req-2'
+        assert su['ref'] == 'main'
+
+    @pytest.mark.parametrize('bad_ref', [
+        '../etc/passwd', 'a..b', 'https://evil.com/repo', 'main; rm -rf x',
+        '-rf', '', 'branch name with spaces',
+    ])
+    def test_invalid_ref_rejected(self, mqtt_publisher, mock_owl, bad_ref, caplog):
+        import logging
+        with patch('subprocess.Popen') as mock_popen, caplog.at_level(logging.WARNING):
+            mqtt_publisher._handle_command({
+                'action': 'update_software', 'ref': bad_ref, 'request_id': 'r'
+            })
+        mock_popen.assert_not_called()
+        assert mqtt_publisher.state['software_update']['status'] == 'error'
+        assert any('update_software refused' in r.message for r in caplog.records)
+
+    def test_refused_while_update_in_progress(self, mqtt_publisher, mock_owl):
+        mqtt_publisher.state['software_update']['status'] = 'fetching'
+        with patch('subprocess.Popen') as mock_popen:
+            mqtt_publisher._handle_command({
+                'action': 'update_software', 'ref': 'main', 'request_id': 'r'
+            })
+        mock_popen.assert_not_called()
+        assert mqtt_publisher.state['software_update']['status'] == 'error'
+        assert 'already in progress' in mqtt_publisher.state['software_update']['error']
+
+    def test_refused_while_transfer_in_progress(self, mqtt_publisher, mock_owl):
+        mqtt_publisher.state['data_transfer']['status'] = 'uploading'
+        with patch('subprocess.Popen') as mock_popen:
+            mqtt_publisher._handle_command({
+                'action': 'update_software', 'ref': 'main', 'request_id': 'r'
+            })
+        mock_popen.assert_not_called()
+        assert 'transfer in progress' in mqtt_publisher.state['software_update']['error']
+
+    def test_popen_failure_reports_error(self, mqtt_publisher, mock_owl):
+        with patch('subprocess.Popen', side_effect=OSError('sudo denied')):
+            mqtt_publisher._handle_command({
+                'action': 'update_software', 'ref': 'main', 'request_id': 'r'
+            })
+        assert mqtt_publisher.state['software_update']['status'] == 'error'
+        assert 'failed to launch' in mqtt_publisher.state['software_update']['error']
+
+    def test_terminal_statuses_allow_new_update(self, mqtt_publisher, mock_owl):
+        for terminal in ('idle', 'complete', 'rolled_back', 'error'):
+            mqtt_publisher.state['software_update'] = {
+                'request_id': 'old', 'status': terminal, 'ref': 'main',
+                'from': '', 'to': '', 'error': '', 'rollback_failed': False,
+                'updated_at': 0
+            }
+            with patch('subprocess.Popen') as mock_popen:
+                mqtt_publisher._handle_command({
+                    'action': 'update_software', 'ref': 'main', 'request_id': 'new'
+                })
+            mock_popen.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# reboot
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestRebootCommand:
+    """Tests for the reboot command handler."""
+
+    def test_reboot_calls_popen(self, mqtt_publisher, mock_owl):
+        with patch('subprocess.Popen') as mock_popen, \
+             patch('shutil.which', return_value='/usr/sbin/reboot'):
+            mqtt_publisher._handle_command({'action': 'reboot'})
+        mock_popen.assert_called_once()
+        argv = mock_popen.call_args[0][0]
+        assert argv == ['sudo', '-n', '/usr/sbin/reboot']
+
+    def test_reboot_handles_popen_failure(self, mqtt_publisher, mock_owl):
+        with patch('subprocess.Popen', side_effect=OSError('denied')):
+            # Should not raise — error is caught and logged
+            mqtt_publisher._handle_command({'action': 'reboot'})
+
+
+# ---------------------------------------------------------------------------
+# unknown action fallthrough
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestUnknownAction:
+    """Unknown actions must warn loudly — silent no-ops are field failures."""
+
+    def test_unknown_action_logs_warning(self, mqtt_publisher, mock_owl, caplog):
+        import logging
+        with caplog.at_level(logging.WARNING):
+            mqtt_publisher._handle_command({'action': 'frobnicate_the_sprayer'})
+        assert any('frobnicate_the_sprayer' in r.message for r in caplog.records)
+
+    def test_unknown_action_does_not_raise(self, mqtt_publisher, mock_owl):
+        mqtt_publisher._handle_command({'action': 'no_such_action'})
+        # State still published afterwards
+        assert mqtt_publisher.client.publish.called
+
+
+# ---------------------------------------------------------------------------
+# transfer_session method dispatch (POST default, PUT for presigned URLs)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestTransferSessionDispatch:
+    """Method validation and threading for the transfer_session command."""
+
+    def test_default_method_is_post(self, mqtt_publisher, mock_owl):
+        with patch('threading.Thread') as mock_thread:
+            mqtt_publisher._handle_command({
+                'action': 'transfer_session',
+                'session_id': '20260611/session_083015',
+                'upload_url': 'https://controller/api/receive',
+            })
+        mock_thread.assert_called_once()
+        args = mock_thread.call_args.kwargs['args']
+        assert args[3] == 'POST'
+
+    def test_put_method_passed_through(self, mqtt_publisher, mock_owl):
+        with patch('threading.Thread') as mock_thread:
+            mqtt_publisher._handle_command({
+                'action': 'transfer_session',
+                'session_id': '20260611/session_083015',
+                'upload_url': 'https://storage.example.com/presigned',
+                'method': 'put',
+            })
+        mock_thread.assert_called_once()
+        args = mock_thread.call_args.kwargs['args']
+        assert args[3] == 'PUT'
+
+    def test_invalid_method_rejected(self, mqtt_publisher, mock_owl):
+        with patch('threading.Thread') as mock_thread:
+            mqtt_publisher._handle_command({
+                'action': 'transfer_session',
+                'session_id': '20260611/session_083015',
+                'upload_url': 'https://x/y',
+                'method': 'DELETE',
+            })
+        mock_thread.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# GPS update handler (owl/{id}/gps topic) — fail-safe + clock-skew immunity
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestGPSUpdateHandler:
+    """_handle_gps_update must store payloads as-received and stamp local time."""
+
+    def test_minimal_payload_invents_nothing(self, mqtt_publisher, mock_owl):
+        mqtt_publisher._handle_gps_update({'latitude': -33.7, 'longitude': 151.1})
+
+        gps = mqtt_publisher.get_gps_data()
+        assert gps['latitude'] == -33.7
+        assert gps['longitude'] == 151.1
+        # No invented accuracy/timestamp keys in the stored payload
+        assert 'accuracy' not in mqtt_publisher.state['gps_payload']
+        assert 'timestamp' not in mqtt_publisher.state['gps_payload']
+
+    def test_payload_without_coordinates_ignored(self, mqtt_publisher, mock_owl):
+        mqtt_publisher._handle_gps_update({'accuracy': 5.0})
+        assert mqtt_publisher.state['gps_available'] is False
+        assert mqtt_publisher.get_gps_data() is None
+
+    def test_received_at_uses_local_clock(self, mqtt_publisher, mock_owl):
+        """A sender timestamp 100s in the past (clock skew) must not poison staleness."""
+        before = time.time()
+        mqtt_publisher._handle_gps_update({
+            'latitude': -33.7, 'longitude': 151.1,
+            'timestamp': time.time() - 100,  # skewed sender clock
+        })
+        gps = mqtt_publisher.get_gps_data()
+        assert gps['received_at'] >= before
+        # Original sender timestamp preserved for EXIF use
+        assert gps['timestamp'] < before - 90
+
+    def test_full_controller_payload_passes_through(self, mqtt_publisher, mock_owl):
+        payload = {
+            'latitude': -33.7853, 'longitude': 151.1234, 'accuracy': 0.8,
+            'hdop': 0.8, 'altitude': 51.2, 'speed_kmh': 7.2, 'heading': 90.0,
+            'satellites': 10, 'utc_time': '012345.00', 'utc_date': '110626',
+            'timestamp': time.time(),
+        }
+        mqtt_publisher._handle_gps_update(payload)
+        gps = mqtt_publisher.get_gps_data()
+        for key, value in payload.items():
+            assert gps[key] == value
+
+    def test_legacy_flat_keys_updated(self, mqtt_publisher, mock_owl):
+        mqtt_publisher._handle_gps_update({
+            'latitude': -33.7, 'longitude': 151.1, 'accuracy': 2.5,
+        })
+        assert mqtt_publisher.state['gps_latitude'] == -33.7
+        assert mqtt_publisher.state['gps_longitude'] == 151.1
+        assert mqtt_publisher.state['gps_accuracy'] == 2.5
+
+
+@pytest.mark.unit
+class TestGetSessionMetadata:
+
+    def test_returns_copy(self, mqtt_publisher, mock_owl):
+        mqtt_publisher.state['session_metadata'] = {'field_name': 'North', 'crop': 'wheat',
+                                                    'weather': '', 'vehicle': ''}
+        metadata = mqtt_publisher.get_session_metadata()
+        assert metadata['field_name'] == 'North'
+        metadata['field_name'] = 'mutated'
+        assert mqtt_publisher.state['session_metadata']['field_name'] == 'North'
+
+
+# ---------------------------------------------------------------------------
+# transfer_session multipart + upload_previews dispatch (Noktura CR-2/CR-3)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestTransferSessionDispatch:
+
+    def test_dispatches_with_upload_object_and_request_id(self, mqtt_publisher):
+        upload = {'upload_id': 'uid-1', 'part_size': 104857600,
+                  'parts': [{'part_number': 1, 'url': 'https://s3/p1'}]}
+        with patch('utils.mqtt_manager.threading.Thread') as mock_thread:
+            mqtt_publisher._handle_command({
+                'action': 'transfer_session',
+                'session_id': '20260611/session_083015',
+                'data_types': ['images'],
+                'request_id': 'req-1',
+                'upload': upload,
+            })
+        kwargs = mock_thread.call_args.kwargs
+        assert kwargs['target'] == mqtt_publisher._upload_session
+        assert kwargs['args'][0] == '20260611/session_083015'
+        assert kwargs['kwargs'] == {'request_id': 'req-1', 'upload': upload}
+
+    def test_multipart_without_upload_url_is_accepted(self, mqtt_publisher):
+        """Multipart commands carry part URLs instead of a single upload_url."""
+        upload = {'upload_id': 'uid-1', 'part_size': 1000,
+                  'parts': [{'part_number': 1, 'url': 'https://s3/p1'}]}
+        with patch('utils.mqtt_manager.threading.Thread') as mock_thread:
+            mqtt_publisher._handle_command({
+                'action': 'transfer_session',
+                'session_id': '20260611',
+                'method': 'PUT',
+                'upload': upload,
+            })
+        assert mock_thread.called
+
+    def test_invalid_upload_object_rejected(self, mqtt_publisher):
+        """Missing parts list means no thread is spawned."""
+        with patch('utils.mqtt_manager.threading.Thread') as mock_thread:
+            mqtt_publisher._handle_command({
+                'action': 'transfer_session',
+                'session_id': '20260611',
+                'upload': {'upload_id': 'uid-1', 'part_size': 1000, 'parts': []},
+            })
+        assert not mock_thread.called
+
+    def test_plain_transfer_still_dispatches(self, mqtt_publisher):
+        """Legacy single-URL command shape keeps working."""
+        with patch('utils.mqtt_manager.threading.Thread') as mock_thread:
+            mqtt_publisher._handle_command({
+                'action': 'transfer_session',
+                'session_id': '20260611',
+                'upload_url': 'https://example.com/upload',
+                'method': 'PUT',
+            })
+        kwargs = mock_thread.call_args.kwargs
+        assert kwargs['target'] == mqtt_publisher._upload_session
+        assert kwargs['kwargs'] == {'request_id': '', 'upload': None}
+
+
+@pytest.mark.unit
+class TestUploadPreviewsDispatch:
+
+    def test_dispatches_with_args(self, mqtt_publisher):
+        urls = ['https://s3/p1', 'https://s3/p2']
+        with patch('utils.mqtt_manager.threading.Thread') as mock_thread:
+            mqtt_publisher._handle_command({
+                'action': 'upload_previews',
+                'request_id': 'req-1',
+                'session_id': '20260611/session_083015',
+                'count': 2,
+                'max_dimension': 800,
+                'upload_urls': urls,
+            })
+        kwargs = mock_thread.call_args.kwargs
+        assert kwargs['target'] == mqtt_publisher._upload_previews
+        assert kwargs['args'] == ('req-1', '20260611/session_083015', 2, 800, urls)
+
+    def test_missing_urls_rejected(self, mqtt_publisher):
+        with patch('utils.mqtt_manager.threading.Thread') as mock_thread:
+            mqtt_publisher._handle_command({
+                'action': 'upload_previews',
+                'request_id': 'req-1',
+                'session_id': '20260611/session_083015',
+                'count': 2,
+            })
+        assert not mock_thread.called
+
+    def test_invalid_count_rejected(self, mqtt_publisher):
+        with patch('utils.mqtt_manager.threading.Thread') as mock_thread:
+            mqtt_publisher._handle_command({
+                'action': 'upload_previews',
+                'session_id': '20260611/session_083015',
+                'count': 'lots',
+                'upload_urls': ['https://s3/p1'],
+            })
+        assert not mock_thread.called

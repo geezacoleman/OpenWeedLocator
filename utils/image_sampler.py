@@ -1,7 +1,8 @@
 import cv2
+import json
 import os
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timezone
 from multiprocessing import Process, Queue
 from multiprocessing.queues import Empty
 from utils.log_manager import LogManager
@@ -10,45 +11,163 @@ from PIL import Image
 
 try:
     import piexif
+    import piexif.helper
 except ImportError as e:
     from utils.error_manager import DependencyError
     raise DependencyError('piexif', str(e))
 
 logger = LogManager.get_logger(__name__)
 
-def add_gps_exif(pil_image, gps_data, quality=95):
+
+def _decimal_to_dms(value):
+    """Decimal degrees -> EXIF rationals as degrees + decimal minutes.
+
+    Matches NMEA's native DDMM.MMMM precision (~0.2 m); rounding instead of
+    truncating avoids the up-to-0.3 m southward/westward bias of the old int() code.
     """
-    Convert a PIL Image to JPEG bytes embedding GPS EXIF data if available."""
-    buf = BytesIO()
-    if not gps_data or 'latitude' not in gps_data or 'longitude' not in gps_data:
-        pil_image.save(buf, format='JPEG', quality=quality, subsampling=0, optimize=True, progressive=True)
-        return buf.getvalue()
+    value = abs(value)
+    degrees = int(value)
+    minutes = round((value - degrees) * 60 * 10000)
+    if minutes >= 60 * 10000:  # rounding carried into the next degree
+        degrees += 1
+        minutes -= 60 * 10000
+    return [(degrees, 1), (minutes, 10000), (0, 1)]
+
+
+def _nmea_time_to_rationals(time_utc):
+    """NMEA 'hhmmss[.sss]' -> EXIF GPSTimeStamp rationals, or None if malformed."""
     try:
-        lat = float(gps_data.get('latitude'))
-        lon = float(gps_data.get('longitude'))
+        hours = int(time_utc[0:2])
+        minutes = int(time_utc[2:4])
+        seconds = float(time_utc[4:])
+        if not (0 <= hours < 24 and 0 <= minutes < 60 and 0 <= seconds < 61):
+            return None
+        return [(hours, 1), (minutes, 1), (round(seconds * 1000), 1000)]
+    except (ValueError, IndexError, TypeError):
+        return None
 
-        lat_deg = int(abs(lat))
-        lat_min = int((abs(lat) - lat_deg) * 60)
-        lat_sec = int((((abs(lat) - lat_deg) * 60) - lat_min) * 60 * 100)
 
-        lon_deg = int(abs(lon))
-        lon_min = int((abs(lon) - lon_deg) * 60)
-        lon_sec = int((((abs(lon) - lon_deg) * 60) - lon_min) * 60 * 100)
+def _nmea_date_to_stamp(date):
+    """NMEA 'ddmmyy' -> EXIF 'YYYY:MM:DD', or None if malformed."""
+    try:
+        day = int(date[0:2])
+        month = int(date[2:4])
+        year = 2000 + int(date[4:6])
+        if not (1 <= day <= 31 and 1 <= month <= 12):
+            return None
+        return f"{year:04d}:{month:02d}:{day:02d}"
+    except (ValueError, IndexError, TypeError):
+        return None
 
-        exif_dict = {
-            "GPS": {
-                piexif.GPSIFD.GPSLatitudeRef: 'N' if lat >= 0 else 'S',
-                piexif.GPSIFD.GPSLatitude: [(lat_deg, 1), (lat_min, 1), (lat_sec, 100)],
-                piexif.GPSIFD.GPSLongitudeRef: 'E' if lon >= 0 else 'W',
-                piexif.GPSIFD.GPSLongitude: [(lon_deg, 1), (lon_min, 1), (lon_sec, 100)]
-            }
-        }
-        exif_bytes = piexif.dump(exif_dict)
-        pil_image.save(buf, format='JPEG', exif=exif_bytes,
-                       quality=quality, subsampling=0, optimize=True, progressive=True)
+
+def build_exif_bytes(gps_data=None, camera_metadata=None, context=None, capture_time=None):
+    """Build EXIF bytes for a saved image from whatever sources are available.
+
+    Fail-safe by design: every tag is written only when its source value is
+    actually present — absent data means the tag is omitted entirely, never
+    substituted with a default or invented value.
+
+    :param gps_data: dict with latitude/longitude and optional hdop, accuracy,
+        altitude, speed_kmh, heading, satellites, utc_time, utc_date (NMEA strings)
+    :param camera_metadata: picamera2 per-frame metadata dict (ExposureTime µs,
+        AnalogueGain, DigitalGain, Lux, ...) or None on webcams
+    :param context: dict with camera_model, owl_version, device_id, algorithm,
+        model, and farmer session metadata (field_name, crop, weather, vehicle)
+    :param capture_time: tz-aware datetime of frame capture
+    :return: piexif-encoded bytes, or None when there is nothing to embed
+    """
+    try:
+        zeroth, exif_ifd, gps_ifd = {}, {}, {}
+
+        if capture_time is not None:
+            local_time = capture_time.astimezone()
+            stamp = local_time.strftime('%Y:%m:%d %H:%M:%S')
+            zeroth[piexif.ImageIFD.DateTime] = stamp
+            exif_ifd[piexif.ExifIFD.DateTimeOriginal] = stamp
+            exif_ifd[piexif.ExifIFD.DateTimeDigitized] = stamp
+            exif_ifd[piexif.ExifIFD.SubSecTimeOriginal] = f"{capture_time.microsecond // 1000:03d}"
+            offset = local_time.strftime('%z')  # e.g. '+1000'
+            if offset and hasattr(piexif.ExifIFD, 'OffsetTimeOriginal'):  # EXIF 2.31, older piexif lacks it
+                exif_ifd[piexif.ExifIFD.OffsetTimeOriginal] = f"{offset[:3]}:{offset[3:]}"
+
+        context = {k: v for k, v in (context or {}).items() if v not in (None, '')}
+        camera_model = context.pop('camera_model', None)
+        if camera_model:
+            zeroth[piexif.ImageIFD.Make] = 'Raspberry Pi'
+            zeroth[piexif.ImageIFD.Model] = str(camera_model)
+        owl_version = context.pop('owl_version', None)
+        if owl_version:
+            zeroth[piexif.ImageIFD.Software] = f"OpenWeedLocator {owl_version}"
+        if context:  # device_id, algorithm, model, session metadata
+            zeroth[piexif.ImageIFD.ImageDescription] = json.dumps(context)
+
+        if camera_metadata:
+            exposure_us = camera_metadata.get('ExposureTime')
+            if exposure_us:
+                exif_ifd[piexif.ExifIFD.ExposureTime] = (int(exposure_us), 1_000_000)
+            analogue_gain = camera_metadata.get('AnalogueGain')
+            if analogue_gain:
+                # libcamera convention: ISO equivalent = total gain x 100
+                total_gain = analogue_gain * (camera_metadata.get('DigitalGain') or 1.0)
+                exif_ifd[piexif.ExifIFD.ISOSpeedRatings] = round(total_gain * 100)
+            lens_position = camera_metadata.get('LensPosition')
+            if lens_position:  # dioptres -> metres
+                exif_ifd[piexif.ExifIFD.SubjectDistance] = (round(100 / lens_position), 100)
+            # Complete raw metadata for scientific traceability (authoritative record)
+            exif_ifd[piexif.ExifIFD.UserComment] = piexif.helper.UserComment.dump(
+                json.dumps(camera_metadata, default=str))
+
+        if gps_data and gps_data.get('latitude') is not None and gps_data.get('longitude') is not None:
+            lat = float(gps_data['latitude'])
+            lon = float(gps_data['longitude'])
+            gps_ifd[piexif.GPSIFD.GPSVersionID] = (2, 3, 0, 0)
+            gps_ifd[piexif.GPSIFD.GPSLatitudeRef] = 'N' if lat >= 0 else 'S'
+            gps_ifd[piexif.GPSIFD.GPSLatitude] = _decimal_to_dms(lat)
+            gps_ifd[piexif.GPSIFD.GPSLongitudeRef] = 'E' if lon >= 0 else 'W'
+            gps_ifd[piexif.GPSIFD.GPSLongitude] = _decimal_to_dms(lon)
+            gps_ifd[piexif.GPSIFD.GPSMapDatum] = 'WGS-84'
+
+            if gps_data.get('altitude') is not None:
+                altitude = float(gps_data['altitude'])
+                gps_ifd[piexif.GPSIFD.GPSAltitudeRef] = 1 if altitude < 0 else 0
+                gps_ifd[piexif.GPSIFD.GPSAltitude] = (round(abs(altitude) * 100), 100)
+            if gps_data.get('hdop') is not None:
+                gps_ifd[piexif.GPSIFD.GPSDOP] = (round(float(gps_data['hdop']) * 100), 100)
+            elif gps_data.get('accuracy') is not None and hasattr(piexif.GPSIFD, 'GPSHPositioningError'):
+                # browser geolocation reports accuracy in metres, not HDOP
+                gps_ifd[piexif.GPSIFD.GPSHPositioningError] = (round(float(gps_data['accuracy']) * 100), 100)
+            if gps_data.get('speed_kmh') is not None:
+                gps_ifd[piexif.GPSIFD.GPSSpeedRef] = 'K'
+                gps_ifd[piexif.GPSIFD.GPSSpeed] = (round(float(gps_data['speed_kmh']) * 100), 100)
+            if gps_data.get('heading') is not None:
+                gps_ifd[piexif.GPSIFD.GPSImgDirectionRef] = 'T'
+                gps_ifd[piexif.GPSIFD.GPSImgDirection] = (round(float(gps_data['heading']) * 100), 100)
+            if gps_data.get('satellites') is not None:
+                gps_ifd[piexif.GPSIFD.GPSSatellites] = str(gps_data['satellites'])
+
+            # NMEA UTC is GPS ground truth — correct even when the Pi clock is wrong
+            gps_time = _nmea_time_to_rationals(gps_data.get('utc_time')) if gps_data.get('utc_time') else None
+            gps_date = _nmea_date_to_stamp(gps_data.get('utc_date')) if gps_data.get('utc_date') else None
+            if gps_time and gps_date:  # only meaningful as a pair
+                gps_ifd[piexif.GPSIFD.GPSTimeStamp] = gps_time
+                gps_ifd[piexif.GPSIFD.GPSDateStamp] = gps_date
+
+        if not (zeroth or exif_ifd or gps_ifd):
+            return None
+        return piexif.dump({'0th': zeroth, 'Exif': exif_ifd, 'GPS': gps_ifd})
+
     except Exception as e:
-        logger.error(f"Failed to embed GPS EXIF data: {e}")
-        pil_image.save(buf, format='JPEG', quality=quality, subsampling=0, optimize=True, progressive=True)
+        logger.error(f"Failed to build EXIF metadata, image will be saved without it: {e}")
+        return None
+
+
+def encode_jpeg(pil_image, exif_bytes=None, quality=95):
+    """Encode a PIL Image to JPEG bytes, embedding EXIF when provided."""
+    buf = BytesIO()
+    save_kwargs = dict(format='JPEG', quality=quality, subsampling=0, optimize=True, progressive=True)
+    if exif_bytes:
+        save_kwargs['exif'] = exif_bytes
+    pil_image.save(buf, **save_kwargs)
     return buf.getvalue()
 
 
@@ -77,7 +196,8 @@ class ImageRecorder:
     def save_images(self):
         while self.running or not self.queue.empty():
             try:
-                frame, frame_id, boxes, centres, gps_data = self.queue.get(timeout=3)
+                frame, frame_id, boxes, centres, gps_data, camera_metadata, context, capture_time = \
+                    self.queue.get(timeout=3)
             except Empty:
                 if not self.running:
                     break
@@ -86,37 +206,45 @@ class ImageRecorder:
                 self.logger.info("[INFO] KeyboardInterrupt received in save_images. Exiting.")
                 break
 
-            self.process_frame(frame, frame_id, boxes, centres, gps_data)
+            self.process_frame(frame, frame_id, boxes, centres, gps_data,
+                               camera_metadata, context, capture_time)
 
-    def process_frame(self, frame, frame_id, boxes, centres, gps_data):
-        timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H%M%S.%f')[:-3] + 'Z'
+    def process_frame(self, frame, frame_id, boxes, centres, gps_data,
+                      camera_metadata=None, context=None, capture_time=None):
+        if capture_time is None:
+            capture_time = datetime.now(timezone.utc)
+        timestamp = capture_time.strftime('%Y-%m-%dT%H%M%S.%f')[:-3] + 'Z'
+        exif_bytes = build_exif_bytes(gps_data=gps_data,
+                                      camera_metadata=camera_metadata,
+                                      context=context,
+                                      capture_time=capture_time)
         if self.mode == 'whole':
-            self.save_frame(frame, frame_id, timestamp, gps_data)
+            self.save_frame(frame, frame_id, timestamp, exif_bytes)
         elif self.mode == 'bbox':
-            self.save_bboxes(frame, frame_id, boxes, timestamp, gps_data)
+            self.save_bboxes(frame, frame_id, boxes, timestamp, exif_bytes)
         elif self.mode == 'square':
-            self.save_squares(frame, frame_id, centres, timestamp, gps_data)
+            self.save_squares(frame, frame_id, centres, timestamp, exif_bytes)
 
-    def save_frame(self, frame, frame_id, timestamp, gps_data):
+    def save_frame(self, frame, frame_id, timestamp, exif_bytes):
         filename = f"{timestamp}_frame_{frame_id}.jpg"
         filepath = os.path.join(self.save_directory, filename)
         image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        image_bytes = add_gps_exif(image, gps_data)
+        image_bytes = encode_jpeg(image, exif_bytes)
         with open(filepath, 'wb') as f:
             f.write(image_bytes)
 
-    def save_bboxes(self, frame, frame_id, boxes, timestamp, gps_data):
+    def save_bboxes(self, frame, frame_id, boxes, timestamp, exif_bytes):
         for contour_id, box in enumerate(boxes):
             startX, startY, width, height = box
             cropped_image = frame[startY:startY+height, startX:startX+width]
             filename = f"{timestamp}_frame_{frame_id}_n_{str(contour_id)}.jpg"
             filepath = os.path.join(self.save_directory, filename)
             image = Image.fromarray(cv2.cvtColor(cropped_image, cv2.COLOR_BGR2RGB))
-            image_bytes = add_gps_exif(image, gps_data)
+            image_bytes = encode_jpeg(image, exif_bytes)
             with open(filepath, 'wb') as f:
                 f.write(image_bytes)
 
-    def save_squares(self, frame, frame_id, centres, timestamp, gps_data):
+    def save_squares(self, frame, frame_id, centres, timestamp, exif_bytes):
         side_length = min(200, frame.shape[0])
         halfLength = side_length // 2
         for contour_id, centre in enumerate(centres):
@@ -132,13 +260,17 @@ class ImageRecorder:
             filename = f"{timestamp}_frame_{frame_id}_n_{str(contour_id)}.jpg"
             filepath = os.path.join(self.save_directory, filename)
             image = Image.fromarray(cv2.cvtColor(square_image, cv2.COLOR_BGR2RGB))
-            image_bytes = add_gps_exif(image, gps_data)
+            image_bytes = encode_jpeg(image, exif_bytes)
             with open(filepath, 'wb') as f:
                 f.write(image_bytes)
 
-    def add_frame(self, frame, frame_id, boxes, centres, gps_data=None):
+    def add_frame(self, frame, frame_id, boxes, centres, gps_data=None,
+                  camera_metadata=None, context=None):
+        # Stamp capture time here, not at dequeue — frames can sit in the queue
+        capture_time = datetime.now(timezone.utc)
         if not self.queue.full():
-            self.queue.put((frame, frame_id, boxes, centres, gps_data))
+            self.queue.put((frame, frame_id, boxes, centres, gps_data,
+                            camera_metadata, context, capture_time))
         else:
             self.logger.info("[INFO] Queue is full, spinning up new process. Frame skipped.")
 

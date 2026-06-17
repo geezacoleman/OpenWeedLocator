@@ -37,6 +37,12 @@
     animation: pulse 1s infinite;
 }
 
+/* Neutral / not-configured (e.g. cloud link off) — calm grey, no alarm */
+.status-dot.neutral {
+    background-color: #95a5a6;
+    animation: none;
+}
+
 /* Smaller variant */
 .status-dot--sm {
     width: 8px;
@@ -47,6 +53,64 @@
 .status-dot--lg {
     width: 16px;
     height: 16px;
+}
+
+/* -------------------------------------------------------------------------
+   Cloud (Noktura) manage card — Config tab
+   ------------------------------------------------------------------------- */
+.cloud-manage-card {
+    background: white;
+    border: 1px solid #dce1e8;
+    border-radius: var(--radius-md);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+    padding: 1rem 1.25rem;
+    margin-bottom: 1rem;
+}
+
+.cloud-manage-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.cloud-manage-head h2,
+.cloud-manage-head h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.cloud-manage-status {
+    margin: 0 0 0.75rem;
+    font-size: 0.85rem;
+    color: var(--text-muted, #5a6470);
+    line-height: 1.4;
+}
+
+.cloud-manage-detail {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.cloud-manage-link {
+    font-size: 0.85rem;
+    word-break: break-all;
+    color: var(--accent, #2980b9);
+}
+
+.cloud-manage-qr {
+    width: 140px;
+    height: 140px;
+    flex-shrink: 0;
+}
+
+.cloud-manage-qr svg {
+    width: 100%;
+    height: 100%;
+    display: block;
 }
 
 /* -------------------------------------------------------------------------

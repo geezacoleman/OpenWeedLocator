@@ -57,7 +57,9 @@ Defaults shown are from `GENERAL_CONFIG.ini`.
 | `relay_num` | `4` | 0+ (integer) | Number of relays connected to the OWL. Must match entries in `[Relays]` |
 | `actuation_duration` | `0.15` | Seconds (float) | How long each relay stays on when a weed is detected |
 | `delay` | `0` | Seconds (float) | Delay between detection and relay actuation. Use for speed/distance compensation |
-| `actuation_zone` | `100` | 1--100 (integer) | Percentage of the frame width used for relay lane mapping |
+| `actuation_top` | `0.0` | 0.0 to 1.0 (float) | Top of the actuation band as a fraction of cropped height (0.0 = top). A weed fires its relay only while its centre is inside the band. Raise to ignore weeds too far ahead |
+| `actuation_bottom` | `1.0` | 0.0 to 1.0 (float) | Bottom of the actuation band as a fraction of cropped height (1.0 = bottom). Lower to ignore weeds too close |
+| `actuation_zone` | `100` | 1--100 (integer) | **Legacy** bottom-anchored zone (%). Used only if `actuation_top`/`actuation_bottom` are absent |
 
 ### Detection algorithms
 
@@ -82,10 +84,20 @@ All algorithms except `gog`, `gog-hybrid`, and `hsv` use the `[GreenOnBrown]` th
 | `resolution_width` | `1456` | 1+ (integer) | Camera capture width in pixels |
 | `resolution_height` | `1088` | 1+ (integer) | Camera capture height in pixels |
 | `exp_compensation` | `-2` | -10 to 10 (integer) | Exposure compensation. Negative = darker (reduces sky/soil glare) |
-| `crop_factor_horizontal` | `0.02` | 0.0 to 0.5 (float) | Fraction of image width to crop from each side. Removes edge distortion |
-| `crop_factor_vertical` | `0.02` | 0.0 to 0.5 (float) | Fraction of image height to crop from top and bottom |
+| `crop_left` | `0.02` | 0.0 to 0.49 (float) | Fraction of image width cropped from the left edge |
+| `crop_right` | `0.02` | 0.0 to 0.49 (float) | Fraction of image width cropped from the right edge |
+| `crop_top` | `0.02` | 0.0 to 0.49 (float) | Fraction of image height cropped from the top edge |
+| `crop_bottom` | `0.02` | 0.0 to 0.49 (float) | Fraction of image height cropped from the bottom edge. Relay lanes spread across the cropped width and recenter automatically |
+| `crop_factor_horizontal` | `0.02` | 0.0 to 0.5 (float) | **Legacy** symmetric horizontal crop. Used only if `crop_left`/`crop_right` are absent |
+| `crop_factor_vertical` | `0.02` | 0.0 to 0.5 (float) | **Legacy** symmetric vertical crop. Used only if `crop_top`/`crop_bottom` are absent |
 
 Higher resolution gives better detection of small weeds but is slower. The dashboard provides resolution presets as a dropdown.
+
+> **Geometry lives in `GEOMETRY.ini`.** The crop edges (`crop_left/right/top/bottom`)
+> and the actuation band (`actuation_top/bottom`) are per-unit mount geometry kept in
+> a separate `config/GEOMETRY.ini`, read **last** so it always wins. Named detection
+> configs never carry geometry, so switching/saving them doesn't disturb a unit's crop.
+> Set it via the dashboard's **Adjust geometry** editor or by editing `GEOMETRY.ini`.
 
 ### `[GreenOnBrown]`
 

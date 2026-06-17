@@ -71,6 +71,10 @@ class FrameReader:
 
             return frame
 
+    def read_with_metadata(self):
+        # file/video sources have no capture metadata
+        return self.read(), None
+
     def reset(self):
         if self.input_type == "directory":
             # reset the iterator to the beginning of the directory

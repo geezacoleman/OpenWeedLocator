@@ -1,0 +1,16 @@
+# In-cab central controller requirements (~/controller_venv).
+# Single source of truth for controller Python dependencies.
+# Installed by controller/networked/in-cab_controller_setup.sh at setup time
+# AND by owl_update.sh --profile controller during updates — never pip-install
+# packages directly in setup scripts; add them here instead.
+# (OWL detection units use requirements.txt.)
+flask==2.2.2
+werkzeug==2.2.3
+gunicorn==23.0.0
+paho-mqtt==2.1.0
+psutil==5.9.4
+boto3==1.39.13
+requests
+pyserial==3.5
+# AI agent tab (controller/networked agent engine)
+httpx

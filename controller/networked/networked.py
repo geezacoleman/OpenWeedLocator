@@ -18,6 +18,7 @@ from flask import Flask, render_template, jsonify, request, Response, stream_wit
 import urllib3
 import paho.mqtt.client as mqtt
 import json
+import re
 import threading
 import time
 import logging
@@ -26,11 +27,16 @@ import hashlib
 import shutil
 import io
 import subprocess
+import uuid
 import zipfile
 from datetime import datetime
 from pathlib import Path
 import requests
 from werkzeug.utils import secure_filename
+
+from utils.config_manager import (
+    build_config_filename, parse_config_meta, strip_geometry_keys, GEOMETRY_FILE,
+)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -237,6 +243,17 @@ class CentralController:
         self.mqtt_connected = False
         self.mqtt_lock = threading.Lock()
 
+        # Cloud (Noktura) link — fleet-level, one bridge mirrors the whole fleet.
+        # Bridge state comes from a retained $SYS topic on this local broker.
+        self.cloud_enable = self.config.getboolean('Cloud', 'enable', fallback=False)
+        self.cloud_device_id = self.config.get('Cloud', 'device_id', fallback='').strip()
+        self.cloud_portal_url = self.config.get('Cloud', 'portal_url', fallback='').strip().rstrip('/')
+        self.cloud_connected = None  # None = unknown/not configured
+        self.cloud_state_topic = (
+            f'$SYS/broker/connection/owl-bridge-{self.cloud_device_id}/state'
+            if (self.cloud_enable and self.cloud_device_id) else None
+        )
+
         # Allow 7 missed 2s heartbeats before marking offline
         self.offline_timeout = 15.0  # seconds
 
@@ -286,6 +303,21 @@ class CentralController:
             'actuation_length_cm': self.actuation_calculator.actuation_length_cm,
             'offset_cm': self.actuation_calculator.offset_cm,
         }
+
+        # Fleet software update orchestration (rolling, one device at a time)
+        self.fleet_update_lock = threading.Lock()
+        self.fleet_update = {
+            'active': False,
+            'ref': '',
+            'queue': [],          # device_ids not yet updated
+            'current': '',        # device currently updating
+            'include_controller': False,
+            'results': {},        # device_id -> complete|rolled_back|error|timeout|aborted
+            'error': '',
+            'started_at': 0,
+            'finished_at': 0,
+        }
+        self._fleet_update_thread = None
 
         logger.info(f"Central Controller initialized (broker: {self.broker_host}:{self.broker_port})")
 
@@ -371,6 +403,11 @@ class CentralController:
             client.subscribe(topics)
             logger.info(f"Subscribed to {len(topics)} topic patterns")
 
+            # Cloud bridge link state (retained) — only when cloud is configured
+            if self.cloud_state_topic:
+                client.subscribe(self.cloud_state_topic)
+                logger.info(f"Subscribed to cloud bridge state: {self.cloud_state_topic}")
+
             logger.info("Clearing potential ghost OWL retained messages...")
 
         else:
@@ -388,6 +425,12 @@ class CentralController:
     def _on_message(self, client, userdata, msg):
         """Process incoming MQTT messages"""
         try:
+            # Cloud bridge link state — retained $SYS payload is '1'/'0', not an
+            # OWL topic; handle before the owl/<id>/<type> split below.
+            if getattr(self, 'cloud_state_topic', None) and msg.topic == self.cloud_state_topic:
+                self.cloud_connected = (msg.payload.decode(errors='ignore').strip() == '1')
+                return
+
             topic_parts = msg.topic.split('/')
             if len(topic_parts) < 3:
                 return
@@ -545,6 +588,7 @@ class CentralController:
                 # Read speed from GPS manager
                 speed_kmh = None
                 gps_status = 'no_gps'
+                fix = None
 
                 if self.gps_manager:
                     gps_state = self.gps_manager.get_state()
@@ -612,11 +656,44 @@ class CentralController:
                                 topic = f"owl/{owl_id}/commands"
                                 self.mqtt_client.publish(topic, payload)
 
+                # Broadcast GPS position so OWLs can embed it in image EXIF
+                self._broadcast_gps_to_owls(fix)
+
                 time.sleep(1.0)
 
             except Exception as e:
                 logger.error(f"Error in actuation broadcast loop: {e}")
                 time.sleep(2.0)
+
+    def _broadcast_gps_to_owls(self, fix):
+        """Publish the current GPS fix to owl/{id}/gps for all connected OWLs.
+
+        OWLs already subscribe to this topic (browser geolocation uses it in
+        standalone mode) and embed the position in saved-image EXIF. Optional
+        fields are included only when present — never invented.
+        """
+        if not (self.mqtt_client and self.mqtt_connected):
+            return
+        if not fix or not fix.get('fix_valid') or fix.get('latitude') is None:
+            return
+
+        payload = {
+            'latitude': fix['latitude'],
+            'longitude': fix['longitude'],
+            'timestamp': time.time(),
+        }
+        # 'accuracy' mirrors hdop for compatibility with the browser-GPS payload shape
+        if fix.get('hdop') is not None:
+            payload['accuracy'] = fix['hdop']
+        for key in ('hdop', 'altitude', 'speed_kmh', 'heading', 'satellites', 'utc_time', 'utc_date'):
+            if fix.get(key) is not None:
+                payload[key] = fix[key]
+
+        message = json.dumps(payload)
+        with self.mqtt_lock:
+            for owl_id, state in self.owls_state.items():
+                if state.get('connected', False):
+                    self.mqtt_client.publish(f"owl/{owl_id}/gps", message)
 
     def get_owls(self):
         """Get current state of all OWLs"""
@@ -896,15 +973,30 @@ class CentralController:
             }
 
         elif action == 'save_config':
+            value = value or {}
             payload = {
                 'action': 'save_config',
-                'filename': value.get('filename') if value else None
+                'filename': value.get('filename'),
+                'name': value.get('name'),
+                'notes': value.get('notes'),
             }
 
         elif action == 'set_active_config':
             payload = {
                 'action': 'set_active_config',
                 'config': value
+            }
+
+        elif action == 'save_geometry':
+            payload = {
+                'action': 'save_geometry',
+                'params': (value or {}).get('params', {})
+            }
+
+        elif action == 'set_preview_mode':
+            payload = {
+                'action': 'set_preview_mode',
+                'mode': (value or {}).get('mode', 'cropped')
             }
 
         elif action == 'restart_service':
@@ -939,6 +1031,170 @@ class CentralController:
             else:
                 logger.error(f"Failed to publish to {device_id} (code: {result.rc})")
                 return {'success': False, 'error': f"Publish failed (code: {result.rc})"}
+
+    # ------------------------------------------------------------------
+    # Fleet software updates (rolling, sequential, abort on first failure)
+    # ------------------------------------------------------------------
+
+    # Shared with owl_update.sh preflight and mqtt_manager._handle_update_software
+    UPDATE_REF_PATTERN = r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$'
+    # Per-device ceiling: fetch + pip + restart + health check, on 4G
+    FLEET_UPDATE_DEVICE_TIMEOUT = 900  # seconds
+    FLEET_TERMINAL_STATUSES = ('complete', 'rolled_back', 'error')
+
+    def start_fleet_update(self, device_ids, ref, include_controller=False):
+        """Kick off a rolling fleet update. Returns a result dict for the API.
+
+        Devices update one at a time; the first non-complete result aborts
+        the remaining queue so a bad ref can't roll across the whole fleet.
+        The controller itself (include_controller) always goes last so it
+        keeps orchestrating while OWLs update.
+        """
+        ref = str(ref or '')
+        if not re.match(self.UPDATE_REF_PATTERN, ref) or '..' in ref:
+            return {'success': False, 'error': f'invalid ref: {ref!r}'}
+        if not self.mqtt_connected or not self.mqtt_client:
+            return {'success': False, 'error': 'MQTT not connected'}
+
+        with self.mqtt_lock:
+            connected = [oid for oid, s in self.owls_state.items() if s.get('connected', False)]
+        if device_ids == 'all':
+            targets = sorted(connected)
+        else:
+            targets = [str(d) for d in device_ids]
+            unknown = [d for d in targets if d not in connected]
+            if unknown:
+                return {'success': False, 'error': f"not connected: {', '.join(unknown)}"}
+        if not targets and not include_controller:
+            return {'success': False, 'error': 'no devices to update'}
+
+        with self.fleet_update_lock:
+            if self.fleet_update['active']:
+                return {'success': False, 'error': 'fleet update already in progress'}
+            self.fleet_update = {
+                'active': True,
+                'ref': ref,
+                'queue': list(targets),
+                'current': '',
+                'include_controller': bool(include_controller),
+                'results': {},
+                'error': '',
+                'started_at': int(time.time()),
+                'finished_at': 0,
+            }
+
+        self._fleet_update_thread = threading.Thread(
+            target=self._fleet_update_worker, args=(targets, ref, bool(include_controller)),
+            daemon=True
+        )
+        self._fleet_update_thread.start()
+        logger.warning(f"Fleet update started: ref={ref} devices={targets} include_controller={include_controller}")
+        return {'success': True, 'queued': targets, 'ref': ref}
+
+    def _fleet_update_worker(self, targets, ref, include_controller):
+        aborted = False
+        try:
+            for device_id in targets:
+                with self.fleet_update_lock:
+                    self.fleet_update['current'] = device_id
+                    self.fleet_update['queue'] = [d for d in self.fleet_update['queue'] if d != device_id]
+
+                result = self._update_one_device(device_id, ref)
+                with self.fleet_update_lock:
+                    self.fleet_update['results'][device_id] = result
+
+                if result != 'complete':
+                    logger.error(f"Fleet update aborted: {device_id} -> {result}")
+                    with self.fleet_update_lock:
+                        remaining = list(self.fleet_update['queue'])
+                        for d in remaining:
+                            self.fleet_update['results'][d] = 'aborted'
+                        self.fleet_update['error'] = f'{device_id}: {result} — remaining devices skipped'
+                    aborted = True
+                    break
+
+            if include_controller and not aborted:
+                with self.fleet_update_lock:
+                    self.fleet_update['current'] = 'controller'
+                self._launch_controller_self_update(ref)
+                # The self-update restarts this process — no terminal status is
+                # recorded here; /api/update/status going away and coming back
+                # with the new version IS the signal.
+        except Exception as e:
+            logger.error(f"Fleet update worker error: {e}", exc_info=True)
+            with self.fleet_update_lock:
+                self.fleet_update['error'] = str(e)
+        finally:
+            with self.fleet_update_lock:
+                self.fleet_update['active'] = False
+                self.fleet_update['current'] = ''
+                self.fleet_update['finished_at'] = int(time.time())
+
+    def _update_one_device(self, device_id, ref):
+        """Update a single OWL and wait for its terminal status.
+
+        Returns: complete | rolled_back | error | timeout | publish_failed
+        """
+        request_id = str(uuid.uuid4())
+        payload = {'action': 'update_software', 'ref': ref, 'request_id': request_id}
+        result = self.mqtt_client.publish(f"owl/{device_id}/commands", json.dumps(payload))
+        if result.rc != mqtt.MQTT_ERR_SUCCESS:
+            return 'publish_failed'
+        logger.info(f"Fleet update: sent update_software to {device_id} (request {request_id})")
+
+        deadline = time.time() + self.FLEET_UPDATE_DEVICE_TIMEOUT
+        while time.time() < deadline:
+            time.sleep(2.0)
+            with self.mqtt_lock:
+                su = self.owls_state.get(device_id, {}).get('software_update') or {}
+            # Only trust statuses for OUR request — the device may still be
+            # reporting a previous update's terminal state.
+            if su.get('request_id') != request_id:
+                continue
+            status = su.get('status', '')
+            if status in self.FLEET_TERMINAL_STATUSES:
+                logger.info(f"Fleet update: {device_id} -> {status}")
+                return status if status != 'error' else 'error'
+        logger.error(f"Fleet update: {device_id} timed out after {self.FLEET_UPDATE_DEVICE_TIMEOUT}s")
+        return 'timeout'
+
+    def _launch_controller_self_update(self, ref):
+        """Update the controller itself via a transient systemd unit.
+
+        Runs LAST. The argv must match the sudoers entry installed by
+        owl_cloud_provision.sh byte-for-byte (literal up to the script args).
+        """
+        repo_dir = Path(__file__).resolve().parents[2]
+        script = repo_dir / 'owl_update.sh'
+        if not script.exists():
+            logger.error(f"Controller self-update: {script} not found")
+            with self.fleet_update_lock:
+                self.fleet_update['results']['controller'] = 'error'
+            return
+        try:
+            import getpass
+            user = getpass.getuser()
+            subprocess.Popen([
+                'sudo', '-n', '/usr/bin/systemd-run',
+                '--unit=owl-update', '--collect',
+                '--property=RuntimeMaxSec=1800',
+                f'--uid={user}', f'--gid={user}',
+                '/bin/bash', str(script),
+                '--unattended', '--profile', 'controller', '--ref', ref,
+                '--request-id', str(uuid.uuid4()),
+                '--status-file', str(repo_dir / '.update_status.json'),
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            logger.warning(f"Controller self-update launched (ref={ref}) — service will restart")
+            with self.fleet_update_lock:
+                self.fleet_update['results']['controller'] = 'launched'
+        except Exception as e:
+            logger.error(f"Controller self-update failed to launch: {e}")
+            with self.fleet_update_lock:
+                self.fleet_update['results']['controller'] = 'error'
+
+    def get_fleet_update_status(self):
+        with self.fleet_update_lock:
+            return json.loads(json.dumps(self.fleet_update))
 
 
 # Create Flask app
@@ -1016,6 +1272,11 @@ def index():
 def api_owls():
     return jsonify({
         "mqtt_connected": controller.mqtt_connected,
+        # Cloud (Noktura) link — fleet-level, independent of per-OWL online state
+        "cloud_enabled": controller.cloud_enable,
+        "cloud_connected": controller.cloud_connected,
+        "cloud_device_id": controller.cloud_device_id,
+        "cloud_portal_url": controller.cloud_portal_url,
         "owls": controller.get_recent_owls(ttl=8),  # Reduced TTL
     })
 
@@ -1063,6 +1324,47 @@ def mqtt_status():
         'client_id': controller.client_id,
         'broker': f"{controller.broker_host}:{controller.broker_port}"
     })
+
+
+@app.route('/api/update', methods=['POST'])
+def start_fleet_update():
+    """Rolling software update across the fleet.
+
+    Body: {"device_ids": ["owl-1", ...] | "all",
+           "ref": "main",
+           "include_controller": false}
+    Devices update sequentially; the first failure aborts the rest.
+    Watch progress on GET /api/update/status.
+    """
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        device_ids = data.get('device_ids', 'all')
+        ref = data.get('ref', 'main')
+        include_controller = bool(data.get('include_controller', False))
+        if device_ids != 'all' and not isinstance(device_ids, list):
+            return jsonify({'success': False, 'error': 'device_ids must be "all" or a list'}), 400
+        result = controller.start_fleet_update(device_ids, ref, include_controller)
+        return jsonify(result), (200 if result.get('success') else 400)
+    except Exception as e:
+        logger.error(f"Error starting fleet update: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/update/status')
+def fleet_update_status():
+    """Fleet update progress + per-device software_update state."""
+    status = controller.get_fleet_update_status()
+    devices = {}
+    with controller.mqtt_lock:
+        for oid, state in controller.owls_state.items():
+            devices[oid] = {
+                'connected': state.get('connected', False),
+                'version': state.get('version', 'unknown'),
+                'git_branch': state.get('git_branch', 'unknown'),
+                'git_commit': state.get('git_commit', 'unknown'),
+                'software_update': state.get('software_update') or {},
+            }
+    return jsonify({'fleet_update': status, 'devices': devices})
 
 
 @app.route('/api/greenonbrown/defaults')
@@ -1140,8 +1442,11 @@ def save_device_config(device_id):
     """Tell a device to save its config to disk"""
     try:
         data = request.json or {}
-        filename = data.get('filename')
-        result = controller.send_command(device_id, 'save_config', {'filename': filename})
+        result = controller.send_command(device_id, 'save_config', {
+            'filename': data.get('filename'),
+            'name': data.get('name'),
+            'notes': data.get('notes'),
+        })
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error saving config on {device_id}: {e}")
@@ -1242,13 +1547,20 @@ def list_config_library():
 
         if config_dir.exists():
             for f in sorted(config_dir.glob('*.ini')):
+                # GEOMETRY.ini is device-resident mount config, not a detection config.
+                if f.name == GEOMETRY_FILE:
+                    continue
                 stat = f.stat()
+                meta = parse_config_meta(f)
                 configs.append({
                     'name': f.name,
                     'path': f'config/{f.name}',
                     'size': stat.st_size,
                     'modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                    'is_default': f.name in protected
+                    'is_default': f.name in protected,
+                    'display_name': meta.get('display_name', ''),
+                    'notes': meta.get('notes', ''),
+                    'created': meta.get('created', ''),
                 })
 
         # Sort: defaults first, then by modified descending
@@ -1268,38 +1580,48 @@ def save_to_config_library():
         if not data or 'config' not in data:
             return jsonify({'success': False, 'error': 'No config data provided'}), 400
 
-        # Generate filename with timestamp (same as standalone)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        suggested_name = data.get('filename', f'config_{timestamp}.ini')
+        display_name = (data.get('name') or '').strip()
+        notes = (data.get('notes') or '').strip()
 
-        if not suggested_name.endswith('.ini'):
-            suggested_name += '.ini'
-
-        # Sanitize filename (same as standalone)
-        safe_name = "".join(c for c in suggested_name if c.isalnum() or c in ('_', '-', '.')).strip()
-        if not safe_name:
-            safe_name = f'config_{timestamp}.ini'
+        # Update-in-place: an explicit overwrite_filename targets an existing file
+        # verbatim (keeps its name). Otherwise build <safe-name>_<timestamp>.ini.
+        overwrite = (data.get('overwrite_filename') or '').strip()
+        if overwrite:
+            safe_name = overwrite if overwrite.endswith('.ini') else overwrite + '.ini'
+        else:
+            safe_name = build_config_filename(display_name, data.get('filename'), timestamp)
 
         config_dir = Path(__file__).parent.parent.parent / 'config'
         new_config_path = config_dir / safe_name
 
-        # Don't allow overwriting protected configs (same as standalone)
-        protected = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini']
+        # Don't allow overwriting protected/infrastructure configs
+        protected = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini', GEOMETRY_FILE]
         if safe_name in protected:
             return jsonify({
                 'success': False,
                 'error': f'Cannot overwrite default config "{safe_name}". Choose a different name.'
             }), 400
 
-        # Build and write config (same as standalone)
+        # Build and write config (same as standalone). Geometry is device-resident
+        # in GEOMETRY.ini — strip it so named configs never carry/overwrite it.
         config = configparser.ConfigParser()
         config.optionxform = str
 
-        for section, options in data['config'].items():
+        for section, options in strip_geometry_keys(data['config']).items():
             if not config.has_section(section):
                 config.add_section(section)
             for key, value in options.items():
                 config.set(section, key, str(value))
+
+        # Stamp human-readable metadata (only fields that were provided).
+        if display_name or notes:
+            config.add_section('Meta')
+            if display_name:
+                config.set('Meta', 'display_name', display_name)
+            if notes:
+                config.set('Meta', 'notes', notes)
+            config.set('Meta', 'created', datetime.now().isoformat(timespec='seconds'))
 
         with open(new_config_path, 'w') as f:
             config.write(f)
@@ -1308,7 +1630,7 @@ def save_to_config_library():
 
         return jsonify({
             'success': True,
-            'message': f'Saved as {safe_name}',
+            'message': f'Saved as {display_name or safe_name}',
             'filename': safe_name,
             'relative_path': f'config/{safe_name}'
         })
@@ -1358,6 +1680,51 @@ def set_device_active_config(device_id):
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error setting active config on {device_id}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/geometry/<device_id>', methods=['POST'])
+def set_device_geometry(device_id):
+    """Apply mount geometry (crop edges + actuation band) to an OWL, or to 'all'.
+
+    persist=false → live only (set_config_section); persist=true → write GEOMETRY.ini
+    on the device(s) via save_geometry.
+    """
+    try:
+        data = request.json or {}
+        params = data.get('params') or {}
+        persist = bool(data.get('persist'))
+        if not params:
+            return jsonify({'success': False, 'error': 'No geometry params'}), 400
+
+        if persist:
+            result = controller.send_command(device_id, 'save_geometry', {'params': params})
+        else:
+            # Split into the two sections the OWL expects.
+            cam = {k: v for k, v in params.items() if k.startswith('crop_')}
+            sysp = {k: v for k, v in params.items() if k.startswith('actuation_')}
+            if cam:
+                controller.send_command(device_id, 'set_config_section',
+                                        {'section': 'Camera', 'params': cam})
+            if sysp:
+                controller.send_command(device_id, 'set_config_section',
+                                        {'section': 'System', 'params': sysp})
+            result = {'success': True}
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error setting geometry on {device_id}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/preview-mode/<device_id>', methods=['POST'])
+def set_device_preview_mode(device_id):
+    """Toggle the OWL's preview stream between 'full' (uncropped) and 'cropped'."""
+    try:
+        mode = (request.json or {}).get('mode', 'cropped')
+        result = controller.send_command(device_id, 'set_preview_mode', {'mode': mode})
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error setting preview mode on {device_id}: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

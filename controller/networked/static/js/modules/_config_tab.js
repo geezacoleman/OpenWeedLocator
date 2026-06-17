@@ -327,50 +327,118 @@ function sendAllToDevice() {
         if (typeof updateConfigEditorChangeState === 'function') updateConfigEditorChangeState();
     }
 
-    showToast('Applied to all OWLs — live until reboot', 'success');
+    showToast('Testing on all OWLs — not saved', 'info');
 }
 
 /**
- * Send all + save to all OWL disks + set as active boot config.
- * Auto-generates timestamp filename. Also saves to controller library.
+ * Open the Save dialog. Sliders have already applied live, so this only
+ * captures a name/notes and persists.
  */
-async function saveToAll() {
-    var target = 'all';
+function openSaveModal() {
+    var modal = document.getElementById('config-save-modal');
+    if (!modal) return;
 
-    // Step 1: Send all settings live
+    // Offer "Update <name>" when a non-default library config is selected.
+    var sel = document.getElementById('config-library-selector');
+    var selName = sel ? sel.value : '';
+    var cfg = (typeof configLibraryList !== 'undefined')
+        ? configLibraryList.find(function (c) { return c.name === selName; }) : null;
+    var modeGroup = document.getElementById('config-save-mode-group');
+    var canUpdate = cfg && !cfg.is_default && selName && selName !== '__reset_defaults__';
+    if (modeGroup) {
+        modeGroup.style.display = canUpdate ? '' : 'none';
+        if (canUpdate) {
+            document.getElementById('config-save-target').textContent =
+                cfg.display_name || cfg.name;
+            document.getElementById('config-save-mode-update').checked = true;
+            modeGroup.dataset.filename = cfg.name;
+        } else {
+            delete modeGroup.dataset.filename;
+        }
+    }
+
+    var nameInput = document.getElementById('config-save-name');
+    var notesInput = document.getElementById('config-save-notes');
+    if (nameInput) nameInput.value = canUpdate ? (cfg.display_name || '') : suggestConfigName();
+    if (notesInput) notesInput.value = canUpdate ? (cfg.notes || '') : '';
+
+    modal.classList.remove('hidden');
+}
+
+function closeSaveModal() {
+    var modal = document.getElementById('config-save-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+/**
+ * Suggest an editable default name based on the active config / algorithm.
+ */
+function suggestConfigName() {
+    var algo = 'config';
+    try {
+        var first = (typeof getFirstConnectedOwl === 'function') ? getFirstConnectedOwl() : null;
+        if (first && owlsData[first] && owlsData[first].algorithm) algo = owlsData[first].algorithm;
+    } catch (e) { /* ignore */ }
+    return algo + ' setup';
+}
+
+/**
+ * Confirm the Save dialog: apply live, save a named copy to the library, save to
+ * each OWL's disk (carrying the name), and optionally set it active on reboot.
+ */
+async function confirmSaveToAll() {
+    var target = 'all';
+    var name = (document.getElementById('config-save-name') || {}).value || '';
+    var notes = (document.getElementById('config-save-notes') || {}).value || '';
+    var setActive = !!(document.getElementById('config-save-active') || {}).checked;
+    name = name.trim();
+
+    // Update-in-place vs save-as-new.
+    var modeGroup = document.getElementById('config-save-mode-group');
+    var isUpdate = modeGroup && modeGroup.style.display !== 'none'
+        && document.getElementById('config-save-mode-update')
+        && document.getElementById('config-save-mode-update').checked;
+    var overwriteFilename = isUpdate && modeGroup ? modeGroup.dataset.filename : null;
+
+    // Apply current settings live first.
     sendAllToDevice();
 
-    // Step 2: Generate timestamp filename
-    var ts = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
-    var filename = 'config_' + ts + '.ini';
-
     try {
-        // Step 3: Save to controller library (if we have editor data)
+        // Save a named copy to the controller library (if editor data is loaded).
+        var savedFilename = null;
         if (typeof deviceConfig !== 'undefined' && Object.keys(deviceConfig).length > 0) {
-            await apiRequest('/api/config/library', {
+            var libRes = await apiRequest('/api/config/library', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ config: deviceConfig, filename: filename })
+                body: JSON.stringify({ config: deviceConfig, name: name, notes: notes,
+                                       overwrite_filename: overwriteFilename })
             });
+            var libData = await libRes.json();
+            if (libData && libData.filename) savedFilename = libData.filename;
         }
 
-        // Step 4: Tell all OWLs to save current config to disk
+        // Tell all OWLs to save their current config to disk, carrying the name.
         await apiRequest('/api/config/' + target + '/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ filename: filename })
+            body: JSON.stringify({ filename: savedFilename, name: name, notes: notes })
         });
 
-        // Step 5: Set as active boot config on all OWLs
-        await apiRequest('/api/config/' + target + '/set-active', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ config: 'config/' + filename })
-        });
+        // Optionally set as the active boot config on all OWLs.
+        if (setActive && savedFilename) {
+            await apiRequest('/api/config/' + target + '/set-active', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config: 'config/' + savedFilename })
+            });
+            updateActiveBadge(name || savedFilename);
+        }
 
-        updateActiveBadge(filename);
+        closeSaveModal();
+        var nameInput = document.getElementById('config-save-name');
+        if (nameInput) nameInput.value = '';
         if (typeof loadConfigLibrary === 'function') await loadConfigLibrary();
-        showToast('Saved to all OWLs — persists after reboot', 'success');
+        showToast(setActive ? 'Saved and set active on reboot' : 'Saved to library', 'success');
 
     } catch (err) {
         showToast('Error saving: ' + err.message, 'error');
@@ -540,6 +608,9 @@ function onPreviewDeviceChanged() {
 }
 
 function stopConfigPreview() {
+    if (typeof GeometryEditor !== 'undefined' && GeometryEditor.isOpen()) {
+        GeometryEditor.close();
+    }
     if (!configPreviewActive) return;
 
     configPreviewActive = false;
@@ -553,6 +624,117 @@ function stopConfigPreview() {
         btn.textContent = 'Preview';
         btn.classList.remove('active');
     }
+}
+
+// ============================================
+// VISUAL GEOMETRY EDITOR
+// ============================================
+
+let geometryEditorActive = false;
+
+function geoFrac(primary, fallback, dflt) {
+    var n = parseFloat(primary);
+    if (!isNaN(n)) return n;
+    n = parseFloat(fallback);
+    if (!isNaN(n)) return n;
+    return dflt;
+}
+
+async function toggleGeometryEditor() {
+    if (typeof GeometryEditor === 'undefined') return;
+
+    if (geometryEditorActive) {
+        GeometryEditor.close();
+        return;
+    }
+
+    var deviceId = getSelectedPreviewDevice();
+    if (!deviceId) {
+        showToast('Select an OWL to adjust', 'warning');
+        return;
+    }
+
+    // Show the full-frame feed for this device behind the overlay.
+    if (!configPreviewActive) {
+        toggleConfigPreview();
+    } else {
+        updateConfigPreviewDevice();
+    }
+
+    // Read the device's current geometry (fall back to defaults).
+    var values = {
+        crop_left: 0.02, crop_right: 0.02, crop_top: 0.02, crop_bottom: 0.02,
+        actuation_top: 0.0, actuation_bottom: 1.0
+    };
+    var relayNum = 4;
+    try {
+        var res = await apiRequest('/api/config/' + deviceId, {}, 5000);
+        var data = await res.json();
+        if (data.success && data.config) {
+            var cam = data.config.Camera || {};
+            var sys = data.config.System || {};
+            values = {
+                crop_left: geoFrac(cam.crop_left, cam.crop_factor_horizontal, 0.02),
+                crop_right: geoFrac(cam.crop_right, cam.crop_factor_horizontal, 0.02),
+                crop_top: geoFrac(cam.crop_top, cam.crop_factor_vertical, 0.02),
+                crop_bottom: geoFrac(cam.crop_bottom, cam.crop_factor_vertical, 0.02),
+                actuation_top: geoFrac(sys.actuation_top, null, 0.0),
+                actuation_bottom: geoFrac(sys.actuation_bottom, null, 1.0)
+            };
+            relayNum = parseInt(sys.relay_num, 10) || 4;
+        }
+    } catch (e) {
+        showToast('Using defaults — could not read device geometry', 'warning');
+    }
+
+    var btn = document.getElementById('config-geometry-btn');
+
+    function postGeometry(target, params, persist) {
+        apiRequest('/api/geometry/' + target, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ params: params, persist: persist })
+        });
+    }
+
+    // Show the full uncropped frame behind the overlay while editing.
+    apiRequest('/api/preview-mode/' + deviceId, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'full' })
+    });
+
+    GeometryEditor.open({
+        host: document.getElementById('config-preview-frame'),
+        img: document.getElementById('config-preview-img'),
+        panel: document.getElementById('config-geometry-panel'),
+        values: values,
+        relayNum: relayNum,
+        allowAll: true,
+        onCommit: function (v, info) {
+            var target = (info && info.applyToAll) ? 'all' : deviceId;
+            postGeometry(target, {
+                crop_left: String(v.crop_left), crop_right: String(v.crop_right),
+                crop_top: String(v.crop_top), crop_bottom: String(v.crop_bottom),
+                actuation_top: String(v.actuation_top), actuation_bottom: String(v.actuation_bottom)
+            }, info && info.persist);
+            if (info && info.persist) {
+                showToast(target === 'all' ? 'Geometry saved to all OWLs' : 'Geometry saved', 'success');
+            }
+        },
+        onClose: function () {
+            geometryEditorActive = false;
+            // Restore the normal cropped preview.
+            apiRequest('/api/preview-mode/' + deviceId, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: 'cropped' })
+            });
+            if (btn) { btn.textContent = 'Adjust geometry'; btn.classList.remove('active'); }
+        }
+    });
+
+    geometryEditorActive = true;
+    if (btn) { btn.textContent = 'Close geometry'; btn.classList.add('active'); }
+    showToast('Drag the edges and band on the feed. Done saves; Cancel reverts.', 'info');
 }
 
 // ============================================

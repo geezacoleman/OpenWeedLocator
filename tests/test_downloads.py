@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from utils.directory_manager import scan_sessions, collect_session_files
+from utils.directory_manager import scan_sessions, collect_session_files, select_preview_images
 
 
 # ---------------------------------------------------------------------------
@@ -1037,3 +1037,566 @@ class TestStandaloneDeleteSession:
         client, _ = standalone_dl_client
         resp = client.delete('/api/downloads/session/99990101')
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# _upload_session method=PUT (presigned URLs) vs POST (controller endpoint)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestUploadSessionMethod:
+    """PUT (presigned URL) must use verified TLS and no custom headers;
+    POST (controller endpoint) must keep its existing behaviour."""
+
+    def _make_session(self, mqtt_publisher, tmp_path):
+        save_dir = str(tmp_path / 'save')
+        img_dir = os.path.join(save_dir, '20260611')
+        os.makedirs(img_dir)
+        with open(os.path.join(img_dir, 'test.jpg'), 'wb') as f:
+            f.write(b'\xff\xd8' * 100)
+        mqtt_publisher.owl_instance.save_directory = save_dir
+
+    def _capture_upload(self, mqtt_publisher, tmp_path, method):
+        self._make_session(mqtt_publisher, tmp_path)
+        captured = {}
+
+        def mock_urlopen(req, **kwargs):
+            captured['request'] = req
+            captured['context'] = kwargs.get('context')
+            # Drain the ProgressReader so the upload "completes"
+            while req.data.read(65536):
+                pass
+            mock_resp = MagicMock()
+            mock_resp.getcode.return_value = 200
+            return mock_resp
+
+        with patch('urllib.request.urlopen', side_effect=mock_urlopen):
+            mqtt_publisher._upload_session(
+                '20260611', ['images'], 'https://example.com/upload', method
+            )
+        return captured
+
+    def test_put_uses_put_method(self, mqtt_publisher, tmp_path):
+        captured = self._capture_upload(mqtt_publisher, tmp_path, 'PUT')
+        assert captured['request'].get_method() == 'PUT'
+        assert mqtt_publisher.state['data_transfer']['status'] == 'complete'
+
+    def test_put_omits_owl_headers(self, mqtt_publisher, tmp_path):
+        """Custom headers outside the presigned SignedHeaders set can
+        invalidate the signature on S3-compatible stores."""
+        captured = self._capture_upload(mqtt_publisher, tmp_path, 'PUT')
+        req = captured['request']
+        assert not req.has_header('X-owl-device-id')
+        assert not req.has_header('X-owl-session-date')
+        assert req.has_header('Content-type')
+
+    def test_put_verifies_tls(self, mqtt_publisher, tmp_path):
+        import ssl
+        captured = self._capture_upload(mqtt_publisher, tmp_path, 'PUT')
+        ctx = captured['context']
+        assert ctx.verify_mode == ssl.CERT_REQUIRED
+        assert ctx.check_hostname is True
+
+    def test_post_keeps_owl_headers(self, mqtt_publisher, tmp_path):
+        captured = self._capture_upload(mqtt_publisher, tmp_path, 'POST')
+        req = captured['request']
+        assert req.get_method() == 'POST'
+        assert req.has_header('X-owl-device-id')
+        assert req.has_header('X-owl-session-date')
+
+    def test_post_keeps_self_signed_tls(self, mqtt_publisher, tmp_path):
+        import ssl
+        captured = self._capture_upload(mqtt_publisher, tmp_path, 'POST')
+        ctx = captured['context']
+        assert ctx.verify_mode == ssl.CERT_NONE
+        assert ctx.check_hostname is False
+
+    def test_put_accepts_204_no_content(self, mqtt_publisher, tmp_path):
+        self._make_session(mqtt_publisher, tmp_path)
+
+        def mock_urlopen(req, **kwargs):
+            while req.data.read(65536):
+                pass
+            mock_resp = MagicMock()
+            mock_resp.getcode.return_value = 204
+            return mock_resp
+
+        with patch('urllib.request.urlopen', side_effect=mock_urlopen):
+            mqtt_publisher._upload_session(
+                '20260611', ['images'], 'https://example.com/upload', 'PUT'
+            )
+        assert mqtt_publisher.state['data_transfer']['status'] == 'complete'
+
+
+# ---------------------------------------------------------------------------
+# _upload_session multipart (presigned part URLs, Noktura CR-2)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestUploadSessionMultipart:
+    """Multipart: sequential part PUTs, ETag accumulation, per-part retry."""
+
+    PART_SIZE = 100_000
+
+    def _make_session(self, mqtt_publisher, tmp_path, file_bytes=250_000):
+        save_dir = str(tmp_path / 'save')
+        img_dir = os.path.join(save_dir, '20260611')
+        os.makedirs(img_dir)
+        with open(os.path.join(img_dir, 'test.jpg'), 'wb') as f:
+            f.write(b'\xff' * file_bytes)
+        mqtt_publisher.owl_instance.save_directory = save_dir
+
+    def _multipart(self, n_parts, part_size=PART_SIZE, upload_id='uid-1'):
+        return {
+            'upload_id': upload_id,
+            'part_size': part_size,
+            'parts': [{'part_number': i + 1, 'url': f'https://s3.example.com/part{i + 1}'}
+                      for i in range(n_parts)],
+        }
+
+    def _run(self, mqtt_publisher, tmp_path, upload, request_id='', fail_attempts=None):
+        """Run a multipart upload with a capturing mock urlopen.
+
+        fail_attempts: {url_suffix: n} — fail the first n attempts to that URL.
+        Returns list of captured {'url', 'method', 'length', 'body'} per attempt.
+        """
+        self._make_session(mqtt_publisher, tmp_path)
+        captured = []
+        failures = dict(fail_attempts or {})
+
+        def mock_urlopen(req, **kwargs):
+            body = b''
+            while True:
+                chunk = req.data.read(65536)
+                if not chunk:
+                    break
+                body += chunk
+            captured.append({
+                'url': req.full_url,
+                'method': req.get_method(),
+                'length': int(req.get_header('Content-length')),
+                'body': body,
+            })
+            for suffix, n in failures.items():
+                if req.full_url.endswith(suffix) and n > 0:
+                    failures[suffix] = n - 1
+                    raise ConnectionResetError('connection reset')
+            mock_resp = MagicMock()
+            mock_resp.getcode.return_value = 200
+            mock_resp.headers = {'ETag': f'"etag-{req.full_url.rsplit("part", 1)[-1]}"'}
+            return mock_resp
+
+        with patch('urllib.request.urlopen', side_effect=mock_urlopen), \
+                patch('time.sleep') as mock_sleep:
+            mqtt_publisher._upload_session(
+                '20260611', ['images'], '', 'PUT',
+                request_id=request_id, upload=upload
+            )
+        self.mock_sleep = mock_sleep
+        return captured
+
+    def test_multipart_puts_parts_sequentially(self, mqtt_publisher, tmp_path):
+        captured = self._run(mqtt_publisher, tmp_path, self._multipart(3))
+
+        state = mqtt_publisher.state['data_transfer']
+        assert state['status'] == 'complete'
+        zip_bytes = state['zip_bytes']
+        assert zip_bytes > 200_000  # 250KB file + zip headers
+
+        assert [c['url'] for c in captured] == [
+            'https://s3.example.com/part1',
+            'https://s3.example.com/part2',
+            'https://s3.example.com/part3',
+        ]
+        assert all(c['method'] == 'PUT' for c in captured)
+        # Last part carries the remainder (zip headers make it > 50KB)
+        assert [c['length'] for c in captured] == [
+            self.PART_SIZE, self.PART_SIZE, zip_bytes - 2 * self.PART_SIZE]
+        # Bounded readers must deliver exactly Content-Length bytes
+        assert all(len(c['body']) == c['length'] for c in captured)
+        assert state['bytes_sent'] == zip_bytes
+        assert state['progress'] == 100
+
+    def test_multipart_accumulates_quoted_etags(self, mqtt_publisher, tmp_path):
+        self._run(mqtt_publisher, tmp_path, self._multipart(3))
+
+        parts = mqtt_publisher.state['data_transfer']['parts']
+        assert parts == [
+            {'part_number': 1, 'etag': '"etag-1"'},
+            {'part_number': 2, 'etag': '"etag-2"'},
+            {'part_number': 3, 'etag': '"etag-3"'},
+        ]
+
+    def test_multipart_echoes_request_id_and_upload_id(self, mqtt_publisher, tmp_path):
+        self._run(mqtt_publisher, tmp_path, self._multipart(3), request_id='req-9')
+
+        state = mqtt_publisher.state['data_transfer']
+        assert state['status'] == 'complete'
+        assert state['request_id'] == 'req-9'
+        assert state['upload_id'] == 'uid-1'
+
+    def test_multipart_retries_failed_part(self, mqtt_publisher, tmp_path):
+        """A part that fails once is re-sent; other parts go once."""
+        captured = self._run(mqtt_publisher, tmp_path, self._multipart(3),
+                             fail_attempts={'part2': 1})
+
+        assert mqtt_publisher.state['data_transfer']['status'] == 'complete'
+        urls = [c['url'] for c in captured]
+        assert urls.count('https://s3.example.com/part1') == 1
+        assert urls.count('https://s3.example.com/part2') == 2
+        assert urls.count('https://s3.example.com/part3') == 1
+        # Backoff slept before the retry (other threads also hit the patched
+        # sleep, so check membership rather than the last call)
+        self.mock_sleep.assert_any_call(2)
+        # The retry re-sent the full part, not a truncated remainder
+        part2_attempts = [c for c in captured if c['url'].endswith('part2')]
+        assert all(len(c['body']) == self.PART_SIZE for c in part2_attempts)
+
+    def test_multipart_exhausted_retries_sets_error(self, mqtt_publisher, tmp_path):
+        """All attempts for a part fail → error state keeps the context the
+        cloud side needs to abort the multipart upload."""
+        captured = self._run(mqtt_publisher, tmp_path, self._multipart(3),
+                             request_id='req-1', fail_attempts={'part2': 99})
+
+        state = mqtt_publisher.state['data_transfer']
+        assert state['status'] == 'error'
+        assert 'reset' in state['error']
+        # part 1 succeeded before the failure — its ETag must survive
+        assert state['parts'] == [{'part_number': 1, 'etag': '"etag-1"'}]
+        assert state['request_id'] == 'req-1'
+        assert state['upload_id'] == 'uid-1'
+        # 3 attempts on part 2, part 3 never reached
+        urls = [c['url'] for c in captured]
+        assert urls.count('https://s3.example.com/part2') == 3
+        assert 'https://s3.example.com/part3' not in urls
+
+    def test_multipart_insufficient_parts_errors_before_upload(self, mqtt_publisher, tmp_path):
+        """Parts that can't cover the zip fail upfront — never a silently
+        truncated object (zip is slightly larger than the manifest size)."""
+        captured = self._run(mqtt_publisher, tmp_path, self._multipart(2))
+
+        assert mqtt_publisher.state['data_transfer']['status'] == 'error'
+        assert 'more parts' in mqtt_publisher.state['data_transfer']['error']
+        assert captured == []
+
+    def test_multipart_extra_parts_skipped(self, mqtt_publisher, tmp_path):
+        """Over-provisioned part URLs past the end of the zip are ignored."""
+        captured = self._run(mqtt_publisher, tmp_path, self._multipart(5))
+
+        assert mqtt_publisher.state['data_transfer']['status'] == 'complete'
+        assert len(captured) == 3
+        assert len(mqtt_publisher.state['data_transfer']['parts']) == 3
+
+    def test_state_reset_between_transfers(self, mqtt_publisher, tmp_path):
+        """A single-PUT transfer after a multipart one must not carry stale
+        parts/upload_id/request_id."""
+        self._run(mqtt_publisher, tmp_path, self._multipart(3), request_id='req-1')
+        assert mqtt_publisher.state['data_transfer']['parts']
+
+        def mock_urlopen(req, **kwargs):
+            while req.data.read(65536):
+                pass
+            mock_resp = MagicMock()
+            mock_resp.getcode.return_value = 200
+            return mock_resp
+
+        with patch('urllib.request.urlopen', side_effect=mock_urlopen):
+            mqtt_publisher._upload_session(
+                '20260611', ['images'], 'https://example.com/upload', 'PUT'
+            )
+
+        state = mqtt_publisher.state['data_transfer']
+        assert state['status'] == 'complete'
+        assert state['parts'] == []
+        assert state['upload_id'] == ''
+        assert state['request_id'] == ''
+
+
+# ---------------------------------------------------------------------------
+# data_transfer zip checksum (Noktura CR-4) + request_id echo
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestUploadSessionChecksum:
+
+    def _make_session(self, mqtt_publisher, tmp_path):
+        save_dir = str(tmp_path / 'save')
+        img_dir = os.path.join(save_dir, '20260611')
+        os.makedirs(img_dir)
+        with open(os.path.join(img_dir, 'test.jpg'), 'wb') as f:
+            f.write(b'\xff\xd8' * 5000)
+        mqtt_publisher.owl_instance.save_directory = save_dir
+
+    def test_complete_includes_zip_bytes_and_md5(self, mqtt_publisher, tmp_path):
+        import hashlib
+        self._make_session(mqtt_publisher, tmp_path)
+        received = []
+
+        def mock_urlopen(req, **kwargs):
+            while True:
+                chunk = req.data.read(65536)
+                if not chunk:
+                    break
+                received.append(chunk)
+            mock_resp = MagicMock()
+            mock_resp.getcode.return_value = 200
+            return mock_resp
+
+        with patch('urllib.request.urlopen', side_effect=mock_urlopen):
+            mqtt_publisher._upload_session(
+                '20260611', ['images'], 'https://example.com/upload', 'PUT'
+            )
+
+        body = b''.join(received)
+        state = mqtt_publisher.state['data_transfer']
+        assert state['status'] == 'complete'
+        assert state['zip_bytes'] == len(body)
+        assert state['zip_md5'] == hashlib.md5(body).hexdigest()
+
+    def test_single_put_echoes_request_id(self, mqtt_publisher, tmp_path):
+        self._make_session(mqtt_publisher, tmp_path)
+
+        def mock_urlopen(req, **kwargs):
+            while req.data.read(65536):
+                pass
+            mock_resp = MagicMock()
+            mock_resp.getcode.return_value = 200
+            return mock_resp
+
+        with patch('urllib.request.urlopen', side_effect=mock_urlopen):
+            mqtt_publisher._upload_session(
+                '20260611', ['images'], 'https://example.com/upload', 'PUT',
+                request_id='req-7'
+            )
+
+        state = mqtt_publisher.state['data_transfer']
+        assert state['status'] == 'complete'
+        assert state['request_id'] == 'req-7'
+
+    def test_multipart_md5_unaffected_by_retry(self, mqtt_publisher, tmp_path):
+        """A retried part must not corrupt the digest — the MD5 is computed
+        in a separate pass, never inside the upload reader."""
+        import hashlib
+        save_dir = str(tmp_path / 'save')
+        img_dir = os.path.join(save_dir, '20260611')
+        os.makedirs(img_dir)
+        with open(os.path.join(img_dir, 'test.jpg'), 'wb') as f:
+            f.write(b'\xff' * 250_000)
+        mqtt_publisher.owl_instance.save_directory = save_dir
+
+        upload = {
+            'upload_id': 'uid-1', 'part_size': 100_000,
+            'parts': [{'part_number': i + 1, 'url': f'https://s3.example.com/part{i + 1}'}
+                      for i in range(3)],
+        }
+        last_body = {}
+        fail_once = {'part2': 1}
+
+        def mock_urlopen(req, **kwargs):
+            body = b''
+            while True:
+                chunk = req.data.read(65536)
+                if not chunk:
+                    break
+                body += chunk
+            suffix = req.full_url.rsplit('/', 1)[-1]
+            if fail_once.get(suffix, 0) > 0:
+                fail_once[suffix] -= 1
+                raise ConnectionResetError('reset')
+            last_body[suffix] = body
+            mock_resp = MagicMock()
+            mock_resp.getcode.return_value = 200
+            mock_resp.headers = {'ETag': f'"{suffix}"'}
+            return mock_resp
+
+        with patch('urllib.request.urlopen', side_effect=mock_urlopen), \
+                patch('time.sleep'):
+            mqtt_publisher._upload_session(
+                '20260611', ['images'], '', 'PUT', upload=upload
+            )
+
+        state = mqtt_publisher.state['data_transfer']
+        assert state['status'] == 'complete'
+        full_zip = last_body['part1'] + last_body['part2'] + last_body['part3']
+        assert state['zip_md5'] == hashlib.md5(full_zip).hexdigest()
+        assert state['zip_bytes'] == len(full_zip)
+
+
+# ---------------------------------------------------------------------------
+# select_preview_images (utils/directory_manager.py, Noktura CR-3)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestSelectPreviewImages:
+
+    def _make_session(self, tmp_path, n_images):
+        sess = tmp_path / '20260611' / 'session_083015'
+        sess.mkdir(parents=True)
+        for i in range(n_images):
+            (sess / f'frame_{i:03d}.jpg').write_bytes(b'\xff\xd8')
+        return str(tmp_path)
+
+    def test_evenly_spaced_selection(self, tmp_path):
+        save_dir = self._make_session(tmp_path, 10)
+        selected = select_preview_images(save_dir, '20260611/session_083015', 3)
+        names = [os.path.basename(p) for p in selected]
+        # First and last always included, middle evenly spaced
+        assert names[0] == 'frame_000.jpg'
+        assert names[-1] == 'frame_009.jpg'
+        assert names[1] in ('frame_004.jpg', 'frame_005.jpg')
+        assert len(selected) == 3
+
+    def test_fewer_images_than_count_returns_all(self, tmp_path):
+        save_dir = self._make_session(tmp_path, 4)
+        selected = select_preview_images(save_dir, '20260611/session_083015', 8)
+        assert len(selected) == 4
+
+    def test_count_one_returns_first(self, tmp_path):
+        save_dir = self._make_session(tmp_path, 10)
+        selected = select_preview_images(save_dir, '20260611/session_083015', 1)
+        assert [os.path.basename(p) for p in selected] == ['frame_000.jpg']
+
+    def test_count_zero_returns_empty(self, tmp_path):
+        save_dir = self._make_session(tmp_path, 10)
+        assert select_preview_images(save_dir, '20260611/session_083015', 0) == []
+
+    def test_invalid_session_returns_empty(self, tmp_path):
+        assert select_preview_images(str(tmp_path), '../etc', 3) == []
+
+
+# ---------------------------------------------------------------------------
+# _upload_previews (Noktura CR-3)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestUploadPreviews:
+
+    def _make_image_session(self, mqtt_publisher, tmp_path, n_images=3,
+                            width=1920, height=1080):
+        cv2 = pytest.importorskip('cv2')
+        np = pytest.importorskip('numpy')
+        save_dir = str(tmp_path / 'save')
+        sess = os.path.join(save_dir, '20260611', 'session_083015')
+        os.makedirs(sess)
+        for i in range(n_images):
+            frame = np.full((height, width, 3), i * 20 % 255, dtype=np.uint8)
+            cv2.imwrite(os.path.join(sess, f'frame_{i:03d}.jpg'), frame)
+        mqtt_publisher.owl_instance.save_directory = save_dir
+
+    def _capture_puts(self, mqtt_publisher, fail_at=None, status=200):
+        captured = []
+
+        def mock_urlopen(req, **kwargs):
+            captured.append({
+                'url': req.full_url,
+                'body': req.data,
+                'headers': dict(req.header_items()),
+                'context': kwargs.get('context'),
+                'request': req,
+            })
+            mock_resp = MagicMock()
+            if fail_at is not None and len(captured) == fail_at:
+                mock_resp.getcode.return_value = 500
+            else:
+                mock_resp.getcode.return_value = status
+            return mock_resp
+
+        return captured, mock_urlopen
+
+    def test_preview_resize_bounded(self, mqtt_publisher, tmp_path):
+        cv2 = pytest.importorskip('cv2')
+        np = pytest.importorskip('numpy')
+        self._make_image_session(mqtt_publisher, tmp_path, n_images=1)
+        captured, mock_urlopen = self._capture_puts(mqtt_publisher)
+
+        with patch('urllib.request.urlopen', side_effect=mock_urlopen):
+            mqtt_publisher._upload_previews(
+                'req-1', '20260611/session_083015', 1, 800,
+                ['https://s3.example.com/preview1'])
+
+        assert mqtt_publisher.state['preview_upload']['status'] == 'complete'
+        img = cv2.imdecode(np.frombuffer(captured[0]['body'], np.uint8),
+                           cv2.IMREAD_COLOR)
+        h, w = img.shape[:2]
+        assert max(h, w) == 800
+        # Aspect ratio preserved (1920x1080 -> 800x450)
+        assert (w, h) == (800, 450)
+
+    def test_preview_put_verified_tls_no_custom_headers(self, mqtt_publisher, tmp_path):
+        import ssl
+        self._make_image_session(mqtt_publisher, tmp_path, n_images=1)
+        captured, mock_urlopen = self._capture_puts(mqtt_publisher)
+
+        with patch('urllib.request.urlopen', side_effect=mock_urlopen):
+            mqtt_publisher._upload_previews(
+                'req-1', '20260611/session_083015', 1, 800,
+                ['https://s3.example.com/preview1'])
+
+        req = captured[0]['request']
+        ctx = captured[0]['context']
+        assert req.get_method() == 'PUT'
+        assert ctx.verify_mode == ssl.CERT_REQUIRED
+        assert ctx.check_hostname is True
+        assert req.get_header('Content-type') == 'image/jpeg'
+        assert not req.has_header('X-owl-device-id')
+
+    def test_preview_sequential_count_and_state(self, mqtt_publisher, tmp_path):
+        self._make_image_session(mqtt_publisher, tmp_path, n_images=10,
+                                 width=64, height=48)
+        captured, mock_urlopen = self._capture_puts(mqtt_publisher)
+        urls = [f'https://s3.example.com/preview{i}' for i in range(3)]
+
+        with patch('urllib.request.urlopen', side_effect=mock_urlopen):
+            mqtt_publisher._upload_previews(
+                'req-2', '20260611/session_083015', 3, 800, urls)
+
+        state = mqtt_publisher.state['preview_upload']
+        assert state['status'] == 'complete'
+        assert state['uploaded'] == 3
+        assert state['total'] == 3
+        assert state['request_id'] == 'req-2'
+        assert state['session_id'] == '20260611/session_083015'
+        assert [c['url'] for c in captured] == urls
+
+    def test_preview_concurrent_job_rejected(self, mqtt_publisher, tmp_path):
+        self._make_image_session(mqtt_publisher, tmp_path, n_images=2,
+                                 width=64, height=48)
+        with mqtt_publisher.state_lock:
+            mqtt_publisher.state['preview_upload']['status'] = 'uploading'
+            mqtt_publisher.state['preview_upload']['request_id'] = 'req-old'
+        captured, mock_urlopen = self._capture_puts(mqtt_publisher)
+
+        with patch('urllib.request.urlopen', side_effect=mock_urlopen):
+            mqtt_publisher._upload_previews(
+                'req-new', '20260611/session_083015', 2, 800,
+                ['https://s3.example.com/p1', 'https://s3.example.com/p2'])
+
+        assert captured == []
+        assert mqtt_publisher.state['preview_upload']['request_id'] == 'req-old'
+
+    def test_preview_failure_sets_error(self, mqtt_publisher, tmp_path):
+        self._make_image_session(mqtt_publisher, tmp_path, n_images=4,
+                                 width=64, height=48)
+        captured, mock_urlopen = self._capture_puts(mqtt_publisher, fail_at=2)
+        urls = [f'https://s3.example.com/preview{i}' for i in range(3)]
+
+        with patch('urllib.request.urlopen', side_effect=mock_urlopen):
+            mqtt_publisher._upload_previews(
+                'req-3', '20260611/session_083015', 3, 800, urls)
+
+        state = mqtt_publisher.state['preview_upload']
+        assert state['status'] == 'error'
+        assert '500' in state['error']
+        assert state['uploaded'] == 1
+
+    def test_preview_invalid_session_id(self, mqtt_publisher):
+        captured, mock_urlopen = self._capture_puts(mqtt_publisher)
+
+        with patch('urllib.request.urlopen', side_effect=mock_urlopen):
+            mqtt_publisher._upload_previews(
+                'req-4', '../etc', 3, 800, ['https://s3.example.com/p1'])
+
+        assert captured == []
+        state = mqtt_publisher.state['preview_upload']
+        assert state['status'] == 'error'
+        assert 'Invalid' in state['error']

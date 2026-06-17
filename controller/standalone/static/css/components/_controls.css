@@ -435,6 +435,54 @@
     pointer-events: none;
 }
 
+/* Sensitivity as signal bars (Low / Med / High = 1 / 2 / 3 filled bars) */
+.seg-btn.sens-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+}
+.sens-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 20px;
+}
+.sens-bars i {
+    width: 5px;
+    border-radius: 1px;
+    background: #cdd5df;          /* unfilled bar */
+}
+.sens-bars i:nth-child(1) { height: 45%; }
+.sens-bars i:nth-child(2) { height: 72%; }
+.sens-bars i:nth-child(3) { height: 100%; }
+.sens-bars--1 i:nth-child(-n+1),
+.sens-bars--2 i:nth-child(-n+2),
+.sens-bars--3 i:nth-child(-n+3) { background: var(--success, #2ecc71); }
+.sens-word {
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--text);
+}
+
+/* GPS tagging tile — segmented On/Off, consistent with Sensitivity & Fan */
+.gps-tile .tile-label {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+.gps-tile .gps-indicator-icon {
+    flex: 0 0 auto;
+    color: var(--secondary);
+}
+.gps-tile.gps-active .gps-indicator-icon,
+.gps-tile.gps-active .tile-subtle {
+    color: var(--success, #2ecc71);
+    font-weight: 700;
+}
+
 /* --------------------------------------------------------------------------
    Power Button
    -------------------------------------------------------------------------- */

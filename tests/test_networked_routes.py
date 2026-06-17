@@ -84,8 +84,39 @@ class TestSaveDeviceConfig:
         assert resp.status_code == 200
         assert data['success'] is True
         mock_ctrl.send_command.assert_called_once_with(
-            'test-owl', 'save_config', {'filename': None}
+            'test-owl', 'save_config', {'filename': None, 'name': None, 'notes': None}
         )
+
+
+@pytest.mark.unit
+class TestApiOwlsCloud:
+    """/api/owls exposes fleet-level cloud (Noktura) link fields."""
+
+    def test_owls_includes_cloud_fields(self, networked_test_client):
+        client, mock_ctrl = networked_test_client
+        mock_ctrl.cloud_enable = True
+        mock_ctrl.cloud_connected = True
+        mock_ctrl.cloud_device_id = 'east-farm'
+        mock_ctrl.cloud_portal_url = 'https://app.noktura.tech'
+        mock_ctrl.get_recent_owls.return_value = {}
+
+        data = client.get('/api/owls').get_json()
+        assert data['cloud_enabled'] is True
+        assert data['cloud_connected'] is True
+        assert data['cloud_device_id'] == 'east-farm'
+        assert data['cloud_portal_url'] == 'https://app.noktura.tech'
+
+    def test_owls_cloud_not_configured(self, networked_test_client):
+        client, mock_ctrl = networked_test_client
+        mock_ctrl.cloud_enable = False
+        mock_ctrl.cloud_connected = None
+        mock_ctrl.cloud_device_id = ''
+        mock_ctrl.cloud_portal_url = ''
+        mock_ctrl.get_recent_owls.return_value = {}
+
+        data = client.get('/api/owls').get_json()
+        assert data['cloud_enabled'] is False
+        assert data['cloud_connected'] is None
 
 
 @pytest.mark.unit

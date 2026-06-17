@@ -508,29 +508,25 @@ setup_python_venv() {
     check_status "Creating virtual environment" "PYTHON_VENV"
 
     echo -e "${GREEN}[INFO] Installing Python dependencies...${NC}"
-    sudo -u $CURRENT_USER bash -c "source ${VENV_PATH}/bin/activate && pip install --upgrade pip && pip install flask==2.2.2 werkzeug==2.2.3 gunicorn==23.0.0 paho-mqtt==2.1.0 psutil==5.9.4 boto3==1.39.13 requests pyserial==3.5"
+    # Controller deps live in requirements-controller.txt (single source of
+    # truth, also used by owl_update.sh --profile controller) — do not
+    # pip-install individual packages here.
+    local REPO_ROOT
+    REPO_ROOT=$(realpath "${SCRIPT_DIR}/../..")
+    sudo -u $CURRENT_USER bash -c "source ${VENV_PATH}/bin/activate && pip install --upgrade pip && pip install -r '${REPO_ROOT}/requirements-controller.txt'"
     check_status "Installing Python dependencies" "PYTHON_VENV"
 }
 
-# Step 2b: Install AI agent dependencies (optional)
+# Step 2b: AI agent dependencies — now installed unconditionally via
+# requirements-controller.txt (httpx). This step is informational only.
 install_agent_dependencies() {
   echo ""
-  echo -e "${GREEN}[INFO] AI Agent (optional)${NC}"
-  echo -e "  Adds a chat assistant to the dashboard that can adjust"
-  echo -e "  detection settings, create custom algorithms, and more."
-  echo -e "  Requires an Anthropic or OpenAI API key to use."
+  echo -e "${GREEN}[INFO] AI Agent${NC}"
+  echo -e "  The dashboard chat assistant is installed by default."
+  echo -e "  It activates once an Anthropic or OpenAI API key is entered"
+  echo -e "  in the dashboard's agent tab."
   echo ""
-  read -p "Install AI agent support? (y/N): " INSTALL_AGENT
-
-  if [[ "$INSTALL_AGENT" =~ ^[Yy]$ ]]; then
-    echo -e "${GREEN}[INFO] Installing AI agent dependencies...${NC}"
-    VENV_PATH="/home/${CURRENT_USER}/controller_venv"
-    sudo -u $CURRENT_USER bash -c "source ${VENV_PATH}/bin/activate && pip install httpx"
-    check_status "Installing AI agent dependencies (httpx)" "AGENT_DEPS"
-  else
-    echo -e "${GREEN}[INFO] Skipping AI agent. You can install later with: pip install httpx${NC}"
-    STATUS_AGENT_DEPS="SKIPPED"
-  fi
+  STATUS_AGENT_DEPS="${TICK}"
 }
 
 # Step 3: Configure hostname
@@ -866,17 +862,25 @@ configure_sudoers() {
 
     local SUDOERS_FILE="/etc/sudoers.d/owl-controller"
     local SUDOERS_TMP="/tmp/owl-controller-sudoers.tmp"
-    local SHUTDOWN_BIN REBOOT_BIN APT_BIN
+    local SHUTDOWN_BIN REBOOT_BIN APT_BIN SYSTEMCTL_BIN SYSTEMD_RUN_BIN REPO_ROOT
     SHUTDOWN_BIN="$(command -v shutdown 2>/dev/null || echo /usr/sbin/shutdown)"
     REBOOT_BIN="$(command -v reboot 2>/dev/null || echo /usr/sbin/reboot)"
     APT_BIN="$(command -v apt 2>/dev/null || echo /usr/bin/apt)"
+    SYSTEMCTL_BIN="$(command -v systemctl 2>/dev/null || echo /usr/bin/systemctl)"
+    SYSTEMD_RUN_BIN="$(command -v systemd-run 2>/dev/null || echo /usr/bin/systemd-run)"
+    REPO_ROOT="$(realpath "${SCRIPT_DIR}/../..")"
 
+    # SECURITY: the systemd-run command must be LITERAL up to the script's
+    # own arguments — a wildcard before --uid would allow uid smuggling.
     cat > "$SUDOERS_TMP" <<EOF
-# OWL Controller — allow dashboard to shut down, reboot, and reinstall firmware
+# OWL Controller — allow dashboard to shut down, reboot, reinstall firmware,
+# restart its own service, and launch the software updater (fleet updates).
 # Managed by in-cab_controller_setup.sh — do not edit manually
 ${CURRENT_USER} ALL=(ALL) NOPASSWD: ${SHUTDOWN_BIN} now
 ${CURRENT_USER} ALL=(ALL) NOPASSWD: ${REBOOT_BIN}
 ${CURRENT_USER} ALL=(ALL) NOPASSWD: ${APT_BIN} reinstall -y ed-hmi3010-101c-firmware
+${CURRENT_USER} ALL=(ALL) NOPASSWD: ${SYSTEMCTL_BIN} restart owl-controller.service
+${CURRENT_USER} ALL=(ALL) NOPASSWD: ${SYSTEMD_RUN_BIN} --unit=owl-update --collect --property=RuntimeMaxSec=1800 --uid=${CURRENT_USER} --gid=${CURRENT_USER} /bin/bash ${REPO_ROOT}/owl_update.sh *
 EOF
 
     # Validate before installing
@@ -1209,11 +1213,7 @@ main() {
     echo -e "${GREEN}============================================${NC}"
     echo -e "$STATUS_PACKAGES System Packages"
     echo -e "$STATUS_PYTHON_VENV Python Environment"
-    if [[ "$STATUS_AGENT_DEPS" == "SKIPPED" ]]; then
-        echo -e "${ORANGE}[SKIPPED]${NC} AI Agent Dependencies"
-    else
-        echo -e "$STATUS_AGENT_DEPS AI Agent Dependencies"
-    fi
+    echo -e "$STATUS_AGENT_DEPS AI Agent Dependencies"
     echo -e "$STATUS_MQTT_BROKER MQTT Broker Configuration"
     echo -e "$STATUS_SSL_CERT SSL Certificate"
     echo -e "$STATUS_NGINX_CONFIG Nginx Configuration"

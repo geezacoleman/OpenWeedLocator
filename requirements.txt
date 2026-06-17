@@ -1,4 +1,8 @@
 ## OWL requirements file ##
+# Single source of truth for OWL-unit Python dependencies.
+# Installed by owl_setup.sh at setup time AND by owl_update.sh during updates —
+# never pip-install packages directly in setup scripts; add them here instead.
+# (Controller units use requirements-controller.txt.)
 # OpenCV should be installed separately
 gpiozero
 pandas
@@ -7,9 +11,15 @@ tqdm
 blessed
 matplotlib==3.10.3
 Pillow>=11.2.1,<11.3.0
+piexif
 pyserial
+# Dashboard + MQTT runtime (owl.py and controller/standalone)
+flask
+gunicorn
+paho-mqtt
+psutil
+boto3
 # Optional: Green-on-Green (YOLO) support — install with: pip install -r requirements-gog.txt
 # ultralytics>=8.0.0
 # ncnn
-# Optional: AI agent (installed via in-cab controller setup)
-# httpx
+# AI agent (controller only): httpx ships in requirements-controller.txt

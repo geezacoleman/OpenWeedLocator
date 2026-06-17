@@ -36,6 +36,20 @@ function updateSystemStats() {
             setText('memChipVal', `${data.memory_percent}%`);
             setText('tempChipVal', `${data.cpu_temp}°C`);
 
+            // Active config indicator (subtle line below the feed). Trim the
+            // .ini and the _YYYYMMDD_HHMMSS timestamp to a readable name.
+            const cfgLine = document.getElementById('activeConfigLine');
+            if (cfgLine) {
+                let cfgName = (data.config_name || '').replace(/\.ini$/, '');
+                cfgName = cfgName.replace(/_\d{8}_\d{6}$/, '').replace(/[-_]+/g, ' ').trim();
+                if (cfgName) {
+                    setText('activeConfigName', cfgName);
+                    cfgLine.classList.remove('hidden');
+                } else {
+                    cfgLine.classList.add('hidden');
+                }
+            }
+
             // Power button reflects owl_running
             setPowerButtonState(!!data.owl_running);
 
@@ -98,6 +112,16 @@ function updateSystemStats() {
             if (statusDot && statusText) {
                 statusDot.classList.toggle('connected', !!data.owl_running);
                 statusText.textContent = data.owl_running ? 'Online' : 'Offline';
+            }
+
+            // Header cloud (Noktura) link status
+            renderCloudStatus(
+                document.getElementById('cloudStatusDot'),
+                document.getElementById('cloudStatusText'),
+                data
+            );
+            if (typeof updateCloudManageBlock === 'function') {
+                updateCloudManageBlock(data);
             }
 
             // Sync AI tab if function exists

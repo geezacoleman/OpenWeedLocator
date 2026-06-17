@@ -1023,22 +1023,22 @@ function toggleFullscreen() {
    -------------------------------------------------------------------------- */
 
 function initGPS() {
-    const gpsToggle = document.getElementById('gpsToggle');
-    if (gpsToggle) {
-        gpsToggle.addEventListener('change', toggleGPS);
-        if (gpsToggle.checked) {
-            startGPS();
-        }
-    }
+    const container = document.getElementById('gps-buttons');
+    if (!container) return;
+    container.querySelectorAll('.seg-btn[data-gps]').forEach(btn => {
+        btn.addEventListener('click', () => setGPS(btn.dataset.gps === 'on'));
+    });
 }
 
-function toggleGPS() {
-    const gpsToggle = document.getElementById('gpsToggle');
-    if (gpsToggle && gpsToggle.checked) {
-        startGPS();
-    } else {
-        stopGPS();
+function setGPS(enabled) {
+    const container = document.getElementById('gps-buttons');
+    if (container) {
+        container.querySelectorAll('.seg-btn[data-gps]').forEach(b => {
+            b.classList.toggle('active', (b.dataset.gps === 'on') === enabled);
+        });
     }
+    if (enabled) startGPS();
+    else stopGPS();
 }
 
 function startGPS() {
@@ -1102,7 +1102,7 @@ function updateGPSIndicator() {
     if (!isGpsEnabled || !gpsData) {
         indicator.classList.remove('gps-active', 'gps-good', 'gps-medium', 'gps-poor');
         indicator.classList.add('gps-off');
-        if (statusText) statusText.textContent = isGpsEnabled ? 'Acquiring...' : 'GPS Off';
+        if (statusText) statusText.textContent = isGpsEnabled ? 'Acquiring…' : 'Off';
         return;
     }
 

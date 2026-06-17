@@ -5,6 +5,17 @@
    Usage: @import after _forms.css
    ========================================================================== */
 
+/* Library caption — display_name + notes + save date under a config selector */
+.config-library-caption {
+    margin-top: 0.4rem;
+    font-size: 0.8rem;
+    color: var(--text-light);
+    min-height: 1rem;
+}
+.config-library-caption:empty {
+    display: none;
+}
+
 /* -------------------------------------------------------------------------
    Config Badges
    ------------------------------------------------------------------------- */

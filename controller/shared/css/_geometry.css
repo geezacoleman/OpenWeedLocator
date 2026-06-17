@@ -1,0 +1,203 @@
+/* ==========================================================================
+   OWL Controllers - Visual Geometry Editor (shared)
+   Drag-on-feed overlay for crop edges + actuation band. Large glove-friendly
+   hit areas (kiosk / bumpy cab).
+   ========================================================================== */
+
+/* Wrapper that shrink-wraps the feed image so the overlay maps exactly to it */
+.config-preview-frame {
+    position: relative;
+    display: inline-block;
+    line-height: 0;
+    max-width: 100%;
+    max-height: 100%;
+}
+
+/* Geometry editor control panel (beside or below the feed; hidden when empty).
+   Scrolls internally so it never pushes the page past the viewport. */
+.geo-panel {
+    width: 100%;
+    background: #fff;
+    border: 1px solid #dce1e8;
+    border-radius: var(--radius-md, 8px);
+    padding: 0.6rem 0.75rem;
+    box-sizing: border-box;
+    max-height: 100%;
+    overflow-y: auto;
+}
+
+.geo-panel:empty {
+    display: none;
+}
+
+.geo-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    touch-action: none;       /* let us own the pointer for dragging */
+    user-select: none;
+}
+
+/* Dimmed (cropped-away) regions */
+.geo-dim {
+    position: absolute;
+    background: rgba(0, 0, 0, 0.55);
+    pointer-events: none;
+}
+
+/* Kept crop rectangle */
+.geo-crop-rect {
+    position: absolute;
+    border: 2px solid #2ecc71;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+    pointer-events: none;
+}
+
+/* Lane dividers */
+.geo-lane {
+    position: absolute;
+    width: 0;
+    border-left: 1px dashed rgba(255, 255, 255, 0.7);
+    pointer-events: none;
+}
+
+/* Actuation band */
+.geo-band {
+    position: absolute;
+    background: rgba(241, 196, 15, 0.22);
+    border-top: 2px solid #f1c40f;
+    border-bottom: 2px solid #f1c40f;
+    pointer-events: none;
+}
+
+/* Drag handles — visible knob + oversized invisible hit area */
+.geo-handle {
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    margin: -11px 0 0 -11px;     /* centre on the point */
+    border-radius: 50%;
+    background: #2ecc71;
+    border: 3px solid #fff;
+    box-shadow: 0 1px 5px rgba(0, 0, 0, 0.5);
+    cursor: grab;
+    z-index: 6;
+}
+
+.geo-handle::after {            /* big invisible hit target for gloves */
+    content: '';
+    position: absolute;
+    inset: -16px;
+}
+
+.geo-handle.dragging {
+    cursor: grabbing;
+    transform: scale(1.15);
+}
+
+.geo-handle-band {
+    background: #f1c40f;
+}
+
+.geo-h-left, .geo-h-right { cursor: ew-resize; }
+.geo-h-top, .geo-h-bottom,
+.geo-h-atop, .geo-h-abottom { cursor: ns-resize; }
+
+/* ── Nudge / action panel ───────────────────────────────────────────── */
+.geo-panel-title {
+    font-weight: 700;
+    font-size: 0.95rem;
+    margin: 0 0 0.4rem;
+    color: var(--text, #2c3e50);
+}
+
+/* Single column — the panel is narrow in both controllers (≤340px), so a
+   second column would clip the +/- buttons. Rows shrink to the panel width. */
+.geo-nudge-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
+    margin-bottom: 0.5rem;
+}
+
+.geo-nudge-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+}
+
+.geo-nudge-label {
+    flex: 1 1 auto;
+    min-width: 0;               /* allow the label to shrink so buttons never clip */
+    font-size: 0.85rem;
+    color: var(--text-light, #5a6b7b);
+}
+
+.geo-nudge-val {
+    min-width: 2.4rem;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+.geo-nudge-btn {
+    width: 36px;
+    height: 36px;
+    flex: 0 0 auto;
+    border: 1px solid #dce1e8;
+    border-radius: var(--radius-md, 8px);
+    background: #f4f7fa;
+    font-size: 1.15rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.geo-nudge-btn:active { transform: scale(0.95); background: #e7edf3; }
+
+.geo-apply-all {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.1rem 0 0.5rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-light, #5a6b7b);
+    cursor: pointer;
+}
+
+.geo-apply-all input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+}
+
+.geo-panel-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem 0.75rem;
+}
+
+.geo-btn {
+    flex: 0 1 auto;
+    padding: 0.55rem 1rem;
+    border: none;
+    border-radius: var(--radius-md, 8px);
+    font-size: 0.9rem;
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.geo-btn:active { transform: scale(0.97); }
+
+.geo-btn-primary {
+    background: linear-gradient(135deg, var(--accent, #3498db) 0%, #2980b9 100%);
+    color: #fff;
+}
+
+.geo-btn-secondary {
+    background: #fff;
+    color: var(--text-light, #5a6b7b);
+    border: 2px solid #bdc3c7;
+}

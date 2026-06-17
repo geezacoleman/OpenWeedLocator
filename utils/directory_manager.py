@@ -121,6 +121,29 @@ def collect_session_files(save_dir, session_id):
     return files
 
 
+def select_preview_images(save_dir, session_id, count):
+    """Pick up to `count` evenly-spaced image paths from a session.
+
+    First and last frames are always included. Archive names carry ISO
+    timestamps, so sorting them gives chronological order. Returns a list
+    of absolute paths (may be shorter than `count` for small sessions).
+    """
+    if count <= 0:
+        return []
+
+    files = collect_session_files(save_dir, session_id)
+    paths = [fp for _, fp in sorted(files)]
+
+    if len(paths) <= count:
+        return paths
+    if count == 1:
+        return [paths[0]]
+
+    n = len(paths)
+    indices = [round(i * (n - 1) / (count - 1)) for i in range(count)]
+    return [paths[i] for i in indices]
+
+
 class DirectorySetup:
     def __init__(self, save_directory):
         self.logger = LogManager.get_logger(__name__)

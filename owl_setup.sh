@@ -89,7 +89,9 @@ reload_bashrc() {
 install_dashboard_dependencies() {
   echo -e "${GREEN}[INFO] Installing dashboard Python dependencies...${NC}"
   source $HOME/.virtualenvs/owl/bin/activate
-  pip install flask gunicorn paho-mqtt psutil boto3 pyserial
+  # Dashboard deps live in requirements.txt (single source of truth, also used
+  # by owl_update.sh) — do not pip-install individual packages here.
+  pip install -r "$HOME/owl/requirements.txt"
   check_status "Installing dashboard Python dependencies" "DASHBOARD_DEPS"
 
   echo -e "${GREEN}[INFO] Verifying Python package installations...${NC}"

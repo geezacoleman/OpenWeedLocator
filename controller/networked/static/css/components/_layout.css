@@ -45,11 +45,19 @@ html, body {
     margin: 0;
 }
 
-.mqtt-status {
+.mqtt-status,
+.cloud-status {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     font-size: 0.85rem;
+}
+
+/* Separator gap between the local-broker and cloud chips */
+.header-status-group {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
 }
 
 /* Main Container */

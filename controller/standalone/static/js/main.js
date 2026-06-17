@@ -26,6 +26,13 @@ function initTabs() {
                 return;
             }
 
+            // Tabs with data-href navigate to a separate page (e.g. /downloads)
+            const href = this.getAttribute('data-href');
+            if (href) {
+                window.location.href = href;
+                return;
+            }
+
             tabLinks.forEach(t => t.classList.remove('active'));
             this.classList.add('active');
 

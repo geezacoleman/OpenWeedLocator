@@ -473,3 +473,57 @@ controller_ip = 192.168.1.2
         # Verify: same MQTT port
         assert owl1_cfg.get('MQTT', 'broker_port') == '1883'
         assert owl2_cfg.get('MQTT', 'broker_port') == '1883'
+
+
+# ---------------------------------------------------------------------------
+# Dependency single-source-of-truth — setup scripts must install from
+# requirements files, never inline package lists (a package baked into a
+# setup script is invisible to owl_update.sh and breaks remote updates)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestRequirementsSingleSource:
+
+    PROJECT_ROOT = os.path.join(os.path.dirname(__file__), '..')
+
+    def _pip_install_lines(self, script_relpath):
+        path = os.path.join(self.PROJECT_ROOT, script_relpath)
+        with open(path, encoding='utf-8') as f:
+            return [line for line in f
+                    if 'pip install' in line and not line.strip().startswith('#')]
+
+    @pytest.mark.parametrize('script', [
+        'owl_setup.sh',
+        'controller/networked/in-cab_controller_setup.sh',
+    ])
+    def test_setup_scripts_install_from_requirements_files(self, script):
+        offenders = []
+        for line in self._pip_install_lines(script):
+            # Allowed: pip install -r <file>, pip install --upgrade pip,
+            # version-pinned numpy workaround, opencv (installed separately
+            # by design — see requirements.txt header)
+            if re.search(r'pip install\s+(--no-input\s+)?(--upgrade pip|-r\s|"numpy|opencv)', line):
+                continue
+            offenders.append(line.strip())
+        assert not offenders, (
+            f"{script} installs packages outside requirements files "
+            f"(invisible to owl_update.sh): {offenders}"
+        )
+
+    def test_controller_requirements_file_exists(self):
+        path = os.path.join(self.PROJECT_ROOT, 'requirements-controller.txt')
+        assert os.path.exists(path), "requirements-controller.txt missing"
+        with open(path, encoding='utf-8') as f:
+            content = f.read()
+        # The controller stack and the agent dep must be pinned here
+        for pkg in ('flask', 'gunicorn', 'paho-mqtt', 'httpx'):
+            assert pkg in content, f"requirements-controller.txt missing {pkg}"
+
+    def test_owl_requirements_include_runtime_deps(self):
+        """paho-mqtt etc. were previously only in owl_setup.sh — they must
+        stay in requirements.txt so remote updates can install them."""
+        path = os.path.join(self.PROJECT_ROOT, 'requirements.txt')
+        with open(path, encoding='utf-8') as f:
+            content = f.read()
+        for pkg in ('flask', 'gunicorn', 'paho-mqtt', 'psutil', 'boto3', 'pyserial'):
+            assert pkg in content, f"requirements.txt missing {pkg}"

@@ -25,6 +25,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from utils.mqtt_manager import DashMQTTSubscriber
 from utils.input_manager import get_rpi_version
 from utils.directory_manager import scan_sessions
+from utils.config_manager import (
+    build_config_filename, parse_config_meta, strip_geometry_keys, GEOMETRY_FILE,
+)
 
 try:
     from flask import Flask, Response, render_template, request, jsonify, send_from_directory, send_file
@@ -61,7 +64,8 @@ class OWLDashboard:
         self.mqtt_client = DashMQTTSubscriber(
             broker_host='localhost',
             broker_port=1883,
-            client_id=f'owl_dashboard_{os.getpid()}')
+            client_id=f'owl_dashboard_{os.getpid()}',
+            cloud_device_id=self.cloud_device_id if self.cloud_enable else None)
 
         try:
             self.mqtt_client.start()
@@ -156,6 +160,12 @@ class OWLDashboard:
             self.logger.info(f"Config loaded from {controller_ini}")
         else:
             self.logger.warning(f"CONTROLLER.ini not found at {controller_ini}")
+
+        # Cloud (Noktura) link config — used for the connectivity indicator.
+        # Absent/disabled on un-provisioned devices (the common case).
+        self.cloud_enable = self.config.getboolean('Cloud', 'enable', fallback=False)
+        self.cloud_device_id = self.config.get('Cloud', 'device_id', fallback='').strip()
+        self.cloud_portal_url = self.config.get('Cloud', 'portal_url', fallback='').strip().rstrip('/')
 
         # controller_type is read on-demand via _get_controller_type()
         self.controller_type = 'none'
@@ -519,6 +529,7 @@ class OWLDashboard:
                 'confidence': mqtt_state.get('confidence', 0.5),
                 'crop_buffer_px': mqtt_state.get('crop_buffer_px', 20),
                 'algorithm_error': mqtt_state.get('algorithm_error'),
+                'config_name': mqtt_state.get('config_name', ''),
                 # Tracking
                 'tracking_enabled': mqtt_state.get('tracking_enabled', False),
                 # Camera resolution
@@ -530,6 +541,11 @@ class OWLDashboard:
                 'allow_high_resolution': mqtt_state.get('allow_high_resolution', False),
                 # Hardware
                 'rpi_version': mqtt_state.get('rpi_version', 'unknown'),
+                # Cloud (Noktura) link — for the connectivity indicator
+                'cloud_enabled': self.cloud_enable,
+                'cloud_connected': self.mqtt_client.get_cloud_connected() if self.mqtt_client else None,
+                'cloud_device_id': self.cloud_device_id,
+                'cloud_portal_url': self.cloud_portal_url,
             })
 
             return jsonify(stats)
@@ -1113,6 +1129,68 @@ class OWLDashboard:
                 self.logger.error(f"Error setting crop buffer: {e}")
                 return jsonify({'success': False, 'error': str(e)}), 500
 
+        @self.app.route('/api/config/section', methods=['POST'])
+        def set_config_section():
+            """Apply a whole config section live via MQTT and persist it.
+
+            Used by the visual geometry editor to push crop edges ([Camera]) and
+            the actuation band ([System]). The OWL re-derives geometry on receipt.
+            """
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            try:
+                data = request.get_json() or {}
+                section = data.get('section')
+                params = data.get('params') or {}
+                if not section or not params:
+                    return jsonify({'success': False, 'error': 'section and params required'}), 400
+                result = self.mqtt_client._send_command(
+                    'set_config_section', section=section, params=params)
+                for key, value in params.items():
+                    self._persist_config_change(section, key, str(value))
+                return jsonify(result if isinstance(result, dict) else {'success': True})
+            except Exception as e:
+                self.logger.error(f"Error setting config section: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/geometry', methods=['POST'])
+        def set_geometry():
+            """Apply mount geometry to the OWL. persist=true writes GEOMETRY.ini."""
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            try:
+                data = request.get_json() or {}
+                params = data.get('params') or {}
+                if not params:
+                    return jsonify({'success': False, 'error': 'No geometry params'}), 400
+                if data.get('persist'):
+                    result = self.mqtt_client._send_command('save_geometry', params=params)
+                else:
+                    cam = {k: v for k, v in params.items() if k.startswith('crop_')}
+                    sysp = {k: v for k, v in params.items() if k.startswith('actuation_')}
+                    if cam:
+                        self.mqtt_client._send_command('set_config_section', section='Camera', params=cam)
+                    if sysp:
+                        self.mqtt_client._send_command('set_config_section', section='System', params=sysp)
+                    result = {'success': True}
+                return jsonify(result if isinstance(result, dict) else {'success': True})
+            except Exception as e:
+                self.logger.error(f"Error setting geometry: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/preview-mode', methods=['POST'])
+        def set_preview_mode():
+            """Toggle the OWL preview stream between 'full' and 'cropped'."""
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            try:
+                mode = (request.get_json() or {}).get('mode', 'cropped')
+                result = self.mqtt_client._send_command('set_preview_mode', mode=mode)
+                return jsonify(result if isinstance(result, dict) else {'success': True})
+            except Exception as e:
+                self.logger.error(f"Error setting preview mode: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
         @self.app.route('/api/config/confidence', methods=['POST'])
         def set_confidence():
             """Set AI confidence via MQTT command."""
@@ -1190,40 +1268,49 @@ class OWLDashboard:
                 if not data or 'config' not in data:
                     return jsonify({'success': False, 'error': 'No config data provided'}), 400
 
-                # Generate new filename with timestamp
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                suggested_name = data.get('filename', f'config_{timestamp}.ini')
+                display_name = (data.get('name') or '').strip()
+                notes = (data.get('notes') or '').strip()
 
-                # Ensure it's in the config directory and has .ini extension
-                if not suggested_name.endswith('.ini'):
-                    suggested_name += '.ini'
-
-                # Sanitize filename
-                safe_name = "".join(c for c in suggested_name if c.isalnum() or c in ('_', '-', '.')).strip()
-                if not safe_name:
-                    safe_name = f'config_{timestamp}.ini'
+                # Update-in-place: an explicit overwrite_filename targets an existing
+                # file verbatim. Otherwise build <safe-name>_<timestamp>.ini.
+                overwrite = (data.get('overwrite_filename') or '').strip()
+                if overwrite:
+                    safe_name = overwrite if overwrite.endswith('.ini') else overwrite + '.ini'
+                else:
+                    safe_name = build_config_filename(display_name, data.get('filename'), timestamp)
 
                 config_dir = self._get_config_dir()
                 new_config_path = os.path.join(config_dir, safe_name)
 
-                # Don't allow overwriting default configs
-                protected_configs = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini']
+                # Don't allow overwriting default/infrastructure configs
+                protected_configs = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini', GEOMETRY_FILE]
                 if safe_name in protected_configs:
                     return jsonify({
                         'success': False,
                         'error': f'Cannot overwrite default config "{safe_name}". Please choose a different name.'
                     }), 400
 
-                # Build config from data
+                # Build config from data. Geometry is device-resident in
+                # GEOMETRY.ini — strip it so named configs never carry/overwrite it.
                 config = configparser.ConfigParser()
                 config.optionxform = str  # Preserve case
 
-                new_config = data['config']
+                new_config = strip_geometry_keys(data['config'])
                 for section, options in new_config.items():
                     if not config.has_section(section):
                         config.add_section(section)
                     for key, value in options.items():
                         config.set(section, key, str(value))
+
+                # Stamp human-readable metadata (only fields that were provided).
+                if display_name or notes:
+                    config.add_section('Meta')
+                    if display_name:
+                        config.set('Meta', 'display_name', display_name)
+                    if notes:
+                        config.set('Meta', 'notes', notes)
+                    config.set('Meta', 'created', datetime.now().isoformat(timespec='seconds'))
 
                 # Write the new config file
                 with open(new_config_path, 'w') as f:
@@ -1757,19 +1844,23 @@ class OWLDashboard:
         configs = []
         if os.path.exists(config_dir):
             for f in os.listdir(config_dir):
-                if f.endswith('.ini'):
+                if f.endswith('.ini') and f != GEOMETRY_FILE:
                     full_path = os.path.join(config_dir, f)
                     stat = os.stat(full_path)
 
                     # Determine if it's a default config
                     is_default = f in ['GENERAL_CONFIG.ini', 'CONTROLLER.ini']
 
+                    meta = parse_config_meta(full_path)
                     configs.append({
                         'name': f,
                         'path': f'config/{f}',
                         'size': stat.st_size,
                         'modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                        'is_default': is_default
+                        'is_default': is_default,
+                        'display_name': meta.get('display_name', ''),
+                        'notes': meta.get('notes', ''),
+                        'created': meta.get('created', ''),
                     })
 
         # Sort: defaults first, then by modified date descending

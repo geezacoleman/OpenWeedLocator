@@ -333,6 +333,43 @@
     z-index: 1;
 }
 
+.config-split.preview-active .config-preview-col {
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+/* Geometry editing — feed and controls flow SIDE BY SIDE on a wide (landscape
+   kiosk) column and WRAP to stacked on a narrow one. The feed height is capped
+   so the whole thing fits 1280x800 without scrolling the page; the column
+   scrolls as a last resort. The feed frame is never flex-grown, so the drag
+   overlay stays aligned to the image. */
+.config-preview-col.geo-host-active {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    align-content: center;
+    justify-content: center;
+    gap: 0.75rem 1rem;
+    overflow-y: auto;
+}
+.config-preview-col.geo-host-active .config-preview-frame {
+    flex: 0 1 auto;
+    max-width: 100%;
+    max-height: 60vh;
+}
+.config-preview-col.geo-host-active .geo-panel {
+    flex: 0 1 320px;
+    max-width: 340px;
+    max-height: 100%;
+}
+
+/* While editing geometry, give the feed + controls the full width by hiding the
+   slider column (the editor is a focused task). Graceful fallback if :has() is
+   unsupported — the slider column stays and the panel just wraps/scrolls. */
+.config-split:has(.config-preview-col.geo-host-active) .config-sliders-col {
+    display: none;
+}
+
 .config-preview-img {
     max-width: 100%;
     max-height: 100%;
@@ -443,6 +480,57 @@
     background: linear-gradient(135deg, var(--accent) 0%, #2980b9 100%);
     color: white;
     box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
+}
+
+/* Test — apply live to all OWLs without saving (purple, matches preview) */
+.config-action-btn.test {
+    background: linear-gradient(135deg, #8e44ad 0%, #6c3483 100%);
+    color: white;
+    box-shadow: 0 2px 8px rgba(142, 68, 173, 0.3);
+}
+
+/* Set-as-default star button */
+.config-action-btn.star {
+    background: #fef9e7;
+    color: #b9770e;
+    border: 2px solid #f1c40f;
+}
+
+/* Restart button (in the restart-required notice) */
+.config-action-btn.restart {
+    background: linear-gradient(135deg, var(--warning) 0%, #d68910 100%);
+    color: white;
+    box-shadow: 0 2px 8px rgba(243, 156, 18, 0.3);
+}
+
+/* "Running: <config>" line on an OWL card */
+.owl-compact-config {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--success-dark);
+    margin: 0.15rem 0 0.35rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Restart-required notice banner */
+.config-restart-notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin: 0.5rem 0;
+    padding: 0.6rem 1rem;
+    background: #fef5e7;
+    border: 1px solid #f5cba7;
+    border-left: 4px solid var(--warning);
+    border-radius: var(--radius-md);
+}
+
+.config-restart-text {
+    font-weight: 600;
+    color: #9c640c;
 }
 
 /* Target badge — replaces device selector in toolbar */

@@ -330,6 +330,30 @@ class TestFrontendBackendConfigSync:
             f"text input instead of correct type): {missing}"
         )
 
+    def test_cloud_section_three_way_parity(self):
+        """[Cloud] keys must agree across the CONTROLLER template, the
+        ConfigValidator registration, and the frontend field defs —
+        a key missing from any layer is a silent integration failure."""
+        from utils.config_manager import ConfigValidator
+
+        template = CONFIG_DIR / 'CONTROLLER_TEMPLATE.ini'
+        config = configparser.ConfigParser()
+        config.read(template, encoding='utf-8')
+        assert config.has_section('Cloud'), "CONTROLLER_TEMPLATE.ini missing [Cloud]"
+        template_keys = set(config.options('Cloud'))
+
+        validator_keys = ConfigValidator.OPTIONAL_SECTIONS['Cloud']['optional_keys']
+        frontend_keys = self._parse_config_field_defs().get('Cloud', set())
+
+        assert template_keys == validator_keys, (
+            f"template vs ConfigValidator mismatch: "
+            f"only in template: {template_keys - validator_keys}, "
+            f"only in validator: {validator_keys - template_keys}"
+        )
+        assert template_keys <= frontend_keys, (
+            f"[Cloud] keys missing frontend field defs: {template_keys - frontend_keys}"
+        )
+
     def test_controller_ini_keys_have_frontend_field_defs(self):
         """Every key in CONTROLLER.ini should also have a frontend definition."""
         controller_ini = CONFIG_DIR / 'CONTROLLER.ini'

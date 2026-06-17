@@ -77,6 +77,31 @@ class TestGPSState:
         d = state.get_dict()
         assert d['fix_valid'] is False
 
+    def test_rmc_active_stores_utc(self):
+        state = GPSState()
+        state.update_from_rmc({
+            'status': 'A',
+            'lat': -33.8688,
+            'lon': 151.2093,
+            'speed_knots': 5.0,
+            'heading': 180.0,
+            'time_utc': '015230.50',
+            'date': '110626',
+        })
+        d = state.get_dict()
+        assert d['utc_time'] == '015230.50'
+        assert d['utc_date'] == '110626'
+
+    def test_rmc_void_does_not_store_utc(self):
+        """UTC from a void fix is untrusted — must stay None."""
+        state = GPSState()
+        state.update_from_rmc({'status': 'V', 'lat': None, 'lon': None,
+                               'speed_knots': None, 'heading': None,
+                               'time_utc': '015230.50', 'date': '110626'})
+        d = state.get_dict()
+        assert d['utc_time'] is None
+        assert d['utc_date'] is None
+
     def test_update_from_gga(self):
         state = GPSState()
         state.update_from_gga({

@@ -122,6 +122,10 @@ class Owl:
 
         self.config.read(self._config_path)
         self.config.read(Path(__file__).parent / 'config' / 'CONTROLLER.ini')
+        # GEOMETRY.ini holds per-unit mount geometry (crop edges + actuation band)
+        # and is read LAST so it always wins over legacy crop_*/actuation_* values
+        # in the active detection config.
+        self.config.read(Path(__file__).parent / 'config' / 'GEOMETRY.ini')
         self.RPI_VERSION = get_rpi_version()
         self.logger.info(msg=f'Raspberry Pi version: {self.RPI_VERSION}')
 
@@ -497,6 +501,10 @@ class Owl:
         self._pending_model = None
         self._pending_detect_classes = None
         self._gog_detector = None
+        # When True the dashboard preview streams the full uncropped frame (used by
+        # the geometry editor so its overlay maps to the whole image). Default: the
+        # preview shows the cropped frame (what the detector actually sees).
+        self._stream_full_frame = False
 
         # Tracking config (ByteTrack + class smoothing + crop mask persistence)
         self.tracking_enabled = self.config.getboolean('Tracking', 'tracking_enabled', fallback=False)
@@ -520,43 +528,73 @@ class Owl:
             self.logger.info(f'Tracking enabled: class_window={self._track_class_window}, '
                              f'crop_persist={self._track_crop_persist}')
 
-        # Crop factors to reduce edge artifacts (0.1 = 10% crop from each side)
+        # Per-edge crop fractions (inset from each edge, 0.0-0.49) to reduce edge
+        # artifacts / exclude a boom or wheel track. Backward-compatible with the
+        # legacy symmetric crop_factor_horizontal/vertical (used only as fallback).
         self.crop_factor_horizontal = self.config.getfloat('Camera', 'crop_factor_horizontal', fallback=0.1)
         self.crop_factor_vertical = self.config.getfloat('Camera', 'crop_factor_vertical', fallback=0.1)
-        self.logger.info(f'[INFO] Crop factor: X {self.crop_factor_horizontal} | Y {self.crop_factor_vertical}')
+        self.crop_left = self.config.getfloat('Camera', 'crop_left', fallback=self.crop_factor_horizontal)
+        self.crop_right = self.config.getfloat('Camera', 'crop_right', fallback=self.crop_factor_horizontal)
+        self.crop_top = self.config.getfloat('Camera', 'crop_top', fallback=self.crop_factor_vertical)
+        self.crop_bottom = self.config.getfloat('Camera', 'crop_bottom', fallback=self.crop_factor_vertical)
 
-        if self.frame_width and self.frame_height:
-            # Calculate cropped dimensions
-            crop_left = int(self.frame_width * self.crop_factor_horizontal)
-            crop_right = int(self.frame_width - crop_left)
-            crop_top = int(self.frame_height * self.crop_factor_vertical)
-            crop_bottom = int(self.frame_height - crop_top)
-            self.cropped_width = crop_right - crop_left
-            self.cropped_height = crop_bottom - crop_top
-            self.logger.info(f'[INFO] Image cropped to {crop_left}x{crop_right}x{crop_top}x{crop_bottom}.')
-            # Store crop boundaries for slicing
-            self.crop_slice = (slice(crop_top, crop_bottom), slice(crop_left, crop_right))
+        # Actuation band — a weed fires only while its centre is inside this band of
+        # the cropped frame (fractions of cropped height; 0=top, 1=bottom). Backward-
+        # compatible with the legacy bottom-anchored actuation_zone %.
+        self.actuation_top = self.config.getfloat(
+            'System', 'actuation_top', fallback=1.0 - self.actuation_zone / 100.0)
+        self.actuation_bottom = self.config.getfloat('System', 'actuation_bottom', fallback=1.0)
 
-            # Calculate lane width based on cropped width
-            self.lane_width = self.cropped_width / self.relay_num
-
-            # Calculate actuation zone Y threshold
-            self.actuation_y_thresh = int(self.cropped_height * (1.0 - self.actuation_zone / 100.0))
-
-            # Calculate lane coords relative to cropped frame
-            for i in range(self.relay_num):
-                laneX = int(i * self.lane_width)
-                self.lane_coords[i] = laneX
-
-            # Precompute the integer lane coordinates for reuse
-            self.lane_coords_int = {k: int(v) for k, v in self.lane_coords.items()}
-
-        else:
-            self.logger.error('[ERROR] No frame width or frame height provided.')
+        # Derive crop_slice, lane coords and actuation band pixel bounds.
+        self.recompute_geometry()
 
     @property
     def config_path(self):
         return self._config_path
+
+    def recompute_geometry(self):
+        """Recompute crop slice, lane coordinates and actuation band pixel bounds
+        from the current per-edge crop fractions, actuation band and relay_num.
+
+        Event-driven and cheap: called once from __init__ and again whenever a
+        geometry config value changes via MQTT. NEVER call this per-frame. Attribute
+        rebinding is atomic in CPython, so the detection loop reading self.crop_slice
+        always sees a complete (old or new) value without a lock.
+        """
+        if not (self.frame_width and self.frame_height):
+            self.logger.error('[ERROR] No frame width or frame height provided.')
+            return
+
+        # Clamp so the crop can never collapse the frame to zero width/height.
+        left = min(max(self.crop_left, 0.0), 0.49)
+        right = min(max(self.crop_right, 0.0), 0.49)
+        top = min(max(self.crop_top, 0.0), 0.49)
+        bottom = min(max(self.crop_bottom, 0.0), 0.49)
+
+        crop_l = int(self.frame_width * left)
+        crop_r = int(self.frame_width * (1.0 - right))
+        crop_t = int(self.frame_height * top)
+        crop_b = int(self.frame_height * (1.0 - bottom))
+        self.cropped_width = crop_r - crop_l
+        self.cropped_height = crop_b - crop_t
+        self.crop_slice = (slice(crop_t, crop_b), slice(crop_l, crop_r))
+        self.logger.info(f'[INFO] Crop edges L{left} R{right} T{top} B{bottom} '
+                         f'-> {self.cropped_width}x{self.cropped_height}px')
+
+        # Lane width across the cropped frame; lanes recenter automatically.
+        self.lane_width = self.cropped_width / self.relay_num
+        lane_coords = {i: int(i * self.lane_width) for i in range(self.relay_num)}
+        self.lane_coords = lane_coords
+        self.lane_coords_int = {k: int(v) for k, v in lane_coords.items()}
+
+        # Actuation band -> pixel bounds within the cropped frame.
+        a_top = min(max(self.actuation_top, 0.0), 1.0)
+        a_bottom = min(max(self.actuation_bottom, 0.0), 1.0)
+        if a_top >= a_bottom:
+            # Degenerate band — fall back to the full cropped height.
+            a_top, a_bottom = 0.0, 1.0
+        self.actuation_y_top = int(self.cropped_height * a_top)
+        self.actuation_y_bottom = int(self.cropped_height * a_bottom)
 
     def hoot(self):
         # Signal successful boot with LED blink
@@ -652,7 +690,7 @@ class Owl:
         try:
             while True:
                 loop_start = time.time()
-                frame = self.cam.read()
+                frame, camera_metadata = self.cam.read_with_metadata()
 
                 if frame is None:
                     self.logger.info("[INFO] Frame is None. Stopped.")
@@ -884,7 +922,8 @@ class Owl:
                             lane_start = self.lane_coords_int[i]
                             lane_end = int(lane_start + self.lane_width)
                             lane_pixels = np.count_nonzero(
-                                weed_detector.detection_mask[self.actuation_y_thresh:, lane_start:lane_end]
+                                weed_detector.detection_mask[self.actuation_y_top:self.actuation_y_bottom,
+                                                             lane_start:lane_end]
                             )
                             if lane_pixels >= min_detection_pixels:
                                 self.relay_controller.receive(
@@ -899,7 +938,7 @@ class Owl:
                             actuation_time = time.time()
                             fired = set()
                             for centre in weed_centres:
-                                if centre[1] >= self.actuation_y_thresh:
+                                if self.actuation_y_top <= centre[1] <= self.actuation_y_bottom:
                                     relay_id = min(int(centre[0] / self.lane_width), self.relay_num - 1)
                                     fired.add(relay_id)
                             for relay_id in fired:
@@ -920,18 +959,34 @@ class Owl:
 
                 if self.dash and frame_count % 5 == 0:  # send every 5th frame to the streamer to reduce overhead
                     try:
-                        if self._detection_enable and image_out is not None:
-                            final_frame_to_stream = image_out
+                        if self._stream_full_frame:
+                            # Geometry editor wants the full, uncropped frame so its
+                            # overlay maps to the whole image. No band lines (the
+                            # client draws its own).
+                            self.set_latest_stream_frame(frame)
                         else:
-                            final_frame_to_stream = frame
+                            # Always show the CROPPED frame (what the detector sees):
+                            # the annotated detection output when detecting, else the
+                            # raw frame cropped for display (cheap view).
+                            if self._detection_enable and image_out is not None:
+                                final_frame_to_stream = image_out
+                            else:
+                                # .copy() → contiguous (cv2.line needs it) and avoids
+                                # drawing band lines onto the live capture buffer.
+                                final_frame_to_stream = frame[self.crop_slice].copy()
 
-                        if self.actuation_zone < 100:
-                            cv2.line(final_frame_to_stream,
-                                     (0, self.actuation_y_thresh),
-                                     (final_frame_to_stream.shape[1], self.actuation_y_thresh),
-                                     (0, 255, 255), 1)
+                            # Draw the actuation band edges (cropped-frame coords).
+                            frame_w = final_frame_to_stream.shape[1]
+                            if self.actuation_y_top > 0:
+                                cv2.line(final_frame_to_stream,
+                                         (0, self.actuation_y_top), (frame_w, self.actuation_y_top),
+                                         (0, 255, 255), 1)
+                            if self.actuation_y_bottom < final_frame_to_stream.shape[0]:
+                                cv2.line(final_frame_to_stream,
+                                         (0, self.actuation_y_bottom), (frame_w, self.actuation_y_bottom),
+                                         (0, 255, 255), 1)
 
-                        self.set_latest_stream_frame(final_frame_to_stream)
+                            self.set_latest_stream_frame(final_frame_to_stream)
                     except Exception as e:
                         self.logger.error(f"Error sending frame to dashboard: {e}")
 
@@ -947,11 +1002,23 @@ class Owl:
                             save_boxes = boxes
                             save_centres = weed_centres
 
+                        context = {
+                            'device_id': self.dash.device_id if self.dash else None,
+                            'algorithm': algorithm,
+                            'model': Path(self._model_path).name if algorithm.startswith('gog') else None,
+                            'owl_version': str(VERSION),
+                            'camera_model': getattr(self.cam, 'camera_model', None),
+                        }
+                        if self.dash:
+                            context.update(self.dash.get_session_metadata())
+
                         self.image_recorder.add_frame(frame=frame,
                                                       frame_id=frame_count,
                                                       boxes=save_boxes,
                                                       centres=save_centres,
-                                                      gps_data=self.gps_data)
+                                                      gps_data=self.gps_data,
+                                                      camera_metadata=camera_metadata,
+                                                      context=context)
 
                         if self.controller:
                             self.status_indicator.image_write_indicator()
@@ -1447,14 +1514,23 @@ class Owl:
                     'latitude': snapshot['latitude'],
                     'longitude': snapshot['longitude'],
                     'accuracy': snapshot.get('hdop'),
+                    'hdop': snapshot.get('hdop'),
+                    'altitude': snapshot.get('altitude'),
+                    'speed_kmh': snapshot.get('speed_kmh'),
+                    'heading': snapshot.get('heading'),
+                    'satellites': snapshot.get('satellites'),
+                    'utc_time': snapshot.get('utc_time'),
+                    'utc_date': snapshot.get('utc_date'),
                     'timestamp': time.time()
                 }
 
-        # Fallback to dashboard GPS (browser geolocation via MQTT)
+        # Fallback to dashboard GPS (browser geolocation or controller broadcast via MQTT)
         if self.dash:
             gps = self.dash.get_gps_data()
             if gps is not None:
-                age = time.time() - gps.get('timestamp', 0)
+                # Staleness uses LOCAL receipt time — the sender's clock
+                # (phone/controller) may be skewed against this Pi's clock.
+                age = time.time() - gps.get('received_at', gps.get('timestamp', 0))
                 if age <= self._GPS_STALE_THRESHOLD:
                     if self.gps_status_led:
                         self.gps_status_led.set_state(GPSLEDState.FIX)

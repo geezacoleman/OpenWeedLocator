@@ -30,7 +30,28 @@ function initConfigEditor() {
         if (deviceId) loadDeviceConfig(deviceId);
     });
 
+    document.getElementById('config-library-selector')?.addEventListener('change', updateLibraryCaption);
+
     loadConfigLibrary();
+}
+
+/**
+ * Show the highlighted library config's name, notes and save date under the selector.
+ */
+function updateLibraryCaption() {
+    const sel = document.getElementById('config-library-selector');
+    const cap = document.getElementById('config-library-caption');
+    if (!sel || !cap) return;
+    const cfg = configLibraryList.find(c => c.name === sel.value);
+    if (!cfg || cfg.is_default || !sel.value || sel.value === '__reset_defaults__') {
+        cap.textContent = '';
+        return;
+    }
+    const parts = [];
+    if (cfg.display_name) parts.push(cfg.display_name);
+    if (cfg.created) parts.push('saved ' + cfg.created.slice(0, 10));
+    if (cfg.notes) parts.push('— ' + cfg.notes);
+    cap.textContent = parts.join('  ');
 }
 
 /**
@@ -164,7 +185,97 @@ function updateConfigEditorChangeState() {
 function updateActiveBadge(configName) {
     const badge = document.getElementById('config-active-badge');
     if (badge) {
-        badge.textContent = 'Active: ' + configName;
+        // Show the friendly [Meta] name for the active file if we have it.
+        var pretty = prettyConfigName(configName);
+        badge.textContent = '★ On reboot: ' + pretty;
+    }
+}
+
+/**
+ * Map a config filename to its friendly [Meta] display name (falls back to a
+ * formatted timestamp or the raw name).
+ */
+function prettyConfigName(name) {
+    if (!name) return '--';
+    var cfg = configLibraryList.find(function(c) { return c.name === name; });
+    if (cfg && cfg.display_name) return cfg.display_name;
+    return formatConfigLabel(name);
+}
+
+/**
+ * Format a config filename into a readable label: prefer [Meta] display_name,
+ * else strip a trailing _YYYYMMDD_HHMMSS timestamp into a date.
+ */
+function escapeConfigLabel(s) {
+    return String(s).replace(/[&<>"]/g, function(c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+}
+
+function formatConfigLabel(name, displayName) {
+    if (displayName) {
+        var safe = escapeConfigLabel(displayName);
+        var m = name.match(/_(\d{4})(\d{2})(\d{2})_\d{6}\.ini$/);
+        if (m) return safe + ' (' + m[3] + '/' + m[2] + ')';
+        return safe;
+    }
+    var match = name.match(/^(.*)_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})\.ini$/);
+    if (match) {
+        var base = match[1].replace(/^config$/, '').replace(/[-_]+/g, ' ').trim();
+        var date = match[4] + '/' + match[3];
+        return (base ? base + ' ' : '') + '(' + date + ')';
+    }
+    return name.replace(/\.ini$/, '');
+}
+
+/**
+ * Set the selected library config as the active boot config on all OWLs.
+ */
+async function setDefaultConfig() {
+    const sel = document.getElementById('config-library-selector');
+    const configName = sel ? sel.value : '';
+    if (!configName || configName === '__reset_defaults__') {
+        showToast('Select a config first', 'warning');
+        return;
+    }
+    try {
+        const res = await apiRequest('/api/config/all/set-active', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config: 'config/' + configName })
+        });
+        const data = await res.json();
+        if (data && data.success !== false) {
+            updateActiveBadge(configName);
+            showToast('Set as default on reboot', 'success');
+        } else {
+            showToast('Failed: ' + (data.error || 'unknown'), 'error');
+        }
+    } catch (err) {
+        showToast('Error setting default: ' + err.message, 'error');
+    }
+}
+
+/**
+ * Show/hide the restart-required notice based on any OWL reporting restart_required
+ * in its state (set when resolution/relay_num change live).
+ */
+function updateRestartNotice() {
+    const notice = document.getElementById('config-restart-notice');
+    const textEl = document.getElementById('config-restart-text');
+    if (!notice) return;
+
+    const keys = new Set();
+    for (const id in owlsData) {
+        const rr = owlsData[id] && owlsData[id].restart_required;
+        if (rr) String(rr).split(',').forEach(k => { if (k) keys.add(k.trim()); });
+    }
+
+    if (keys.size > 0) {
+        notice.classList.remove('hidden');
+        if (textEl) textEl.textContent = 'Restart needed to apply: ' + Array.from(keys).join(', ');
+    } else {
+        notice.classList.add('hidden');
     }
 }
 
@@ -193,7 +304,7 @@ function renderConfigLibrarySelector() {
     var defaults = configLibraryList.filter(c => c.is_default);
     var custom = configLibraryList.filter(c => !c.is_default);
 
-    var html = '<option value="">Presets...</option>';
+    var html = '<option value="">Library&hellip;</option>';
     html += '<option value="__reset_defaults__">Reset to Defaults</option>';
 
     if (defaults.length > 0) {
@@ -207,13 +318,7 @@ function renderConfigLibrarySelector() {
     if (custom.length > 0) {
         html += '<optgroup label="Custom">';
         custom.forEach(c => {
-            // Format timestamp filenames for readability
-            var label = c.name;
-            var match = label.match(/^config_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})\.ini$/);
-            if (match) {
-                label = match[1] + '-' + match[2] + '-' + match[3] + ' ' +
-                        match[4] + ':' + match[5] + ':' + match[6];
-            }
+            var label = formatConfigLabel(c.name, c.display_name);
             html += '<option value="' + c.name + '">' + label + '</option>';
         });
         html += '</optgroup>';

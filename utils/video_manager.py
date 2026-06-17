@@ -189,6 +189,10 @@ class WebcamStream:
         # return the frame most recently read
         return self.frame
 
+    def read_with_metadata(self):
+        # webcams expose no per-frame capture metadata
+        return self.frame, None
+
     def stop(self):
         self.stop_event.set()
         if self.thread.is_alive():
@@ -206,6 +210,7 @@ class PiCamera2Stream:
         self.frame_width = None
         self.frame_height = None
         self.frame = None
+        self.frame_metadata = None
         self.frame_available = False
 
         self.stopped = Event()
@@ -293,7 +298,14 @@ class PiCamera2Stream:
         try:
             while not self.stopped.is_set():
                 try:
-                    frame = self.camera.capture_array("main")
+                    # capture_request gives the frame AND its per-frame metadata
+                    # (ExposureTime, AnalogueGain, Lux, ...) atomically for EXIF.
+                    request = self.camera.capture_request()
+                    try:
+                        frame = request.make_array("main")  # copies, safe after release
+                        metadata = request.get_metadata()
+                    finally:
+                        request.release()  # mandatory — buffer pool exhausts otherwise
 
                 except Exception as e:
                     try:
@@ -302,7 +314,7 @@ class PiCamera2Stream:
                     except Exception:
                         dmesg_tail = "Could not read dmesg output."
 
-                    original = f"Exception during Picamera2.capture_array(): {e}\n\nRecent kernel/libcamera messages (tail 50 lines):\n{dmesg_tail}"
+                    original = f"Exception during Picamera2.capture_request(): {e}\n\nRecent kernel/libcamera messages (tail 50 lines):\n{dmesg_tail}"
                     err = CameraNotFoundError(error_type="capture_exception", original_error=original)
 
                     self.logger.critical(str(err), exc_info=True, extra={'error_code': 'camera_capture_exception'})
@@ -316,7 +328,7 @@ class PiCamera2Stream:
                         dmesg_tail = "Could not read dmesg output."
 
                     original = (
-                            "capture_array returned None (no frame). This commonly indicates a camera I/O error.\n\n"
+                            "capture_request returned None (no frame). This commonly indicates a camera I/O error.\n\n"
                             "Recent kernel/libcamera messages (tail 50 lines):\n" + dmesg_tail
                     )
                     err = CameraNotFoundError(error_type="no_frame", original_error=original)
@@ -326,6 +338,7 @@ class PiCamera2Stream:
 
                 with self.lock:
                     self.frame = frame
+                    self.frame_metadata = metadata
                     self.frame_available = True
 
                 with self.condition:
@@ -345,13 +358,18 @@ class PiCamera2Stream:
 
     def read(self):
         # return the frame most recently read
+        frame, _ = self.read_with_metadata()
+        return frame
+
+    def read_with_metadata(self):
+        # return the most recent frame and its capture metadata atomically
         with self.condition:
             while not self.frame_available:
                 self.condition.wait()
 
             with self.lock:
                 self.frame_available = False
-                return self.frame
+                return self.frame, self.frame_metadata
 
     def stop(self):
         self.stopped.set()
@@ -429,6 +447,10 @@ class PiCameraStream:
         # return the frame most recently read
         return self.frame
 
+    def read_with_metadata(self):
+        # legacy picamera exposes no per-frame capture metadata
+        return self.frame, None
+
     def stop(self):
         # Signal the thread to stop
         self.stopped.set()
@@ -490,6 +512,9 @@ class VideoStream:
         # Set frame dimensions from the initialized stream
         self.frame_width = self.stream.frame_width
         self.frame_height = self.stream.frame_height
+
+        # Camera model name (e.g. 'imx296') for image EXIF; None on webcams
+        self.camera_model = getattr(self.stream, 'camera_model', None)
 
     def _resolve_camera_type(self, camera_type: str) -> str:
         """
@@ -583,6 +608,10 @@ class VideoStream:
     def read(self):
         """Return the current frame."""
         return self.stream.read()
+
+    def read_with_metadata(self):
+        """Return (frame, capture_metadata); metadata is None on backends without it."""
+        return self.stream.read_with_metadata()
 
     def stop(self):
         """Stop the thread and release any resources."""

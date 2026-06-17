@@ -139,6 +139,45 @@ class TestSaveConfig:
         with open(pointer, 'r') as f:
             assert 'activated.ini' in f.read()
 
+    def test_save_named_writes_meta(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        resp = client.post('/api/config', json={
+            'config': {'System': {'algorithm': 'exg'}},
+            'name': 'High sensitivity - wheat',
+            'notes': 'dewy mornings'
+        })
+        data = resp.get_json()
+        assert data['success'] is True
+        cp = configparser.ConfigParser()
+        cp.read(os.path.join(str(tmp_dir), data['filename']))
+        assert cp.get('Meta', 'display_name') == 'High sensitivity - wheat'
+        assert cp.get('Meta', 'notes') == 'dewy mornings'
+
+    def test_save_update_in_place_overwrites_same_file(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        r1 = client.post('/api/config', json={
+            'config': {'System': {'algorithm': 'exg'}}, 'name': 'wheat'})
+        fn = r1.get_json()['filename']
+        r2 = client.post('/api/config', json={
+            'config': {'System': {'algorithm': 'exhsv'}}, 'overwrite_filename': fn})
+        assert r2.get_json()['filename'] == fn   # same file, no new timestamp
+        cp = configparser.ConfigParser()
+        cp.read(os.path.join(str(tmp_dir), fn))
+        assert cp.get('System', 'algorithm') == 'exhsv'
+
+    def test_save_strips_geometry(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        resp = client.post('/api/config', json={
+            'config': {
+                'Camera': {'crop_left': '0.1', 'resolution_width': '1456'},
+                'System': {'actuation_top': '0.2', 'algorithm': 'exg'},
+            }, 'name': 'geomtest'})
+        cp = configparser.ConfigParser()
+        cp.read(os.path.join(str(tmp_dir), resp.get_json()['filename']))
+        assert not cp.has_option('Camera', 'crop_left')      # geometry stripped
+        assert cp.get('Camera', 'resolution_width') == '1456'
+        assert not cp.has_option('System', 'actuation_top')
+
 
 @pytest.mark.unit
 class TestSetActiveConfig:

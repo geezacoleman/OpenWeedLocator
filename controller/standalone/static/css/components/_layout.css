@@ -75,10 +75,29 @@
     animation: none;
 }
 
+.status-dot.connecting,
 .status-dot.booting,
 .status-dot.stopping {
     background-color: var(--warning);
     animation: pulse 1s infinite;
+}
+
+.status-dot.disconnected {
+    background-color: var(--danger);
+    animation: pulse 2s infinite;
+}
+
+/* Neutral / not-configured (e.g. cloud link off) — calm grey, no alarm */
+.status-dot.neutral {
+    background-color: #95a5a6;
+    animation: none;
+}
+
+.cloud-status {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
 }
 
 /* --------------------------------------------------------------------------

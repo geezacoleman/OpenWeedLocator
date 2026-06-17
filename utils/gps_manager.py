@@ -284,6 +284,8 @@ class GPSState:
         self.satellites = None
         self.hdop = None
         self.altitude = None
+        self.utc_time = None
+        self.utc_date = None
         self.fix_valid = False
         self.last_fix_time = None
         self.connected = False
@@ -296,6 +298,12 @@ class GPSState:
                 self.longitude = data['lon']
                 self.fix_valid = True
                 self.last_fix_time = time.time()
+                # Raw NMEA UTC ('hhmmss[.sss]' / 'ddmmyy') — only trusted from
+                # an active fix; used for EXIF GPSTimeStamp/GPSDateStamp.
+                if data.get('time_utc') is not None:
+                    self.utc_time = data['time_utc']
+                if data.get('date') is not None:
+                    self.utc_date = data['date']
             # Don't clear fix_valid here — a GGA fix may still be valid.
             # The 10s staleness check in get_dict() handles true fix loss.
 
@@ -363,6 +371,8 @@ class GPSState:
                 'satellites': self.satellites,
                 'hdop': round(self.hdop, 1) if self.hdop is not None else None,
                 'altitude': round(self.altitude, 1) if self.altitude is not None else None,
+                'utc_time': self.utc_time,
+                'utc_date': self.utc_date,
                 'fix_valid': fix_valid,
                 'age_seconds': age,
             }

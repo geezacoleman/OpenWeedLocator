@@ -6,14 +6,17 @@
     <title>OWL Controller</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="stylesheet" href="/shared/css/numpad.css">
+    <link rel="stylesheet" href="/shared/css/_geometry.css">
 
     <!-- Shared JS utilities (load first) -->
+    <script src="/shared/js/vendor/qrcode.js" defer></script>
     <script src="/shared/js/hardware.js" defer></script>
     <script src="/shared/js/api.js" defer></script>
     <script src="/shared/js/utils.js" defer></script>
     <script src="/shared/js/toast.js" defer></script>
     <script src="/shared/js/config.js" defer></script>
     <script src="/shared/js/numpad.js" defer></script>
+    <script src="/shared/js/geometry_editor.js" defer></script>
     <script src="/shared/js/resolution_warning.js" defer></script>
     <script src="/shared/js/high_res_warning.js" defer></script>
 
@@ -49,6 +52,11 @@
                 <span class="status-dot" id="statusDot"></span>
                 <span id="statusText">Connecting...</span>
             </div>
+            <!-- Cloud (Noktura) link — always shown; neutral grey when not configured -->
+            <div class="cloud-status" id="cloudStatus">
+                <span class="status-dot neutral" id="cloudStatusDot"></span>
+                <span id="cloudStatusText">Cloud: not linked</span>
+            </div>
         </div>
     </div>
 </div>
@@ -61,6 +69,9 @@
         </div>
         <div class="nav-tab" data-tab="storage">
             <span class="tab-text">Storage</span>
+        </div>
+        <div class="nav-tab" data-href="/downloads">
+            <span class="tab-text">Downloads</span>
         </div>
         <div class="nav-tab" data-tab="ai">
             <span class="tab-text">AI</span>
@@ -194,10 +205,19 @@
                     <!-- Sensitivity presets -->
                     <div class="control-tile">
                         <div class="tile-label">Sensitivity</div>
-                        <div id="sensitivity-buttons" class="segmented segmented--three">
-                            <button class="seg-btn" data-sens="low">Low</button>
-                            <button class="seg-btn active" data-sens="medium">Med</button>
-                            <button class="seg-btn" data-sens="high">High</button>
+                        <div id="sensitivity-buttons" class="segmented segmented--three segmented--bars">
+                            <button class="seg-btn sens-btn" data-sens="low">
+                                <span class="sens-bars sens-bars--1"><i></i><i></i><i></i></span>
+                                <span class="sens-word">Low</span>
+                            </button>
+                            <button class="seg-btn sens-btn active" data-sens="medium">
+                                <span class="sens-bars sens-bars--2"><i></i><i></i><i></i></span>
+                                <span class="sens-word">Med</span>
+                            </button>
+                            <button class="seg-btn sens-btn" data-sens="high">
+                                <span class="sens-bars sens-bars--3"><i></i><i></i><i></i></span>
+                                <span class="sens-word">High</span>
+                            </button>
                         </div>
                     </div>
 
@@ -218,6 +238,21 @@
                             <button class="seg-btn active" data-purpose="recording">Rec</button>
                             <button class="seg-btn" data-purpose="detection">Det</button>
                         </div>
+                    </div>
+
+                    <!-- GPS image tagging (browser geolocation) -->
+                    <div class="control-tile gps-tile gps-off" id="gpsIndicator">
+                        <div class="tile-label">
+                            <svg class="gps-indicator-icon" viewBox="0 0 24 24" width="15" height="15">
+                                <path fill="currentColor" d="M12,2A7,7 0 0,1 19,9C19,14.25 12,22 12,22C12,22 5,14.25 5,9A7,7 0 0,1 12,2M12,4A5,5 0 0,0 7,9C7,10 7,12 12,18.71C17,12 17,10 17,9A5,5 0 0,0 12,4M12,6.5A2.5,2.5 0 0,1 14.5,9A2.5,2.5 0 0,1 12,11.5A2.5,2.5 0 0,1 9.5,9A2.5,2.5 0 0,1 12,6.5"/>
+                            </svg>
+                            GPS tagging
+                        </div>
+                        <div id="gps-buttons" class="segmented segmented--two">
+                            <button class="seg-btn active" data-gps="off">Off</button>
+                            <button class="seg-btn" data-gps="on">On</button>
+                        </div>
+                        <div class="tile-subtle" id="gpsStatusText">Off</div>
                     </div>
                 </div>
 
@@ -242,18 +277,6 @@
                     </div>
                 </div>
 
-                <!-- GPS Indicator -->
-                <div class="gps-indicator" id="gpsIndicator">
-                    <svg class="gps-indicator-icon" viewBox="0 0 24 24" width="18" height="18">
-                        <path fill="currentColor" d="M12,2A7,7 0 0,1 19,9C19,14.25 12,22 12,22C12,22 5,14.25 5,9A7,7 0 0,1 12,2M12,4A5,5 0 0,0 7,9C7,10 7,12 12,18.71C17,12 17,10 17,9A5,5 0 0,0 12,4M12,6.5A2.5,2.5 0 0,1 14.5,9A2.5,2.5 0 0,1 12,11.5A2.5,2.5 0 0,1 9.5,9A2.5,2.5 0 0,1 12,6.5"/>
-                    </svg>
-                    <span id="gpsStatusText">GPS Off</span>
-                    <label class="gps-label">
-                        <input type="checkbox" id="gpsToggle">
-                        <span class="gps-toggle-track"></span>
-                    </label>
-                </div>
-
                 <!-- Metrics footer with gradients -->
                 <div class="metrics-row">
                     <span class="metric-chip cpu" id="chipCpu">CPU  <strong id="cpuChipVal">0%</strong></span>
@@ -264,14 +287,25 @@
                 <!-- Video Feed Toggle -->
                 <button class="preview-toggle-btn" id="previewToggle">Video Feed</button>
                 <div class="preview-container hidden" id="previewContainer">
-                    <img id="stream-img" class="preview-stream" src="/video_feed" alt="Camera Feed">
+                    <div class="config-preview-frame" id="stream-frame">
+                        <img id="stream-img" class="preview-stream" src="/video_feed" alt="Camera Feed">
+                    </div>
                     <div id="stream-status-overlay" class="preview-overlay-message hidden">
                         <p>Stream Unavailable</p>
                     </div>
                     <div class="preview-controls">
                         <button class="icon-btn" id="fullscreenBtn">Fullscreen</button>
                         <button class="icon-btn" id="downloadFrame">Save Frame</button>
+                        <button class="icon-btn" id="geometryBtn" onclick="toggleStandaloneGeometry()">Adjust geometry</button>
                     </div>
+                    <div class="geo-panel" id="standalone-geometry-panel"></div>
+                </div>
+
+                <!-- Active config indicator (subtle, below the feed) -->
+                <div class="active-config-line hidden" id="activeConfigLine">
+                    <span class="active-config-icon" aria-hidden="true">&#9733;</span>
+                    <span>Running</span>
+                    <strong id="activeConfigName">--</strong>
                 </div>
 
                 <!-- Widget slot: dashboard controls -->
@@ -387,6 +421,19 @@
     <div id="config" class="tab-content">
         <div class="config-container">
 
+            <!-- Noktura cloud link -->
+            <div class="card cloud-manage-card" id="cloud-manage-block">
+                <div class="cloud-manage-head">
+                    <span class="status-dot neutral" id="cloud-manage-dot"></span>
+                    <h2>Noktura cloud</h2>
+                </div>
+                <p class="cloud-manage-status" id="cloud-manage-status">This device is not linked to Noktura.</p>
+                <div class="cloud-manage-detail">
+                    <a class="cloud-manage-link hidden" id="cloud-manage-link" target="_blank" rel="noopener noreferrer"></a>
+                    <div class="cloud-manage-qr hidden" id="cloud-manage-qr"></div>
+                </div>
+            </div>
+
             <!-- Config Header -->
             <div class="card config-header-card">
                 <div class="config-header">
@@ -414,6 +461,7 @@
                             Save As...
                         </button>
                     </div>
+                    <div class="config-library-caption" id="configCaption"></div>
                 </div>
             </div>
 

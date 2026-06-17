@@ -284,3 +284,118 @@ function clamp(value, min, max) {
 function isEmpty(str) {
     return !str || str.trim().length === 0;
 }
+
+/* -------------------------------------------------------------------------
+   Cloud (Noktura) connectivity — shared by both controllers
+   ------------------------------------------------------------------------- */
+
+/**
+ * Build the Noktura portal management URL for a device, or '' if unavailable.
+ * @param {string} portalUrl - [Cloud] portal_url base (no trailing slash)
+ * @param {string} slug - cloud device_id
+ * @returns {string}
+ */
+function cloudPortalLink(portalUrl, slug) {
+    if (isEmpty(portalUrl) || isEmpty(slug)) return '';
+    return `${portalUrl.replace(/\/+$/, '')}/d/${encodeURIComponent(slug)}`;
+}
+
+/**
+ * Derive the cloud link status-dot class from an API payload.
+ * @returns {'neutral'|'connected'|'disconnected'|'connecting'}
+ */
+function cloudStatusClass(data) {
+    if (!data || !data.cloud_enabled) return 'neutral';
+    if (data.cloud_connected === true) return 'connected';
+    if (data.cloud_connected === false) return 'disconnected';
+    return 'connecting';  // enabled but bridge state not yet observed
+}
+
+/**
+ * Render the header cloud-status chip from an API stats/owls payload.
+ * Three states: not linked (grey), connecting (amber, enabled but unseen),
+ * disconnected (red), connected (green).
+ * @param {HTMLElement} dotEl - the status dot span
+ * @param {HTMLElement} textEl - the status text span
+ * @param {object} data - payload with cloud_enabled/cloud_connected/cloud_device_id
+ */
+function renderCloudStatus(dotEl, textEl, data) {
+    if (!dotEl || !textEl) return;
+    const cls = cloudStatusClass(data);
+    dotEl.classList.remove('connected', 'disconnected', 'connecting', 'neutral');
+    dotEl.classList.add(cls);
+
+    const slug = (data && data.cloud_device_id) || '';
+    if (cls === 'neutral') {
+        textEl.textContent = 'Cloud: not linked';
+    } else if (cls === 'connected') {
+        textEl.textContent = slug ? `Cloud: connected as ${slug}` : 'Cloud: connected';
+    } else if (cls === 'disconnected') {
+        textEl.textContent = 'Cloud: disconnected';
+    } else {
+        textEl.textContent = 'Cloud: connecting…';
+    }
+}
+
+// Remember the last URL we drew a QR for, so the 2s poll doesn't redraw it.
+let _cloudQrUrl = null;
+
+/**
+ * Populate the Config-tab "Noktura cloud" manage card (status + portal link +
+ * QR). No-op when the card isn't on the page. Renders the QR only when the
+ * portal URL changes. Requires the vendored `qrcode` global for the QR.
+ * @param {object} data - payload with cloud_* fields
+ */
+function updateCloudManageBlock(data) {
+    const block = document.getElementById('cloud-manage-block');
+    if (!block) return;
+
+    const cls = cloudStatusClass(data);
+    const slug = (data && data.cloud_device_id) || '';
+    const url = cloudPortalLink(data && data.cloud_portal_url, slug);
+
+    const dot = document.getElementById('cloud-manage-dot');
+    if (dot) {
+        dot.classList.remove('connected', 'disconnected', 'connecting', 'neutral');
+        dot.classList.add(cls);
+    }
+
+    const statusEl = document.getElementById('cloud-manage-status');
+    if (statusEl) {
+        if (cls === 'neutral') {
+            statusEl.textContent = 'This device is not linked to Noktura. Run owl_cloud_provision.sh with the credentials issued at registration to connect.';
+        } else if (cls === 'connected') {
+            statusEl.textContent = `Connected to Noktura as ${slug || 'this device'}.`;
+        } else if (cls === 'disconnected') {
+            statusEl.textContent = 'Configured, but the cloud link is currently down (cellular or broker).';
+        } else {
+            statusEl.textContent = 'Configured — connecting to Noktura…';
+        }
+    }
+
+    const linkEl = document.getElementById('cloud-manage-link');
+    const qrEl = document.getElementById('cloud-manage-qr');
+    if (url) {
+        if (linkEl) {
+            linkEl.href = url;
+            linkEl.textContent = url;
+            linkEl.classList.remove('hidden');
+        }
+        if (qrEl && _cloudQrUrl !== url) {
+            _cloudQrUrl = url;
+            try {
+                const qr = qrcode(0, 'M');
+                qr.addData(url);
+                qr.make();
+                qrEl.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+                qrEl.classList.remove('hidden');
+            } catch (e) {
+                qrEl.classList.add('hidden');
+            }
+        }
+    } else {
+        if (linkEl) { linkEl.classList.add('hidden'); linkEl.removeAttribute('href'); }
+        if (qrEl) { qrEl.classList.add('hidden'); qrEl.innerHTML = ''; }
+        _cloudQrUrl = null;
+    }
+}

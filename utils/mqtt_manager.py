@@ -11,18 +11,114 @@ import logging
 import os
 import sys
 import configparser
+import tempfile
 from pathlib import Path
 import socket
 
 from collections import deque
-from utils.config_manager import GREENONBROWN_PARAMS
-from utils.directory_manager import scan_sessions, collect_session_files
+from utils.config_manager import (
+    GREENONBROWN_PARAMS, GEOMETRY_KEYS as MOUNT_GEOMETRY_KEYS,
+    GEOMETRY_SECTION_KEYS, GEOMETRY_FILE,
+)
+from utils.directory_manager import scan_sessions, collect_session_files, select_preview_images
+
+# Config keys whose live change requires re-deriving crop/lane/actuation geometry.
+# When any of these change via set_config_section we call owl.recompute_geometry()
+# once (event-driven — never per-frame). Includes the legacy symmetric aliases.
+GEOMETRY_KEYS = set(MOUNT_GEOMETRY_KEYS) | {
+    'crop_factor_horizontal', 'crop_factor_vertical', 'actuation_zone',
+}
+
+# Config keys that can't be applied live — they need a camera/hardware re-init.
+# Changing one updates config + state and surfaces a "restart required" notice.
+RESTART_REQUIRED_KEYS = {
+    'resolution_width', 'resolution_height', 'relay_num',
+}
 
 try:
     import paho.mqtt.client as mqtt
 except ImportError:
     print("Install paho-mqtt: pip install paho-mqtt")
     exit(1)
+
+
+def _data_transfer_state(**overrides):
+    """Fresh data_transfer state dict — single source of truth for its shape."""
+    state = {
+        'status': 'idle', 'session_date': '', 'progress': 0,
+        'bytes_sent': 0, 'bytes_total': 0, 'error': '',
+        'request_id': '', 'upload_id': '', 'parts': [],
+        'zip_bytes': 0, 'zip_md5': ''
+    }
+    state.update(overrides)
+    return state
+
+
+def _preview_upload_state(**overrides):
+    """Fresh preview_upload state dict."""
+    state = {
+        'request_id': '', 'session_id': '', 'status': 'idle',
+        'uploaded': 0, 'total': 0, 'error': ''
+    }
+    state.update(overrides)
+    return state
+
+
+def _valid_multipart(upload):
+    """Check a transfer_session 'upload' object has usable parts + part_size."""
+    if not isinstance(upload, dict):
+        return False
+    parts = upload.get('parts')
+    if not isinstance(parts, list) or not parts:
+        return False
+    try:
+        return int(upload.get('part_size', 0)) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+class _ProgressReader:
+    """Bounded file reader that publishes data_transfer progress via MQTT.
+
+    Reads at most `length` bytes from the file handle's current position.
+    Progress runs 50-100% across `total` bytes (0-50% was zipping);
+    `base_sent` offsets bytes_sent so multipart parts report cumulatively.
+    """
+
+    def __init__(self, fh, length, publisher, base_sent=0, total=None):
+        self.fh = fh
+        self.length = length
+        self.publisher = publisher
+        self.base_sent = base_sent
+        self.total = total if total is not None else length
+        self.sent = 0
+        self.last_publish = base_sent
+
+    def read(self, size=-1):
+        remaining = self.length - self.sent
+        if remaining <= 0:
+            return b''
+        if size is None or size < 0 or size > remaining:
+            size = remaining
+        chunk = self.fh.read(size)
+        self.sent += len(chunk)
+        done = self.base_sent + self.sent
+        if self.total > 0:
+            pct = 50 + int(done / self.total * 50)
+        else:
+            pct = 100
+        with self.publisher.state_lock:
+            self.publisher.state['data_transfer']['progress'] = pct
+            self.publisher.state['data_transfer']['bytes_sent'] = done
+        # Publish every 100KB
+        if done - self.last_publish >= 102400:
+            self.last_publish = done
+            self.publisher._publish_state()
+        return chunk
+
+    def __len__(self):
+        # urllib checks this against Content-Length — part length, not file size
+        return self.length
 
 
 class OWLMQTTPublisher:
@@ -107,6 +203,8 @@ class OWLMQTTPublisher:
             'gps_accuracy': 0.0,
             'gps_timestamp': 0.0,
             'gps_available': False,
+            'gps_payload': None,
+            'gps_received_at': None,
             'last_update': time.time(),
             'networked_mode': self.networked_mode,
             'broker_host': broker_host,
@@ -146,6 +244,25 @@ class OWLMQTTPublisher:
             'allow_high_resolution': False,
             # Hardware
             'rpi_version': 'unknown',
+            # Software version (populated once at startup — the process
+            # restarts after every update, so this is always current)
+            'version': 'unknown',
+            'git_branch': 'unknown',
+            'git_commit': 'unknown',
+            'pi_model': 'unknown',
+            'os_pretty': 'unknown',
+            # Remote software update state (mirrored from .update_status.json
+            # written by owl_update.sh; see _read_update_status)
+            'software_update': {
+                'request_id': '',
+                'status': 'idle',
+                'ref': '',
+                'from': '',
+                'to': '',
+                'error': '',
+                'rollback_failed': False,
+                'updated_at': 0
+            },
             # Model download state
             'model_download': {
                 'status': 'idle',
@@ -164,15 +281,16 @@ class OWLMQTTPublisher:
             },
             # Data sessions and transfer state
             'data_sessions': [],
-            'data_transfer': {
-                'status': 'idle',
-                'session_date': '',
-                'progress': 0,
-                'bytes_sent': 0,
-                'bytes_total': 0,
-                'error': ''
-            }
+            'data_transfer': _data_transfer_state(),
+            # Preview thumbnail upload state (upload_previews command)
+            'preview_upload': _preview_upload_state()
         }
+
+        self._populate_version_info()
+
+        # Remote update status file (written by owl_update.sh)
+        self._update_status_path = Path(__file__).resolve().parents[1] / '.update_status.json'
+        self._update_status_stamp = None  # (mtime, size) of last successful read
 
         # Thread safety
         self.state_lock = threading.RLock()
@@ -262,6 +380,13 @@ class OWLMQTTPublisher:
             # Save directory (runtime-resolved — may differ from config if USB path changed)
             self.state['save_directory'] = getattr(self.owl_instance, 'save_directory', '')
 
+            # Active config filename (basename) so the dashboard can show what's running.
+            try:
+                active = self._resolve_config_path()
+                self.state['config_name'] = os.path.basename(active) if active else ''
+            except Exception:
+                self.state['config_name'] = ''
+
             # Hardware controller info (for networked controller to detect incompatible setups)
             ct = getattr(self.owl_instance, 'controller_type', None)
             self.state['controller_type'] = ct if isinstance(ct, str) else 'none'
@@ -336,6 +461,10 @@ class OWLMQTTPublisher:
 
         with self.state_lock:
             self.state['owl_running'] = True
+
+        # Pick up the terminal status of a software update that restarted us
+        # (owl_update.sh writes complete/rolled_back after the restart).
+        self._read_update_status()
 
         # Start threads first — they already guard on self.connected
         self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
@@ -621,7 +750,18 @@ class OWLMQTTPublisher:
 
             elif action == 'save_config':
                 filename = command.get('filename')
-                self._handle_save_config(filename)
+                self._handle_save_config(filename,
+                                         name=command.get('name'),
+                                         notes=command.get('notes'))
+
+            elif action == 'save_geometry':
+                self._handle_save_geometry(command.get('params') or {})
+
+            elif action == 'set_preview_mode':
+                mode = command.get('mode', 'cropped')
+                if self.owl_instance is not None:
+                    self.owl_instance._stream_full_frame = (mode == 'full')
+                    self.logger.info(f"Preview mode set to {mode}")
 
             elif action == 'set_active_config':
                 config_path = command.get('config')
@@ -744,10 +884,20 @@ class OWLMQTTPublisher:
                 session_date = command.get('session_id') or command.get('session_date', '')
                 data_types = command.get('data_types', ['images', 'logs', 'tracks', 'config'])
                 upload_url = command.get('upload_url', '')
-                if session_date and upload_url:
+                request_id = str(command.get('request_id', ''))
+                # Optional presigned multipart descriptor (upload_id, part_size, parts)
+                upload = command.get('upload')
+                # POST (default) = controller endpoint; PUT = S3-style presigned URL
+                upload_method = str(command.get('method', 'POST')).upper()
+                if upload is not None and not _valid_multipart(upload):
+                    self.logger.error("transfer_session invalid upload object (needs parts list + part_size > 0)")
+                elif upload_method not in ('POST', 'PUT'):
+                    self.logger.error(f"transfer_session invalid method: {upload_method}")
+                elif session_date and (upload_url or upload):
                     threading.Thread(
                         target=self._upload_session,
-                        args=(session_date, data_types, upload_url),
+                        args=(session_date, data_types, upload_url, upload_method),
+                        kwargs={'request_id': request_id, 'upload': upload},
                         daemon=True
                     ).start()
                 else:
@@ -765,9 +915,31 @@ class OWLMQTTPublisher:
                 else:
                     self.logger.error("delete_session missing session_date")
 
+            elif action == 'upload_previews':
+                request_id = str(command.get('request_id', ''))
+                session_id = command.get('session_id', '')
+                upload_urls = command.get('upload_urls', [])
+                try:
+                    count = int(command.get('count', 5))
+                    max_dimension = int(command.get('max_dimension', 1280))
+                except (TypeError, ValueError):
+                    count, max_dimension = 0, 0
+                if (session_id and isinstance(upload_urls, list) and upload_urls
+                        and count > 0 and max_dimension > 0):
+                    threading.Thread(
+                        target=self._upload_previews,
+                        args=(request_id, session_id, count, max_dimension, upload_urls),
+                        daemon=True
+                    ).start()
+                else:
+                    self.logger.error("upload_previews missing/invalid session_id, upload_urls, count or max_dimension")
+
+            elif action == 'update_software':
+                self._handle_update_software(command)
+
             elif action == 'reboot':
-                self.logger.warning("Reboot command received - this requires system privileges")
-                # Future implementation
+                self.logger.warning("Reboot command received")
+                self._handle_reboot()
 
             elif action == 'restart_service':
                 self.logger.warning("Service restart command received")
@@ -776,6 +948,10 @@ class OWLMQTTPublisher:
             elif action == 'shutdown':
                 self.logger.warning("Shutdown command received")
                 self._handle_shutdown()
+
+            else:
+                # Silent no-op handlers are invisible failures — always warn.
+                self.logger.warning(f"Unknown MQTT command action: {action!r} — no handler registered (command ignored)")
 
             # Update timestamp and publish new state
             self.state['last_update'] = time.time()
@@ -821,7 +997,11 @@ class OWLMQTTPublisher:
 
         try:
             gob_changed = False
+            geometry_changed = False
+            restart_keys = set()
             for key, value in params.items():
+                if key in GEOMETRY_KEYS:
+                    geometry_changed = True
                 # Route threshold keys through _update_greenonbrown_param
                 # regardless of section name (defense-in-depth)
                 if key in GREENONBROWN_PARAMS:
@@ -832,6 +1012,12 @@ class OWLMQTTPublisher:
                 elif section == 'System' and key == 'algorithm':
                     # Route algorithm changes through set_algorithm handler
                     self._handle_command({'action': 'set_algorithm', 'value': value})
+                elif key in RESTART_REQUIRED_KEYS:
+                    # Can't apply live — applying relay_num/resolution to the running
+                    # instance would leave lane/camera state inconsistent. Persist to
+                    # config below and flag a restart instead.
+                    restart_keys.add(key)
+                    self.logger.info(f"{section}.{key} change needs a restart to take effect")
                 elif hasattr(self.owl_instance, key):
                     # Type-convert to match existing attribute type (INI values are strings)
                     current = getattr(self.owl_instance, key)
@@ -888,6 +1074,20 @@ class OWLMQTTPublisher:
                         gog.detection_persist_frames = getattr(
                             self.owl_instance, 'detection_persist_frames', 0)
 
+            # Re-derive crop slice / lane coords / actuation band on the live
+            # instance — event-driven, once per change, never per-frame.
+            if geometry_changed and hasattr(self.owl_instance, 'recompute_geometry'):
+                try:
+                    self.owl_instance.recompute_geometry()
+                    self.logger.info("Recomputed geometry after live config change")
+                except Exception as e:
+                    self.logger.error(f"Error recomputing geometry: {e}")
+
+            # Surface a restart-required notice for keys that can't apply live.
+            if restart_keys:
+                existing = set(filter(None, str(self.state.get('restart_required', '')).split(',')))
+                self.state['restart_required'] = ','.join(sorted(existing | restart_keys))
+
             # Ensure dashboard sees the changes immediately
             self._sync_parameters_to_state()
             self._publish_state()
@@ -899,17 +1099,41 @@ class OWLMQTTPublisher:
         except Exception as e:
             self.logger.error(f"Error setting config section [{section}]: {e}")
 
-    def _handle_save_config(self, filename=None):
+    def _apply_meta(self, name=None, notes=None):
+        """Stamp a [Meta] section onto the live config so a saved file carries its
+        human name/notes. Only writes fields that are actually provided — never
+        invents a name (fail-safe metadata)."""
+        if name is None and notes is None:
+            return
+        if not hasattr(self.owl_instance, 'config'):
+            return
+        cfg = self.owl_instance.config
+        with self.config_lock:
+            if not cfg.has_section('Meta'):
+                cfg.add_section('Meta')
+            if name is not None:
+                cfg.set('Meta', 'display_name', str(name))
+            if notes is not None:
+                cfg.set('Meta', 'notes', str(notes))
+            from datetime import datetime
+            cfg.set('Meta', 'created', datetime.now().isoformat(timespec='seconds'))
+
+    def _handle_save_config(self, filename=None, name=None, notes=None):
         """Write current config to disk.
 
         Copy-on-write: if the resolved path is a protected default
         (GENERAL_CONFIG.ini, CONTROLLER.ini), creates a timestamped copy
         and updates active_config.txt so the default is never overwritten.
+
+        If name/notes are provided, a [Meta] section is stamped first so the
+        saved file carries a human-readable name.
         """
         try:
             if not hasattr(self.owl_instance, 'config'):
                 self.logger.error("Cannot save config - OWL has no config object")
                 return
+
+            self._apply_meta(name, notes)
 
             config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
             protected = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini']
@@ -944,12 +1168,83 @@ class OWLMQTTPublisher:
 
             with self.config_lock:
                 with open(save_path, 'w') as f:
-                    self.owl_instance.config.write(f)
+                    self._write_config_without_geometry(self.owl_instance.config, f)
 
             self.logger.info(f"Config saved to {save_path}")
 
         except Exception as e:
             self.logger.error(f"Error saving config: {e}")
+
+    def _write_config_without_geometry(self, config, fileobj):
+        """Write a config to fileobj with mount-geometry keys removed, so named
+        detection configs never carry geometry (it lives in GEOMETRY.ini)."""
+        tmp = configparser.ConfigParser()
+        tmp.optionxform = str
+        for section in config.sections():
+            tmp.add_section(section)
+            geom = GEOMETRY_SECTION_KEYS.get(section, set())
+            for opt in config.options(section):
+                if opt in geom:
+                    continue
+                tmp.set(section, opt, config.get(section, opt, raw=True))
+        tmp.write(fileobj)
+
+    def _handle_save_geometry(self, params):
+        """Apply geometry params live and persist ONLY them to GEOMETRY.ini.
+
+        Geometry is per-unit mount config — written in place (atomic temp+replace),
+        never copy-on-write, and kept out of named detection configs.
+        """
+        if self.owl_instance is None:
+            self.logger.warning("Cannot save geometry - OWL instance not set")
+            return
+        try:
+            applied = {}
+            for key, value in params.items():
+                if key not in MOUNT_GEOMETRY_KEYS:
+                    continue
+                try:
+                    setattr(self.owl_instance, key, float(value))
+                    applied[key] = float(value)
+                except (ValueError, TypeError):
+                    self.logger.warning(f"Bad geometry value {key}={value}")
+
+            # Also mirror into the live merged config so a subsequent get_config is correct.
+            if hasattr(self.owl_instance, 'config'):
+                with self.config_lock:
+                    for section, keys in GEOMETRY_SECTION_KEYS.items():
+                        for key in keys:
+                            if key in applied:
+                                if not self.owl_instance.config.has_section(section):
+                                    self.owl_instance.config.add_section(section)
+                                self.owl_instance.config.set(section, key, str(applied[key]))
+
+            if hasattr(self.owl_instance, 'recompute_geometry'):
+                self.owl_instance.recompute_geometry()
+
+            # Persist only the geometry keys to GEOMETRY.ini (in place, atomic).
+            config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
+            geom_path = os.path.join(config_dir, GEOMETRY_FILE)
+            cp = configparser.ConfigParser()
+            cp.optionxform = str
+            cp.read(geom_path)
+            for section, keys in GEOMETRY_SECTION_KEYS.items():
+                for key in keys:
+                    if key in applied:
+                        if not cp.has_section(section):
+                            cp.add_section(section)
+                        cp.set(section, key, str(applied[key]))
+            with self.config_lock:
+                fd, tmp_path = tempfile.mkstemp(suffix='.ini', prefix='.owl_geom_', dir=config_dir)
+                with os.fdopen(fd, 'w') as f:
+                    cp.write(f)
+                os.replace(tmp_path, geom_path)
+
+            self.logger.info(f"Geometry persisted to {GEOMETRY_FILE}: {applied}")
+            self._sync_parameters_to_state()
+            self._publish_state()
+        except Exception as e:
+            self.logger.error(f"Error saving geometry: {e}")
 
     def _handle_set_active_config(self, config_path):
         """Write config path to active_config.txt"""
@@ -997,6 +1292,157 @@ class OWLMQTTPublisher:
             )
         except Exception as e:
             self.logger.error(f"Error shutting down: {e}")
+
+    def _handle_reboot(self):
+        """Reboot the system (called via MQTT).
+
+        Resolves the reboot binary path to match the sudoers entry created
+        by the setup/provisioning scripts (command -v reboot).
+        """
+        try:
+            import shutil
+            import subprocess
+            reboot_bin = shutil.which('reboot') or '/usr/sbin/reboot'
+            self.logger.warning("Rebooting system...")
+            subprocess.Popen(
+                ['sudo', '-n', reboot_bin],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+        except Exception as e:
+            self.logger.error(f"Error rebooting: {e}")
+
+    # Software update — ref allowlist shared with owl_update.sh preflight
+    UPDATE_REF_PATTERN = r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$'
+    UPDATE_TERMINAL_STATUSES = ('idle', 'complete', 'rolled_back', 'error')
+
+    def _handle_update_software(self, command):
+        """Launch owl_update.sh in a transient systemd unit.
+
+        The script must run OUTSIDE owl.service's cgroup or systemd kills it
+        at its own restart step — hence systemd-run. The argv below must match
+        the sudoers entry installed by owl_cloud_provision.sh byte-for-byte.
+        Progress flows back via the status file read each heartbeat.
+        """
+        import re
+        import subprocess
+
+        ref = str(command.get('ref', 'main'))
+        request_id = str(command.get('request_id', ''))
+
+        def _refuse(msg):
+            self.logger.warning(f"update_software refused: {msg}")
+            with self.state_lock:
+                self.state['software_update'] = {
+                    'request_id': request_id, 'status': 'error', 'ref': ref,
+                    'from': '', 'to': '', 'error': msg,
+                    'rollback_failed': False, 'updated_at': int(time.time())
+                }
+            self._publish_state()
+
+        if not re.match(self.UPDATE_REF_PATTERN, ref) or '..' in ref:
+            _refuse(f"invalid ref: {ref!r}")
+            return
+        with self.state_lock:
+            update_status = self.state['software_update'].get('status', 'idle')
+            transfer_status = self.state['data_transfer'].get('status', 'idle')
+        if update_status not in self.UPDATE_TERMINAL_STATUSES:
+            _refuse(f"update already in progress (status: {update_status})")
+            return
+        if transfer_status not in ('idle', 'complete', 'error'):
+            _refuse(f"data transfer in progress (status: {transfer_status})")
+            return
+
+        repo_dir = Path(__file__).resolve().parents[1]
+        script = repo_dir / 'owl_update.sh'
+        if not script.exists():
+            _refuse(f"updater not found: {script}")
+            return
+
+        # Seed state so the dashboard/cloud sees acceptance immediately —
+        # the script overwrites this via the status file within seconds.
+        with self.state_lock:
+            self.state['software_update'] = {
+                'request_id': request_id, 'status': 'starting', 'ref': ref,
+                'from': '', 'to': '', 'error': '',
+                'rollback_failed': False, 'updated_at': int(time.time())
+            }
+        self._publish_state()
+
+        try:
+            import getpass
+            user = getpass.getuser()
+            subprocess.Popen([
+                'sudo', '-n', '/usr/bin/systemd-run',
+                '--unit=owl-update', '--collect',
+                '--property=RuntimeMaxSec=1800',
+                f'--uid={user}', f'--gid={user}',
+                '/bin/bash', str(script),
+                '--unattended', '--ref', ref,
+                '--request-id', request_id,
+                '--status-file', str(self._update_status_path),
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.logger.warning(f"Software update launched: ref={ref} request_id={request_id}")
+        except Exception as e:
+            _refuse(f"failed to launch updater: {e}")
+
+    def _read_update_status(self):
+        """Mirror owl_update.sh's status file into state['software_update'].
+
+        Called every heartbeat and once at start(); after a service restart
+        this is how the new process picks up and publishes the terminal
+        complete/rolled_back status. The file is written via temp+rename so
+        a partial read is not possible.
+        """
+        try:
+            st = self._update_status_path.stat()
+        except OSError:
+            return  # no update has ever run
+        stamp = (st.st_mtime_ns, st.st_size)
+        if stamp == self._update_status_stamp:
+            return
+        try:
+            with open(self._update_status_path) as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            self.logger.debug(f"Could not read update status file: {e}")
+            return  # keep previous state, retry next heartbeat
+        self._update_status_stamp = stamp
+        with self.state_lock:
+            self.state['software_update'] = {
+                'request_id': str(data.get('request_id', '')),
+                'status': str(data.get('status', 'idle')),
+                'ref': str(data.get('ref', '')),
+                'from': str(data.get('from', '')),
+                'to': str(data.get('to', '')),
+                'error': str(data.get('error', '')),
+                'rollback_failed': bool(data.get('rollback_failed', False)),
+                'updated_at': int(data.get('updated_at', 0)),
+            }
+
+    def _populate_version_info(self):
+        """Fill version/git/hardware fields in state. Never raises —
+        MQTT startup must not depend on git or /proc being available."""
+        try:
+            from version import VERSION, SystemInfo
+            self.state['version'] = str(VERSION)
+            git_info = SystemInfo.get_git_info()
+            if git_info:
+                self.state['git_branch'] = git_info.get('branch', 'unknown')
+                self.state['git_commit'] = git_info.get('commit', 'unknown')
+            pi_model = SystemInfo.get_rpi_info()
+            if pi_model:
+                self.state['pi_model'] = pi_model
+            try:
+                with open('/etc/os-release') as f:
+                    for line in f:
+                        if line.startswith('PRETTY_NAME='):
+                            self.state['os_pretty'] = line.split('=', 1)[1].strip().strip('"')
+                            break
+            except OSError:
+                pass
+        except Exception as e:
+            self.logger.warning(f"Could not populate version info: {e}")
 
     def _handle_set_actuation_params(self, command):
         """Handle actuation parameter updates from central controller"""
@@ -1258,27 +1704,38 @@ class OWLMQTTPublisher:
                 self.state['data_sessions'] = []
             self._publish_state()
 
-    def _upload_session(self, session_date, data_types, upload_url):
-        """ZIP and upload a data session to the controller. Runs in background thread.
+    def _upload_session(self, session_date, data_types, upload_url, method='POST',
+                        request_id='', upload=None):
+        """ZIP and upload a data session. Runs in background thread.
 
         session_date can be "YYYYMMDD" (all sessions under that date) or
         "YYYYMMDD/session_HHMMSS" (specific session).
+
+        method='POST' uploads to the controller endpoint (self-signed cert,
+        custom X-OWL headers). method='PUT' targets an S3-style presigned URL:
+        verified TLS and no custom headers (anything outside the presigned
+        SignedHeaders set can invalidate the signature).
+
+        upload (optional) switches to S3 presigned multipart: a dict with
+        'upload_id', 'part_size' and 'parts' [{part_number, url}, ...].
+        Parts are PUT sequentially; the ETags S3 returns accumulate in
+        state.data_transfer.parts so the cloud side can call
+        CompleteMultipartUpload — the device never needs S3 credentials.
         """
         import re
-        import urllib.request
-        import ssl
         import tempfile
         import zipfile
+
+        upload_id = str(upload.get('upload_id', '')) if upload else ''
 
         # Validate format: date or date/session
         if not re.match(r'^\d{8}(/session_\d{6})?$', session_date):
             self.logger.error(f"Invalid session identifier: {session_date}")
             with self.state_lock:
-                self.state['data_transfer'] = {
-                    'status': 'error', 'session_date': session_date,
-                    'progress': 0, 'bytes_sent': 0, 'bytes_total': 0,
-                    'error': 'Invalid session identifier'
-                }
+                self.state['data_transfer'] = _data_transfer_state(
+                    status='error', session_date=session_date,
+                    request_id=request_id, upload_id=upload_id,
+                    error='Invalid session identifier')
             self._publish_state()
             return
 
@@ -1287,10 +1744,9 @@ class OWLMQTTPublisher:
             if self.state['data_transfer']['status'] not in ('idle', 'complete', 'error'):
                 self.logger.warning("Transfer already in progress")
                 return
-            self.state['data_transfer'] = {
-                'status': 'scanning', 'session_date': session_date,
-                'progress': 0, 'bytes_sent': 0, 'bytes_total': 0, 'error': ''
-            }
+            self.state['data_transfer'] = _data_transfer_state(
+                status='scanning', session_date=session_date,
+                request_id=request_id, upload_id=upload_id)
         self._publish_state()
 
         tmp_path = None
@@ -1304,11 +1760,10 @@ class OWLMQTTPublisher:
 
             if not files_to_zip:
                 with self.state_lock:
-                    self.state['data_transfer'] = {
-                        'status': 'error', 'session_date': session_date,
-                        'progress': 0, 'bytes_sent': 0, 'bytes_total': 0,
-                        'error': 'No files found for this session'
-                    }
+                    self.state['data_transfer'] = _data_transfer_state(
+                        status='error', session_date=session_date,
+                        request_id=request_id, upload_id=upload_id,
+                        error='No files found for this session')
                 self._publish_state()
                 return
 
@@ -1330,87 +1785,37 @@ class OWLMQTTPublisher:
                             self._publish_state()
 
             zip_size = os.path.getsize(tmp_path)
+            # Checksum before any upload reader touches the file — a retried
+            # multipart part would feed bytes through a hashing reader twice
+            zip_md5 = self._md5_file(tmp_path)
 
-            # Upload via HTTP POST
             with self.state_lock:
                 self.state['data_transfer']['status'] = 'uploading'
                 self.state['data_transfer']['bytes_total'] = zip_size
+                self.state['data_transfer']['zip_bytes'] = zip_size
+                self.state['data_transfer']['zip_md5'] = zip_md5
             self._publish_state()
 
-            ssl_ctx = ssl.create_default_context()
-            ssl_ctx.check_hostname = False
-            ssl_ctx.verify_mode = ssl.CERT_NONE
-
-            # Stream the file in chunks — never load entire ZIP into memory
-            # Use a wrapper that tracks bytes read for progress reporting
-            upload_state = self.state['data_transfer']
-
-            class ProgressReader:
-                """File wrapper that publishes upload progress via MQTT."""
-                def __init__(inner_self, fh, total, publisher):
-                    inner_self.fh = fh
-                    inner_self.total = total
-                    inner_self.sent = 0
-                    inner_self.publisher = publisher
-                    inner_self.last_publish = 0
-
-                def read(inner_self, size=-1):
-                    chunk = inner_self.fh.read(size)
-                    inner_self.sent += len(chunk)
-                    # Progress 50-100% during upload (0-50% was zipping)
-                    if inner_self.total > 0:
-                        pct = 50 + int(inner_self.sent / inner_self.total * 50)
-                    else:
-                        pct = 100
-                    with inner_self.publisher.state_lock:
-                        inner_self.publisher.state['data_transfer']['progress'] = pct
-                        inner_self.publisher.state['data_transfer']['bytes_sent'] = inner_self.sent
-                    # Publish every 100KB
-                    if inner_self.sent - inner_self.last_publish >= 102400:
-                        inner_self.last_publish = inner_self.sent
-                        inner_self.publisher._publish_state()
-                    return chunk
-
-                def __len__(inner_self):
-                    return inner_self.total
-
-            with open(tmp_path, 'rb') as f:
-                progress_fh = ProgressReader(f, zip_size, self)
-                req = urllib.request.Request(
-                    upload_url,
-                    data=progress_fh,
-                    method='POST',
-                    headers={
-                        'Content-Type': 'application/octet-stream',
-                        'X-OWL-Device-ID': self.device_id,
-                        'X-OWL-Session-Date': session_date,
-                        'Content-Length': str(zip_size),
-                    }
-                )
-
-                response = urllib.request.urlopen(req, context=ssl_ctx, timeout=300)
-            resp_code = response.getcode()
-
-            if resp_code in (200, 201):
-                with self.state_lock:
-                    self.state['data_transfer'] = {
-                        'status': 'complete', 'session_date': session_date,
-                        'progress': 100, 'bytes_sent': zip_size,
-                        'bytes_total': zip_size, 'error': ''
-                    }
-                self._publish_state()
-                self.logger.info(f"Session {session_date} uploaded successfully ({zip_size} bytes)")
+            if upload:
+                self._upload_multipart(tmp_path, zip_size, upload)
             else:
-                raise Exception(f"Upload failed with status {resp_code}")
+                self._upload_single(tmp_path, zip_size, upload_url, method, session_date)
+
+            # Both upload paths raise on failure
+            with self.state_lock:
+                self.state['data_transfer'].update(
+                    status='complete', progress=100,
+                    bytes_sent=zip_size, error='')
+            self._publish_state()
+            self.logger.info(f"Session {session_date} uploaded successfully ({zip_size} bytes)")
 
         except Exception as e:
             self.logger.error(f"Session upload failed: {e}")
+            # Keep request_id/upload_id and any accumulated parts — the cloud
+            # side needs them to abort the multipart upload server-side
             with self.state_lock:
-                self.state['data_transfer'] = {
-                    'status': 'error', 'session_date': session_date,
-                    'progress': 0, 'bytes_sent': 0, 'bytes_total': 0,
-                    'error': str(e)
-                }
+                self.state['data_transfer'].update(
+                    status='error', progress=0, bytes_sent=0, error=str(e))
             self._publish_state()
 
         finally:
@@ -1419,6 +1824,218 @@ class OWLMQTTPublisher:
                     os.unlink(tmp_path)
                 except OSError:
                     pass
+
+    @staticmethod
+    def _md5_file(path):
+        """Streaming MD5 of a file (64KB chunks)."""
+        import hashlib
+        h = hashlib.md5()
+        with open(path, 'rb') as f:
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                h.update(chunk)
+        return h.hexdigest()
+
+    def _upload_single(self, tmp_path, zip_size, upload_url, method, session_date):
+        """Upload the whole zip in one request. Raises on failure."""
+        import urllib.request
+        import ssl
+
+        ssl_ctx = ssl.create_default_context()
+        if method == 'POST':
+            # Controller endpoint uses a self-signed certificate
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+        # PUT (presigned URL): keep full verification — public CA host
+
+        if method == 'PUT':
+            headers = {
+                'Content-Type': 'application/octet-stream',
+                'Content-Length': str(zip_size),
+            }
+        else:
+            headers = {
+                'Content-Type': 'application/octet-stream',
+                'X-OWL-Device-ID': self.device_id,
+                'X-OWL-Session-Date': session_date,
+                'Content-Length': str(zip_size),
+            }
+
+        # Stream the file in chunks — never load entire ZIP into memory
+        with open(tmp_path, 'rb') as f:
+            progress_fh = _ProgressReader(f, zip_size, self)
+            req = urllib.request.Request(
+                upload_url,
+                data=progress_fh,
+                method=method,
+                headers=headers
+            )
+            response = urllib.request.urlopen(req, context=ssl_ctx, timeout=300)
+        resp_code = response.getcode()
+
+        # 204: some S3-compatible stores return No Content on PUT
+        if resp_code not in (200, 201, 204):
+            raise Exception(f"Upload failed with status {resp_code}")
+
+    def _upload_multipart(self, tmp_path, zip_size, upload):
+        """PUT each presigned part sequentially, accumulating ETags in state.
+
+        Only a failed part is retried; raises once a part exhausts its
+        retries. The cloud side calls CompleteMultipartUpload with the
+        collected ETags after status reaches complete.
+        """
+        parts = sorted(upload['parts'], key=lambda p: int(p['part_number']))
+        part_size = int(upload['part_size'])
+
+        # The cloud side sizes the part list from the session manifest, but
+        # the zip is slightly larger (zip headers). Fail before uploading
+        # anything rather than completing a silently truncated object.
+        if len(parts) * part_size < zip_size:
+            raise Exception(
+                f"Parts cover only {len(parts) * part_size} of {zip_size} "
+                f"zip bytes — request more parts")
+
+        with open(tmp_path, 'rb') as f:
+            bytes_done = 0
+            for part in parts:
+                part_number = int(part['part_number'])
+                offset = (part_number - 1) * part_size
+                length = min(part_size, zip_size - offset)
+                if length <= 0:
+                    # Spare part URLs past the end of the zip (the cloud side
+                    # may over-provision as a safety margin) — done
+                    break
+                etag = self._put_part(f, offset, length, part['url'],
+                                      bytes_done, zip_size)
+                bytes_done += length
+                with self.state_lock:
+                    self.state['data_transfer']['parts'].append(
+                        {'part_number': part_number, 'etag': etag})
+                    self.state['data_transfer']['bytes_sent'] = bytes_done
+                    self.state['data_transfer']['progress'] = 50 + int(bytes_done / zip_size * 50)
+                self._publish_state()
+
+    def _put_part(self, fh, offset, length, url, base_sent, total, attempts=3):
+        """PUT one multipart slice with retry/backoff. Returns the ETag.
+
+        The ETag is kept verbatim — S3 returns it quoted and
+        CompleteMultipartUpload expects the quoted form.
+        """
+        import urllib.request
+        import ssl
+
+        headers = {
+            'Content-Type': 'application/octet-stream',
+            'Content-Length': str(length),
+        }
+        last_error = None
+        for attempt in range(attempts):
+            if attempt:
+                time.sleep(2 ** attempt)  # 2s, 4s
+            try:
+                # Re-stream just this part; rewind progress to the part start
+                # so a retry doesn't double-count bytes_sent
+                with self.state_lock:
+                    self.state['data_transfer']['bytes_sent'] = base_sent
+                fh.seek(offset)
+                reader = _ProgressReader(fh, length, self,
+                                         base_sent=base_sent, total=total)
+                req = urllib.request.Request(url, data=reader, method='PUT',
+                                             headers=headers)
+                response = urllib.request.urlopen(
+                    req, context=ssl.create_default_context(), timeout=300)
+                code = response.getcode()
+                if code in (200, 201, 204):
+                    return response.headers.get('ETag', '')
+                last_error = Exception(f"Part upload failed with status {code}")
+                self.logger.warning(f"Part PUT attempt {attempt + 1}/{attempts}: status {code}")
+            except Exception as e:
+                last_error = e
+                self.logger.warning(f"Part PUT attempt {attempt + 1}/{attempts} failed: {e}")
+        raise last_error
+
+    def _upload_previews(self, request_id, session_id, count, max_dimension, upload_urls):
+        """Re-encode and upload sample images from a session to presigned URLs.
+
+        Runs in background thread. One preview job at a time; each image is
+        bounded (longest edge <= max_dimension, JPEG q70, ~200KB) so the whole
+        job stays at a few hundred KB on metered cellular.
+        """
+        import re
+        import ssl
+        import urllib.request
+
+        if not re.match(r'^\d{8}(/session_\d{6})?$', session_id):
+            self.logger.error(f"Invalid session identifier for previews: {session_id}")
+            with self.state_lock:
+                self.state['preview_upload'] = _preview_upload_state(
+                    status='error', request_id=request_id, session_id=session_id,
+                    error='Invalid session identifier')
+            self._publish_state()
+            return
+
+        # Guard: one preview job at a time
+        with self.state_lock:
+            if self.state['preview_upload']['status'] == 'uploading':
+                self.logger.warning("Preview upload already in progress")
+                return
+            self.state['preview_upload'] = _preview_upload_state(
+                status='uploading', request_id=request_id, session_id=session_id)
+        self._publish_state()
+
+        try:
+            import cv2
+
+            save_dir = getattr(self.owl_instance, 'save_directory', None) if self.owl_instance else None
+            count = min(count, 20, len(upload_urls))
+            images = select_preview_images(save_dir, session_id, count) if save_dir else []
+            total = min(len(images), len(upload_urls))
+            if total <= 0:
+                raise Exception('No images found for this session')
+
+            with self.state_lock:
+                self.state['preview_upload']['total'] = total
+            self._publish_state()
+
+            ssl_ctx = ssl.create_default_context()
+            for i in range(total):
+                img = cv2.imread(images[i])
+                if img is None:
+                    self.logger.warning(f"Unreadable preview image skipped: {images[i]}")
+                    continue
+                h, w = img.shape[:2]
+                if max(h, w) > max_dimension:
+                    scale = max_dimension / max(h, w)
+                    img = cv2.resize(img, (round(w * scale), round(h * scale)),
+                                     interpolation=cv2.INTER_AREA)
+                ok, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                if not ok:
+                    self.logger.warning(f"JPEG encode failed, preview skipped: {images[i]}")
+                    continue
+                body = buf.tobytes()
+                req = urllib.request.Request(
+                    upload_urls[i], data=body, method='PUT',
+                    headers={'Content-Type': 'image/jpeg',
+                             'Content-Length': str(len(body))})
+                response = urllib.request.urlopen(req, context=ssl_ctx, timeout=30)
+                if response.getcode() not in (200, 201, 204):
+                    raise Exception(f"Preview upload failed with status {response.getcode()}")
+                with self.state_lock:
+                    self.state['preview_upload']['uploaded'] += 1
+                self._publish_state()
+
+            with self.state_lock:
+                self.state['preview_upload']['status'] = 'complete'
+            self._publish_state()
+            self.logger.info(f"Uploaded {total} previews for session {session_id}")
+
+        except Exception as e:
+            self.logger.error(f"Preview upload failed: {e}")
+            with self.state_lock:
+                self.state['preview_upload'].update(status='error', error=str(e))
+            self._publish_state()
 
     def _delete_session(self, session_date, data_types):
         """Delete a data session directory from the OWL. Runs in background thread.
@@ -1620,16 +2237,27 @@ class OWLMQTTPublisher:
         return models
 
     def _handle_gps_update(self, gps_data):
-        """Handle GPS updates from dashboard or central controller"""
+        """Handle GPS updates from dashboard or central controller.
+
+        Stores the payload as-received (no invented defaults) plus the LOCAL
+        receipt time — staleness checks must not depend on the sender's clock.
+        """
+        if not isinstance(gps_data, dict) or gps_data.get('latitude') is None or gps_data.get('longitude') is None:
+            self.logger.warning(f"Ignoring GPS update without coordinates: {gps_data}")
+            return
+
         with self.state_lock:
-            self.state.update({
-                'gps_latitude': float(gps_data.get('latitude', 0.0)),
-                'gps_longitude': float(gps_data.get('longitude', 0.0)),
-                'gps_accuracy': float(gps_data.get('accuracy', 0.0)),
-                'gps_timestamp': float(gps_data.get('timestamp', time.time())),
-                'gps_available': True,
-                'last_update': time.time()
-            })
+            self.state['gps_payload'] = dict(gps_data)
+            self.state['gps_received_at'] = time.time()
+            self.state['gps_available'] = True
+            self.state['last_update'] = time.time()
+            # Legacy flat keys (dashboard state display) — only when present
+            self.state['gps_latitude'] = float(gps_data['latitude'])
+            self.state['gps_longitude'] = float(gps_data['longitude'])
+            if gps_data.get('accuracy') is not None:
+                self.state['gps_accuracy'] = float(gps_data['accuracy'])
+            if gps_data.get('timestamp') is not None:
+                self.state['gps_timestamp'] = float(gps_data['timestamp'])
 
     def _monitor_states(self):
         """Monitor for state changes that need to trigger actions"""
@@ -1649,6 +2277,7 @@ class OWLMQTTPublisher:
             try:
                 if self.connected:
                     self._refresh_ai_state()
+                    self._read_update_status()
                     with self.state_lock:
                         self._publish_state()
                 time.sleep(heartbeat_interval)
@@ -1769,15 +2398,18 @@ class OWLMQTTPublisher:
             return self.state['sensitivity_level']
 
     def get_gps_data(self):
+        """Return the last GPS payload plus local receipt time, or None."""
         with self.state_lock:
-            if not self.state['gps_available']:
+            if not self.state['gps_available'] or not self.state['gps_payload']:
                 return None
-            return {
-                'latitude': self.state['gps_latitude'],
-                'longitude': self.state['gps_longitude'],
-                'accuracy': self.state['gps_accuracy'],
-                'timestamp': self.state['gps_timestamp']
-            }
+            gps = dict(self.state['gps_payload'])
+            gps['received_at'] = self.state['gps_received_at']
+            return gps
+
+    def get_session_metadata(self):
+        """Return a copy of the farmer-entered session metadata (field, crop, etc.)."""
+        with self.state_lock:
+            return dict(self.state.get('session_metadata', {}))
 
     def set_stream_status(self, is_active: bool):
         """Allows the main Owl instance to report the video stream status."""
@@ -1831,11 +2463,22 @@ class DashMQTTSubscriber:
     For networked mode, use the central controller instead
     """
 
-    def __init__(self, broker_host='localhost', broker_port=1883, client_id='owl_dashboard', device_id=None):
+    def __init__(self, broker_host='localhost', broker_port=1883, client_id='owl_dashboard', device_id=None,
+                 cloud_device_id=None):
         self.broker_host = broker_host
         self.broker_port = broker_port
         self.client_id = client_id
         self.logger = logging.getLogger(__name__)
+
+        # Cloud bridge connectivity: mosquitto publishes a retained 1/0 to
+        # this local $SYS topic when the Noktura bridge connects/drops.
+        # None = not yet observed (or cloud not configured).
+        self.cloud_device_id = cloud_device_id or None
+        self.cloud_connected = None
+        self.cloud_state_topic = (
+            f'$SYS/broker/connection/owl-bridge-{self.cloud_device_id}/state'
+            if self.cloud_device_id else None
+        )
 
         # Determine if this is for networked or standalone mode
         self.networked_mode = (broker_host.lower() not in ['localhost', '127.0.0.1'])
@@ -1926,6 +2569,9 @@ class DashMQTTSubscriber:
             client.subscribe(self.topics['config'])
             client.subscribe(self.topics['indicators'])
             client.subscribe(self.topics['errors'])
+            # Cloud bridge link state (retained) — only when cloud is configured
+            if self.cloud_state_topic:
+                client.subscribe(self.cloud_state_topic)
 
         else:
             self.logger.error(f"Failed to connect to MQTT broker: {rc}")
@@ -1939,6 +2585,12 @@ class DashMQTTSubscriber:
     def _on_message(self, client, userdata, msg):
         """Handle incoming MQTT messages"""
         topic = msg.topic
+
+        # Cloud bridge link state — retained $SYS payload is '1'/'0', not JSON
+        if getattr(self, 'cloud_state_topic', None) and topic == self.cloud_state_topic:
+            self.cloud_connected = (msg.payload.decode(errors='ignore').strip() == '1')
+            return
+
         raw = msg.payload.decode(errors='ignore')
         try:
             data = json.loads(raw)
@@ -2026,6 +2678,10 @@ class DashMQTTSubscriber:
         """Get current sensitivity level as string"""
         with self.state_lock:
             return self.current_state.get('sensitivity_level', 'medium')
+
+    def get_cloud_connected(self):
+        """Cloud bridge link state: True (up), False (down), None (unknown/not configured)."""
+        return self.cloud_connected
 
     def _send_command(self, action, **kwargs):
         """Send command to OWL"""

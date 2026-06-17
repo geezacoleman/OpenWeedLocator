@@ -509,7 +509,7 @@ setup_service_control_permissions() {
 # without a password, which is required for the web dashboard power button.
 # Also allows shutdown (triggered by central controller MQTT command).
 
-Cmnd_Alias OWL_SERVICE_CMDS = ${SYSTEMCTL_BIN} start owl.service, ${SYSTEMCTL_BIN} stop owl.service, ${SYSTEMCTL_BIN} is-active owl.service, ${SYSTEMCTL_BIN} reset-failed owl.service, ${SHUTDOWN_BIN} now
+Cmnd_Alias OWL_SERVICE_CMDS = ${SYSTEMCTL_BIN} start owl.service, ${SYSTEMCTL_BIN} stop owl.service, ${SYSTEMCTL_BIN} restart owl.service, ${SYSTEMCTL_BIN} is-active owl.service, ${SYSTEMCTL_BIN} reset-failed owl.service, ${SHUTDOWN_BIN} now
 
 # Grant the user permission to run ONLY the commands in the alias.
 ${CURRENT_USER} ALL=(ALL) NOPASSWD: OWL_SERVICE_CMDS

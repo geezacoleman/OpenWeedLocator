@@ -156,10 +156,15 @@ async function updateDashboard() {
         owlsData = data.owls || {};
 
         updateMQTTStatus();
+        updateCloudStatus(data);
         updateOWLGrid();
         // Update config editor device selector if it exists
         if (typeof updateConfigEditorDevices === 'function') {
             updateConfigEditorDevices();
+        }
+        // Show/hide the restart-required notice based on OWL state
+        if (typeof updateRestartNotice === 'function') {
+            updateRestartNotice();
         }
 
         // Sync pipeline mode from first connected OWL
@@ -241,6 +246,18 @@ function updateMQTTStatus() {
     }
 }
 
+// Cloud (Noktura) link — fleet-level, independent of per-OWL online state.
+function updateCloudStatus(data) {
+    renderCloudStatus(
+        document.getElementById('cloud-status-dot'),
+        document.getElementById('cloud-status-text'),
+        data
+    );
+    if (typeof updateCloudManageBlock === 'function') {
+        updateCloudManageBlock(data);
+    }
+}
+
 function updateOWLGrid() {
     const grid = document.getElementById('owls-column');
     if (!grid) return;
@@ -285,6 +302,14 @@ function buildOWLCard(deviceId, owl) {
         ? '<div class="device-warning-badge">Hardware controller (' + ctrlType + ') — use standalone dashboard</div>'
         : '';
 
+    // Active config "Running: <name>" (prefer the friendly [Meta] name).
+    let cfgName = owl.config_name || '';
+    if (cfgName && typeof prettyConfigName === 'function') cfgName = prettyConfigName(cfgName);
+    const esc = (typeof escapeConfigLabel === 'function') ? escapeConfigLabel : (s) => s;
+    const cfgLine = (isOnline && cfgName)
+        ? '<div class="owl-compact-config" title="Config loaded on this OWL">Running: ' + esc(cfgName) + '</div>'
+        : '';
+
     return `
         <div class="owl-card-compact ${onlineClass}">
             <div class="owl-card-compact-header">
@@ -295,6 +320,7 @@ function buildOWLCard(deviceId, owl) {
                 </span>
                 ${hwWarning}
             </div>
+            ${cfgLine}
             <div class="owl-compact-stats">
                 <div class="owl-compact-stat"><strong${tempClass}>${temp.toFixed(0)}°C</strong> CPU</div>
                 <div class="owl-compact-stat"><strong>${cpu.toFixed(0)}%</strong> Load</div>

@@ -2,6 +2,7 @@ from pathlib import Path
 from configparser import ConfigParser, Error as ConfigParserError
 from typing import Dict, Set, Tuple
 
+import re
 import logging
 import utils.error_manager as errors
 
@@ -13,6 +14,74 @@ GREENONBROWN_PARAMS = frozenset({
     'min_detection_area', 'invert_hue',
 })
 
+# Per-unit MOUNT geometry. Lives in GEOMETRY.ini (device-resident), NOT in named
+# detection configs. Single source of truth for both the recompute trigger and the
+# geometry-strip on named saves.
+GEOMETRY_SECTION_KEYS = {
+    'Camera': {'crop_left', 'crop_right', 'crop_top', 'crop_bottom'},
+    'System': {'actuation_top', 'actuation_bottom'},
+}
+GEOMETRY_KEYS = frozenset(k for keys in GEOMETRY_SECTION_KEYS.values() for k in keys)
+GEOMETRY_FILE = 'GEOMETRY.ini'
+
+
+def strip_geometry_keys(config_dict):
+    """Return a copy of a {section: {key: value}} config dict with mount geometry
+    keys removed, so named detection configs never carry geometry (it is
+    device-resident in GEOMETRY.ini). Sections left empty are dropped."""
+    out = {}
+    for section, opts in config_dict.items():
+        geom = GEOMETRY_SECTION_KEYS.get(section, set())
+        if geom:
+            kept = {k: v for k, v in opts.items() if k not in geom}
+        else:
+            kept = dict(opts)
+        if kept:
+            out[section] = kept
+    return out
+
+
+def build_config_filename(display_name, fallback_filename, timestamp):
+    """Build a safe filename for a saved config.
+
+    - A human display_name becomes '<safe-name>_<timestamp>.ini' (timestamp kept
+      for uniqueness so named saves never overwrite each other).
+    - Otherwise an explicit fallback_filename is honoured as-is (sanitised) for
+      backward compatibility with programmatic callers.
+    - Otherwise a plain 'config_<timestamp>.ini'.
+    """
+    if display_name:
+        base = re.sub(r'[^a-z0-9]+', '-', display_name.lower()).strip('-')
+        if base:
+            return f'{base}_{timestamp}.ini'
+    if fallback_filename:
+        fn = fallback_filename if fallback_filename.endswith('.ini') else fallback_filename + '.ini'
+        safe = re.sub(r'[^A-Za-z0-9_.-]+', '', fn)
+        if safe and safe != '.ini':
+            return safe
+    return f'config_{timestamp}.ini'
+
+
+def parse_config_meta(path):
+    """Read the [Meta] section from a config .ini.
+
+    Returns {display_name, notes, created} with absent keys omitted (fail-safe —
+    never invents values). Returns {} if the section/file is missing or unreadable.
+    """
+    try:
+        cp = ConfigParser()
+        cp.optionxform = str
+        cp.read(path)
+        if not cp.has_section('Meta'):
+            return {}
+        meta = {}
+        for k in ('display_name', 'notes', 'created'):
+            if cp.has_option('Meta', k):
+                meta[k] = cp.get('Meta', k)
+        return meta
+    except Exception:
+        return {}
+
 
 class ConfigValidator:
     """Validates OWL configuration files"""
@@ -23,7 +92,8 @@ class ConfigValidator:
     REQUIRED_CONFIG = {
         'System': {
             'required_keys': {'algorithm', 'relay_num'},
-            'optional_keys': {'input_file_or_directory', 'actuation_duration', 'delay', 'actuation_zone'}
+            'optional_keys': {'input_file_or_directory', 'actuation_duration', 'delay', 'actuation_zone',
+                              'actuation_top', 'actuation_bottom'}
         },
         'Controller': {
             # Base requirements for all controller types
@@ -68,7 +138,8 @@ class ConfigValidator:
         'Camera': {
             'required_keys': {'resolution_width', 'resolution_height'},
             'optional_keys': {'exp_compensation', 'crop_factor_horizontal', 'crop_factor_vertical', 'camera_type',
-                              'allow_high_resolution'}
+                              'allow_high_resolution',
+                              'crop_left', 'crop_right', 'crop_top', 'crop_bottom'}
         },
         'GreenOnGreen': {
             'required_keys': {'model_path', 'confidence'},
@@ -116,6 +187,14 @@ class ConfigValidator:
         'inference_resolution': ('int', 160, 1280),
         'crop_buffer_px': ('int', 0, 50),
         'actuation_zone': ('int', 1, 100),
+        # Per-edge crop fractions (inset from each edge, 0.0-0.49)
+        'crop_left': ('float', 0, 0.49),
+        'crop_right': ('float', 0, 0.49),
+        'crop_top': ('float', 0, 0.49),
+        'crop_bottom': ('float', 0, 0.49),
+        # Actuation band (fractions of cropped height; 0.0 = top of crop, 1.0 = bottom)
+        'actuation_top': ('float', 0, 1.0),
+        'actuation_bottom': ('float', 0, 1.0),
         # GPIO pins
         'switch_pin': ('pin', 1, 40),
         'detection_mode_pin_up': ('pin', 1, 40),
@@ -131,6 +210,8 @@ class ConfigValidator:
         'track_class_window': ('int', 1, 20),
         'track_crop_persist': ('int', 1, 10),
         'detection_persist_frames': ('int', 0, 15),
+        # Network ports ([MQTT] and [Cloud])
+        'broker_port': ('int', 1, 65535),
         # Boolean fields
         'image_sample_enable': ('bool', None, None),
         'detection_enable': ('bool', None, None),
@@ -195,6 +276,18 @@ class ConfigValidator:
                               'new_track_thresh', 'track_buffer', 'match_thresh',
                               'track_class_window', 'track_crop_persist',
                               'detection_persist_frames'}
+        },
+        # Cloud bridge (Noktura) — written by owl_cloud_provision.sh.
+        # Optional: un-provisioned devices have no [Cloud] section at all.
+        'Cloud': {
+            'optional_keys': {'enable', 'broker_host', 'broker_port', 'device_id',
+                              'ca_cert', 'username', 'password_file', 'portal_url'}
+        },
+        # Human-readable config metadata written when a named config is saved.
+        # Ignored by the detection pipeline; present so the controller can show
+        # a friendly name/notes. Listed here so it never triggers a startup warning.
+        'Meta': {
+            'optional_keys': {'display_name', 'notes', 'created'}
         },
     }
 
