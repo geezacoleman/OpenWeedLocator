@@ -772,8 +772,14 @@ function geoCloseEditor() {
     var label = document.getElementById('config-preview-label');
     if (frame) frame.style.display = '';
     if (label) label.style.display = '';
-    var actionBar = document.querySelector('.config-action-bar');
-    if (actionBar) actionBar.style.display = '';
+    // Restore the bits hidden during geometry.
+    ['.config-action-bar', '.config-mode-bar', '#config-preview-device',
+     '#config-preview-btn'].forEach(function (sel) {
+        var el = document.querySelector(sel);
+        if (el) el.style.display = '';
+    });
+    var feedToggle = document.getElementById('geo-feed-toggle');
+    if (feedToggle) feedToggle.style.display = 'none';
 
     geometryEditorActive = false;
     var btn = document.getElementById('config-geometry-btn');
@@ -799,15 +805,20 @@ async function toggleGeometryEditor() {
     if (label) label.style.display = 'none';
     var multi = document.getElementById('geo-multi');
     if (multi) multi.style.display = 'flex';
-    var actionBar = document.querySelector('.config-action-bar');
-    if (actionBar) actionBar.style.display = 'none';
-
-    // 1-up / 2-up toggle
-    document.querySelectorAll('#geo-updown .geo-updown-btn').forEach(function (b) {
+    // Hide everything not relevant to geometry to reclaim space.
+    [['.config-action-bar', null], ['.config-mode-bar', null],
+     ['#config-preview-device', null], ['#config-preview-btn', null]].forEach(function (pair) {
+        var el = document.querySelector(pair[0]);
+        if (el) el.style.display = 'none';
+    });
+    // 1-up / 2-up toggle lives in the toolbar so it's always reachable.
+    var feedToggle = document.getElementById('geo-feed-toggle');
+    if (feedToggle) feedToggle.style.display = '';
+    document.querySelectorAll('#geo-feed-toggle .geo-updown-btn').forEach(function (b) {
         b.classList.toggle('active', parseInt(b.dataset.up, 10) === geoMode);
         b.onclick = function () {
             geoMode = parseInt(b.dataset.up, 10);
-            document.querySelectorAll('#geo-updown .geo-updown-btn').forEach(function (x) {
+            document.querySelectorAll('#geo-feed-toggle .geo-updown-btn').forEach(function (x) {
                 x.classList.toggle('active', x === b);
             });
             geoBuildSlots();

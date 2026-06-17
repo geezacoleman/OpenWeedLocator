@@ -96,6 +96,14 @@ function setupEventListeners() {
 
     // Preview device selector — swap feed live
     document.getElementById('config-preview-device')?.addEventListener('change', onPreviewDeviceChanged);
+
+    // Noktura cloud details — revealed on demand by clicking the cloud status
+    document.getElementById('cloud-status')?.addEventListener('click', function () {
+        document.getElementById('cloud-manage-block')?.classList.toggle('hidden');
+    });
+    document.getElementById('cloud-manage-close')?.addEventListener('click', function () {
+        document.getElementById('cloud-manage-block')?.classList.add('hidden');
+    });
 }
 
 // ============================================

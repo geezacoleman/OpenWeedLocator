@@ -346,14 +346,25 @@ const GeometryEditor = (function () {
         var allRow = ctx.allowAll
             ? '<label class="geo-apply-all"><input type="checkbox" id="geo-apply-all"> Apply to all OWLs</label>'
             : '';
+        // Starts minimised (just the buttons) so it doesn't cover the feed;
+        // "Fine-tune" expands the nudge grid.
+        panelEl.classList.add('geo-panel-pop', 'geo-min');
         panelEl.innerHTML =
-            '<div class="geo-panel-title">Adjust crop &amp; actuation band</div>' +
-            '<div class="geo-nudge-grid">' + rows + '</div>' +
-            allRow +
+            '<div class="geo-panel-head">' +
+            '<button class="geo-min-btn" id="geo-min" title="Show/hide fine-tune">&#9874; Fine-tune</button>' +
             '<div class="geo-panel-actions">' +
             '<button class="geo-btn geo-btn-secondary" id="geo-cancel">Cancel</button>' +
-            '<button class="geo-btn geo-btn-primary" id="geo-done">Done (save)</button>' +
+            '<button class="geo-btn geo-btn-primary" id="geo-done">Done</button>' +
+            '</div></div>' +
+            '<div class="geo-panel-body">' +
+            '<div class="geo-nudge-grid">' + rows + '</div>' +
+            allRow +
             '</div>';
+
+        var minBtn = panelEl.querySelector('#geo-min');
+        minBtn.addEventListener('click', function () {
+            panelEl.classList.toggle('geo-min');
+        });
 
         function api() { return { applyToAll: function () { var c = panelEl.querySelector('#geo-apply-all'); return !!(c && c.checked); } }; }
         function refresh() {

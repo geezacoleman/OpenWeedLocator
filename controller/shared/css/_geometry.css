@@ -161,6 +161,27 @@
 .geo-h-top, .geo-h-bottom,
 .geo-h-atop, .geo-h-abottom { cursor: ns-resize; }
 
+/* ── Minimisable popup head (Fine-tune toggle + Cancel/Done) ─────────── */
+.geo-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.geo-min-btn {
+    border: 1px solid #dce1e8;
+    background: #f4f7fa;
+    border-radius: 7px;
+    padding: 0.4rem 0.7rem;
+    font-weight: 700;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+.geo-panel-body { margin-top: 0.5rem; }
+.geo-panel.geo-min .geo-panel-body { display: none; }
+.geo-panel-head .geo-panel-actions { margin: 0; }
+
 /* ── Nudge / action panel ───────────────────────────────────────────── */
 .geo-panel-title {
     font-weight: 700;

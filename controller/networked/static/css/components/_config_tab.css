@@ -433,23 +433,24 @@
 .geo-feeds.geo-2up .geo-slot-img { max-width: 45vw; max-height: 62vh; }
 .geo-feeds.geo-1up .geo-slot-img { max-width: 88vw; max-height: 66vh; }
 
-/* Controls as a floating overlay popup over the feeds (bottom-centre). */
+/* Controls as a small floating popup in the bottom-right corner — minimised to
+   just the buttons by default so it barely covers the feed; "Fine-tune" expands. */
 .config-split.geo-mode .geo-panel {
     position: absolute;
-    left: 50%;
-    bottom: 10px;
-    transform: translateX(-50%);
-    width: min(580px, 94%);
-    max-height: 70%;
+    right: 12px;
+    bottom: 12px;
+    width: 300px;
+    max-width: 70%;
+    max-height: 80%;
     overflow-y: auto;
     z-index: 20;
+    padding: 0.5rem 0.6rem;
     background: rgba(255, 255, 255, 0.97);
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
 }
-/* Roomy popup → two-column nudge grid (short, not clipped at this width). */
-.config-split.geo-mode .geo-nudge-grid {
-    grid-template-columns: 1fr 1fr;
-    gap: 0.25rem 1rem;
+.config-split.geo-mode .geo-nudge-grid { grid-template-columns: 1fr; }
+.config-split.geo-mode .geo-panel.geo-min {
+    width: auto;     /* shrink to just the button row when collapsed */
 }
 
 .config-preview-img {

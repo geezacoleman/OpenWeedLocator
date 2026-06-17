@@ -96,6 +96,34 @@
     flex: 1 1 220px;
 }
 
+/* Click-to-reveal dropdown variant (anchored under the header cloud status) */
+.cloud-status { cursor: pointer; }
+.cloud-manage-dropdown {
+    display: block;          /* override the slim flex banner */
+    position: fixed;
+    top: 56px;
+    right: 12px;
+    width: min(420px, 92vw);
+    z-index: 1100;
+    margin-bottom: 0;
+}
+.cloud-manage-dropdown .cloud-manage-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+.cloud-manage-dropdown .cloud-manage-status { margin: 0.25rem 0 0.5rem; }
+.cloud-manage-close {
+    margin-left: auto;
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--text-light, #5a6470);
+}
+
 .cloud-manage-detail {
     display: flex;
     align-items: center;

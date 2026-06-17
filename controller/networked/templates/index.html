@@ -22,14 +22,28 @@
                 <span class="status-dot" id="mqtt-status-dot"></span>
                 <span id="mqtt-status-text">MQTT Connecting...</span>
             </div>
-            <!-- Cloud (Noktura) link — fleet-level; always shown, neutral when off -->
-            <div class="cloud-status" id="cloud-status">
+            <!-- Cloud (Noktura) link — click to reveal the details panel -->
+            <div class="cloud-status" id="cloud-status" title="Click for Noktura cloud details">
                 <span class="status-dot neutral" id="cloud-status-dot"></span>
                 <span id="cloud-status-text">Cloud: not linked</span>
             </div>
         </div>
     </div>
 </header>
+
+<!-- Noktura cloud details — hidden until the cloud status is clicked -->
+<div class="cloud-manage-card cloud-manage-dropdown hidden" id="cloud-manage-block">
+    <div class="cloud-manage-head">
+        <span class="status-dot neutral" id="cloud-manage-dot"></span>
+        <h3>Noktura cloud</h3>
+        <button class="cloud-manage-close" id="cloud-manage-close" aria-label="Close">&times;</button>
+    </div>
+    <p class="cloud-manage-status" id="cloud-manage-status">This controller is not linked to Noktura.</p>
+    <div class="cloud-manage-detail">
+        <a class="cloud-manage-link hidden" id="cloud-manage-link" target="_blank" rel="noopener noreferrer"></a>
+        <div class="cloud-manage-qr hidden" id="cloud-manage-qr"></div>
+    </div>
+</div>
 
 <!-- Tab Bar -->
 <div class="view-toggle">
@@ -342,19 +356,6 @@
     <!-- Config View -->
     <div id="view-config" class="view-panel" style="display:none;">
         <div class="config-tab-content">
-            <!-- Noktura cloud link (fleet-level) -->
-            <div class="cloud-manage-card" id="cloud-manage-block">
-                <div class="cloud-manage-head">
-                    <span class="status-dot neutral" id="cloud-manage-dot"></span>
-                    <h3>Noktura cloud</h3>
-                </div>
-                <p class="cloud-manage-status" id="cloud-manage-status">This controller is not linked to Noktura.</p>
-                <div class="cloud-manage-detail">
-                    <a class="cloud-manage-link hidden" id="cloud-manage-link" target="_blank" rel="noopener noreferrer"></a>
-                    <div class="cloud-manage-qr hidden" id="cloud-manage-qr"></div>
-                </div>
-            </div>
-
             <!-- Toolbar -->
             <div class="config-toolbar">
                 <div class="config-toolbar-group">
@@ -365,6 +366,10 @@
                     </select>
                     <button class="config-action-btn preview" id="config-preview-btn" onclick="toggleConfigPreview()">Preview</button>
                     <button class="config-action-btn secondary" id="config-geometry-btn" onclick="toggleGeometryEditor()">Adjust geometry</button>
+                    <div class="geo-feed-toggle geo-updown" id="geo-feed-toggle" style="display:none;">
+                        <button class="geo-updown-btn" data-up="1">1 feed</button>
+                        <button class="geo-updown-btn active" data-up="2">2 feeds</button>
+                    </div>
                 </div>
                 <div class="config-toolbar-spacer"></div>
                 <span class="config-badge" id="config-active-badge">--</span>
@@ -584,12 +589,6 @@
 
                     <!-- Geometry editor — up to two feeds side by side -->
                     <div class="geo-multi" id="geo-multi" style="display:none;">
-                        <div class="geo-multi-bar">
-                            <div class="geo-updown" id="geo-updown">
-                                <button class="geo-updown-btn" data-up="1">1 feed</button>
-                                <button class="geo-updown-btn active" data-up="2">2 feeds</button>
-                            </div>
-                        </div>
                         <div class="geo-feeds" id="geo-feeds">
                             <div class="geo-slot" data-slot="0">
                                 <select class="geo-slot-pick" data-slot="0"></select>

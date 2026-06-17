@@ -10,7 +10,7 @@ from typing import Optional
 @dataclass
 class Version:
     major: int = 3
-    minor: int = 0
+    minor: int = 1
     patch: int = 0
     tag: Optional[str] = None
 
