@@ -349,18 +349,19 @@
     align-items: center;
     align-content: center;
     justify-content: center;
-    gap: 0.75rem 1rem;
-    overflow-y: auto;
+    gap: 0.75rem 1.25rem;
+    overflow-y: auto;          /* the column is the ONE scroll container, if needed */
 }
 .config-preview-col.geo-host-active .config-preview-frame {
     flex: 0 1 auto;
     max-width: 100%;
-    max-height: 60vh;
+    max-height: 100%;          /* fill the column height → bigger feed, less dark void */
 }
 .config-preview-col.geo-host-active .geo-panel {
-    flex: 0 1 320px;
+    flex: 0 0 320px;
     max-width: 340px;
-    max-height: 100%;
+    max-height: none;          /* no nested scrollbar — the column scrolls instead */
+    overflow: visible;
 }
 
 /* While editing geometry, give the feed + controls the full width by hiding the

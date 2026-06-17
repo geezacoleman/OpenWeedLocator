@@ -58,34 +58,42 @@
 /* -------------------------------------------------------------------------
    Cloud (Noktura) manage card — Config tab
    ------------------------------------------------------------------------- */
+/* Slim single-line banner: "● Noktura cloud — <status>". The link/QR (when
+   linked) wrap onto a second line; the not-linked state stays one compact row. */
 .cloud-manage-card {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.3rem 0.75rem;
     background: white;
     border: 1px solid #dce1e8;
     border-radius: var(--radius-md);
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
-    padding: 1rem 1.25rem;
-    margin-bottom: 1rem;
+    padding: 0.45rem 0.9rem;
+    margin-bottom: 0.6rem;
 }
 
 .cloud-manage-head {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
+    gap: 0.4rem;
+    margin-bottom: 0;
+    flex: 0 0 auto;
 }
 
 .cloud-manage-head h2,
 .cloud-manage-head h3 {
     margin: 0;
-    font-size: 1rem;
+    font-size: 0.9rem;
     font-weight: 600;
 }
 
 .cloud-manage-status {
-    margin: 0 0 0.75rem;
-    font-size: 0.85rem;
+    margin: 0;
+    font-size: 0.8rem;
     color: var(--text-muted, #5a6470);
-    line-height: 1.4;
+    line-height: 1.3;
+    flex: 1 1 220px;
 }
 
 .cloud-manage-detail {

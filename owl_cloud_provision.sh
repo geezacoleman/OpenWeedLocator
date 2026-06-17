@@ -77,7 +77,7 @@ _update_ini_key() {
     local rc=0
     awk -v sect="[${section}]" -v key="$key" -v val="$value" '
         /^\[/ { in_sect = ($0 == sect) }
-        in_sect && index($0, key " = ") == 1 { $0 = key " = " val; done = 1 }
+        in_sect && !done && $0 ~ ("^" key "[ \t]*=") { $0 = key " = " val; done = 1 }
         { print }
         END { exit done ? 0 : 3 }
     ' "$file" > "${file}.tmp" || rc=$?
