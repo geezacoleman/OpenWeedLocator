@@ -717,6 +717,12 @@ async function geoBuildSlots() {
     var owls = geoConnectedOwls();
     var slotCount = (geoMode === 2 && owls.length >= 2) ? 2 : 1;
 
+    var feedsEl = document.getElementById('geo-feeds');
+    if (feedsEl) {
+        feedsEl.classList.toggle('geo-2up', slotCount === 2);
+        feedsEl.classList.toggle('geo-1up', slotCount === 1);
+    }
+
     for (var s = 0; s < 2; s++) {
         var slotEl = document.querySelector('.geo-slot[data-slot="' + s + '"]');
         if (!slotEl) continue;

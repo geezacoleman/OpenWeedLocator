@@ -364,29 +364,26 @@
     overflow: visible;
 }
 
-/* ── Geometry mode: hide the sliders, lay feeds + controls in a row ────────
-   Up to two feeds on the left (wrap to stacked on narrow), shared controls on
-   the right. Fits 1280×800 without page scroll. */
+/* ── Geometry mode: hide the sliders, feeds fill the width side by side, the
+   controls float as an overlay popup so the feeds stay large. ───────────── */
 .config-split.geo-mode .config-sliders-col { display: none; }
 .config-split.geo-mode .config-preview-col {
     display: flex;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-    align-content: center;
-    justify-content: center;
-    gap: 0.75rem 1.25rem;
-    overflow-y: auto;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    position: relative;          /* anchor the floating controls popup */
+    overflow: hidden;
     padding: 0.5rem 0.75rem;
 }
 .geo-multi {
     flex: 1 1 auto;
-    min-width: 0;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
 }
-.geo-multi-bar { display: flex; justify-content: center; }
+.geo-multi-bar { display: flex; justify-content: center; flex: 0 0 auto; }
 .geo-updown { display: flex; gap: 0.4rem; }
 .geo-updown-btn {
     padding: 0.35rem 0.9rem;
@@ -402,19 +399,24 @@
     color: #fff;
     border-color: var(--accent, #3498db);
 }
+
+/* Feeds: always horizontal, side by side, sharing the width. */
 .geo-feeds {
+    flex: 1 1 auto;
+    min-height: 0;
     display: flex;
-    gap: 1rem;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 0.75rem;
     justify-content: center;
-    align-items: flex-start;
-    flex-wrap: wrap;
+    align-items: center;
 }
 .geo-slot {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 0.4rem;
-    max-width: 100%;
+    min-width: 0;
 }
 .geo-slot-pick {
     max-width: 200px;
@@ -424,16 +426,30 @@
     background: #fff;
     font-weight: 600;
 }
-.geo-slot-frame,
-.geo-slot-img {
-    max-height: 44vh;
-    max-width: 100%;
-}
+/* The frame shrink-wraps the img; bound the IMG to viewport units so two feeds
+   fit side by side and the overlay stays aligned (max-* on the img, not the
+   shrink-wrapping frame). */
+.geo-slot-frame { max-width: 100%; max-height: 100%; }
+.geo-feeds.geo-2up .geo-slot-img { max-width: 45vw; max-height: 62vh; }
+.geo-feeds.geo-1up .geo-slot-img { max-width: 88vw; max-height: 66vh; }
+
+/* Controls as a floating overlay popup over the feeds (bottom-centre). */
 .config-split.geo-mode .geo-panel {
-    flex: 0 0 300px;
-    max-width: 320px;
-    max-height: none;
-    overflow: visible;
+    position: absolute;
+    left: 50%;
+    bottom: 10px;
+    transform: translateX(-50%);
+    width: min(580px, 94%);
+    max-height: 70%;
+    overflow-y: auto;
+    z-index: 20;
+    background: rgba(255, 255, 255, 0.97);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+/* Roomy popup → two-column nudge grid (short, not clipped at this width). */
+.config-split.geo-mode .geo-nudge-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.25rem 1rem;
 }
 
 .config-preview-img {
