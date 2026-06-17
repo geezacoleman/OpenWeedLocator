@@ -608,8 +608,8 @@ function onPreviewDeviceChanged() {
 }
 
 function stopConfigPreview() {
-    if (typeof GeometryEditor !== 'undefined' && GeometryEditor.isOpen()) {
-        GeometryEditor.close();
+    if (geometryEditorActive) {
+        geoCloseEditor();
     }
     if (!configPreviewActive) return;
 
@@ -627,10 +627,14 @@ function stopConfigPreview() {
 }
 
 // ============================================
-// VISUAL GEOMETRY EDITOR
+// VISUAL GEOMETRY EDITOR (up to 2 feeds side by side)
 // ============================================
 
 let geometryEditorActive = false;
+let geoInstances = [];   // [{ slot, deviceId, editor }]
+let geoActive = null;    // active editor instance
+let geoControls = null;  // shared controls panel handle
+let geoMode = 2;         // 1 or 2 feeds
 
 function geoFrac(primary, fallback, dflt) {
     var n = parseFloat(primary);
@@ -640,40 +644,44 @@ function geoFrac(primary, fallback, dflt) {
     return dflt;
 }
 
-async function toggleGeometryEditor() {
-    if (typeof GeometryEditor === 'undefined') return;
+function geoConnectedOwls() {
+    var ids = [];
+    for (var id in owlsData) { if (owlsData[id] && owlsData[id].connected) ids.push(id); }
+    return ids;
+}
 
-    if (geometryEditorActive) {
-        GeometryEditor.close();
-        return;
-    }
+function geoSetPreviewMode(deviceId, mode) {
+    apiRequest('/api/preview-mode/' + deviceId, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: mode })
+    });
+}
 
-    var deviceId = getSelectedPreviewDevice();
-    if (!deviceId) {
-        showToast('Select an OWL to adjust', 'warning');
-        return;
-    }
+function geoPostGeometry(target, v, persist) {
+    apiRequest('/api/geometry/' + target, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            params: {
+                crop_left: String(v.crop_left), crop_right: String(v.crop_right),
+                crop_top: String(v.crop_top), crop_bottom: String(v.crop_bottom),
+                actuation_top: String(v.actuation_top), actuation_bottom: String(v.actuation_bottom)
+            }, persist: !!persist
+        })
+    });
+}
 
-    // Show the full-frame feed for this device behind the overlay.
-    if (!configPreviewActive) {
-        toggleConfigPreview();
-    } else {
-        updateConfigPreviewDevice();
-    }
-
-    // Read the device's current geometry (fall back to defaults).
-    var values = {
-        crop_left: 0.02, crop_right: 0.02, crop_top: 0.02, crop_bottom: 0.02,
-        actuation_top: 0.0, actuation_bottom: 1.0
+async function geoFetchSeed(deviceId) {
+    var seed = {
+        values: { crop_left: 0.02, crop_right: 0.02, crop_top: 0.02, crop_bottom: 0.02,
+                  actuation_top: 0.0, actuation_bottom: 1.0 },
+        relayNum: 4
     };
-    var relayNum = 4;
     try {
         var res = await apiRequest('/api/config/' + deviceId, {}, 5000);
         var data = await res.json();
         if (data.success && data.config) {
-            var cam = data.config.Camera || {};
-            var sys = data.config.System || {};
-            values = {
+            var cam = data.config.Camera || {}, sys = data.config.System || {};
+            seed.values = {
                 crop_left: geoFrac(cam.crop_left, cam.crop_factor_horizontal, 0.02),
                 crop_right: geoFrac(cam.crop_right, cam.crop_factor_horizontal, 0.02),
                 crop_top: geoFrac(cam.crop_top, cam.crop_factor_vertical, 0.02),
@@ -681,60 +689,152 @@ async function toggleGeometryEditor() {
                 actuation_top: geoFrac(sys.actuation_top, null, 0.0),
                 actuation_bottom: geoFrac(sys.actuation_bottom, null, 1.0)
             };
-            relayNum = parseInt(sys.relay_num, 10) || 4;
+            seed.relayNum = parseInt(sys.relay_num, 10) || 4;
         }
-    } catch (e) {
-        showToast('Using defaults — could not read device geometry', 'warning');
-    }
+    } catch (e) { /* defaults */ }
+    return seed;
+}
 
-    var btn = document.getElementById('config-geometry-btn');
+function geoSetActive(editor) {
+    geoActive = editor;
+    geoInstances.forEach(function (g) { g.editor.setActive(g.editor === editor); });
+    if (geoControls) geoControls.refresh();
+}
 
-    function postGeometry(target, params, persist) {
-        apiRequest('/api/geometry/' + target, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ params: params, persist: persist })
-        });
-    }
-
-    // Show the full uncropped frame behind the overlay while editing.
-    apiRequest('/api/preview-mode/' + deviceId, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'full' })
+function geoDestroyInstances() {
+    geoInstances.forEach(function (g) {
+        geoSetPreviewMode(g.deviceId, 'cropped');
+        g.editor.destroy();
     });
+    geoInstances = [];
+    geoActive = null;
+}
 
-    GeometryEditor.open({
-        host: document.getElementById('config-preview-frame'),
-        img: document.getElementById('config-preview-img'),
-        panel: document.getElementById('config-geometry-panel'),
-        values: values,
-        relayNum: relayNum,
-        allowAll: true,
-        onCommit: function (v, info) {
-            var target = (info && info.applyToAll) ? 'all' : deviceId;
-            postGeometry(target, {
-                crop_left: String(v.crop_left), crop_right: String(v.crop_right),
-                crop_top: String(v.crop_top), crop_bottom: String(v.crop_bottom),
-                actuation_top: String(v.actuation_top), actuation_bottom: String(v.actuation_bottom)
-            }, info && info.persist);
-            if (info && info.persist) {
-                showToast(target === 'all' ? 'Geometry saved to all OWLs' : 'Geometry saved', 'success');
-            }
-        },
-        onClose: function () {
-            geometryEditorActive = false;
-            // Restore the normal cropped preview.
-            apiRequest('/api/preview-mode/' + deviceId, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ mode: 'cropped' })
+// (Re)build the feed slots from current picker selections + mode.
+async function geoBuildSlots() {
+    geoDestroyInstances();
+
+    var owls = geoConnectedOwls();
+    var slotCount = (geoMode === 2 && owls.length >= 2) ? 2 : 1;
+
+    for (var s = 0; s < 2; s++) {
+        var slotEl = document.querySelector('.geo-slot[data-slot="' + s + '"]');
+        if (!slotEl) continue;
+        slotEl.style.display = (s < slotCount) ? '' : 'none';
+        if (s >= slotCount) continue;
+
+        var pick = slotEl.querySelector('.geo-slot-pick');
+        var prev = pick.value;
+        pick.innerHTML = owls.map(function (id) {
+            return '<option value="' + id + '">' + id + '</option>';
+        }).join('');
+        var deviceId = (owls.indexOf(prev) >= 0) ? prev : (owls[s] || owls[0]);
+        if (deviceId) pick.value = deviceId;
+        pick.onchange = function () { geoBuildSlots(); };
+        if (!deviceId) continue;
+
+        var img = document.getElementById('geo-img-' + s);
+        var frame = document.getElementById('geo-frame-' + s);
+        geoSetPreviewMode(deviceId, 'full');
+        img.src = '/api/video_feed/' + deviceId + '?t=' + Date.now();
+
+        var seed = await geoFetchSeed(deviceId);
+        (function (devId, slotIdx) {
+            var editor = GeometryEditor.create({
+                host: frame, img: img, values: seed.values, relayNum: seed.relayNum,
+                deviceId: devId, label: devId,
+                onCommit: function (v, info) { geoPostGeometry(devId, v, info && info.persist); },
+                onActivate: function (ed) { geoSetActive(ed); },
+                onChange: function () { if (geoControls) geoControls.refresh(); }
             });
-            if (btn) { btn.textContent = 'Adjust geometry'; btn.classList.remove('active'); }
-        }
-    });
+            geoInstances.push({ slot: slotIdx, deviceId: devId, editor: editor });
+        })(deviceId, s);
+    }
+
+    if (geoInstances.length) geoSetActive(geoInstances[0].editor);
+}
+
+function geoCloseEditor() {
+    geoDestroyInstances();
+    if (geoControls) { geoControls.destroy(); geoControls = null; }
+
+    var split = document.getElementById('config-split');
+    if (split) split.classList.remove('geo-mode');
+    var multi = document.getElementById('geo-multi');
+    if (multi) multi.style.display = 'none';
+    var frame = document.getElementById('config-preview-frame');
+    var label = document.getElementById('config-preview-label');
+    if (frame) frame.style.display = '';
+    if (label) label.style.display = '';
+    var actionBar = document.querySelector('.config-action-bar');
+    if (actionBar) actionBar.style.display = '';
+
+    geometryEditorActive = false;
+    var btn = document.getElementById('config-geometry-btn');
+    if (btn) { btn.textContent = 'Adjust geometry'; btn.classList.remove('active'); }
+}
+
+async function toggleGeometryEditor() {
+    if (typeof GeometryEditor === 'undefined') return;
+    if (geometryEditorActive) { geoCloseEditor(); return; }
+
+    var owls = geoConnectedOwls();
+    if (!owls.length) { showToast('No OWLs connected', 'warning'); return; }
 
     geometryEditorActive = true;
+    geoMode = (owls.length >= 2) ? 2 : 1;
+
+    // Switch the layout into geometry mode (hide sliders + single preview).
+    var split = document.getElementById('config-split');
+    if (split) split.classList.add('geo-mode');
+    var frame = document.getElementById('config-preview-frame');
+    var label = document.getElementById('config-preview-label');
+    if (frame) frame.style.display = 'none';
+    if (label) label.style.display = 'none';
+    var multi = document.getElementById('geo-multi');
+    if (multi) multi.style.display = 'flex';
+    var actionBar = document.querySelector('.config-action-bar');
+    if (actionBar) actionBar.style.display = 'none';
+
+    // 1-up / 2-up toggle
+    document.querySelectorAll('#geo-updown .geo-updown-btn').forEach(function (b) {
+        b.classList.toggle('active', parseInt(b.dataset.up, 10) === geoMode);
+        b.onclick = function () {
+            geoMode = parseInt(b.dataset.up, 10);
+            document.querySelectorAll('#geo-updown .geo-updown-btn').forEach(function (x) {
+                x.classList.toggle('active', x === b);
+            });
+            geoBuildSlots();
+        };
+    });
+
+    // Shared controls panel (acts on the active feed).
+    geoControls = GeometryEditor.mountControls(document.getElementById('config-geometry-panel'), {
+        allowAll: true,
+        getActive: function () { return geoActive; },
+        onCancel: function () {
+            geoInstances.forEach(function (g) { g.editor.revert(); });
+            geoCloseEditor();
+        },
+        onDone: function (applyAll) {
+            if (applyAll && geoActive) {
+                var v = geoActive.getValues();
+                geoPostGeometry('all', v, true);
+                geoInstances.forEach(function (g) { if (g.editor !== geoActive) g.editor.setValues(v); });
+                showToast('Geometry saved to all OWLs', 'success');
+            } else {
+                geoInstances.forEach(function (g) { g.editor.commitPersist(); });
+                showToast('Geometry saved', 'success');
+            }
+            geoCloseEditor();
+        }
+    });
+
+    var btn = document.getElementById('config-geometry-btn');
     if (btn) { btn.textContent = 'Close geometry'; btn.classList.add('active'); }
-    showToast('Drag the edges and band on the feed. Done saves; Cancel reverts.', 'info');
+    showToast('Drag the edges/band on each feed. Tap a feed to make it active. Done saves; Cancel reverts.', 'info');
+
+    await geoBuildSlots();
 }
 
 // ============================================

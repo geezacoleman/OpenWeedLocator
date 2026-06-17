@@ -576,10 +576,36 @@
 
                 <!-- Preview column -->
                 <div class="config-preview-col">
+                    <!-- Normal single preview (Preview button) -->
                     <span class="config-preview-label" id="config-preview-label"></span>
                     <div class="config-preview-frame" id="config-preview-frame">
                         <img id="config-preview-img" class="config-preview-img" src="" alt="Live Preview" />
                     </div>
+
+                    <!-- Geometry editor — up to two feeds side by side -->
+                    <div class="geo-multi" id="geo-multi" style="display:none;">
+                        <div class="geo-multi-bar">
+                            <div class="geo-updown" id="geo-updown">
+                                <button class="geo-updown-btn" data-up="1">1 feed</button>
+                                <button class="geo-updown-btn active" data-up="2">2 feeds</button>
+                            </div>
+                        </div>
+                        <div class="geo-feeds" id="geo-feeds">
+                            <div class="geo-slot" data-slot="0">
+                                <select class="geo-slot-pick" data-slot="0"></select>
+                                <div class="config-preview-frame geo-slot-frame" id="geo-frame-0">
+                                    <img class="config-preview-img geo-slot-img" id="geo-img-0" src="" alt="Feed A" />
+                                </div>
+                            </div>
+                            <div class="geo-slot" data-slot="1">
+                                <select class="geo-slot-pick" data-slot="1"></select>
+                                <div class="config-preview-frame geo-slot-frame" id="geo-frame-1">
+                                    <img class="config-preview-img geo-slot-img" id="geo-img-1" src="" alt="Feed B" />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="geo-panel" id="config-geometry-panel"></div>
                 </div>
             </div>

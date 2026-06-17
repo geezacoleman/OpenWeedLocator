@@ -70,12 +70,15 @@
     pointer-events: none;
 }
 
-/* Drag handles — visible knob + oversized invisible hit area */
+/* Drag handles — visible knob + oversized invisible hit area. Centred on their
+   point via transform translate(-50%,-50%); JS also appends scale(1/zoom) so
+   they stay a constant size when the feed is zoomed in. */
 .geo-handle {
     position: absolute;
     width: 22px;
     height: 22px;
-    margin: -11px 0 0 -11px;     /* centre on the point */
+    transform: translate(-50%, -50%);
+    transform-origin: center;
     border-radius: 50%;
     background: #2ecc71;
     border: 3px solid #fff;
@@ -92,7 +95,62 @@
 
 .geo-handle.dragging {
     cursor: grabbing;
-    transform: scale(1.15);
+}
+
+/* Transformable content layer (img + overlay) for zoom/pan */
+.geo-content {
+    position: relative;
+    display: inline-block;
+    line-height: 0;
+    transform-origin: 0 0;
+    max-width: 100%;
+    max-height: 100%;
+}
+
+/* Per-feed zoom toolbar */
+.geo-zoombar {
+    position: absolute;
+    left: 8px;
+    bottom: 8px;
+    z-index: 7;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.45rem;
+    background: rgba(20, 24, 38, 0.78);
+    border-radius: 999px;
+}
+.geo-zoom-label {
+    color: #fff;
+    font-size: 0.78rem;
+    font-weight: 700;
+    margin-right: 0.25rem;
+}
+.geo-zoom-btn {
+    min-width: 34px;
+    height: 34px;
+    padding: 0 0.4rem;
+    border: none;
+    border-radius: 7px;
+    background: #f4f7fa;
+    font-size: 1.05rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+}
+.geo-zoom-btn.geo-zoom-reset { font-size: 0.8rem; }
+.geo-zoom-val {
+    min-width: 2.8rem;
+    text-align: center;
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+/* Active feed highlight (which one the shared controls act on) */
+.geo-active-feed {
+    outline: 3px solid #2ecc71;
+    outline-offset: -1px;
 }
 
 .geo-handle-band {

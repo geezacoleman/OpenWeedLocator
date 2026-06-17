@@ -37,6 +37,18 @@ from werkzeug.utils import secure_filename
 from utils.config_manager import (
     build_config_filename, parse_config_meta, strip_geometry_keys, GEOMETRY_FILE,
 )
+try:
+    from version import VERSION as _OWL_VERSION
+    CONTROLLER_VERSION = str(_OWL_VERSION)
+except Exception:
+    CONTROLLER_VERSION = 'unknown'
+
+# Device id the controller publishes its own presence under (matches the
+# 'owl-controller' device Noktura expects). The cloud bridge forwards
+# owl/<id>/status and owl/<id>/state, so this needs no bridge change.
+CONTROLLER_DEVICE_ID = 'owl-controller'
+CONTROLLER_STATUS_TOPIC = f'owl/{CONTROLLER_DEVICE_ID}/status'
+CONTROLLER_STATE_TOPIC = f'owl/{CONTROLLER_DEVICE_ID}/state'
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -351,6 +363,14 @@ class CentralController:
         self.mqtt_client.on_disconnect = self._on_disconnect
         self.mqtt_client.on_message = self._on_message
 
+        # Last Will — the broker (and the cloud/Noktura via the bridge) sees the
+        # controller go offline if it dies. Set BEFORE connect.
+        self.mqtt_client.will_set(
+            CONTROLLER_STATUS_TOPIC,
+            json.dumps({'device_id': CONTROLLER_DEVICE_ID, 'connected': False,
+                        'timestamp': time.time()}),
+            qos=1, retain=True)
+
         # Enable paho's built-in auto-reconnect after initial connection is lost
         self.mqtt_client.reconnect_delay_set(min_delay=1, max_delay=60)
 
@@ -408,6 +428,10 @@ class CentralController:
                 client.subscribe(self.cloud_state_topic)
                 logger.info(f"Subscribed to cloud bridge state: {self.cloud_state_topic}")
 
+            # Publish our own presence so the cloud bridge forwards it and Noktura
+            # shows the controller (owl-controller) online with version.
+            self._publish_controller_presence()
+
             logger.info("Clearing potential ghost OWL retained messages...")
 
         else:
@@ -437,6 +461,11 @@ class CentralController:
 
             device_id = topic_parts[1]
             topic_type = topic_parts[2]
+
+            # Ignore our own controller presence (we publish it for the cloud
+            # bridge / Noktura) so it never appears as an OWL in the dashboard.
+            if device_id == CONTROLLER_DEVICE_ID:
+                return
 
             # Decode payload
             try:
@@ -504,6 +533,30 @@ class CentralController:
         except Exception as e:
             logger.error(f"Error processing message on {msg.topic}: {e}")
 
+    def _publish_controller_presence(self):
+        """Publish the controller's own presence (owl-controller) so the cloud
+        bridge forwards it and Noktura shows the controller online with version.
+        Mirrors the OWL OWLMQTTPublisher status/state shape."""
+        if not self.mqtt_client:
+            return
+        try:
+            now = time.time()
+            self.mqtt_client.publish(CONTROLLER_STATUS_TOPIC, json.dumps({
+                'device_id': CONTROLLER_DEVICE_ID,
+                'connected': True,
+                'timestamp': now,
+            }), qos=1, retain=True)
+            self.mqtt_client.publish(CONTROLLER_STATE_TOPIC, json.dumps({
+                'device_id': CONTROLLER_DEVICE_ID,
+                'type': 'controller',
+                'version': CONTROLLER_VERSION,
+                'connected': True,
+                'owl_count': len(self.owls_state),
+                'timestamp': now,
+            }), retain=False)
+        except Exception as e:
+            logger.error(f"Error publishing controller presence: {e}")
+
     def check_connections(self):
         """Background thread to check for offline OWLs - runs every 1 second"""
         while True:
@@ -525,6 +578,11 @@ class CentralController:
                             del self.owls_state[device_id]
 
                 self._update_session_state()
+
+                # Refresh our own presence each cycle (keeps Noktura's view fresh).
+                if self.mqtt_connected:
+                    self._publish_controller_presence()
+
                 time.sleep(2)
 
             except Exception as e:
