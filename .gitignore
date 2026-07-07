@@ -153,6 +153,10 @@ cython_debug/
 # OWL configuration (created by setup.sh, contains site-specific settings)
 config/CONTROLLER.ini
 
+# Per-unit mount geometry (device-resident; created on first use of the geometry
+# editor). See config/GEOMETRY_TEMPLATE.ini for a documented reference.
+config/GEOMETRY.ini
+
 # User-saved config presets (created from dashboard Save As)
 config/config_*
 

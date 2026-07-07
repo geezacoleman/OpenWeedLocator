@@ -178,6 +178,55 @@ class TestSaveConfig:
         assert cp.get('Camera', 'resolution_width') == '1456'
         assert not cp.has_option('System', 'actuation_top')
 
+    def test_resave_config_carrying_meta_does_not_crash(self, standalone_test_client):
+        # Repro of the DuplicateSectionError: GET returns a [Meta] section, the
+        # frontend round-trips it in data['config'], and the re-save must not 500.
+        client, dashboard, tmp_dir = standalone_test_client
+        r1 = client.post('/api/config', json={
+            'config': {'System': {'algorithm': 'exg'}}, 'name': 'wheat'})
+        fn = r1.get_json()['filename']
+        r2 = client.post('/api/config', json={
+            'config': {'System': {'algorithm': 'exhsv'},
+                       'Meta': {'display_name': 'wheat', 'created': '2020-01-01T00:00:00'}},
+            'name': 'wheat', 'overwrite_filename': fn})
+        assert r2.status_code == 200
+        assert r2.get_json()['success'] is True
+        cp = configparser.ConfigParser()
+        cp.read(os.path.join(str(tmp_dir), fn))
+        assert cp.get('System', 'algorithm') == 'exhsv'
+        assert cp.get('Meta', 'display_name') == 'wheat'   # re-stamped once, no dup
+
+    def test_update_without_name_preserves_existing_meta(self, standalone_test_client):
+        # An update-in-place that omits name/notes must not blank the friendly name.
+        client, dashboard, tmp_dir = standalone_test_client
+        r1 = client.post('/api/config', json={
+            'config': {'System': {'algorithm': 'exg'}}, 'name': 'wheat', 'notes': 'am'})
+        fn = r1.get_json()['filename']
+        r2 = client.post('/api/config', json={
+            'config': {'System': {'algorithm': 'exhsv'}}, 'overwrite_filename': fn})
+        assert r2.get_json()['success'] is True
+        cp = configparser.ConfigParser()
+        cp.read(os.path.join(str(tmp_dir), fn))
+        assert cp.get('Meta', 'display_name') == 'wheat'
+        assert cp.get('Meta', 'notes') == 'am'
+
+    def test_overwrite_filename_traversal_rejected(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        resp = client.post('/api/config', json={
+            'config': {'System': {'algorithm': 'exg'}},
+            'overwrite_filename': '../../evil'})
+        assert resp.status_code == 400
+        assert 'Invalid' in resp.get_json()['error']
+
+    def test_template_files_excluded_from_config_listing(self, standalone_test_client):
+        # A *_TEMPLATE.ini must never appear as a selectable detection config.
+        client, dashboard, tmp_dir = standalone_test_client
+        with open(os.path.join(str(tmp_dir), 'GEOMETRY_TEMPLATE.ini'), 'w') as f:
+            f.write('[Camera]\ncrop_left = 0.02\n')
+        resp = client.get('/api/config')
+        names = [c['name'] for c in resp.get_json().get('available_configs', [])]
+        assert 'GEOMETRY_TEMPLATE.ini' not in names
+
 
 @pytest.mark.unit
 class TestSetActiveConfig:

@@ -297,7 +297,16 @@ function isEmpty(str) {
  */
 function cloudPortalLink(portalUrl, slug) {
     if (isEmpty(portalUrl) || isEmpty(slug)) return '';
-    return `${portalUrl.replace(/\/+$/, '')}/d/${encodeURIComponent(slug)}`;
+    const base = portalUrl.replace(/\/+$/, '');
+    // Only allow http(s) — a javascript:/data: portal_url would execute when the
+    // returned string is assigned to a link href.
+    try {
+        const scheme = new URL(base).protocol;
+        if (scheme !== 'http:' && scheme !== 'https:') return '';
+    } catch (e) {
+        return '';
+    }
+    return `${base}/d/${encodeURIComponent(slug)}`;
 }
 
 /**

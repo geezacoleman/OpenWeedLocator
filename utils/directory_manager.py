@@ -124,9 +124,13 @@ def collect_session_files(save_dir, session_id):
 def select_preview_images(save_dir, session_id, count):
     """Pick up to `count` evenly-spaced image paths from a session.
 
-    First and last frames are always included. Archive names carry ISO
-    timestamps, so sorting them gives chronological order. Returns a list
-    of absolute paths (may be shorter than `count` for small sessions).
+    First and last frames are always included. For a single session subdir the
+    archive names carry ISO timestamps, so sorting them is chronological. For a
+    whole-date selection that mixes legacy flat images with session subdirs the
+    ordering is by archive path (flat frames sort before session_* frames), which
+    is stable but only approximately chronological — acceptable for evenly-spaced
+    preview thumbnails. Returns a list of absolute paths (may be shorter than
+    `count` for small sessions).
     """
     if count <= 0:
         return []

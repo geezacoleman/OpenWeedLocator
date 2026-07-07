@@ -18,7 +18,7 @@ import socket
 from collections import deque
 from utils.config_manager import (
     GREENONBROWN_PARAMS, GEOMETRY_KEYS as MOUNT_GEOMETRY_KEYS,
-    GEOMETRY_SECTION_KEYS, GEOMETRY_FILE,
+    GEOMETRY_SECTION_KEYS, GEOMETRY_FILE, atomic_write_config,
 )
 from utils.directory_manager import scan_sessions, collect_session_files, select_preview_images
 
@@ -1136,14 +1136,15 @@ class OWLMQTTPublisher:
             self._apply_meta(name, notes)
 
             config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
-            protected = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini']
+            protected = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini', GEOMETRY_FILE]
 
             if filename:
-                # Save to a new file in the config directory
-                save_path = os.path.join(config_dir, filename)
+                # Save to a new file in the config directory. Basename only — a
+                # client-supplied filename must never escape config/ via traversal.
+                basename = os.path.basename(filename)
+                save_path = os.path.join(config_dir, basename)
 
-                # Safety: don't overwrite default presets
-                basename = os.path.basename(save_path)
+                # Safety: don't overwrite default/infrastructure presets
                 if basename in protected:
                     self.logger.error(f"Cannot overwrite default preset: {basename}")
                     return
@@ -1167,8 +1168,9 @@ class OWLMQTTPublisher:
                     self._handle_set_active_config(f'config/{new_name}')
 
             with self.config_lock:
-                with open(save_path, 'w') as f:
-                    self._write_config_without_geometry(self.owl_instance.config, f)
+                atomic_write_config(
+                    save_path,
+                    lambda f: self._write_config_without_geometry(self.owl_instance.config, f))
 
             self.logger.info(f"Config saved to {save_path}")
 

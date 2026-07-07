@@ -36,6 +36,7 @@ from werkzeug.utils import secure_filename
 
 from utils.config_manager import (
     build_config_filename, parse_config_meta, strip_geometry_keys, GEOMETRY_FILE,
+    stamp_config_meta, atomic_write_config,
 )
 try:
     from version import VERSION as _OWL_VERSION
@@ -823,6 +824,9 @@ class CentralController:
         presets = []
         if config_dir.exists():
             for ini_file in sorted(config_dir.glob('*.ini')):
+                # Skip device-resident geometry and *_TEMPLATE.ini docs — not selectable presets.
+                if ini_file.name == GEOMETRY_FILE or ini_file.name.endswith('_TEMPLATE.ini'):
+                    continue
                 presets.append({
                     'name': ini_file.stem,
                     'filename': ini_file.name,
@@ -1605,8 +1609,9 @@ def list_config_library():
 
         if config_dir.exists():
             for f in sorted(config_dir.glob('*.ini')):
-                # GEOMETRY.ini is device-resident mount config, not a detection config.
-                if f.name == GEOMETRY_FILE:
+                # Skip device-resident geometry and *_TEMPLATE.ini docs — neither is a
+                # selectable detection config.
+                if f.name == GEOMETRY_FILE or f.name.endswith('_TEMPLATE.ini'):
                     continue
                 stat = f.stat()
                 meta = parse_config_meta(f)
@@ -1647,6 +1652,9 @@ def save_to_config_library():
         overwrite = (data.get('overwrite_filename') or '').strip()
         if overwrite:
             safe_name = overwrite if overwrite.endswith('.ini') else overwrite + '.ini'
+            # Confine overwrite to config/ — reject any path traversal.
+            if safe_name != os.path.basename(safe_name):
+                return jsonify({'success': False, 'error': 'Invalid config filename'}), 400
         else:
             safe_name = build_config_filename(display_name, data.get('filename'), timestamp)
 
@@ -1666,23 +1674,21 @@ def save_to_config_library():
         config = configparser.ConfigParser()
         config.optionxform = str
 
-        for section, options in strip_geometry_keys(data['config']).items():
+        new_config = strip_geometry_keys(data['config'])
+        new_config.pop('Meta', None)  # never round-trip [Meta]; re-stamped below
+        for section, options in new_config.items():
             if not config.has_section(section):
                 config.add_section(section)
             for key, value in options.items():
                 config.set(section, key, str(value))
 
-        # Stamp human-readable metadata (only fields that were provided).
-        if display_name or notes:
-            config.add_section('Meta')
-            if display_name:
-                config.set('Meta', 'display_name', display_name)
-            if notes:
-                config.set('Meta', 'notes', notes)
-            config.set('Meta', 'created', datetime.now().isoformat(timespec='seconds'))
+        # Stamp human-readable metadata authoritatively. On an update-in-place the
+        # existing name/notes/created are preserved when not resupplied.
+        stamp_config_meta(config, display_name, notes,
+                          existing_path=new_config_path if overwrite else None)
 
-        with open(new_config_path, 'w') as f:
-            config.write(f)
+        # Atomic write — survives power loss mid-write.
+        atomic_write_config(new_config_path, config.write)
 
         logger.info(f"Config saved to library: {new_config_path}")
 
@@ -1702,8 +1708,8 @@ def save_to_config_library():
 def delete_from_config_library(name):
     """Delete a custom config from library — mirrors standalone /api/config/delete"""
     try:
-        protected = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini']
-        if name in protected:
+        protected = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini', GEOMETRY_FILE]
+        if name in protected or name.endswith('_TEMPLATE.ini'):
             return jsonify({'success': False, 'error': 'Cannot delete default configs'}), 400
 
         config_dir = Path(__file__).parent.parent.parent / 'config'

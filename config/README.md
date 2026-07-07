@@ -265,6 +265,24 @@ cp config/CONTROLLER_TEMPLATE.ini config/CONTROLLER.ini
 | `[WebDashboard]` | Flask dashboard port |
 | `[GPS]` | GPS source, serial settings, networked GPS server config |
 | `[Actuation]` | Speed-adaptive actuation settings |
+| `[Cloud]` | Noktura cloud bridge (`enable`, `broker_host`, `broker_port`, `device_id`, `username`, `ca_cert`, `password_file`, `portal_url`) |
+
+The `[Cloud]` section is managed by `owl_cloud_provision.sh` (run it with the credentials issued when the device is registered on the Noktura platform). It configures a mosquitto bridge from the local broker to the cloud broker; the bridge config at `/etc/mosquitto/conf.d/owl-cloud.conf` must stay in sync with this section, so prefer re-running the script over hand-editing. The bridge password lives in `password_file` (mode 600), never in `CONTROLLER.ini`.
+
+---
+
+## Mount geometry (GEOMETRY.ini)
+
+`config/GEOMETRY.ini` holds the **per-unit** crop rectangle and actuation band — geometry that is physical to how *this* OWL is mounted. It is **device-resident and git-ignored**, and is created only when you first use the dashboard's "Adjust geometry" editor (or by copying the template by hand). While it is absent, OWL falls back to the legacy `crop_factor_*` / `actuation_zone` values in the active config, so a software update never overrides a unit's existing geometry.
+
+See `config/GEOMETRY_TEMPLATE.ini` for a documented reference. To create one manually:
+
+```bash
+cp config/GEOMETRY_TEMPLATE.ini config/GEOMETRY.ini
+# Then edit the crop_*/actuation_* fractions, or use the dashboard editor
+```
+
+Loading or saving a named detection config never touches geometry, and saving a detection config never captures it.
 
 ## How the two files work together
 

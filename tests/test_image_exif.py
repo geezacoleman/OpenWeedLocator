@@ -116,9 +116,28 @@ class TestRoundTrip:
 
     def test_make_model_software(self):
         exif = _load(build_exif_bytes(context=FULL_CONTEXT))
-        assert exif['0th'][piexif.ImageIFD.Make] == b'Raspberry Pi'
+        # Make is derived from the real sensor model prefix (imx -> Sony), not invented.
+        assert exif['0th'][piexif.ImageIFD.Make] == b'Sony'
         assert exif['0th'][piexif.ImageIFD.Model] == b'imx296'
         assert exif['0th'][piexif.ImageIFD.Software] == b'OpenWeedLocator 3.0.0'
+
+    @pytest.mark.parametrize('model,make', [
+        ('imx296', b'Sony'), ('imx477', b'Sony'), ('imx708', b'Sony'),
+        ('ov5647', b'OmniVision'), ('og02b10', b'OmniVision'), ('ox03c10', b'OmniVision'),
+        ('ar0234', b'onsemi'), ('mt9v034', b'onsemi'),
+        ('gc2053', b'GalaxyCore'), ('s5k3p8', b'Samsung'), ('hi846', b'SK Hynix'),
+    ])
+    def test_make_derived_from_sensor_prefix(self, model, make):
+        # Manufacturer is derived from the real model prefix — covers every mapped maker.
+        exif = _load(build_exif_bytes(context={'camera_model': model}))
+        assert exif['0th'][piexif.ImageIFD.Make] == make
+        assert exif['0th'][piexif.ImageIFD.Model] == model.encode()
+
+    def test_unknown_sensor_omits_make_keeps_model(self):
+        # Unrecognised sensor prefix -> Make omitted (never invented), Model kept.
+        exif = _load(build_exif_bytes(context={'camera_model': 'zz9999'}))
+        assert piexif.ImageIFD.Make not in exif['0th']
+        assert exif['0th'][piexif.ImageIFD.Model] == b'zz9999'
 
     def test_image_description_json_omits_empty_values(self):
         exif = _load(build_exif_bytes(context=FULL_CONTEXT))
@@ -201,6 +220,22 @@ class TestFailSafeOmission:
         assert image.size == (32, 24)
         exif = piexif.load(jpeg_bytes)
         assert not exif['GPS'] and not exif['Exif'] and not exif['0th']
+
+    def test_encode_jpeg_falls_back_on_oversized_exif(self):
+        # An EXIF blob over the JPEG APP1 limit must not lose the image — it is
+        # saved without EXIF rather than raising and killing the save worker.
+        huge_exif = b'\x00' * 70000
+        jpeg_bytes = encode_jpeg(_image(), exif_bytes=huge_exif)
+        assert jpeg_bytes[:2] == b'\xff\xd8'                       # valid JPEG SOI
+        assert Image.open(__import__('io').BytesIO(jpeg_bytes)).size == (32, 24)
+
+    def test_oversized_metadata_omits_usercomment_keeps_datetime(self):
+        # A very large camera_metadata payload is dropped from UserComment, but the
+        # structured "Date Taken" tag still survives (bounded EXIF stays in limits).
+        big_meta = {'blob': 'x' * 20000}
+        exif = _load(build_exif_bytes(camera_metadata=big_meta, capture_time=CAPTURE_TIME))
+        assert piexif.ExifIFD.UserComment not in exif['Exif']
+        assert piexif.ExifIFD.DateTimeOriginal in exif['Exif']
 
     def test_gps_without_coordinates_omits_gps_ifd(self):
         exif = _load(build_exif_bytes(gps_data={'speed_kmh': 5.0},

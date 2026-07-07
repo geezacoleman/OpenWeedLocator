@@ -650,12 +650,25 @@ function geoConnectedOwls() {
     return ids;
 }
 
-function geoSetPreviewMode(deviceId, mode) {
+function geoSetPreviewMode(deviceId, mode, useBeacon) {
+    // On page unload a normal fetch is often cancelled — sendBeacon survives unload
+    // so the OWL preview reliably reverts to cropped and never sticks on full-frame.
+    if (useBeacon && navigator.sendBeacon) {
+        navigator.sendBeacon('/api/preview-mode/' + deviceId,
+            new Blob([JSON.stringify({ mode: mode })], { type: 'application/json' }));
+        return;
+    }
     apiRequest('/api/preview-mode/' + deviceId, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: mode })
     });
 }
+
+// Safety net: if the page is closed/reloaded while the geometry editor is open (so
+// geoCloseEditor never runs), revert every active OWL preview to cropped via beacon.
+window.addEventListener('pagehide', function () {
+    geoInstances.forEach(function (g) { geoSetPreviewMode(g.deviceId, 'cropped', true); });
+});
 
 function geoPostGeometry(target, v, persist) {
     apiRequest('/api/geometry/' + target, {

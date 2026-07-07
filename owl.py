@@ -78,7 +78,8 @@ try:
     from utils.algorithms import fft_blur
     from utils.greenonbrown import GreenOnBrown
     from utils.frame_reader import FrameReader
-    from utils.config_manager import ConfigValidator
+    from utils.config_manager import ConfigValidator, atomic_write_config
+    from utils.geometry import compute_geometry
     from utils.log_manager import LogManager, MQTTLogHandler
     from utils.shared_types import Sensitivity
     import utils.error_manager as errors
@@ -561,40 +562,28 @@ class Owl:
         rebinding is atomic in CPython, so the detection loop reading self.crop_slice
         always sees a complete (old or new) value without a lock.
         """
-        if not (self.frame_width and self.frame_height):
+        geo = compute_geometry(
+            self.frame_width, self.frame_height,
+            self.crop_left, self.crop_right, self.crop_top, self.crop_bottom,
+            self.relay_num, self.actuation_top, self.actuation_bottom)
+        if geo is None:
             self.logger.error('[ERROR] No frame width or frame height provided.')
             return
 
-        # Clamp so the crop can never collapse the frame to zero width/height.
-        left = min(max(self.crop_left, 0.0), 0.49)
-        right = min(max(self.crop_right, 0.0), 0.49)
-        top = min(max(self.crop_top, 0.0), 0.49)
-        bottom = min(max(self.crop_bottom, 0.0), 0.49)
+        # Attribute rebinding is atomic in CPython, so the detection loop always sees
+        # a complete (old or new) value without a lock.
+        self.cropped_width = geo['cropped_width']
+        self.cropped_height = geo['cropped_height']
+        self.crop_slice = geo['crop_slice']
+        self.lane_width = geo['lane_width']
+        self.lane_coords = geo['lane_coords']
+        self.lane_coords_int = geo['lane_coords_int']
+        self.actuation_y_top = geo['y_top']
+        self.actuation_y_bottom = geo['y_bottom']
 
-        crop_l = int(self.frame_width * left)
-        crop_r = int(self.frame_width * (1.0 - right))
-        crop_t = int(self.frame_height * top)
-        crop_b = int(self.frame_height * (1.0 - bottom))
-        self.cropped_width = crop_r - crop_l
-        self.cropped_height = crop_b - crop_t
-        self.crop_slice = (slice(crop_t, crop_b), slice(crop_l, crop_r))
+        left, right, top, bottom = geo['clamped_edges']
         self.logger.info(f'[INFO] Crop edges L{left} R{right} T{top} B{bottom} '
                          f'-> {self.cropped_width}x{self.cropped_height}px')
-
-        # Lane width across the cropped frame; lanes recenter automatically.
-        self.lane_width = self.cropped_width / self.relay_num
-        lane_coords = {i: int(i * self.lane_width) for i in range(self.relay_num)}
-        self.lane_coords = lane_coords
-        self.lane_coords_int = {k: int(v) for k, v in lane_coords.items()}
-
-        # Actuation band -> pixel bounds within the cropped frame.
-        a_top = min(max(self.actuation_top, 0.0), 1.0)
-        a_bottom = min(max(self.actuation_bottom, 0.0), 1.0)
-        if a_top >= a_bottom:
-            # Degenerate band — fall back to the full cropped height.
-            a_top, a_bottom = 0.0, 1.0
-        self.actuation_y_top = int(self.cropped_height * a_top)
-        self.actuation_y_bottom = int(self.cropped_height * a_bottom)
 
     def hoot(self):
         # Signal successful boot with LED blink
@@ -1002,28 +991,34 @@ class Owl:
                             save_boxes = boxes
                             save_centres = weed_centres
 
-                        context = {
-                            'device_id': self.dash.device_id if self.dash else None,
-                            'algorithm': algorithm,
-                            'model': Path(self._model_path).name if algorithm.startswith('gog') else None,
-                            'owl_version': str(VERSION),
-                            'camera_model': getattr(self.cam, 'camera_model', None),
-                        }
-                        if self.dash:
-                            context.update(self.dash.get_session_metadata())
+                        # Image sampling is auxiliary — a metadata/EXIF/disk error here
+                        # must never reach the loop's except (which stops the OWL).
+                        try:
+                            context = {
+                                'device_id': self.dash.device_id if self.dash else None,
+                                'algorithm': algorithm,
+                                'model': Path(self._model_path).name if algorithm.startswith('gog') else None,
+                                'owl_version': str(VERSION),
+                                'camera_model': getattr(self.cam, 'camera_model', None),
+                            }
+                            if self.dash:
+                                context.update(self.dash.get_session_metadata())
 
-                        self.image_recorder.add_frame(frame=frame,
-                                                      frame_id=frame_count,
-                                                      boxes=save_boxes,
-                                                      centres=save_centres,
-                                                      gps_data=self.gps_data,
-                                                      camera_metadata=camera_metadata,
-                                                      context=context)
+                            self.image_recorder.add_frame(frame=frame,
+                                                          frame_id=frame_count,
+                                                          boxes=save_boxes,
+                                                          centres=save_centres,
+                                                          gps_data=self.gps_data,
+                                                          camera_metadata=camera_metadata,
+                                                          context=context)
 
-                        if self.controller:
-                            self.status_indicator.image_write_indicator()
-                        if self.dash:
-                            self.dash.image_write_indicator()
+                            if self.controller:
+                                self.status_indicator.image_write_indicator()
+                            if self.dash:
+                                self.dash.image_write_indicator()
+                        except Exception as e:
+                            self.logger.error(f"Image sampling error (detection continues): {e}",
+                                              exc_info=True)
 
                         if self.status_indicator.DRIVE_FULL:
                             if self.dash:
@@ -1215,8 +1210,7 @@ class Owl:
         self.config.set('GreenOnBrown', 'brightness_max', str(self.brightness_max))
 
         # Write the updated configuration to the new file with a timestamped filename
-        with open(new_config_path, 'w') as configfile:
-            self.config.write(configfile)
+        atomic_write_config(new_config_path, self.config.write)
 
         self.logger.info(f"[INFO] Configuration saved to {new_config_path}")
 

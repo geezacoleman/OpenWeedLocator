@@ -18,6 +18,40 @@ except ImportError as e:
 
 logger = LogManager.get_logger(__name__)
 
+# Per-field cap for the free-form JSON EXIF tags (UserComment, ImageDescription).
+# Keeps total EXIF well under the JPEG APP1 ~64 KB limit so the structured tags
+# (DateTimeOriginal, GPS, exposure) always fit and the save never fails on metadata.
+_MAX_EXIF_JSON = 8000
+
+# Sensor model prefix -> real manufacturer. libcamera reports only the sensor model
+# (e.g. 'imx296', 'ar0234'); the model-number prefix encodes the maker, so we can fill
+# EXIF Make with a TRUE value derived from data we already pull — and omit it (never
+# invent one) for an unrecognised prefix. Prefix conventions:
+#   Sony        IMX
+#   OmniVision  OV (legacy), OG (newer, e.g. og02b10), OX (automotive)
+#   onsemi      AR (e.g. ar0234; formerly Aptina), MT9 (legacy Aptina/Micron)
+#   GalaxyCore  GC
+#   Samsung     S5K
+#   SK Hynix    Hi
+# Sorted longest-prefix-first so a more specific prefix always wins.
+_SENSOR_MAKE = sorted((
+    ('imx', 'Sony'),
+    ('ov', 'OmniVision'),
+    ('og', 'OmniVision'),
+    ('ox', 'OmniVision'),
+    ('ar', 'onsemi'),
+    ('mt9', 'onsemi'),
+    ('gc', 'GalaxyCore'),
+    ('s5k', 'Samsung'),
+    ('hi', 'SK Hynix'),
+), key=lambda kv: -len(kv[0]))
+
+
+def _sensor_make(model):
+    """Return the manufacturer for a sensor model string, or None if unrecognised."""
+    m = model.lower()
+    return next((make for prefix, make in _SENSOR_MAKE if m.startswith(prefix)), None)
+
 
 def _decimal_to_dms(value):
     """Decimal degrees -> EXIF rationals as degrees + decimal minutes.
@@ -93,13 +127,20 @@ def build_exif_bytes(gps_data=None, camera_metadata=None, context=None, capture_
         context = {k: v for k, v in (context or {}).items() if v not in (None, '')}
         camera_model = context.pop('camera_model', None)
         if camera_model:
-            zeroth[piexif.ImageIFD.Make] = 'Raspberry Pi'
-            zeroth[piexif.ImageIFD.Model] = str(camera_model)
+            model = str(camera_model)
+            make = _sensor_make(model)
+            if make:  # omit when the sensor maker is unknown — never invent it
+                zeroth[piexif.ImageIFD.Make] = make
+            zeroth[piexif.ImageIFD.Model] = model
         owl_version = context.pop('owl_version', None)
         if owl_version:
             zeroth[piexif.ImageIFD.Software] = f"OpenWeedLocator {owl_version}"
         if context:  # device_id, algorithm, model, session metadata
-            zeroth[piexif.ImageIFD.ImageDescription] = json.dumps(context)
+            desc = json.dumps(context)
+            if len(desc) <= _MAX_EXIF_JSON:
+                zeroth[piexif.ImageIFD.ImageDescription] = desc
+            else:
+                logger.warning(f"EXIF ImageDescription too large ({len(desc)} bytes) — omitted")
 
         if camera_metadata:
             exposure_us = camera_metadata.get('ExposureTime')
@@ -114,8 +155,11 @@ def build_exif_bytes(gps_data=None, camera_metadata=None, context=None, capture_
             if lens_position:  # dioptres -> metres
                 exif_ifd[piexif.ExifIFD.SubjectDistance] = (round(100 / lens_position), 100)
             # Complete raw metadata for scientific traceability (authoritative record)
-            exif_ifd[piexif.ExifIFD.UserComment] = piexif.helper.UserComment.dump(
-                json.dumps(camera_metadata, default=str))
+            meta_json = json.dumps(camera_metadata, default=str)
+            if len(meta_json) <= _MAX_EXIF_JSON:
+                exif_ifd[piexif.ExifIFD.UserComment] = piexif.helper.UserComment.dump(meta_json)
+            else:
+                logger.warning(f"EXIF UserComment too large ({len(meta_json)} bytes) — omitted")
 
         if gps_data and gps_data.get('latitude') is not None and gps_data.get('longitude') is not None:
             lat = float(gps_data['latitude'])
@@ -162,11 +206,21 @@ def build_exif_bytes(gps_data=None, camera_metadata=None, context=None, capture_
 
 
 def encode_jpeg(pil_image, exif_bytes=None, quality=95):
-    """Encode a PIL Image to JPEG bytes, embedding EXIF when provided."""
-    buf = BytesIO()
+    """Encode a PIL Image to JPEG bytes, embedding EXIF when provided.
+
+    Fail-safe: if the EXIF is rejected at save time (e.g. it exceeds the JPEG APP1
+    ~64 KB limit), the image is still written WITHOUT EXIF rather than lost — the
+    pixel data always reaches disk.
+    """
     save_kwargs = dict(format='JPEG', quality=quality, subsampling=0, optimize=True, progressive=True)
     if exif_bytes:
-        save_kwargs['exif'] = exif_bytes
+        try:
+            buf = BytesIO()
+            pil_image.save(buf, exif=exif_bytes, **save_kwargs)
+            return buf.getvalue()
+        except Exception as e:
+            logger.error(f"Failed to embed EXIF, saving image without it: {e}")
+    buf = BytesIO()
     pil_image.save(buf, **save_kwargs)
     return buf.getvalue()
 

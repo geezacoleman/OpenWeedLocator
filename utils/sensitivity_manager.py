@@ -16,8 +16,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Protected config files that must never be written to directly
-PROTECTED_CONFIGS = frozenset({'GENERAL_CONFIG.ini', 'CONTROLLER.ini'})
+# Protected config files that must never be written to directly (GEOMETRY.ini is
+# device-resident mount config, written only by the geometry editor)
+PROTECTED_CONFIGS = frozenset({'GENERAL_CONFIG.ini', 'CONTROLLER.ini', 'GEOMETRY.ini'})
 
 
 class SensitivityManager:

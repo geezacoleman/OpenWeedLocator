@@ -222,6 +222,15 @@ function showSaveConfigModal() {
 
 let standaloneGeometryActive = false;
 
+// Safety net: if the page is closed/reloaded while the geometry editor is open (so
+// onClose never runs), revert the OWL preview to cropped via beacon (survives unload).
+window.addEventListener('pagehide', function () {
+    if (standaloneGeometryActive && navigator.sendBeacon) {
+        navigator.sendBeacon('/api/preview-mode',
+            new Blob([JSON.stringify({ mode: 'cropped' })], { type: 'application/json' }));
+    }
+});
+
 function geoFracStandalone(primary, fallback, dflt) {
     var n = parseFloat(primary);
     if (!isNaN(n)) return n;

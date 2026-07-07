@@ -27,6 +27,7 @@ from utils.input_manager import get_rpi_version
 from utils.directory_manager import scan_sessions
 from utils.config_manager import (
     build_config_filename, parse_config_meta, strip_geometry_keys, GEOMETRY_FILE,
+    stamp_config_meta, atomic_write_config,
 )
 
 try:
@@ -1277,6 +1278,9 @@ class OWLDashboard:
                 overwrite = (data.get('overwrite_filename') or '').strip()
                 if overwrite:
                     safe_name = overwrite if overwrite.endswith('.ini') else overwrite + '.ini'
+                    # Confine overwrite to config/ — reject any path traversal.
+                    if safe_name != os.path.basename(safe_name):
+                        return jsonify({'success': False, 'error': 'Invalid config filename'}), 400
                 else:
                     safe_name = build_config_filename(display_name, data.get('filename'), timestamp)
 
@@ -1297,24 +1301,20 @@ class OWLDashboard:
                 config.optionxform = str  # Preserve case
 
                 new_config = strip_geometry_keys(data['config'])
+                new_config.pop('Meta', None)  # never round-trip [Meta]; re-stamped below
                 for section, options in new_config.items():
                     if not config.has_section(section):
                         config.add_section(section)
                     for key, value in options.items():
                         config.set(section, key, str(value))
 
-                # Stamp human-readable metadata (only fields that were provided).
-                if display_name or notes:
-                    config.add_section('Meta')
-                    if display_name:
-                        config.set('Meta', 'display_name', display_name)
-                    if notes:
-                        config.set('Meta', 'notes', notes)
-                    config.set('Meta', 'created', datetime.now().isoformat(timespec='seconds'))
+                # Stamp human-readable metadata authoritatively. On an update-in-place
+                # the existing name/notes/created are preserved when not resupplied.
+                stamp_config_meta(config, display_name, notes,
+                                  existing_path=new_config_path if overwrite else None)
 
-                # Write the new config file
-                with open(new_config_path, 'w') as f:
-                    config.write(f)
+                # Write the new config file (atomic — survives power loss mid-write)
+                atomic_write_config(new_config_path, config.write)
 
                 self.logger.info(f"Config saved to new file: {new_config_path}")
 
@@ -1410,11 +1410,11 @@ class OWLDashboard:
                 if not config_name:
                     return jsonify({'success': False, 'error': 'No config specified'}), 400
 
-                # Don't allow deleting default configs
-                protected_configs = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini']
+                # Don't allow deleting default/infrastructure configs
+                protected_configs = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini', GEOMETRY_FILE]
                 basename = os.path.basename(config_name)
 
-                if basename in protected_configs:
+                if basename in protected_configs or basename.endswith('_TEMPLATE.ini'):
                     return jsonify({
                         'success': False,
                         'error': 'Cannot delete default configuration files'
@@ -1844,7 +1844,8 @@ class OWLDashboard:
         configs = []
         if os.path.exists(config_dir):
             for f in os.listdir(config_dir):
-                if f.endswith('.ini') and f != GEOMETRY_FILE:
+                # Skip device-resident geometry and *_TEMPLATE.ini docs — not selectable configs.
+                if f.endswith('.ini') and f != GEOMETRY_FILE and not f.endswith('_TEMPLATE.ini'):
                     full_path = os.path.join(config_dir, f)
                     stat = os.stat(full_path)
 
@@ -1890,7 +1891,7 @@ class OWLDashboard:
             config.set(section, key, str(value))
 
             basename = os.path.basename(config_path)
-            protected = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini']
+            protected = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini', GEOMETRY_FILE]
 
             if basename in protected:
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -1898,14 +1899,12 @@ class OWLDashboard:
                 config_dir = self._get_config_dir()
                 new_path = os.path.join(config_dir, new_name)
 
-                with open(new_path, 'w') as f:
-                    config.write(f)
+                atomic_write_config(new_path, config.write)
 
                 self._set_active_config(f'config/{new_name}')
                 self.logger.info(f"Config saved to new file: {new_name} (was protected default)")
             else:
-                with open(config_path, 'w') as f:
-                    config.write(f)
+                atomic_write_config(config_path, config.write)
                 self.logger.info(f"Config updated: {basename} [{section}] {key}={value}")
 
         except Exception as e:

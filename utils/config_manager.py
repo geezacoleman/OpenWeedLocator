@@ -2,8 +2,11 @@ from pathlib import Path
 from configparser import ConfigParser, Error as ConfigParserError
 from typing import Dict, Set, Tuple
 
+import os
 import re
 import logging
+import tempfile
+from datetime import datetime
 import utils.error_manager as errors
 
 logger = logging.getLogger(__name__)
@@ -81,6 +84,56 @@ def parse_config_meta(path):
         return meta
     except Exception:
         return {}
+
+
+def stamp_config_meta(config, display_name, notes, existing_path=None):
+    """Stamp a fresh [Meta] section onto a ConfigParser from the provided name/notes.
+
+    Fixes the DuplicateSectionError round-trip bug: callers must first remove any
+    incoming [Meta] from the config dict (it is re-stamped authoritatively here).
+    On an update (existing_path points at the file being overwritten), a missing
+    name/notes is preserved from the existing file and the original 'created'
+    timestamp is kept, so an update never blanks a config's friendly name. No-op
+    when there is nothing to record.
+    """
+    existing = parse_config_meta(existing_path) if existing_path else {}
+    name = (display_name or existing.get('display_name', '')).strip()
+    note = (notes or existing.get('notes', '')).strip()
+    if not (name or note):
+        return
+    if not config.has_section('Meta'):
+        config.add_section('Meta')
+    if name:
+        config.set('Meta', 'display_name', name)
+    if note:
+        config.set('Meta', 'notes', note)
+    config.set('Meta', 'created',
+               existing.get('created') or datetime.now().isoformat(timespec='seconds'))
+
+
+def atomic_write_config(path, write_fn):
+    """Atomically write a config file so a power loss can never leave a truncated
+    .ini (tractors lose power mid-write). Writes to a temp file in the SAME
+    directory — so os.replace stays on one filesystem and is atomic — then renames
+    it over the target. On any failure the temp file is removed and the error
+    re-raised, leaving the original untouched.
+
+    :param path: destination .ini path
+    :param write_fn: callable(file_obj) that writes the config to the given handle
+    """
+    path = os.fspath(path)
+    directory = os.path.dirname(os.path.abspath(path))
+    fd, tmp_path = tempfile.mkstemp(suffix='.ini', prefix='.owl_cfg_', dir=directory)
+    try:
+        with os.fdopen(fd, 'w') as f:
+            write_fn(f)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 class ConfigValidator:

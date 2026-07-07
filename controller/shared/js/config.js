@@ -379,5 +379,7 @@ function getOrderedSections(configData) {
     Object.keys(configData).forEach(s => {
         if (!order.includes(s)) order.push(s);
     });
-    return order.filter(s => configData[s]);
+    // [Meta] is internal bookkeeping (display_name/notes/created), not a detection
+    // setting — it is stamped by the save flow, so never show it as editable fields.
+    return order.filter(s => configData[s] && s !== 'Meta');
 }

@@ -3,8 +3,9 @@ saves ([Meta] section).
 
 Covers:
 - build_config_filename / parse_config_meta helpers
-- recompute_geometry math + backward-compat fallbacks (replicated, since owl.py
-  can't import on non-Pi platforms — owl.py is also checked at source level)
+- geometry math via the shared utils.geometry.compute_geometry (the SAME function
+  owl.py calls, so the tests can't drift from production); owl.py's use of it is
+  also checked at source level since owl.py can't import on non-Pi platforms
 - live geometry recompute trigger + restart-required flag in mqtt_manager
 - hot-path timing guard for the per-frame crop + actuation-band filter
 """
@@ -28,6 +29,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from utils.config_manager import (
     build_config_filename, parse_config_meta, strip_geometry_keys, GEOMETRY_KEYS,
 )
+from utils.geometry import compute_geometry
 
 
 # ---------------------------------------------------------------------------
@@ -95,29 +97,9 @@ class TestParseConfigMeta:
 
 
 # ---------------------------------------------------------------------------
-# Geometry math (replicates owl.recompute_geometry — owl.py can't import here)
+# Geometry math — via the SHARED utils.geometry.compute_geometry that owl.py uses,
+# so these assertions validate production code, not a replica that can drift.
 # ---------------------------------------------------------------------------
-
-def compute_geometry(frame_w, frame_h, left, right, top, bottom,
-                     relay_num, a_top, a_bottom):
-    """Pure replica of owl.Owl.recompute_geometry for verification."""
-    crop_l = int(frame_w * left)
-    crop_r = int(frame_w * (1.0 - right))
-    crop_t = int(frame_h * top)
-    crop_b = int(frame_h * (1.0 - bottom))
-    cropped_width = crop_r - crop_l
-    cropped_height = crop_b - crop_t
-    crop_slice = (slice(crop_t, crop_b), slice(crop_l, crop_r))
-    lane_width = cropped_width / relay_num
-    lane_coords = {i: int(i * lane_width) for i in range(relay_num)}
-    y_top = int(cropped_height * a_top)
-    y_bottom = int(cropped_height * a_bottom)
-    return {
-        'crop_slice': crop_slice, 'cropped_width': cropped_width,
-        'cropped_height': cropped_height, 'lane_width': lane_width,
-        'lane_coords': lane_coords, 'y_top': y_top, 'y_bottom': y_bottom,
-    }
-
 
 @pytest.mark.unit
 class TestGeometryMath:
@@ -149,6 +131,21 @@ class TestGeometryMath:
         wide = compute_geometry(1000, 800, 0.0, 0.0, 0.0, 0.0, 4, 0.0, 1.0)
         narrow = compute_geometry(1000, 800, 0.2, 0.2, 0.0, 0.0, 4, 0.0, 1.0)
         assert narrow['lane_width'] < wide['lane_width']
+
+    def test_crop_edges_clamped_to_049(self):
+        # Absurd insets must not collapse the frame — each edge clamps at 0.49.
+        geo = compute_geometry(1000, 800, 0.9, 0.9, 0.9, 0.9, 4, 0.0, 1.0)
+        assert geo['cropped_width'] > 0 and geo['cropped_height'] > 0
+        assert geo['clamped_edges'] == (0.49, 0.49, 0.49, 0.49)
+
+    def test_degenerate_band_falls_back_to_full_height(self):
+        # top >= bottom is meaningless — fall back to the full cropped height.
+        geo = compute_geometry(1000, 800, 0.0, 0.0, 0.0, 0.0, 4, 0.8, 0.2)
+        assert geo['y_top'] == 0
+        assert geo['y_bottom'] == 800
+
+    def test_missing_frame_dims_returns_none(self):
+        assert compute_geometry(0, 0, 0.1, 0.1, 0.1, 0.1, 4, 0.0, 1.0) is None
 
 
 # ---------------------------------------------------------------------------
