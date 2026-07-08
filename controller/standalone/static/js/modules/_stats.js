@@ -94,11 +94,11 @@ function updateSystemStats() {
                 }
             }
 
-            // Sensitivity Low/High
-            const sensLabel = normalizeSensitivity(data);
-            document.querySelectorAll('.seg-btn[data-sens]').forEach(b => {
-                b.classList.toggle('active', b.dataset.sens === sensLabel);
-            });
+            // Sensitivity buttons (mode-aware: reads the axis matching the
+            // active detection mode, highlights nothing on a custom value)
+            if (typeof syncSensitivityFromStats === 'function') {
+                syncSensitivityFromStats(data);
+            }
 
             // Fan Auto/100 + RPM
             const fanMode = normalizeFanMode(data.fan_status);
@@ -153,6 +153,9 @@ function updateSystemStats() {
             }
             if (typeof updateModeAvailability === 'function') {
                 updateModeAvailability(!!data.model_available);
+            }
+            if (typeof updatePaintedChipHint === 'function') {
+                updatePaintedChipHint((data.available_lut_profiles || []).length > 0);
             }
 
             // Algorithm error banner

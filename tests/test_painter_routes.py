@@ -114,6 +114,8 @@ class TestPainterPreview:
         assert resp.mimetype == 'image/png'
         img = cv2.imdecode(np.frombuffer(resp.data, np.uint8), cv2.IMREAD_COLOR)
         assert img is not None and img.shape[1] == 256
+        # Coverage rides along as a header for the dashboard's fill square
+        assert float(resp.headers['X-Coverage']) > 0
 
         resp = client.get('/api/painter/swatch?name=ghost')
         assert resp.status_code == 404

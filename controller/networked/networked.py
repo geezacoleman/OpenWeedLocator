@@ -2546,9 +2546,10 @@ def painter_swatch():
         sensitivity = 50
     try:
         lut = lut_profile_manager.load_and_bake(name, sensitivity)
-        png, _ = lut_swatch_png(lut)
+        png, coverage = lut_swatch_png(lut)
         return Response(png, mimetype='image/png',
-                        headers={'Cache-Control': 'no-store'})
+                        headers={'Cache-Control': 'no-store',
+                                 'X-Coverage': f'{coverage * 100:.1f}'})
     except LUTProfileError as e:
         return jsonify({'success': False, 'error': str(e)}), 404
 

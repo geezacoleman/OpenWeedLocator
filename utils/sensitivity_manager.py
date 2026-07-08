@@ -32,7 +32,14 @@ class SensitivityManager:
         'min_detection_area',
     })
 
-    # Hardcoded fallbacks — used when config has no [Sensitivity_*] sections
+    # Optional float key: min weed size as % of the detection frame. When a
+    # kiosk uses the percent key (> 0), owl.py ignores the px value — presets
+    # must carry both or their min-area component is dead. Legacy preset
+    # sections without this key still load (percent left untouched on apply).
+    PERCENT_KEY = 'min_detection_area_percent'
+
+    # Hardcoded fallbacks — used when config has no [Sensitivity_*] sections.
+    # Percent values mirror the px values at the default 416x320 frame.
     BUILTIN_PRESETS = {
         'low': {
             'exg_min': 25, 'exg_max': 200,
@@ -40,6 +47,7 @@ class SensitivityManager:
             'saturation_min': 52, 'saturation_max': 218,
             'brightness_min': 62, 'brightness_max': 188,
             'min_detection_area': 20,
+            'min_detection_area_percent': 0.015,
         },
         'medium': {
             'exg_min': 25, 'exg_max': 200,
@@ -47,6 +55,7 @@ class SensitivityManager:
             'saturation_min': 50, 'saturation_max': 220,
             'brightness_min': 60, 'brightness_max': 190,
             'min_detection_area': 10,
+            'min_detection_area_percent': 0.0075,
         },
         'high': {
             'exg_min': 22, 'exg_max': 210,
@@ -54,6 +63,7 @@ class SensitivityManager:
             'saturation_min': 40, 'saturation_max': 225,
             'brightness_min': 50, 'brightness_max': 200,
             'min_detection_area': 5,
+            'min_detection_area_percent': 0.004,
         },
     }
 
@@ -150,6 +160,9 @@ class SensitivityManager:
 
         if values is None and owl_instance is not None:
             values = {k: getattr(owl_instance, k) for k in self.SENSITIVITY_KEYS}
+            percent = getattr(owl_instance, self.PERCENT_KEY, None)
+            if percent is not None:
+                values[self.PERCENT_KEY] = percent
         if values is None:
             logger.error("No values provided for preset save")
             return False
@@ -160,15 +173,17 @@ class SensitivityManager:
             logger.error(f"Missing keys for preset: {missing}")
             return False
 
-        # Store int values
-        int_values = {k: int(values[k]) for k in self.SENSITIVITY_KEYS}
-        self._presets[name] = int_values
+        # Store int values (+ optional float percent key)
+        preset_values = {k: int(values[k]) for k in self.SENSITIVITY_KEYS}
+        if self.PERCENT_KEY in values:
+            preset_values[self.PERCENT_KEY] = float(values[self.PERCENT_KEY])
+        self._presets[name] = preset_values
 
         # Write to config
         section = self._section_name(name)
         if not self.config.has_section(section):
             self.config.add_section(section)
-        for k, v in int_values.items():
+        for k, v in preset_values.items():
             self.config.set(section, k, str(v))
 
         self.persist()
@@ -277,6 +292,10 @@ class SensitivityManager:
                 values = {}
                 for key in self.SENSITIVITY_KEYS:
                     values[key] = self.config.getint(section, key)
+                # Optional percent key — legacy sections don't have it
+                if self.config.has_option(section, self.PERCENT_KEY):
+                    values[self.PERCENT_KEY] = self.config.getfloat(
+                        section, self.PERCENT_KEY)
                 self._presets[name] = values
             except (configparser.NoOptionError, ValueError) as e:
                 logger.warning(f"Skipping malformed preset [{section}]: {e}")

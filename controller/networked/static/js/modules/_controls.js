@@ -355,6 +355,8 @@ async function restartOWL(deviceId) {
 // Remember GoB algorithm when switching modes
 let lastGoBAlgorithm = 'exhsv';
 let pendingMode = null;
+// Active mode — the sensitivity dial reads this to know which axis it drives
+let currentPipelineMode = 'gob';
 
 function setPipelineMode(mode) {
     var btn = document.querySelector('.mode-btn[data-mode="' + mode + '"]');
@@ -363,6 +365,9 @@ function setPipelineMode(mode) {
     if (mode === 'lut') {
         // Painted mode activates via profile apply (a profile must exist);
         // with none saved, reveal the panel so Paint weeds is reachable.
+        if (btn.classList.contains('no-profiles')) {
+            showToast('No painted profiles yet — use Paint weeds to create one', 'info');
+        }
         if (typeof activateLutMode === 'function') activateLutMode();
         return;
     }
@@ -417,6 +422,10 @@ function updatePipelineModeUI(algorithm) {
     });
 
     pendingMode = null;
+    currentPipelineMode = mode;
+    if (typeof updateSensitivityModeCaption === 'function') {
+        updateSensitivityModeCaption();
+    }
 
     // Update slider visibility ('lut' also covers the forced-panel case)
     if (typeof updateSliderVisibility === 'function') {
@@ -553,21 +562,18 @@ function fixScreen() {
 // ============================================
 
 function updateModeAvailability(modelAvailable) {
-    var gogBtn = document.querySelector('.mode-btn[data-mode="gog"]');
-    var hybridBtn = document.querySelector('.mode-btn[data-mode="hybrid"]');
+    // querySelectorAll: the mode selector is duplicated on the config tab
+    document.querySelectorAll(
+        '.mode-btn[data-mode="gog"], .mode-btn[data-mode="hybrid"]'
+    ).forEach(function(btn) {
+        btn.classList.toggle('disabled', !modelAvailable);
+        btn.title = modelAvailable ? '' : 'Needs an AI model on the OWL';
+    });
+}
 
-    if (gogBtn) {
-        if (modelAvailable) {
-            gogBtn.classList.remove('disabled');
-        } else {
-            gogBtn.classList.add('disabled');
-        }
-    }
-    if (hybridBtn) {
-        if (modelAvailable) {
-            hybridBtn.classList.remove('disabled');
-        } else {
-            hybridBtn.classList.add('disabled');
-        }
-    }
+function updatePaintedChipHint(hasProfiles) {
+    document.querySelectorAll('.mode-btn[data-mode="lut"]').forEach(function(btn) {
+        btn.classList.toggle('no-profiles', !hasProfiles);
+        btn.title = hasProfiles ? '' : 'No painted profiles yet — opens the paint panel';
+    });
 }

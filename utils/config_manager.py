@@ -352,6 +352,10 @@ class ConfigValidator:
         'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
         'min_detection_area',
     }
+    # Optional preset keys — legacy [Sensitivity_*] sections don't have them
+    SENSITIVITY_SECTION_OPTIONAL_KEYS = {
+        'min_detection_area_percent',
+    }
 
     # Optional top-level sections (not in REQUIRED_CONFIG)
     OPTIONAL_SECTIONS = {
@@ -694,14 +698,15 @@ class ConfigValidator:
                 continue
             section_errors = {}
             config_keys = set(config[section].keys())
+            allowed_keys = cls.SENSITIVITY_SECTION_KEYS | cls.SENSITIVITY_SECTION_OPTIONAL_KEYS
             missing = cls.SENSITIVITY_SECTION_KEYS - config_keys
             if missing:
                 section_errors['missing_keys'] = f"Missing required keys: {', '.join(sorted(missing))}"
-            extra = config_keys - cls.SENSITIVITY_SECTION_KEYS
+            extra = config_keys - allowed_keys
             if extra:
                 section_errors['extra_keys'] = f"Unexpected keys: {', '.join(sorted(extra))}"
-            # Validate values are valid integers in range
-            for key in cls.SENSITIVITY_SECTION_KEYS & config_keys:
+            # Validate values are in range
+            for key in allowed_keys & config_keys:
                 value = config.get(section, key)
                 used_pins = set()  # not relevant for sensitivity keys
                 is_valid, error_msg = cls.validate_value(key, value, used_pins)

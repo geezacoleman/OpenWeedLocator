@@ -122,6 +122,29 @@ class TestBake:
         assert sensitivity_to_ratio(50) == pytest.approx(2.0)
         assert sensitivity_to_ratio(100) == pytest.approx(0.2)
 
+    def test_spill_only_bins_not_sprayed_at_low_sensitivity(self):
+        """A handful of stray dark pixels must not spray their bins at
+        strict sensitivities (the eps-ratio blow-up regression)."""
+        dark = (10, 10, 10)
+        fg = np.vstack([_pixels(GREEN, 100_000), _pixels(dark, 10)])
+        hb = pixel_histogram(_pixels(BROWN, 100_000))
+        hf = pixel_histogram(fg)
+        b, g, r = dark
+        flat = (r >> 3) * 1024 + (g >> 3) * 32 + (b >> 3)
+        for sensitivity in (25, 50):
+            lut = bake_lut(hf, hb, sensitivity)
+            assert lut[flat] == 0, f'dark bin sprayed at sensitivity {sensitivity}'
+
+    def test_swatch_no_near_black_colours_at_default_sensitivity(self):
+        """Swatch of a green profile with stray dark pixels has no black bars."""
+        fg = np.vstack([_pixels(GREEN, 100_000, jitter=15), _pixels((10, 10, 10), 10)])
+        hf = pixel_histogram(fg)
+        hb = pixel_histogram(_pixels(BROWN, 100_000, jitter=15))
+        lut3d = bake_lut(hf, hb, 50).reshape(LUT_BINS, LUT_BINS, LUT_BINS)
+        r_bins, g_bins, b_bins = np.nonzero(lut3d)
+        centres = np.stack([b_bins, g_bins, r_bins], axis=1) * 8 + 4
+        assert centres.max(axis=1).min() > 40, 'near-black bin in swatch'
+
 
 # ---------------------------------------------------------------------------
 # Apply

@@ -396,6 +396,13 @@
     font-size: 0.9rem;
 }
 
+/* Which axis the sensitivity buttons drive (Colour / Painted / AI) */
+.tile-caption {
+    margin: -0.3rem 0 0.4rem;
+    color: #8a99aa;
+    font-size: 0.75rem;
+}
+
 /* --------------------------------------------------------------------------
    Segmented Control
    -------------------------------------------------------------------------- */
@@ -433,6 +440,13 @@
     opacity: 0.6;
     cursor: not-allowed;
     pointer-events: none;
+}
+
+/* Custom GoB presets greyed out in Painted/AI modes (colour axis only) */
+.seg-btn.disabled {
+    opacity: 0.5;
+    filter: grayscale(0.6);
+    cursor: not-allowed;
 }
 
 /* Sensitivity as signal bars (Low / Med / High = 1 / 2 / 3 filled bars) */
@@ -764,8 +778,19 @@
 }
 
 .mode-btn.disabled {
-    opacity: 0.35;
+    opacity: 0.5;
+    filter: grayscale(0.6);
     cursor: not-allowed;
+    text-decoration: line-through;
+}
+
+/* Painted chip with no saved profiles: still tappable (opens the paint
+   panel) but flagged so it doesn't read as a ready-to-use mode */
+.mode-btn.no-profiles::after {
+    content: '+';
+    margin-left: 6px;
+    font-weight: 700;
+    color: #ff8c1a;
 }
 
 .mode-btn.loading {

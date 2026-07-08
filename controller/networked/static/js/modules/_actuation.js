@@ -356,16 +356,37 @@ var sensitivityLevels = ['low', 'medium', 'high'];
 var sensitivityColors = {
     low: '#3498db',
     medium: '#27ae60',
-    high: '#e67e22'
+    high: '#e67e22',
+    custom: '#7f8c8d'
 };
 var sensitivityLabels = {
     low: 'Low',
     medium: 'Medium',
-    high: 'High'
+    high: 'High',
+    custom: 'Custom'
 };
 // Needle angle for each level (degrees, 0 = straight up)
 var sensitivityNeedleAngles = { low: -61, medium: 0, high: 61 };
 var currentSensitivity = 'medium';
+
+// The dial drives whichever detection mode is active: Colour -> GoB preset,
+// Painted -> lut_sensitivity, AI -> model confidence (lower = sprays more),
+// Hybrid -> GoB preset + confidence together. When the underlying value was
+// fine-tuned on the config tab and matches no level, the dial shows Custom.
+var lutSensitivityLevels = { low: 30, medium: 50, high: 70 };
+var LUT_LEVEL_TOLERANCE = 2;
+var confidenceLevels = { low: 0.65, medium: 0.50, high: 0.35 };
+var CONFIDENCE_TOLERANCE = 0.02;
+var sensitivityModeCaptions = {
+    gob: 'Colour sensitivity',
+    lut: 'Painted sensitivity',
+    gog: 'AI sensitivity',
+    hybrid: 'Colour + AI sensitivity'
+};
+
+function dialMode() {
+    return (typeof currentPipelineMode !== 'undefined') ? currentPipelineMode : 'gob';
+}
 
 function initSensitivityDial() {
     var svg = document.getElementById('sensitivity-svg');
@@ -456,8 +477,73 @@ function setSensitivityLevel(level) {
     currentSensitivity = level;
     updateSensitivityDial(level);
 
-    // Broadcast to all OWLs
-    sendCommand('all', 'set_sensitivity', level);
+    var mode = dialMode();
+
+    if (mode === 'gob' || mode === 'hybrid') {
+        // Broadcast GoB preset to all OWLs
+        sendCommand('all', 'set_sensitivity', level);
+    }
+    if (mode === 'lut') {
+        // Same path as the config-tab slider so both stay in step
+        var lutVal = lutSensitivityLevels[level];
+        if (typeof configParams !== 'undefined' && configParams.lut_sensitivity) {
+            configParams.lut_sensitivity.value = lutVal;
+            if (typeof updateSlider === 'function') updateSlider('lut_sensitivity');
+        }
+        if (typeof sendConfigUpdate === 'function') sendConfigUpdate('lut_sensitivity', lutVal);
+    }
+    if (mode === 'gog' || mode === 'hybrid') {
+        var confPct = confidenceLevels[level] * 100;
+        if (typeof configParams !== 'undefined' && configParams.confidence) {
+            configParams.confidence.value = confPct;
+            if (typeof updateSlider === 'function') updateSlider('confidence');
+        }
+        if (typeof sendConfigUpdate === 'function') sendConfigUpdate('confidence', confPct);
+    }
+
+    // Snap-back guard: don't let the next heartbeats undo the click
+    if (typeof lastSliderSendTime !== 'undefined') lastSliderSendTime = Date.now();
+}
+
+/* Map heartbeat state to the level the dial should display for the active
+   mode; 'custom' when the value matches no level. In Colour mode the raw
+   preset name passes through so custom presets show by name, dimmed. */
+function sensitivityLevelFromState(mode, owl) {
+    if (mode === 'lut') {
+        var v = parseFloat(owl.lut_sensitivity);
+        if (isNaN(v)) return null;
+        for (var L in lutSensitivityLevels) {
+            if (Math.abs(v - lutSensitivityLevels[L]) <= LUT_LEVEL_TOLERANCE) return L;
+        }
+        return 'custom';
+    }
+    if (mode === 'gog' || mode === 'hybrid') {
+        var c = parseFloat(owl.confidence);
+        if (isNaN(c)) return null;
+        var match = null;
+        for (var K in confidenceLevels) {
+            if (Math.abs(c - confidenceLevels[K]) <= CONFIDENCE_TOLERANCE) { match = K; break; }
+        }
+        if (mode === 'gog') return match || 'custom';
+        // Hybrid: the GoB preset and confidence must agree on a level
+        var preset = (owl.sensitivity_level || '').toLowerCase();
+        return (match && preset === match) ? match : 'custom';
+    }
+    return owl.sensitivity_level || null;
+}
+
+function syncSensitivityFromOwl(owl) {
+    updateSensitivityModeCaption();
+    if (!owl) return;
+    if (typeof lastSliderSendTime !== 'undefined'
+            && (Date.now() - lastSliderSendTime) < 5000) return;
+    var level = sensitivityLevelFromState(dialMode(), owl);
+    if (level) updateSensitivityDial(level);
+}
+
+function updateSensitivityModeCaption() {
+    var el = document.getElementById('sensitivity-mode-caption');
+    if (el) el.textContent = sensitivityModeCaptions[dialMode()] || 'Sensitivity';
 }
 
 function updateSensitivityDial(level) {

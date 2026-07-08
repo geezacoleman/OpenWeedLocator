@@ -300,8 +300,59 @@ class TestListPresets:
         sm = SensitivityManager(config, path)
         presets = sm.list_presets()
         for p in presets:
-            assert len(p['values']) == 9
+            assert len(p['values']) in (9, 10)   # percent key is optional
             assert 'exg_min' in p['values']
+
+
+class TestMinDetectionAreaPercent:
+    """Presets must drive the percent min-weed-size key — when a kiosk uses
+    min_detection_area_percent > 0, owl.py ignores the px value, so presets
+    without the percent key silently lose their min-area component."""
+
+    def test_builtins_carry_percent_key(self, tmp_path):
+        config, path = _make_config(tmp_path, sections=False)
+        sm = SensitivityManager(config, path)
+        assert sm.get_preset_values('low')['min_detection_area_percent'] == 0.015
+        assert sm.get_preset_values('medium')['min_detection_area_percent'] == 0.0075
+        assert sm.get_preset_values('high')['min_detection_area_percent'] == 0.004
+
+    def test_apply_sets_percent_on_owl(self, tmp_path):
+        config, path = _make_config(tmp_path, sections=False)
+        sm = SensitivityManager(config, path)
+        owl = _FakeOwl()
+        owl.min_detection_area_percent = 0.001
+        sm.apply_preset('high', owl)
+        assert owl.min_detection_area_percent == 0.004
+        assert owl.min_detection_area == 5
+
+    def test_legacy_sections_without_percent_still_load(self, tmp_path):
+        """Config [Sensitivity_*] sections predating the percent key load
+        fine and leave the owl's percent value untouched on apply."""
+        config, path = _make_config(tmp_path, sections=True)
+        sm = SensitivityManager(config, path)
+        vals = sm.get_preset_values('high')
+        assert 'min_detection_area_percent' not in vals
+
+        owl = _FakeOwl()
+        owl.min_detection_area_percent = 0.123
+        sm.apply_preset('high', owl)
+        assert owl.min_detection_area_percent == 0.123   # untouched
+        assert owl.min_detection_area == 5
+
+    def test_save_from_owl_captures_percent(self, tmp_path):
+        config, path = _make_config(tmp_path, sections=False)
+        sm = SensitivityManager(config, path)
+        owl = _FakeOwl()
+        sm.apply_preset('medium', owl)
+        owl.min_detection_area_percent = 0.05
+        sm.save_custom_preset('my_preset', owl_instance=owl)
+        assert sm.get_preset_values('my_preset')['min_detection_area_percent'] == 0.05
+
+        # Round-trips through persist (copy-on-write file)
+        config2 = configparser.ConfigParser()
+        config2.read(sm.config_path)
+        assert config2.getfloat('Sensitivity_My_preset',
+                                'min_detection_area_percent') == 0.05
 
 
 class TestPersist:

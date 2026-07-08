@@ -492,6 +492,14 @@
     color: #27ae60;
 }
 
+/* Which axis the dial is driving (Colour / Painted / AI sensitivity) */
+.sensitivity-mode-caption {
+    font-size: 0.75rem;
+    color: #8a99aa;
+    text-align: center;
+    margin-top: 2px;
+}
+
 /* ---------------------------------------------------------------------------
    Responsive: Stack columns on narrow screens (<900px)
    --------------------------------------------------------------------------- */

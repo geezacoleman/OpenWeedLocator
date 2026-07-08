@@ -209,6 +209,7 @@
                     <!-- Sensitivity presets -->
                     <div class="control-tile">
                         <div class="tile-label">Sensitivity</div>
+                        <div class="tile-caption" id="sensitivityModeCaption">Colour sensitivity</div>
                         <div id="sensitivity-buttons" class="segmented segmented--three segmented--bars">
                             <button class="seg-btn sens-btn" data-sens="low">
                                 <span class="sens-bars sens-bars--1"><i></i><i></i><i></i></span>
@@ -618,7 +619,11 @@
                         <button class="fine-btn" data-delta="1">+</button>
                     </div>
                     <div class="lut-swatch-row">
-                        <span class="lut-sens-caption">higher sprays more</span>
+                        <div class="lut-coverage"
+                             title="Share of all colours this profile sprays at the current sensitivity">
+                            <div class="lut-coverage-square"><div class="lut-coverage-fill" id="lutCoverageFill"></div></div>
+                            <span class="lut-coverage-text" id="lutCoverageText">--</span>
+                        </div>
                         <img id="lutSwatchImg" class="lut-swatch" alt="Colours this profile sprays"
                              title="Colours this profile sprays" style="display:none">
                     </div>

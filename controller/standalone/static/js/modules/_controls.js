@@ -535,11 +535,90 @@ function setSegActive(nodeList, activeBtn) {
     nodeList.forEach(b => b.classList.toggle('active', b === activeBtn));
 }
 
+// The sensitivity buttons drive whichever detection mode is active:
+// Colour -> GoB preset, Painted -> lut_sensitivity, AI -> model confidence
+// (lower = sprays more), Hybrid -> GoB preset + confidence together. When
+// the value was fine-tuned on the config tab and matches no level, no
+// button is highlighted (custom).
+const lutSensitivityLevels = { low: 30, medium: 50, high: 70 };
+const LUT_LEVEL_TOLERANCE = 2;
+const confidenceLevels = { low: 0.65, medium: 0.50, high: 0.35 };
+const CONFIDENCE_TOLERANCE = 0.02;
+const BUILTIN_SENSITIVITY_NAMES = ['low', 'medium', 'high'];
+const sensitivityModeCaptions = {
+    gob: 'Colour sensitivity',
+    lut: 'Painted sensitivity',
+    gog: 'AI sensitivity',
+    hybrid: 'Colour + AI sensitivity'
+};
+
+function sensitivityMode() {
+    return (typeof currentPipelineMode !== 'undefined') ? currentPipelineMode : 'gob';
+}
+
+function updateSensitivityModeCaption() {
+    const el = document.getElementById('sensitivityModeCaption');
+    if (el) el.textContent = sensitivityModeCaptions[sensitivityMode()] || 'Sensitivity';
+    updateSensitivityButtonsForMode();
+}
+
+/* Custom-named GoB presets only exist on the colour axis — grey them out
+   (visible, not hidden) when Painted or AI mode is active. */
+function updateSensitivityButtonsForMode() {
+    const mode = sensitivityMode();
+    const gobAxis = (mode === 'gob' || mode === 'hybrid');
+    document.querySelectorAll('.seg-btn[data-sens]').forEach(btn => {
+        const isBuiltin = BUILTIN_SENSITIVITY_NAMES.includes(btn.dataset.sens);
+        const disable = !isBuiltin && !gobAxis;
+        btn.classList.toggle('disabled', disable);
+        btn.title = disable ? 'Colour mode preset' : '';
+    });
+}
+
+/* Map polled stats to the level the buttons should highlight for the
+   active mode; null = highlight nothing (custom value). */
+function sensitivityLevelFromStats(data) {
+    const mode = sensitivityMode();
+    if (mode === 'lut') {
+        const v = parseFloat(data.lut_sensitivity);
+        if (isNaN(v)) return null;
+        for (const L of BUILTIN_SENSITIVITY_NAMES) {
+            if (Math.abs(v - lutSensitivityLevels[L]) <= LUT_LEVEL_TOLERANCE) return L;
+        }
+        return null;
+    }
+    if (mode === 'gog' || mode === 'hybrid') {
+        const c = parseFloat(data.confidence);
+        if (isNaN(c)) return null;
+        let match = null;
+        for (const L of BUILTIN_SENSITIVITY_NAMES) {
+            if (Math.abs(c - confidenceLevels[L]) <= CONFIDENCE_TOLERANCE) { match = L; break; }
+        }
+        if (mode === 'gog') return match;
+        // Hybrid: the GoB preset and confidence must agree on a level
+        const preset = normalizeSensitivity(data);
+        return (match && preset === match) ? match : null;
+    }
+    return normalizeSensitivity(data);
+}
+
+function syncSensitivityFromStats(data) {
+    updateSensitivityModeCaption();
+    // Don't overwrite a level that was just tapped (5s cooldown)
+    if (typeof lastSliderSendTime !== 'undefined'
+            && (Date.now() - lastSliderSendTime) < 5000) return;
+    const level = sensitivityLevelFromStats(data);
+    document.querySelectorAll('.seg-btn[data-sens]').forEach(b => {
+        b.classList.toggle('active', b.dataset.sens === level);
+    });
+}
+
 function bindSensitivityButtons() {
     const container = document.getElementById('sensitivity-buttons');
     if (!container) return;
     container.querySelectorAll('.seg-btn[data-sens]').forEach(btn => {
         btn.addEventListener('click', () => {
+            if (btn.classList.contains('disabled')) return;
             const allBtns = container.querySelectorAll('.seg-btn[data-sens]');
             setSegActive(allBtns, btn);
             setSensitivity(btn.dataset.sens);
@@ -583,15 +662,45 @@ function renderSensitivityButtons(presets, active) {
         btn.dataset.sens = preset.name;
         btn.textContent = builtinLabels[preset.name] || preset.name;
         btn.addEventListener('click', () => {
+            if (btn.classList.contains('disabled')) return;
             const allBtns = container.querySelectorAll('.seg-btn[data-sens]');
             setSegActive(allBtns, btn);
             setSensitivity(preset.name);
         });
         container.appendChild(btn);
     });
+    updateSensitivityButtonsForMode();
 }
 
 function setSensitivity(level) {
+    const mode = sensitivityMode();
+    const isBuiltin = BUILTIN_SENSITIVITY_NAMES.includes(level);
+
+    // Snap-back guard: don't let the next stats polls undo the tap
+    if (typeof lastSliderSendTime !== 'undefined') lastSliderSendTime = Date.now();
+
+    if (mode === 'lut' && isBuiltin) {
+        // Same path as the config-tab slider so both stay in step
+        const lutVal = lutSensitivityLevels[level];
+        if (typeof configParams !== 'undefined' && configParams.lut_sensitivity) {
+            configParams.lut_sensitivity.value = lutVal;
+            if (typeof updateSlider === 'function') updateSlider('lut_sensitivity');
+        }
+        if (typeof sendSliderUpdate === 'function') sendSliderUpdate('lut_sensitivity', lutVal);
+        return Promise.resolve();
+    }
+
+    if ((mode === 'gog' || mode === 'hybrid') && isBuiltin) {
+        const confPct = confidenceLevels[level] * 100;
+        if (typeof configParams !== 'undefined' && configParams.confidence) {
+            configParams.confidence.value = confPct;
+            if (typeof updateSlider === 'function') updateSlider('confidence');
+        }
+        if (typeof sendSliderUpdate === 'function') sendSliderUpdate('confidence', confPct);
+        if (mode === 'gog') return Promise.resolve();
+        // Hybrid falls through: the GoB preset applies too
+    }
+
     return apiRequest('/api/sensitivity/set', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -845,6 +954,8 @@ function syncSwitchPurposeToggle() {
 let lastGoBAlgorithm = 'exhsv';
 let pendingMode = null;
 let pendingModeTimestamp = 0;
+// Active mode — the sensitivity buttons read this to know which axis they drive
+let currentPipelineMode = 'gob';
 
 function setPipelineMode(mode) {
     var btn = document.querySelector('.mode-btn[data-mode="' + mode + '"]');
@@ -853,6 +964,9 @@ function setPipelineMode(mode) {
     if (mode === 'lut') {
         // Painted mode activates via profile apply (a profile must exist);
         // with none saved, reveal the panel so Paint weeds is reachable.
+        if (btn.classList.contains('no-profiles')) {
+            showNotification('Info', 'No painted profiles yet — use Paint weeds to create one', 'info', 4000);
+        }
         if (typeof activateLutMode === 'function') activateLutMode();
         return;
     }
@@ -923,26 +1037,28 @@ function updatePipelineModeUI(algorithm) {
             btn.classList.add('active');
         }
     });
+
+    currentPipelineMode = mode;
+    if (typeof updateSensitivityModeCaption === 'function') {
+        updateSensitivityModeCaption();
+    }
 }
 
 function updateModeAvailability(modelAvailable) {
-    var gogBtn = document.querySelector('.mode-btn[data-mode="gog"]');
-    var hybridBtn = document.querySelector('.mode-btn[data-mode="hybrid"]');
+    // querySelectorAll: keep every copy of the mode selector in sync
+    document.querySelectorAll(
+        '.mode-btn[data-mode="gog"], .mode-btn[data-mode="hybrid"]'
+    ).forEach(function(btn) {
+        btn.classList.toggle('disabled', !modelAvailable);
+        btn.title = modelAvailable ? '' : 'Needs an AI model on the OWL';
+    });
+}
 
-    if (gogBtn) {
-        if (modelAvailable) {
-            gogBtn.classList.remove('disabled');
-        } else {
-            gogBtn.classList.add('disabled');
-        }
-    }
-    if (hybridBtn) {
-        if (modelAvailable) {
-            hybridBtn.classList.remove('disabled');
-        } else {
-            hybridBtn.classList.add('disabled');
-        }
-    }
+function updatePaintedChipHint(hasProfiles) {
+    document.querySelectorAll('.mode-btn[data-mode="lut"]').forEach(function(btn) {
+        btn.classList.toggle('no-profiles', !hasProfiles);
+        btn.title = hasProfiles ? '' : 'No painted profiles yet — opens the paint panel';
+    });
 }
 
 /* --------------------------------------------------------------------------

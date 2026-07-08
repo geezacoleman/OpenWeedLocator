@@ -116,9 +116,12 @@ def sensitivity_to_ratio(sensitivity):
 def bake_lut(hist_fg, hist_bg, sensitivity=DEFAULT_SENSITIVITY):
     """Bake histograms into a flat LUT_SIZE uint8 table (values 0 / 255).
 
-    Bayes likelihood ratio on class-normalised, smoothed histograms.
-    Colours with zero weed evidence (even after smoothing) are never
-    classified as weed, regardless of sensitivity.
+    Bayes likelihood ratio on class-normalised, smoothed histograms with a
+    uniform Laplace prior (alpha = one count spread over the whole colour
+    space). Bins holding near-zero evidence in both classes get ratio ~= 1,
+    so smoothing spill alone cannot classify a colour as weed at strict
+    sensitivities. Colours with zero weed evidence (even after smoothing)
+    are never classified as weed, regardless of sensitivity.
     """
     hf = _smooth3(hist_fg)
     hb = _smooth3(hist_bg)
@@ -127,10 +130,10 @@ def bake_lut(hist_fg, hist_bg, sensitivity=DEFAULT_SENSITIVITY):
     if fg_total <= 0 or bg_total <= 0:
         raise LUTProfileError('profile has an empty class histogram')
 
-    eps = 1e-9
+    alpha = 1.0 / LUT_SIZE
     p_fg = hf / fg_total
     p_bg = hb / bg_total
-    ratio = (p_fg + eps) / (p_bg + eps)
+    ratio = (p_fg + alpha) / (p_bg + alpha)
 
     threshold = sensitivity_to_ratio(sensitivity)
     lut = (ratio > threshold) & (hf > 0)

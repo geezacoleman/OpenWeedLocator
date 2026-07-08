@@ -200,6 +200,29 @@ class TestNetworkedTrackingOptimisticState:
 
 
 @pytest.mark.unit
+class TestModeChipGating:
+    """updateModeAvailability must gate EVERY copy of the mode selector —
+    the networked config tab duplicates the chip row, and querySelector
+    (first match) left those copies enabled when no AI model was present."""
+
+    @pytest.mark.parametrize('controller_dir', ['networked', 'standalone'])
+    def test_update_mode_availability_uses_query_selector_all(self, controller_dir):
+        js = (PROJECT_ROOT / 'controller' / controller_dir / 'static' /
+              'js' / 'modules' / '_controls.js').read_text(encoding='utf-8')
+        body = js.split('function updateModeAvailability')[1].split('\nfunction ')[0]
+        assert 'querySelectorAll' in body, (
+            "updateModeAvailability must use querySelectorAll so duplicated "
+            "mode selectors (config tab) get the disabled state too"
+        )
+
+    @pytest.mark.parametrize('controller_dir', ['networked', 'standalone'])
+    def test_painted_chip_hint_exists(self, controller_dir):
+        js = (PROJECT_ROOT / 'controller' / controller_dir / 'static' /
+              'js' / 'modules' / '_controls.js').read_text(encoding='utf-8')
+        assert 'function updatePaintedChipHint' in js
+
+
+@pytest.mark.unit
 class TestZoneTrackingWarning:
     """Verify owl.py logs a warning when zone actuation and tracking are both active."""
 

@@ -613,3 +613,35 @@ class TestGPSStateSchema:
 
         assert resp.status_code == 200
         assert data['connection']['gps_enabled'] is False
+
+
+@pytest.mark.unit
+class TestPainterSwatchRoute:
+    """Tests for GET /api/painter/swatch (networked controller)."""
+
+    def test_swatch_serves_png_with_coverage_header(self, networked_test_client,
+                                                    tmp_path):
+        import numpy as np
+        import controller.networked.networked as net_mod
+        from utils.lut_manager import LUTProfileManager
+
+        client, _ = networked_test_client
+
+        # Point the module's profile manager at a tmp dir with one profile
+        mgr = LUTProfileManager(tmp_path / 'lut_profiles')
+        green = np.tile(np.array([40, 180, 60], np.uint8), (1000, 1))
+        brown = np.tile(np.array([60, 90, 120], np.uint8), (1000, 1))
+        mgr.save('swatchy', green, brown)
+        old_mgr = net_mod.lut_profile_manager
+        net_mod.lut_profile_manager = mgr
+        try:
+            resp = client.get('/api/painter/swatch?name=swatchy&sensitivity=50')
+            assert resp.status_code == 200
+            assert resp.mimetype == 'image/png'
+            # Coverage rides along as a header for the dashboard's fill square
+            assert float(resp.headers['X-Coverage']) > 0
+
+            resp = client.get('/api/painter/swatch?name=ghost')
+            assert resp.status_code == 404
+        finally:
+            net_mod.lut_profile_manager = old_mgr

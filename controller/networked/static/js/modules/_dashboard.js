@@ -196,6 +196,9 @@ async function updateDashboard() {
             if (typeof updateModeAvailability === 'function') {
                 updateModeAvailability(!!firstOwl.model_available);
             }
+            if (typeof updatePaintedChipHint === 'function') {
+                updatePaintedChipHint((firstOwl.available_lut_profiles || []).length > 0);
+            }
             if (typeof syncLutPanelFromOwl === 'function') {
                 syncLutPanelFromOwl(firstOwl);
             }
@@ -206,9 +209,10 @@ async function updateDashboard() {
             syncConfigFromOWLState(firstOwl);
             // Check for config mismatch across OWLs
             checkConfigMismatch();
-            // Sync sensitivity dial from OWL state
-            if (typeof updateSensitivityDial === 'function' && firstOwl.sensitivity_level) {
-                updateSensitivityDial(firstOwl.sensitivity_level);
+            // Sync sensitivity dial from OWL state (mode-aware: reads the
+            // axis matching the active mode, shows Custom on no match)
+            if (typeof syncSensitivityFromOwl === 'function') {
+                syncSensitivityFromOwl(firstOwl);
             }
             // Sync nozzle button state from OWL
             const nozzleBtn = document.getElementById('main-nozzles-btn');

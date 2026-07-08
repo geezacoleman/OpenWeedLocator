@@ -12,5 +12,11 @@ psutil==5.9.4
 boto3==1.39.13
 requests
 pyserial==3.5
+# Weed/LUT painter — controller-side OpenCV image processing (bake LUTs, render
+# spray-preview overlays and swatches). Core functions only, no GUI/contrib, so
+# the lighter headless build is enough; numpy is pulled in as its dependency.
+# Without this, networked.py sets PAINTER_AVAILABLE=False and the painter tab is
+# silently disabled ("Weed painter disabled (OpenCV/numpy missing)" in the log).
+opencv-python-headless
 # AI agent tab (controller/networked agent engine)
 httpx

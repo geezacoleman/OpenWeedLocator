@@ -162,6 +162,24 @@ function lutCurrentSensitivity() {
 /* "Sprayed colours" strip for the selected profile — refetched only when
    the (profile, sensitivity) pair actually changes, not on every poll. */
 var lutSwatchKey = '';
+var lutSwatchObjectUrl = null;
+
+function setLutCoverage(pct) {
+    var fill = document.getElementById('lutCoverageFill');
+    var text = document.getElementById('lutCoverageText');
+    if (!fill || !text) return;
+    if (pct === null || isNaN(pct)) {
+        fill.style.height = '0';
+        text.textContent = '--';
+        return;
+    }
+    // Typical profiles cover 2-10% of colour space — scale against a 25%
+    // cap so slider motion is visible; the text carries the exact value
+    var h = Math.min(100, (pct / 25) * 100);
+    if (pct > 0 && h < 6) h = 6;
+    fill.style.height = h + '%';
+    text.textContent = pct.toFixed(1) + '% of colours';
+}
 
 function updateLutSwatch() {
     var img = document.getElementById('lutSwatchImg');
@@ -170,6 +188,7 @@ function updateLutSwatch() {
     var name = sel ? sel.value : '';
     if (!name) {
         img.style.display = 'none';
+        setLutCoverage(null);
         lutSwatchKey = '';
         return;
     }
@@ -177,10 +196,23 @@ function updateLutSwatch() {
     var key = name + ':' + sens;
     if (key === lutSwatchKey) return;
     lutSwatchKey = key;
-    img.onerror = function () { img.style.display = 'none'; };
-    img.onload = function () { img.style.display = ''; };
-    img.src = '/api/painter/swatch?name=' + encodeURIComponent(name) +
-        '&sensitivity=' + encodeURIComponent(sens) + '&t=' + Date.now();
+    fetch('/api/painter/swatch?name=' + encodeURIComponent(name) +
+          '&sensitivity=' + encodeURIComponent(sens) + '&t=' + Date.now())
+        .then(function (r) {
+            if (!r.ok) throw new Error('swatch ' + r.status);
+            var coverage = parseFloat(r.headers.get('X-Coverage'));
+            return r.blob().then(function (blob) {
+                if (lutSwatchObjectUrl) URL.revokeObjectURL(lutSwatchObjectUrl);
+                lutSwatchObjectUrl = URL.createObjectURL(blob);
+                img.src = lutSwatchObjectUrl;
+                img.style.display = '';
+                setLutCoverage(coverage);
+            });
+        })
+        .catch(function () {
+            img.style.display = 'none';
+            setLutCoverage(null);
+        });
 }
 
 function refreshLutProfiles() {

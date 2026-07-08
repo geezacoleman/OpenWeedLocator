@@ -131,8 +131,19 @@
 }
 
 .mode-btn.disabled {
-    opacity: 0.35;
+    opacity: 0.5;
+    filter: grayscale(0.6);
     cursor: not-allowed;
+    text-decoration: line-through;
+}
+
+/* Painted chip with no saved profiles: still tappable (opens the paint
+   panel) but flagged so it doesn't read as a ready-to-use mode */
+.mode-btn.no-profiles::after {
+    content: '+';
+    margin-left: 6px;
+    font-weight: 700;
+    color: #ff8c1a;
 }
 
 .mode-btn.loading {

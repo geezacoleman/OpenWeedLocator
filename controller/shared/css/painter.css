@@ -403,18 +403,6 @@
 .lut-sens-row { align-items: center; }
 .lut-sens-row .slider-title { flex: 0 0 auto; }
 
-.lut-sens-input {
-    flex: 1 1 160px;
-    height: 44px;
-    accent-color: #ff8c1a;
-}
-
-.lut-sens-caption {
-    color: #8a99aa;
-    font-size: 0.85rem;
-    flex: 0 0 auto;
-}
-
 /* "Sprayed colours" strip — the profile's LUT made visible.
    Lives inside the Sensitivity slider group (painted mode). */
 .lut-swatch-row {
@@ -422,6 +410,38 @@
     align-items: center;
     gap: 10px;
     margin-top: 8px;
+}
+
+/* Live coverage readout: square fills with green as sensitivity rises */
+.lut-coverage {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+.lut-coverage-square {
+    width: 34px;
+    height: 34px;
+    border: 1px solid #dce1e8;
+    border-radius: 6px;
+    background: #f4f6f9;
+    display: flex;
+    align-items: flex-end;
+    overflow: hidden;
+}
+
+.lut-coverage-fill {
+    width: 100%;
+    height: 0;
+    background: #27ae60;
+    transition: height 0.25s ease;
+}
+
+.lut-coverage-text {
+    color: #8a99aa;
+    font-size: 0.85rem;
+    white-space: nowrap;
 }
 
 .lut-swatch {

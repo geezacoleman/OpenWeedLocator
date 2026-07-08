@@ -48,6 +48,7 @@ STATUS_SSL_CERT=""
 STATUS_AVAHI_CONFIG=""
 STATUS_DASHBOARD_SERVICE=""
 STATUS_KIOSK_MODE=""
+STATUS_DISPLAY_ROTATION=""
 STATUS_UFW_CONFIG=""
 STATUS_SERVICES=""
 STATUS_CONTROLLER_INI=""
@@ -63,6 +64,7 @@ ERROR_SSL_CERT=""
 ERROR_AVAHI_CONFIG=""
 ERROR_DASHBOARD_SERVICE=""
 ERROR_KIOSK_MODE=""
+ERROR_DISPLAY_ROTATION=""
 ERROR_UFW_CONFIG=""
 ERROR_SERVICES=""
 ERROR_CONTROLLER_INI=""
@@ -325,39 +327,91 @@ collect_user_input() {
     read -p "Enable kiosk mode on boot? (y/n, default: y): " KIOSK_MODE
     KIOSK_MODE=${KIOSK_MODE:-y}
 
-    # Screen resolution (for kiosk display)
+    # Display type, resolution and orientation (for kiosk display)
     SCREEN_WIDTH=1280
     SCREEN_HEIGHT=800
+    DISPLAY_TYPE="edatec"          # edatec / rpi_touch2 / generic
+    DISPLAY_ORIENTATION="landscape"
+    DISPLAY_ROTATION=0             # DSI panel rotation 0/90/180/270 (Touch Display 2 only)
+    DSI_TOUCH2="no"                # yes = Raspberry Pi Touch Display 2 (needs panel rotation)
 
     if [[ "$KIOSK_MODE" =~ ^[Yy]$ ]]; then
         echo ""
-        echo -e "${GREEN}[INFO] Select display resolution (for kiosk/touchscreen):${NC}"
-        echo "  1) 1280x800  (EDATEC HMI3010 default)"
-        echo "  2) 1024x600  (7\" alternative)"
-        echo "  3) 1920x1080 (Full HD)"
-        echo "  4) Custom"
+        echo -e "${GREEN}[INFO] Select your display:${NC}"
+        echo "  1) EDATEC HMI3010 10.1\"         (1280x800, landscape — OWL default)"
+        echo "  2) Raspberry Pi Touch Display 2  (720x1280 panel — rotates to 1280x720 landscape)"
+        echo "  3) Generic HDMI / other          (pick a resolution)"
         echo ""
 
         while true; do
-            read -p "Select resolution (1-4, default 1): " res_choice
-            res_choice=${res_choice:-1}
-            case "$res_choice" in
-                1) SCREEN_WIDTH=1280; SCREEN_HEIGHT=800; break ;;
-                2) SCREEN_WIDTH=1024; SCREEN_HEIGHT=600; break ;;
-                3) SCREEN_WIDTH=1920; SCREEN_HEIGHT=1080; break ;;
-                4)
-                    read -p "Enter width (e.g. 1280): " SCREEN_WIDTH
-                    read -p "Enter height (e.g. 720): " SCREEN_HEIGHT
-                    if [[ "$SCREEN_WIDTH" =~ ^[0-9]+$ ]] && [[ "$SCREEN_HEIGHT" =~ ^[0-9]+$ ]]; then
-                        break
-                    else
-                        echo -e "${RED}[ERROR] Invalid dimensions. Enter numbers only.${NC}"
-                    fi
-                    ;;
+            read -p "Select display (1-3, default 1): " display_choice
+            display_choice=${display_choice:-1}
+            case "$display_choice" in
+                1) DISPLAY_TYPE="edatec"; DSI_TOUCH2="no"; SCREEN_WIDTH=1280; SCREEN_HEIGHT=800
+                   DISPLAY_ROTATION=0; DISPLAY_ORIENTATION="landscape"; break ;;
+                2) DISPLAY_TYPE="rpi_touch2"; DSI_TOUCH2="yes"; break ;;
+                3) DISPLAY_TYPE="generic"; DSI_TOUCH2="no"; DISPLAY_ROTATION=0; DISPLAY_ORIENTATION="landscape"
+                   echo ""
+                   echo -e "${GREEN}[INFO] Select display resolution:${NC}"
+                   echo "  1) 1024x600  (7\" alternative)"
+                   echo "  2) 1920x1080 (Full HD)"
+                   echo "  3) 1280x800"
+                   echo "  4) Custom"
+                   echo ""
+                   while true; do
+                       read -p "Select resolution (1-4, default 2): " res_choice
+                       res_choice=${res_choice:-2}
+                       case "$res_choice" in
+                           1) SCREEN_WIDTH=1024; SCREEN_HEIGHT=600; break ;;
+                           2) SCREEN_WIDTH=1920; SCREEN_HEIGHT=1080; break ;;
+                           3) SCREEN_WIDTH=1280; SCREEN_HEIGHT=800; break ;;
+                           4)
+                               read -p "Enter width (e.g. 1280): " SCREEN_WIDTH
+                               read -p "Enter height (e.g. 720): " SCREEN_HEIGHT
+                               if [[ "$SCREEN_WIDTH" =~ ^[0-9]+$ ]] && [[ "$SCREEN_HEIGHT" =~ ^[0-9]+$ ]]; then
+                                   break
+                               else
+                                   echo -e "${RED}[ERROR] Invalid dimensions. Enter numbers only.${NC}"
+                               fi
+                               ;;
+                           *) echo -e "${RED}[ERROR] Invalid selection.${NC}" ;;
+                       esac
+                   done
+                   break ;;
                 *) echo -e "${RED}[ERROR] Invalid selection.${NC}" ;;
             esac
         done
-        echo -e "${GREEN}[INFO] Screen resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}${NC}"
+
+        # Orientation — only the Touch Display 2 is portrait-native and needs
+        # rotating. The panel overlay's rotation= parameter carries the touch
+        # digitizer WITH the display; a compositor-only rotation (Screen
+        # Configuration / wlr-randr) rotates pixels but leaves touch in portrait,
+        # which is the classic "landscape screen, vertical touch" symptom.
+        if [[ "$DSI_TOUCH2" == "yes" ]]; then
+            echo ""
+            echo -e "${GREEN}[INFO] Select display orientation (landscape strongly recommended):${NC}"
+            echo "  1) Landscape             (recommended)"
+            echo "  2) Landscape (inverted)  (use if it comes up upside down)"
+            echo "  3) Portrait              (native, tall)"
+            echo "  4) Portrait (inverted)"
+            echo ""
+            while true; do
+                read -p "Select orientation (1-4, default 1): " orient_choice
+                orient_choice=${orient_choice:-1}
+                case "$orient_choice" in
+                    1) DISPLAY_ORIENTATION="landscape";          DISPLAY_ROTATION=90;  SCREEN_WIDTH=1280; SCREEN_HEIGHT=720; break ;;
+                    2) DISPLAY_ORIENTATION="landscape-inverted"; DISPLAY_ROTATION=270; SCREEN_WIDTH=1280; SCREEN_HEIGHT=720; break ;;
+                    3) DISPLAY_ORIENTATION="portrait";           DISPLAY_ROTATION=0;   SCREEN_WIDTH=720;  SCREEN_HEIGHT=1280; break ;;
+                    4) DISPLAY_ORIENTATION="portrait-inverted";  DISPLAY_ROTATION=180; SCREEN_WIDTH=720;  SCREEN_HEIGHT=1280; break ;;
+                    *) echo -e "${RED}[ERROR] Invalid selection.${NC}" ;;
+                esac
+            done
+            if [[ "$DISPLAY_ORIENTATION" != "landscape" && "$DISPLAY_ORIENTATION" != "landscape-inverted" ]]; then
+                echo -e "${ORANGE}[WARN] Portrait selected. The OWL dashboard is laid out for landscape (1280x720 or wider) — some panels may not fit. Landscape is strongly recommended.${NC}"
+            fi
+        fi
+
+        echo -e "${GREEN}[INFO] Display: ${DISPLAY_TYPE} — ${SCREEN_WIDTH}x${SCREEN_HEIGHT} (${DISPLAY_ORIENTATION})${NC}"
     fi
 
     # GPS Configuration — select source (none / serial / tcp / gpsd)
@@ -453,7 +507,7 @@ collect_user_input() {
     echo -e "Hostname: ${HOSTNAME}"
     echo -e "Kiosk Mode: ${KIOSK_MODE}"
     if [[ "$KIOSK_MODE" =~ ^[Yy]$ ]]; then
-        echo -e "Screen Resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}"
+        echo -e "Display: ${DISPLAY_TYPE} (${SCREEN_WIDTH}x${SCREEN_HEIGHT}, ${DISPLAY_ORIENTATION})"
     fi
     case "$GPS_SOURCE" in
         none)   echo -e "GPS: Disabled" ;;
@@ -492,6 +546,7 @@ install_system_packages() {
         python3-pip \
         python3-venv python3-full \
         chromium \
+        wlr-randr \
         network-manager
 
     check_status "Installing system packages" "PACKAGES"
@@ -802,6 +857,109 @@ EOF
     check_status "Kiosk mode configuration" "KIOSK_MODE"
 }
 
+# Step 12b: Rotate the Raspberry Pi Touch Display 2 (DSI panel) for labwc/Wayland.
+#
+# IMPORTANT: on Raspberry Pi OS Bookworm the labwc/wlroots compositor IGNORES the
+# config.txt panel rotation (dtoverlay rotation= / display_rotate) for the
+# DESKTOP — that only rotates the boot logo/console, so the kiosk stays portrait
+# even with rotation=90. The desktop is rotated instead with `wlr-randr
+# --transform` from the labwc autostart (it runs inside the Wayland session).
+# wlroots on the Pi does NOT carry the touch digitizer with that transform, so
+# touch is realigned separately with a libinput calibration matrix installed as
+# a udev rule. (Rotating via the Screen Configuration GUI saves a kanshi
+# transform that rotates pixels but not touch — and can crash labwc — so we
+# clear it.) Only the Touch Display 2 needs any of this; EDATEC/HDMI are native.
+configure_display_rotation() {
+    if [[ "$DSI_TOUCH2" != "yes" ]]; then
+        return 0
+    fi
+
+    # Orientation -> wlr-randr transform + matching libinput touch matrix.
+    # The matrix is the standard 90/180/270 rotation. If a landscape picture is
+    # correct but touch is mirrored/inverted, pick the other landscape option
+    # (it flips both the transform and the matrix together).
+    local WLR_TRANSFORM="normal"
+    local TOUCH_MATRIX=""     # empty = identity (no udev rule needed)
+    case "$DISPLAY_ORIENTATION" in
+        landscape)          WLR_TRANSFORM="90";     TOUCH_MATRIX="0 -1 1 1 0 0" ;;
+        landscape-inverted) WLR_TRANSFORM="270";    TOUCH_MATRIX="0 1 0 -1 0 1" ;;
+        portrait-inverted)  WLR_TRANSFORM="180";    TOUCH_MATRIX="-1 0 1 0 -1 1" ;;
+        portrait)           WLR_TRANSFORM="normal"; TOUCH_MATRIX="" ;;
+    esac
+
+    echo -e "${GREEN}[INFO] Configuring Touch Display 2 for ${DISPLAY_ORIENTATION} (wlr-randr transform=${WLR_TRANSFORM})...${NC}"
+
+    # 1) Neutralise any panel/console rotation so it can't fight the compositor
+    #    transform or leave the boot logo rotated the opposite way.
+    local BOOT_DIR="/boot/firmware"
+    [ -f "${BOOT_DIR}/config.txt" ] || BOOT_DIR="/boot"
+    local CONFIG_TXT="${BOOT_DIR}/config.txt"
+    local CMDLINE_TXT="${BOOT_DIR}/cmdline.txt"
+    if [ -f "$CONFIG_TXT" ] && grep -q '^[[:space:]]*dtoverlay=vc4-kms-dsi-ili9881-7inch' "$CONFIG_TXT"; then
+        cp "$CONFIG_TXT" "${CONFIG_TXT}.owl.bak.$(date +%s)" 2>/dev/null || true
+        # drop any ,rotation=NN param from the overlay line (keep the overlay)
+        sed -i 's/\(dtoverlay=vc4-kms-dsi-ili9881-7inch\)[^[:space:]]*/\1/' "$CONFIG_TXT"
+    fi
+    if [ -f "$CMDLINE_TXT" ]; then
+        cp "$CMDLINE_TXT" "${CMDLINE_TXT}.owl.bak.$(date +%s)" 2>/dev/null || true
+        sed -i 's/[[:space:]]*video=DSI-[0-9]:[^ ]*//g' "$CMDLINE_TXT"
+    fi
+
+    # 2) Clear any saved GUI rotation (kanshi) — it overrides the autostart
+    #    transform on login and rotates pixels without touch.
+    local KANSHI_CFG="/home/${CURRENT_USER}/.config/kanshi/config"
+    if [ -f "$KANSHI_CFG" ]; then
+        cp "$KANSHI_CFG" "${KANSHI_CFG}.owl.bak.$(date +%s)" 2>/dev/null || true
+        rm -f "$KANSHI_CFG"
+        echo -e "${GREEN}[INFO]   Cleared saved Screen Configuration transform (~/.config/kanshi/config)${NC}"
+    fi
+
+    # 3) Rotate the labwc desktop from the kiosk autostart (runs in the Wayland
+    #    session — same on Bookworm and Trixie, both labwc/wlroots). The DSI
+    #    output is DSI-0 on some images and DSI-1 on others, so detect it at
+    #    runtime rather than hard-coding.
+    local AUTOSTART="/home/${CURRENT_USER}/.config/labwc/autostart"
+    if [ -f "$AUTOSTART" ]; then
+        # drop any previous OWL-managed rotation block
+        sed -i '/# OWL-ROTATE-START/,/# OWL-ROTATE-END/d' "$AUTOSTART"
+        if [[ "$WLR_TRANSFORM" != "normal" ]]; then
+            local _AS_TMP="${AUTOSTART}.owltmp"
+            cat > "$_AS_TMP" <<EOF
+# OWL-ROTATE-START — rotate Touch Display 2 to ${DISPLAY_ORIENTATION} (managed by setup)
+_owl_dsi=\$(wlr-randr 2>/dev/null | grep -oE '^DSI-[0-9]+' | head -n1)
+[ -n "\$_owl_dsi" ] && wlr-randr --output "\$_owl_dsi" --transform ${WLR_TRANSFORM}
+# OWL-ROTATE-END
+EOF
+            cat "$AUTOSTART" >> "$_AS_TMP"
+            mv "$_AS_TMP" "$AUTOSTART"
+        fi
+        chown "$CURRENT_USER":"$(id -g -n "$CURRENT_USER")" "$AUTOSTART" 2>/dev/null || true
+    else
+        echo -e "${ORANGE}[WARNING] Kiosk autostart not found — desktop rotation not applied.${NC}"
+    fi
+
+    # 4) Realign touch to the rotated output with a libinput calibration matrix.
+    local TOUCH_RULE="/etc/udev/rules.d/99-owl-touch-rotate.rules"
+    if [ -n "$TOUCH_MATRIX" ]; then
+        cat > "$TOUCH_RULE" <<EOF
+# Managed by OWL in-cab_controller_setup.sh — realign Touch Display 2 touch
+# input to the ${DISPLAY_ORIENTATION} wlr-randr transform. wlroots on the Pi
+# does not rotate touch with the output, so this matrix does it. Reboot to apply.
+ACTION=="add|change", KERNEL=="event*", ENV{ID_INPUT_TOUCHSCREEN}=="1", ENV{LIBINPUT_CALIBRATION_MATRIX}="${TOUCH_MATRIX}"
+EOF
+    else
+        rm -f "$TOUCH_RULE"
+    fi
+
+    echo -e "${TICK} Touch Display 2 set to ${DISPLAY_ORIENTATION}"
+    echo -e "${GREEN}[INFO]   Display: wlr-randr --transform ${WLR_TRANSFORM} on the DSI output (labwc autostart)${NC}"
+    if [ -n "$TOUCH_MATRIX" ]; then
+        echo -e "${GREEN}[INFO]   Touch:   libinput matrix '${TOUCH_MATRIX}' (${TOUCH_RULE})${NC}"
+    fi
+    echo -e "${GREEN}[INFO]   Both take effect after reboot.${NC}"
+    STATUS_DISPLAY_ROTATION="${TICK}"
+}
+
 
 # Step 11: Configure network with NetworkManager (WiFi or Ethernet)
 configure_network() {
@@ -1065,7 +1223,7 @@ Static IP: ${STATIC_IP}
 Gateway: ${GATEWAY_IP}
 Connection: ${CONN_SUMMARY}
 Kiosk Mode: ${KIOSK_MODE}
-Screen Resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}
+Display: ${DISPLAY_TYPE} (${SCREEN_WIDTH}x${SCREEN_HEIGHT}, ${DISPLAY_ORIENTATION})
 
 Access URLs:
 - Dashboard: https://${HOSTNAME}.local/ or https://${STATIC_IP}/ (kiosk only)
@@ -1195,6 +1353,9 @@ main() {
     # Step 12: Configure kiosk mode
     configure_kiosk_mode
 
+    # Step 12b: Rotate the DSI panel (Raspberry Pi Touch Display 2 only)
+    configure_display_rotation
+
     # Step 13: Configure network
     configure_network
 
@@ -1227,6 +1388,10 @@ main() {
         echo -e "$STATUS_KIOSK_MODE Kiosk Mode Configuration"
     elif [[ "$STATUS_KIOSK_MODE" == "SKIPPED" ]]; then
         echo -e "${ORANGE}[SKIPPED]${NC} Kiosk Mode"
+    fi
+
+    if [[ -n "$STATUS_DISPLAY_ROTATION" ]]; then
+        echo -e "$STATUS_DISPLAY_ROTATION Display Rotation (${DISPLAY_ORIENTATION})"
     fi
 
     if [[ "$NET_INTERFACE" == "wifi" ]]; then
@@ -1308,6 +1473,10 @@ main() {
 
         if [[ "$STATUS_KIOSK_MODE" == "${TICK}" ]]; then
             echo -e "  • Kiosk mode will launch automatically on boot"
+        fi
+        if [[ "$DSI_TOUCH2" == "yes" ]]; then
+            echo -e "  • Touch Display 2 will come up in ${DISPLAY_ORIENTATION} — display and touch rotated together"
+            echo -e "    (if it boots upside down, re-run and pick the inverted orientation)"
         fi
 
         echo -e ""
