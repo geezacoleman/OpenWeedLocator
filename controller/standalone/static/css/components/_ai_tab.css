@@ -257,6 +257,35 @@
     max-height: 46vh;
 }
 
+/* While editing, the Fullscreen/Save Frame/geometry buttons are irrelevant —
+   the panel's own Cancel/Done close the editor. Hiding the row keeps the
+   whole editor inside the container at kiosk height. */
+.preview-container.geo-host-active .preview-controls {
+    display: none;
+}
+
+/* Geometry controls float over the feed (bottom-right), minimised to the
+   button row by default, so Done/Cancel are always on-screen on the Pi
+   display instead of flowing below the fold. Scrolls internally if the
+   expanded fine-tune grid is taller than the feed. */
+.preview-container.geo-host-active .geo-panel {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    width: 300px;
+    max-width: calc(100% - 20px);
+    max-height: calc(100% - 20px);
+    overflow-y: auto;
+    z-index: 20;
+    padding: 0.5rem 0.6rem;
+    background: rgba(255, 255, 255, 0.97);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+
+.preview-container.geo-host-active .geo-panel.geo-min {
+    width: auto;    /* shrink to just the button row when collapsed */
+}
+
 /* Active config indicator — subtle line under the feed (not a metric chip). */
 .active-config-line {
     display: flex;

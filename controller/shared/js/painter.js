@@ -533,6 +533,7 @@ const Painter = (function () {
         _showDialog(
             '<div class="painter-dialog-title">Save profile</div>' +
             '<input type="text" class="painter-name-input" value="' + _suggestName() + '" ' +
+            'data-numpad data-label="Profile name" ' +
             'autocapitalize="off" autocomplete="off" spellcheck="false">' +
             '<div class="painter-dialog-note">Lowercase letters, numbers and underscores.</div>',
             [
@@ -540,9 +541,8 @@ const Painter = (function () {
                 { label: 'Save only', onClick: function () { _save(false); } },
                 { label: 'Cancel' }
             ]);
-        var input = els.dialog.querySelector('.painter-name-input');
-        input.focus();
-        input.select();
+        // No auto-focus: the on-screen keyboard opens on focusin (data-numpad),
+        // and it shouldn't pop up unrequested — the user taps the field to edit.
     }
 
     function _save(applyNow) {

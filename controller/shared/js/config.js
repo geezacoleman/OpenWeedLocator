@@ -370,7 +370,11 @@ function _fireConfigChange(callback, section, key, value) {
             value: value,
             type: 'select-one',
             checked: false,
-            tagName: 'SELECT'
+            tagName: 'SELECT',
+            // Handlers toggle a 'modified' class on the target; give the
+            // synthetic target a no-op classList so they don't throw (a throw
+            // here aborts the second key's update and the unsaved-changes flag).
+            classList: { toggle: function () {} }
         }
     };
     callback(fakeEvent);

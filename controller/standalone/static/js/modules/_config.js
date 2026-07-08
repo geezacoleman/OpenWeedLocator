@@ -203,7 +203,8 @@ function showSaveConfigModal() {
             nameInput.value = activeCfg.display_name || '';
             notesInput.value = activeCfg.notes || '';
         }
-        nameInput.focus();
+        // No auto-focus: focusin opens the on-screen keyboard (data-numpad),
+        // and it shouldn't pop up unrequested — the user taps the field to edit.
         const done = (val) => { document.body.removeChild(overlay); resolve(val); };
         overlay.querySelector('#modalCancel').onclick = () => done(null);
         overlay.querySelector('#modalSave').onclick = () => {

@@ -274,8 +274,10 @@ const Numpad = (() => {
             var el = e.target;
             if (el.tagName !== 'INPUT') return;
             if (el.type !== 'number' && el.type !== 'text') return;
-            // Only for config editor inputs and relay mappings
-            if (!el.closest('.config-section-body') && !el.dataset.numpad) return;
+            // Only for config editor inputs and opted-in fields. Presence
+            // check, not truthiness: a bare data-numpad attribute reads as
+            // the empty string, which is falsy.
+            if (!el.closest('.config-section-body') && !('numpad' in el.dataset)) return;
 
             open(el);
         });
