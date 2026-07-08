@@ -73,6 +73,27 @@ DOWNLOADS_DIR = Path(__file__).parent.parent.parent / 'downloads'
 DOWNLOADS_DIR.mkdir(exist_ok=True)
 MAX_DOWNLOADS_SIZE_MB = 2000  # 2GB default staging quota
 
+# Weed painter — needs OpenCV on the controller; degrade gracefully without it
+LUT_PROFILES_DIR = UPLOADS_DIR / 'lut_profiles'
+try:
+    import cv2
+    import numpy as np
+    from utils.lut_manager import LUTProfileManager, LUTProfileError, MIN_CLASS_PIXELS
+    from utils.painter_sessions import (
+        PainterSessionStore, PainterError, validate_strokes,
+        collect_class_pixels, preview_images, make_thumbnail_jpeg,
+    )
+    from utils.lut_manager import lut_swatch_png
+    painter_store = PainterSessionStore()
+    lut_profile_manager = LUTProfileManager(str(LUT_PROFILES_DIR))
+    lut_profile_manager.ensure_builtin_profiles()
+    PAINTER_AVAILABLE = True
+except ImportError as _painter_err:
+    painter_store = None
+    lut_profile_manager = None
+    PAINTER_AVAILABLE = False
+    logger.warning(f'Weed painter disabled (OpenCV/numpy missing): {_painter_err}')
+
 
 def _compute_sha256(filepath):
     """Streaming SHA256 hash for large files."""
@@ -639,6 +660,18 @@ class CentralController:
             payload = json.dumps({'action': 'set_tracking', 'value': merged['tracking_enabled']})
             self.mqtt_client.publish(topic, payload)
             logger.info(f"Pushed tracking_enabled={merged['tracking_enabled']} to {device_id}")
+
+        # Painted LUT profile — the .npz persists on the OWL's disk, so a
+        # reconnecting unit only needs the activation commands re-asserted.
+        if 'lut_profile' in merged:
+            payload = json.dumps({'action': 'set_lut_profile', 'name': merged['lut_profile']})
+            self.mqtt_client.publish(topic, payload)
+            logger.info(f"Pushed lut_profile={merged['lut_profile']} to {device_id}")
+
+        if 'lut_sensitivity' in merged:
+            payload = json.dumps({'action': 'set_lut_sensitivity', 'value': merged['lut_sensitivity']})
+            self.mqtt_client.publish(topic, payload)
+            logger.info(f"Pushed lut_sensitivity={merged['lut_sensitivity']} to {device_id}")
 
     def _actuation_broadcast_loop(self):
         """Broadcast computed actuation params to all connected OWLs every 1s."""
@@ -2232,6 +2265,307 @@ def delete_model(name):
     except Exception as e:
         logger.error(f"Error deleting model: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Weed painter routes (same surface as standalone so shared painter.js works)
+# ---------------------------------------------------------------------------
+
+
+def _painter_unavailable():
+    return jsonify({'success': False,
+                    'error': 'Weed painter requires OpenCV on the controller'}), 503
+
+
+def _deploy_lut_profile(name, sensitivity):
+    """Push a profile to every connected OWL and activate it fleet-wide.
+
+    Uses the download_model pattern: the OWL fetches the .npz over HTTPS,
+    verifies SHA256, then (apply=True) activates the profile and the lut
+    algorithm atomically after the file lands.
+    """
+    filename = f'{name}.npz'
+    path = LUT_PROFILES_DIR / filename
+    sha256 = _compute_sha256(path)
+    static_ip = controller.config.get('Network', 'static_ip', fallback='localhost')
+    url = f'https://{static_ip}/api/painter/download/{filename}'
+
+    payload = json.dumps({
+        'action': 'download_lut_profile',
+        'url': url,
+        'filename': filename,
+        'sha256': sha256,
+        'apply': True,
+        'sensitivity': sensitivity,
+    })
+    sent_to = []
+    with controller.mqtt_lock:
+        for device_id, state in controller.owls_state.items():
+            if state.get('connected', False):
+                controller.mqtt_client.publish(f'owl/{device_id}/commands', payload)
+                sent_to.append(device_id)
+
+    # Reconnecting OWLs get the activation re-asserted (file persists on
+    # their disk, so set_lut_profile alone is enough after first deploy).
+    controller.desired_state.setdefault('all', {})['lut_profile'] = name
+    controller.desired_state.setdefault('all', {})['lut_sensitivity'] = sensitivity
+    logger.info(f"LUT profile '{name}' deployed to {len(sent_to)} OWLs: {sent_to}")
+    return sent_to
+
+
+@app.route('/api/painter/session', methods=['POST'])
+def painter_session_start():
+    if not PAINTER_AVAILABLE:
+        return _painter_unavailable()
+    return jsonify({'success': True, 'session_id': painter_store.new_session()})
+
+
+@app.route('/api/painter/session/end', methods=['POST'])
+def painter_session_end():
+    if not PAINTER_AVAILABLE:
+        return _painter_unavailable()
+    data = request.json or {}
+    painter_store.end_session(str(data.get('session_id', '')))
+    return jsonify({'success': True})
+
+
+@app.route('/api/painter/frame', methods=['POST'])
+def painter_grab_frame():
+    """Freeze the selected OWL's current camera frame into the session."""
+    if not PAINTER_AVAILABLE:
+        return _painter_unavailable()
+    import base64
+    data = request.json or {}
+    session_id = str(data.get('session_id', ''))
+    device_id = str(data.get('device_id', '')).replace('_', '-')
+    if not device_id:
+        return jsonify({'success': False, 'error': 'No OWL selected'}), 400
+    host = _resolve_owl_host(device_id)
+    try:
+        r = requests.get(f'https://{host}/latest_frame.jpg', timeout=5, verify=False)
+        if r.status_code != 200:
+            return jsonify({'success': False,
+                            'error': f'Could not get frame from {device_id}'}), 502
+        frame = cv2.imdecode(np.frombuffer(r.content, np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            raise PainterError('Could not decode camera frame')
+        frame_id = painter_store.add_frame(session_id, frame)
+        return jsonify({'success': True, 'frame_id': frame_id,
+                        'image': base64.b64encode(r.content).decode('ascii'),
+                        'width': frame.shape[1], 'height': frame.shape[0]})
+    except PainterError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except requests.exceptions.ConnectionError:
+        return jsonify({'success': False,
+                        'error': f'{device_id} is offline or unreachable'}), 502
+    except Exception as e:
+        logger.error(f"Painter frame grab failed: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/painter/session/frames', methods=['GET'])
+def painter_session_frames():
+    """Re-fetch a session's frozen frames (browser reload recovery)."""
+    if not PAINTER_AVAILABLE:
+        return _painter_unavailable()
+    import base64
+    session_id = request.args.get('session_id', '')
+    if not painter_store.has_session(session_id):
+        return jsonify({'success': False, 'error': 'Session not found'}), 404
+    frames = []
+    for frame_id, frame in painter_store.list_frames(session_id):
+        ok, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        if ok:
+            frames.append({'frame_id': frame_id,
+                           'image': base64.b64encode(jpeg.tobytes()).decode('ascii'),
+                           'width': frame.shape[1], 'height': frame.shape[0]})
+    return jsonify({'success': True, 'frames': frames})
+
+
+@app.route('/api/painter/preview', methods=['POST'])
+def painter_preview():
+    """Bake a LUT from the current strokes; return the spray-preview overlay."""
+    if not PAINTER_AVAILABLE:
+        return _painter_unavailable()
+    import base64
+    data = request.json or {}
+    try:
+        session_id = str(data.get('session_id', ''))
+        frame_id = str(data.get('frame_id', ''))
+        sensitivity = max(0, min(100, int(data.get('sensitivity', 50))))
+        strokes = validate_strokes(data.get('strokes', []))
+        base_profile = None
+        base_name = str(data.get('base_profile', '') or '').strip()
+        if base_name:
+            base_profile = lut_profile_manager.load(base_name)
+        fg, bg = collect_class_pixels(painter_store, session_id, strokes, base_profile)
+        counts = {'weed': int(fg.shape[0]), 'background': int(bg.shape[0]),
+                  'required': MIN_CLASS_PIXELS}
+        if fg.shape[0] == 0 or bg.shape[0] == 0:
+            return jsonify({'success': True, 'overlay': None,
+                            'swatch': None, 'counts': counts})
+        frame = painter_store.get_frame(session_id, frame_id)
+        overlay, swatch, coverage = preview_images(frame, fg, bg, sensitivity)
+        return jsonify({'success': True,
+                        'overlay': base64.b64encode(overlay).decode('ascii'),
+                        'swatch': base64.b64encode(swatch).decode('ascii'),
+                        'coverage': round(coverage * 100, 1),
+                        'counts': counts})
+    except (PainterError, LUTProfileError) as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Painter preview failed: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/painter/save', methods=['POST'])
+def painter_save():
+    """Persist the painted profile to the library; optionally deploy fleet-wide."""
+    if not PAINTER_AVAILABLE:
+        return _painter_unavailable()
+    data = request.json or {}
+    try:
+        session_id = str(data.get('session_id', ''))
+        name = str(data.get('name', '')).strip().lower()
+        sensitivity = max(0, min(100, int(data.get('sensitivity', 50))))
+        apply_now = bool(data.get('apply', False))
+        strokes = validate_strokes(data.get('strokes', []))
+        base_profile = None
+        base_name = str(data.get('base_profile', '') or '').strip()
+        if base_name:
+            base_profile = lut_profile_manager.load(base_name)
+        fg, bg = collect_class_pixels(painter_store, session_id, strokes, base_profile)
+        thumb = None
+        thumb_frame_id = str(data.get('thumbnail_frame_id', '') or '')
+        if thumb_frame_id:
+            try:
+                thumb = make_thumbnail_jpeg(
+                    painter_store.get_frame(session_id, thumb_frame_id))
+            except PainterError:
+                pass
+        frames_count = len({s['frame_id'] for s in strokes})
+        meta = lut_profile_manager.save(name, fg, bg, strokes=strokes,
+                                        thumbnail_jpeg=thumb, frames=frames_count)
+        sent_to = []
+        if apply_now:
+            if not controller.mqtt_connected or not controller.mqtt_client:
+                return jsonify({'success': False,
+                                'error': 'Saved, but MQTT not connected — '
+                                         'deploy failed'}), 503
+            sent_to = _deploy_lut_profile(name, sensitivity)
+        return jsonify({'success': True, 'meta': meta, 'applied': apply_now,
+                        'sent_to': sent_to})
+    except (PainterError, LUTProfileError) as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Painter save failed: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/painter/download/<name>')
+def painter_download(name):
+    """Serve a LUT profile .npz to an OWL unit."""
+    safe_name = secure_filename(name)
+    if not safe_name or not safe_name.endswith('.npz'):
+        return jsonify({'error': 'Invalid name'}), 400
+    target = LUT_PROFILES_DIR / safe_name
+    if not target.resolve().parent == LUT_PROFILES_DIR.resolve():
+        return jsonify({'error': 'Invalid path'}), 400
+    if not target.is_file():
+        return jsonify({'error': 'Profile not found'}), 404
+    return send_from_directory(str(LUT_PROFILES_DIR), safe_name)
+
+
+@app.route('/api/painter/profiles', methods=['GET'])
+def painter_profiles():
+    """List library profiles + the fleet-wide active one."""
+    if not PAINTER_AVAILABLE:
+        return _painter_unavailable()
+    desired = controller.desired_state.get('all', {})
+    active = desired.get('lut_profile', '')
+    sensitivity = desired.get('lut_sensitivity', 50)
+    if not active:
+        # Fall back to what a connected OWL reports (controller restarted)
+        for state in controller.owls_state.values():
+            if state.get('connected') and state.get('lut_profile'):
+                active = state['lut_profile']
+                sensitivity = state.get('lut_sensitivity', 50)
+                break
+    return jsonify({'success': True,
+                    'profiles': lut_profile_manager.list_profiles(),
+                    'active': active, 'sensitivity': sensitivity})
+
+
+@app.route('/api/painter/profiles/delete', methods=['POST'])
+def painter_profile_delete():
+    if not PAINTER_AVAILABLE:
+        return _painter_unavailable()
+    data = request.json or {}
+    name = str(data.get('name', '')).strip().lower()
+    try:
+        lut_profile_manager.delete(name)
+        # Clean up copies on the OWLs too
+        if controller.mqtt_connected and controller.mqtt_client:
+            controller._broadcast_raw({'action': 'delete_lut_profile', 'name': name})
+        if controller.desired_state.get('all', {}).get('lut_profile') == name:
+            controller.desired_state['all'].pop('lut_profile', None)
+        return jsonify({'success': True})
+    except LUTProfileError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+
+@app.route('/api/painter/apply', methods=['POST'])
+def painter_apply():
+    """Deploy + activate a saved profile fleet-wide."""
+    if not PAINTER_AVAILABLE:
+        return _painter_unavailable()
+    data = request.json or {}
+    name = str(data.get('name', '')).strip().lower()
+    try:
+        sensitivity = max(0, min(100, int(data.get('sensitivity', 50))))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'Invalid sensitivity'}), 400
+    if not name or not lut_profile_manager.exists(name):
+        return jsonify({'success': False, 'error': f'Unknown profile: {name}'}), 400
+    if not controller.mqtt_connected or not controller.mqtt_client:
+        return jsonify({'success': False, 'error': 'MQTT not connected'}), 503
+    sent_to = _deploy_lut_profile(name, sensitivity)
+    return jsonify({'success': True, 'sent_to': sent_to})
+
+
+@app.route('/api/painter/swatch')
+def painter_swatch():
+    """PNG swatch of the colours a saved profile sprays at a given
+    sensitivity — the LUT made visible."""
+    if not PAINTER_AVAILABLE:
+        return _painter_unavailable()
+    name = str(request.args.get('name', '')).strip().lower()
+    try:
+        sensitivity = max(0, min(100, int(request.args.get('sensitivity', 50))))
+    except (TypeError, ValueError):
+        sensitivity = 50
+    try:
+        lut = lut_profile_manager.load_and_bake(name, sensitivity)
+        png, _ = lut_swatch_png(lut)
+        return Response(png, mimetype='image/png',
+                        headers={'Cache-Control': 'no-store'})
+    except LUTProfileError as e:
+        return jsonify({'success': False, 'error': str(e)}), 404
+
+
+@app.route('/api/painter/sensitivity', methods=['POST'])
+def painter_sensitivity():
+    """Live fleet-wide sensitivity (config tab, LUT mode)."""
+    data = request.json or {}
+    try:
+        sensitivity = max(0, min(100, int(data.get('value', 50))))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'Invalid sensitivity'}), 400
+    if not controller.mqtt_connected or not controller.mqtt_client:
+        return jsonify({'success': False, 'error': 'MQTT not connected'}), 503
+    controller._broadcast_raw({'action': 'set_lut_sensitivity', 'value': sensitivity})
+    controller.desired_state.setdefault('all', {})['lut_sensitivity'] = sensitivity
+    return jsonify({'success': True})
 
 
 # ---------------------------------------------------------------------------

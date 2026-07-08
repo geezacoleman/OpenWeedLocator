@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
     <link rel="stylesheet" href="/shared/css/numpad.css" />
     <link rel="stylesheet" href="/shared/css/_geometry.css" />
+    <link rel="stylesheet" href="/shared/css/painter.css" />
     <script src="{{ url_for('static', filename='lib/leaflet/leaflet.js') }}"></script>
 </head>
 <body>
@@ -180,6 +181,7 @@
                             <button class="mode-btn active" data-mode="gob" onclick="setPipelineMode('gob')">Colour</button>
                             <button class="mode-btn" data-mode="gog" onclick="setPipelineMode('gog')">AI</button>
                             <button class="mode-btn" data-mode="hybrid" onclick="setPipelineMode('hybrid')">Hybrid</button>
+                            <button class="mode-btn" data-mode="lut" onclick="setPipelineMode('lut')">Painted</button>
                         </div>
                     </div>
                 </div>
@@ -391,6 +393,21 @@
                     <button class="mode-btn active" data-mode="gob" onclick="setPipelineMode('gob')">Colour</button>
                     <button class="mode-btn" data-mode="gog" onclick="setPipelineMode('gog')">AI</button>
                     <button class="mode-btn" data-mode="hybrid" onclick="setPipelineMode('hybrid')">Hybrid</button>
+                    <button class="mode-btn" data-mode="lut" onclick="setPipelineMode('lut')">Painted</button>
+                </div>
+            </div>
+
+            <!-- Painted LUT profile panel — visible only in Painted mode -->
+            <div class="card lut-panel" id="lut-panel" style="display:none;">
+                <div class="lut-panel-row">
+                    <span class="lut-panel-label">Profile</span>
+                    <select id="lutProfileSelect" class="config-select">
+                        <option value="">No painted profiles yet</option>
+                    </select>
+                    <button id="applyLutProfileBtn" class="config-action-btn primary">Apply to all OWLs</button>
+                    <button id="openPainterBtn" class="config-action-btn primary">Paint weeds</button>
+                    <button id="extendLutProfileBtn" class="config-action-btn secondary">Edit</button>
+                    <button id="deleteLutProfileBtn" class="config-action-btn secondary">Delete</button>
                 </div>
             </div>
 
@@ -491,23 +508,50 @@
                             </div>
                         </div>
 
-                        <!-- Min Detection Area (single) -->
-                        <div class="config-slider-group">
+                        <!-- Min Weed Size (% of frame, log scale) -->
+                        <div class="config-slider-group" id="min-weed-size-slider-group"
+                             title="Detections smaller than this fraction of the camera frame are ignored. Resolution-independent; log scale for fine control at small sizes.">
                             <div class="slider-header">
-                                <span class="slider-title">Min Detection Area</span>
+                                <span class="slider-title">Min Weed Size</span>
                                 <span class="slider-values">
-                                    <span class="slider-val" id="min_detection_area-value">--</span>
+                                    <span class="slider-val" id="min_detection_area_percent-value">--</span>
                                 </span>
                             </div>
-                            <div class="single-slider" data-param="min_detection_area">
+                            <div class="single-slider" data-param="min_detection_area_percent">
                                 <div class="slider-rail">
                                     <div class="slider-track"><div class="slider-fill"></div></div>
-                                    <div class="slider-knob active" data-param="min_detection_area" id="min_detection_area-knob"></div>
+                                    <div class="slider-knob active" data-param="min_detection_area_percent" id="min_detection_area_percent-knob"></div>
                                 </div>
                             </div>
                             <div class="slider-fine-tune">
                                 <button class="fine-btn" data-delta="-1">&minus;</button>
                                 <button class="fine-btn" data-delta="1">+</button>
+                            </div>
+                        </div>
+
+                        <!-- LUT Sensitivity (single, painted mode only) -->
+                        <div class="config-slider-group" id="lut-sensitivity-slider-group" style="display:none;"
+                             title="Moves the painted colour threshold. Low: only the exact colours painted as weed are sprayed. High: anything close to them is sprayed.">
+                            <div class="slider-header">
+                                <span class="slider-title">Sensitivity</span>
+                                <span class="slider-values">
+                                    <span class="slider-val" id="lut_sensitivity-value">--</span>
+                                </span>
+                            </div>
+                            <div class="single-slider" data-param="lut_sensitivity">
+                                <div class="slider-rail">
+                                    <div class="slider-track"><div class="slider-fill"></div></div>
+                                    <div class="slider-knob active" data-param="lut_sensitivity" id="lut_sensitivity-knob"></div>
+                                </div>
+                            </div>
+                            <div class="slider-fine-tune">
+                                <button class="fine-btn" data-delta="-1">&minus;</button>
+                                <button class="fine-btn" data-delta="1">+</button>
+                            </div>
+                            <div class="lut-swatch-row">
+                                <span class="lut-sens-caption">higher sprays more</span>
+                                <img id="lutSwatchImg" class="lut-swatch" alt="Colours this profile sprays"
+                                     title="Colours this profile sprays" style="display:none">
                             </div>
                         </div>
 
@@ -808,6 +852,7 @@
 <script src="/shared/js/config.js"></script>
 <script src="/shared/js/numpad.js"></script>
 <script src="/shared/js/geometry_editor.js"></script>
+<script src="/shared/js/painter.js"></script>
 <script src="/shared/js/resolution_warning.js"></script>
 <script src="/shared/js/high_res_warning.js"></script>
 
@@ -816,6 +861,7 @@
 <script src="{{ url_for('static', filename='js/modules/_dashboard.js') }}"></script>
 <script src="{{ url_for('static', filename='js/modules/_controls.js') }}"></script>
 <script src="{{ url_for('static', filename='js/modules/_config_tab.js') }}"></script>
+<script src="{{ url_for('static', filename='js/modules/_lut_panel.js') }}"></script>
 <script src="{{ url_for('static', filename='js/modules/_video.js') }}"></script>
 <script src="{{ url_for('static', filename='js/modules/_config_editor.js') }}"></script>
 <script src="{{ url_for('static', filename='js/modules/_gps.js') }}"></script>

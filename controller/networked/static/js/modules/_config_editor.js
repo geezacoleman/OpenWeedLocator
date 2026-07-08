@@ -137,7 +137,10 @@ async function loadDeviceConfig(deviceId) {
         deviceConfig = JSON.parse(JSON.stringify(data.config));
         configEditorHasChanges = false;
 
-        updateActiveBadge(data.config_name || 'Unknown');
+        // The autosave working file displays as its source preset + unsaved marker
+        updateActiveBadge((data.config_unsaved && data.config_source)
+            ? data.config_source + ' — unsaved changes'
+            : (data.config_name || 'Unknown'));
         renderDeviceConfigSections();
         updateConfigEditorChangeState();
         showToast('Config loaded from ' + deviceId, 'success');

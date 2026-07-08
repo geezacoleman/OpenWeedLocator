@@ -12,7 +12,7 @@
  */
 const CONFIG_FIELD_DEFS = {
     'System': {
-        'algorithm': { type: 'select', options: ['exhsv', 'exg', 'hsv', 'gog', 'gog-hybrid'], help: 'Detection algorithm' },
+        'algorithm': { type: 'select', options: ['exhsv', 'exg', 'hsv', 'lut', 'gog', 'gog-hybrid'], help: 'Detection algorithm' },
         'input_file_or_directory': { type: 'text', help: 'Leave empty for camera input' },
         'relay_num': { type: 'select', options: ['1', '2', '4', '8', '12', '16'], help: 'Number of relays' },
         'actuation_duration': { type: 'number', step: 0.01, min: 0.01, max: 2.0, help: 'Spray duration in seconds' },
@@ -53,8 +53,11 @@ const CONFIG_FIELD_DEFS = {
         'saturation_max': { type: 'number', min: 0, max: 255 },
         'brightness_min': { type: 'number', min: 0, max: 255 },
         'brightness_max': { type: 'number', min: 0, max: 255 },
-        'min_detection_area': { type: 'number', min: 1, max: 10000 },
-        'invert_hue': { type: 'boolean' }
+        'min_detection_area': { type: 'number', min: 1, max: 10000, help: 'Min weed size in px² (used when the percent key is 0)' },
+        'min_detection_area_percent': { type: 'number', step: 0.001, min: 0, max: 5, help: 'Min weed size as % of the detection frame (0 = use px value)' },
+        'invert_hue': { type: 'boolean' },
+        'lut_profile': { type: 'text', help: 'Active painted LUT profile (set via the weed painter)' },
+        'lut_sensitivity': { type: 'number', min: 0, max: 100, help: 'LUT detection sensitivity (higher sprays more)' }
     },
     'GreenOnGreen': {
         'model_path': { type: 'text', help: 'Path to YOLO model (NCNN dir or .pt file)' },

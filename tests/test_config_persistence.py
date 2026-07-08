@@ -18,24 +18,32 @@ import pytest
 class TestPersistConfigChange:
     """Tests for standalone OWLDashboard._persist_config_change()."""
 
-    def test_writes_to_non_protected_file(self, standalone_test_client):
+    def test_named_preset_stays_frozen(self, standalone_test_client):
+        """Frozen-preset model: live changes never mutate a named preset —
+        they divert to the autosave working file with provenance."""
         client, dashboard, tmp_dir = standalone_test_client
 
-        # Create a custom config file (non-protected)
         custom_path = os.path.join(str(tmp_dir), 'my_config.ini')
         shutil.copy(os.path.join(str(tmp_dir), 'GENERAL_CONFIG.ini'), custom_path)
+        with open(custom_path) as f:
+            original = f.read()
 
-        # Set active config to the custom file
         pointer = os.path.join(str(tmp_dir), 'active_config.txt')
         with open(pointer, 'w') as f:
             f.write('config/my_config.ini')
 
         dashboard._persist_config_change('GreenOnBrown', 'exg_min', '42')
 
-        # Verify the file was updated
+        # Named preset untouched
+        with open(custom_path) as f:
+            assert f.read() == original
+
+        # Change landed in the autosave working file with provenance
+        from utils.config_manager import AUTOSAVE_CONFIG
         config = configparser.ConfigParser()
-        config.read(custom_path)
+        config.read(os.path.join(str(tmp_dir), AUTOSAVE_CONFIG))
         assert config.get('GreenOnBrown', 'exg_min') == '42'
+        assert config.get('Meta', 'source') == 'my_config.ini'
 
     def test_protected_default_triggers_copy_on_write(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
@@ -79,8 +87,10 @@ class TestPersistConfigChange:
 
         dashboard._persist_config_change('GreenOnGreen', 'confidence', '0.75')
 
+        # Change diverts to the autosave working file (frozen-preset model)
+        from utils.config_manager import AUTOSAVE_CONFIG
         config = configparser.ConfigParser()
-        config.read(custom_path)
+        config.read(os.path.join(str(tmp_dir), AUTOSAVE_CONFIG))
         assert config.get('GreenOnGreen', 'confidence') == '0.75'
 
     def test_missing_config_file_logged(self, standalone_test_client):

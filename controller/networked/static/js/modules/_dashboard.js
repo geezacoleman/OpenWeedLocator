@@ -23,7 +23,8 @@ function syncConfigFromOWLState(owlState) {
     var synced = false;
     var params = ['exg_min', 'exg_max', 'hue_min', 'hue_max',
                   'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
-                  'min_detection_area', 'crop_buffer_px', 'confidence'];
+                  'min_detection_area', 'min_detection_area_percent',
+                  'crop_buffer_px', 'confidence', 'lut_sensitivity'];
 
     for (var i = 0; i < params.length; i++) {
         var key = params[i];
@@ -36,6 +37,18 @@ function syncConfigFromOWLState(owlState) {
                 newVal = Math.round(newVal * 100);
             }
 
+            // Min weed size %: when unset (0 = legacy px mode) seed the
+            // slider from the px value converted against the frame area
+            if (key === 'min_detection_area_percent') {
+                var mp = configParams[key];
+                if (newVal <= 0) {
+                    var area = (Number(owlState.resolution_width) || 640)
+                             * (Number(owlState.resolution_height) || 480);
+                    newVal = (Number(owlState.min_detection_area) || 10) / area * 100;
+                }
+                newVal = roundParamValue(mp, Math.max(mp.min, Math.min(mp.max, newVal)));
+            }
+
             if (configParams[key].value !== newVal) {
                 configParams[key].value = newVal;
                 synced = true;
@@ -45,6 +58,7 @@ function syncConfigFromOWLState(owlState) {
 
     if (synced && typeof updateAllSliders === 'function') {
         updateAllSliders();
+        if (typeof updateLutSwatch === 'function') updateLutSwatch();
     }
 }
 
@@ -182,6 +196,9 @@ async function updateDashboard() {
             if (typeof updateModeAvailability === 'function') {
                 updateModeAvailability(!!firstOwl.model_available);
             }
+            if (typeof syncLutPanelFromOwl === 'function') {
+                syncLutPanelFromOwl(firstOwl);
+            }
             if (typeof setHighResContextBadge === 'function' && firstOwl.rpi_version) {
                 setHighResContextBadge(firstOwl.rpi_version);
             }
@@ -303,8 +320,11 @@ function buildOWLCard(deviceId, owl) {
         : '';
 
     // Active config "Running: <name>" (prefer the friendly [Meta] name).
-    let cfgName = owl.config_name || '';
+    // The autosave working file displays as its source preset + unsaved marker.
+    let cfgName = (owl.config_unsaved && owl.config_source)
+        ? owl.config_source : (owl.config_name || '');
     if (cfgName && typeof prettyConfigName === 'function') cfgName = prettyConfigName(cfgName);
+    if (cfgName && owl.config_unsaved) cfgName += ' — unsaved changes';
     const esc = (typeof escapeConfigLabel === 'function') ? escapeConfigLabel : (s) => s;
     const cfgLine = (isOnline && cfgName)
         ? '<div class="owl-compact-config" title="Config loaded on this OWL">Running: ' + esc(cfgName) + '</div>'

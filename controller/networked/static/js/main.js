@@ -33,6 +33,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initSensitivityDial();
     startActuationPolling();
     if (typeof Numpad !== 'undefined') Numpad.init();
+    if (typeof initLutPanel === 'function') initLutPanel();
     if (typeof initWidgets === 'function') initWidgets();
     if (typeof initAgent === 'function') initAgent();
     updateDashboard();

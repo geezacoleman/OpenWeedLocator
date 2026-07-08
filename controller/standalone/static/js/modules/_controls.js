@@ -850,6 +850,14 @@ function setPipelineMode(mode) {
     var btn = document.querySelector('.mode-btn[data-mode="' + mode + '"]');
     if (!btn || btn.classList.contains('disabled') || btn.classList.contains('loading')) return;
 
+    if (mode === 'lut') {
+        // Painted mode activates via profile apply (a profile must exist);
+        // with none saved, reveal the panel so Paint weeds is reachable.
+        if (typeof activateLutMode === 'function') activateLutMode();
+        return;
+    }
+    if (typeof clearLutPanelForced === 'function') clearLutPanelForced();
+
     var algorithm;
     if (mode === 'gob') {
         algorithm = lastGoBAlgorithm;
@@ -897,12 +905,19 @@ function updatePipelineModeUI(algorithm) {
         mode = 'gog';
     } else if (algorithm === 'gog-hybrid') {
         mode = 'hybrid';
+    } else if (algorithm === 'lut') {
+        mode = 'lut';   // never remember 'lut' as a GoB algorithm
     } else {
         mode = 'gob';
         if (algorithm) lastGoBAlgorithm = algorithm;
     }
 
-    document.querySelectorAll('.mode-btn').forEach(function(btn) {
+    // A locally-forced Painted panel (no profile applied yet) keeps its button lit
+    if (mode === 'gob' && typeof isLutPanelForced === 'function' && isLutPanelForced()) {
+        mode = 'lut';
+    }
+
+    document.querySelectorAll('.mode-btn[data-mode]').forEach(function(btn) {
         btn.classList.remove('active', 'loading');
         if (btn.dataset.mode === mode) {
             btn.classList.add('active');

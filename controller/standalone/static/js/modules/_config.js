@@ -32,7 +32,11 @@ async function loadConfig() {
         activeConfigPath = data.active_config;
         isDefaultConfig = data.is_default;
         availableConfigs = data.available_configs || [];
-        document.getElementById('configFilePath').textContent = data.config_name;
+        // The autosave working file displays as its source preset + unsaved marker
+        document.getElementById('configFilePath').textContent =
+            (data.config_unsaved && data.config_source)
+                ? data.config_source + ' — unsaved changes'
+                : data.config_name;
         updateActiveConfigBadge();
         renderConfigSections();
         renderConfigSelector();

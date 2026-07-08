@@ -75,6 +75,9 @@ document.addEventListener('DOMContentLoaded', function() {
     initConfigEditor();
     initSliders();
 
+    // Initialize painted LUT panel + weed painter
+    if (typeof initLutPanel === 'function') initLutPanel();
+
     // Initialize on-screen numpad for kiosk
     if (typeof Numpad !== 'undefined') Numpad.init();
 

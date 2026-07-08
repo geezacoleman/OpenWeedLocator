@@ -360,6 +360,14 @@ function setPipelineMode(mode) {
     var btn = document.querySelector('.mode-btn[data-mode="' + mode + '"]');
     if (!btn || btn.classList.contains('disabled') || btn.classList.contains('loading')) return;
 
+    if (mode === 'lut') {
+        // Painted mode activates via profile apply (a profile must exist);
+        // with none saved, reveal the panel so Paint weeds is reachable.
+        if (typeof activateLutMode === 'function') activateLutMode();
+        return;
+    }
+    if (typeof clearLutPanelForced === 'function') clearLutPanelForced();
+
     // Map mode to algorithm value
     var algorithm;
     if (mode === 'gob') {
@@ -386,14 +394,22 @@ function updatePipelineModeUI(algorithm) {
         mode = 'gog';
     } else if (algorithm === 'gog-hybrid') {
         mode = 'hybrid';
+    } else if (algorithm === 'lut') {
+        mode = 'lut';   // never remember 'lut' as a GoB algorithm
     } else {
         mode = 'gob';
         // Remember the GoB algorithm for switching back
         if (algorithm) lastGoBAlgorithm = algorithm;
     }
 
-    // Update button states
-    document.querySelectorAll('.mode-btn').forEach(function(btn) {
+    // A locally-forced Painted panel (no profiles applied yet) keeps its
+    // button lit even though the fleet still reports a GoB algorithm.
+    if (mode === 'gob' && typeof isLutPanelForced === 'function' && isLutPanelForced()) {
+        mode = 'lut';
+    }
+
+    // Update button states (pipeline buttons only — not e.g. stability .mode-btn)
+    document.querySelectorAll('.mode-btn[data-mode]').forEach(function(btn) {
         btn.classList.remove('active', 'loading');
         if (btn.dataset.mode === mode) {
             btn.classList.add('active');
@@ -402,9 +418,9 @@ function updatePipelineModeUI(algorithm) {
 
     pendingMode = null;
 
-    // Update slider visibility
+    // Update slider visibility ('lut' also covers the forced-panel case)
     if (typeof updateSliderVisibility === 'function') {
-        updateSliderVisibility(algorithm);
+        updateSliderVisibility(mode === 'lut' ? 'lut' : algorithm);
     }
 }
 

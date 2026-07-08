@@ -1,0 +1,434 @@
+/* ==========================================================================
+   OWL Controllers - Weed Painter (shared)
+   Full-screen modal: stage + right tool rail + bottom filmstrip.
+   Sized for the EDATEC HMI3010 kiosk (1280x800) with glove-friendly targets.
+   ========================================================================== */
+
+.painter-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 3000;
+    display: flex;
+    background: #10151c;
+}
+
+.painter-main {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+/* ── Stage ── */
+.painter-stage {
+    position: relative;
+    flex: 1 1 auto;
+    overflow: hidden;
+    touch-action: none;
+    background: #10151c;
+}
+
+.painter-content {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-origin: 0 0;
+    line-height: 0;
+}
+
+.painter-frame {
+    display: block;
+    max-width: none;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+.painter-mask,
+.painter-strokes {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.painter-strokes { cursor: crosshair; }
+
+.painter-zoombar {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(16, 21, 28, 0.85);
+    border: 1px solid #3a4553;
+    border-radius: 10px;
+    padding: 6px;
+}
+
+.painter-zoom-btn {
+    min-width: 56px;
+    min-height: 56px;
+    font-size: 1.4rem;
+    border: 1px solid #3a4553;
+    border-radius: 8px;
+    background: #1d2634;
+    color: #e8edf4;
+}
+
+.painter-zoom-btn:active { background: #2c3a4d; }
+.painter-zoom-reset { font-size: 0.95rem; }
+
+.painter-zoom-val {
+    color: #e8edf4;
+    font-size: 1rem;
+    min-width: 48px;
+    text-align: center;
+}
+
+.painter-hint {
+    position: absolute;
+    left: 12px;
+    bottom: 12px;
+    right: 12px;
+    pointer-events: none;
+    color: #e8edf4;
+    background: rgba(16, 21, 28, 0.85);
+    border: 1px solid #3a4553;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 1.05rem;
+    width: fit-content;
+    max-width: calc(100% - 24px);
+}
+
+.painter-hint.error { border-color: #c0392b; color: #ff9d8f; }
+
+/* ── Filmstrip ── */
+.painter-filmstrip {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    background: #161d27;
+    border-top: 1px solid #2b3441;
+    overflow-x: auto;
+}
+
+.painter-thumbs {
+    display: flex;
+    gap: 8px;
+}
+
+.painter-thumb {
+    position: relative;
+    flex: 0 0 auto;
+    width: 112px;
+    height: 72px;
+    padding: 0;
+    border: 2px solid #3a4553;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #000;
+}
+
+.painter-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.painter-thumb.active { border-color: #2ecc40; }
+
+.painter-thumb span {
+    position: absolute;
+    top: 2px;
+    right: 4px;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.6);
+    border-radius: 6px;
+    padding: 0 6px;
+    font-size: 0.8rem;
+}
+
+.painter-newframe {
+    flex: 0 0 auto;
+    min-width: 140px;
+    height: 72px;
+    border: 2px dashed #3a4553;
+    border-radius: 8px;
+    background: transparent;
+    color: #e8edf4;
+    font-size: 1.05rem;
+}
+
+.painter-newframe:active { background: #1d2634; }
+
+/* ── Tool rail ── */
+.painter-rail {
+    flex: 0 0 220px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 14px;
+    background: #161d27;
+    border-left: 1px solid #2b3441;
+    overflow-y: auto;
+}
+
+.painter-rail-title {
+    color: #e8edf4;
+    font-size: 1.15rem;
+    font-weight: 600;
+}
+
+.painter-tools {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.painter-tool {
+    min-height: 60px;
+    border: 1px solid #3a4553;
+    border-radius: 10px;
+    background: #1d2634;
+    color: #e8edf4;
+    font-size: 1rem;
+}
+
+.painter-tool.active { border-width: 3px; border-color: #7f97b3; background: #2c3a4d; }
+.painter-tool-weed.active { border-color: #2ecc40; }
+.painter-tool-bg.active { border-color: #ff4136; }
+
+.painter-brushes {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.painter-label {
+    color: #9fb0c3;
+    font-size: 0.95rem;
+    flex: 1 1 auto;
+}
+
+.painter-brush {
+    width: 52px;
+    height: 52px;
+    border: 1px solid #3a4553;
+    border-radius: 10px;
+    background: #1d2634;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.painter-brush span {
+    display: block;
+    border-radius: 50%;
+    background: #e8edf4;
+}
+
+.painter-brush.active { border: 3px solid #7f97b3; background: #2c3a4d; }
+
+.painter-undo {
+    min-height: 60px;
+    border: 1px solid #3a4553;
+    border-radius: 10px;
+    background: #1d2634;
+    color: #e8edf4;
+    font-size: 1.05rem;
+}
+
+.painter-undo:active { background: #2c3a4d; }
+
+.painter-sens { color: #e8edf4; }
+
+.painter-sens .painter-label { display: block; margin-bottom: 8px; }
+.painter-sens-val { color: #e8edf4; }
+
+.painter-sens-slider {
+    width: 100%;
+    height: 44px;
+    accent-color: #ff8c1a;
+    touch-action: none;
+}
+
+.painter-swatch-wrap { color: #e8edf4; }
+.painter-swatch-wrap .painter-label { display: block; margin-bottom: 6px; }
+.painter-coverage { color: #9fb0c3; font-weight: 400; font-size: 0.85rem; }
+
+.painter-swatch {
+    display: block;
+    width: 100%;
+    height: 26px;
+    border-radius: 6px;
+    border: 1px solid #3a4553;
+    image-rendering: pixelated;
+}
+
+.painter-counts {
+    color: #9fb0c3;
+    font-size: 0.9rem;
+    min-height: 1.2em;
+}
+
+.painter-rail-spacer { flex: 1 1 auto; }
+
+.painter-save {
+    min-height: 64px;
+    border: none;
+    border-radius: 10px;
+    background: #2ecc40;
+    color: #0c1a0e;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.painter-save:disabled { background: #2b3441; color: #6c7a89; }
+
+.painter-exit {
+    min-height: 60px;
+    border: 1px solid #3a4553;
+    border-radius: 10px;
+    background: #1d2634;
+    color: #e8edf4;
+    font-size: 1.05rem;
+}
+
+/* ── In-overlay dialogs ── */
+.painter-dialog {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 10;
+}
+
+.painter-dialog-box {
+    background: white;
+    border: 1px solid #dce1e8;
+    border-radius: 12px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+    padding: 20px;
+    min-width: 380px;
+    max-width: 520px;
+}
+
+.painter-dialog-title {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #22303f;
+    margin-bottom: 12px;
+}
+
+.painter-dialog-note {
+    color: #5d6d7e;
+    font-size: 0.95rem;
+    margin: 8px 0 4px;
+}
+
+.painter-name-input {
+    width: 100%;
+    min-height: 52px;
+    font-size: 1.1rem;
+    padding: 8px 12px;
+    border: 1px solid #dce1e8;
+    border-radius: 8px;
+    box-sizing: border-box;
+}
+
+.painter-dialog-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+    flex-wrap: wrap;
+}
+
+.painter-dialog-btn {
+    flex: 1 1 auto;
+    min-height: 56px;
+    border: 1px solid #dce1e8;
+    border-radius: 10px;
+    background: #f4f6f9;
+    color: #22303f;
+    font-size: 1.05rem;
+}
+
+.painter-dialog-btn.primary {
+    background: #2ecc40;
+    border-color: #2ecc40;
+    color: #0c1a0e;
+    font-weight: 600;
+}
+
+/* ── Config-tab LUT panel (both controllers) ──
+   Compact two-row card, rendered only while the Painted detection mode is
+   selected — it must not consume space in Colour/AI/Hybrid modes. */
+.lut-panel {
+    background: white;
+    border-radius: 12px;
+    border: 1px solid #dce1e8;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 8px;
+}
+
+.lut-panel-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.lut-panel-label {
+    color: #5d6d7e;
+    font-size: 0.95rem;
+    flex: 0 0 auto;
+}
+
+.lut-panel-row .config-select { min-height: 52px; flex: 1 1 160px; max-width: 340px; }
+.lut-panel-row button { min-height: 52px; padding: 0 16px; }
+
+.lut-sens-row { align-items: center; }
+.lut-sens-row .slider-title { flex: 0 0 auto; }
+
+.lut-sens-input {
+    flex: 1 1 160px;
+    height: 44px;
+    accent-color: #ff8c1a;
+}
+
+.lut-sens-caption {
+    color: #8a99aa;
+    font-size: 0.85rem;
+    flex: 0 0 auto;
+}
+
+/* "Sprayed colours" strip — the profile's LUT made visible.
+   Lives inside the Sensitivity slider group (painted mode). */
+.lut-swatch-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.lut-swatch {
+    flex: 1 1 120px;
+    min-width: 0;
+    height: 24px;
+    border-radius: 6px;
+    border: 1px solid #dce1e8;
+    image-rendering: pixelated;
+}

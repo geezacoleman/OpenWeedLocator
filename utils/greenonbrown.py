@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 from utils.algorithms import exg, exg_standardised, exg_standardised_hue, hsv, exgr, gndvi, maxg
+from utils.lut_manager import apply_lut
 import numpy as np
 import cv2
 
@@ -7,9 +8,14 @@ import cv2
 MAX_DETECTIONS = 50
 
 class GreenOnBrown:
-    def __init__(self, algorithm='exg', label_file='models/labels.txt'):
+    def __init__(self, algorithm='exg', label_file='models/labels.txt', lut_table=None):
         self.algorithm = algorithm
         self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+
+        # Painted LUT profile table (baked by utils.lut_manager) and a reusable
+        # per-frame index buffer — the detection loop is single-threaded.
+        self.lut_table = lut_table
+        self._lut_index_buffer = None
 
         # Dictionary mapping algorithm names to functions
         self.algorithms = {
@@ -19,7 +25,8 @@ class GreenOnBrown:
             'nexg': exg_standardised,
             'exhsv': exg_standardised_hue,
             'hsv': hsv,
-            'gndvi': gndvi
+            'gndvi': gndvi,
+            'lut': self._lut_inference,
         }
 
         # Discover custom algorithms (file-isolated, AST-validated)
@@ -28,6 +35,18 @@ class GreenOnBrown:
             self.algorithms.update(discover_custom_algorithms())
         except Exception:
             pass
+
+    def set_lut(self, lut_table):
+        """Hot-swap the baked LUT table (profile switch or sensitivity re-bake)."""
+        self.lut_table = lut_table
+
+    def _lut_inference(self, image, params=None):
+        """Classify via the painted colour LUT. Returns a pre-thresholded mask."""
+        if self.lut_table is None:
+            raise RuntimeError('LUT algorithm selected but no profile is loaded')
+        if self._lut_index_buffer is None or self._lut_index_buffer.shape != image.shape[:2]:
+            self._lut_index_buffer = np.empty(image.shape[:2], dtype=np.uint16)
+        return apply_lut(image, self.lut_table, self._lut_index_buffer), True
 
     def inference(self, image,
                   exg_min=30,

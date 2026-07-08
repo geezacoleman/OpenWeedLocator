@@ -40,8 +40,13 @@ function updateSystemStats() {
             // .ini and the _YYYYMMDD_HHMMSS timestamp to a readable name.
             const cfgLine = document.getElementById('activeConfigLine');
             if (cfgLine) {
-                let cfgName = (data.config_name || '').replace(/\.ini$/, '');
+                // The autosave working file displays as its source preset
+                // plus an unsaved marker (frozen-preset model)
+                const rawName = (data.config_unsaved && data.config_source)
+                    ? data.config_source : (data.config_name || '');
+                let cfgName = rawName.replace(/\.ini$/, '');
                 cfgName = cfgName.replace(/_\d{8}_\d{6}$/, '').replace(/[-_]+/g, ' ').trim();
+                if (cfgName && data.config_unsaved) cfgName += ' — unsaved changes';
                 if (cfgName) {
                     setText('activeConfigName', cfgName);
                     cfgLine.classList.remove('hidden');
@@ -132,6 +137,11 @@ function updateSystemStats() {
             // Sync config sliders from MQTT state
             if (typeof syncSlidersFromStats === 'function') {
                 syncSlidersFromStats(data);
+            }
+
+            // Sync painted LUT panel (config tab)
+            if (typeof syncLutPanelFromStats === 'function') {
+                syncLutPanelFromStats(data);
             }
 
             // Update hardware lock UI based on controller status

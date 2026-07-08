@@ -146,7 +146,21 @@ class Owl:
         self.brightness_min = self.config.getint('GreenOnBrown', 'brightness_min')
         self.brightness_max = self.config.getint('GreenOnBrown', 'brightness_max')
         self.min_detection_area = self.config.getint('GreenOnBrown', 'min_detection_area')
+        # Resolution-independent alternative: min weed size as % of the
+        # detection (cropped) frame area. When > 0 it takes precedence over
+        # the px value above (which remains as legacy/preset fallback).
+        self.min_detection_area_percent = self.config.getfloat(
+            'GreenOnBrown', 'min_detection_area_percent', fallback=0.0)
         self.invert_hue = self.config.getboolean('GreenOnBrown', 'invert_hue')
+
+        # Painted LUT detection profiles (algorithm = lut). Profiles are .npz
+        # files built by the dashboard weed painter and stored beside the config.
+        self.lut_profile = self.config.get('GreenOnBrown', 'lut_profile', fallback='')
+        self.lut_sensitivity = self.config.getint('GreenOnBrown', 'lut_sensitivity', fallback=50)
+        from utils.lut_manager import LUTProfileManager
+        self.lut_manager = LUTProfileManager(
+            os.path.join(os.path.dirname(os.path.abspath(self._config_path)), 'lut_profiles'))
+        self.lut_manager.ensure_builtin_profiles()
 
         # Sensitivity preset manager
         from utils.sensitivity_manager import SensitivityManager
@@ -501,6 +515,8 @@ class Owl:
         self._pending_trackbar_updates = {}
         self._pending_model = None
         self._pending_detect_classes = None
+        self._pending_lut_profile = None
+        self._pending_lut_sensitivity = None
         self._gog_detector = None
         # When True the dashboard preview streams the full uncropped frame (used by
         # the geometry editor so its overlay maps to the whole image). Default: the
@@ -653,6 +669,14 @@ class Owl:
                     detection_persist_frames=self.detection_persist_frames,
                     tracker_params=tracker_params,
                 )
+            elif algo == 'lut':
+                if not self.lut_profile:
+                    raise ValueError(
+                        'LUT algorithm selected but no lut_profile is set — '
+                        'paint one via the dashboard weed painter')
+                lut_table = self.lut_manager.load_and_bake(
+                    self.lut_profile, self.lut_sensitivity)
+                return GreenOnBrown(algorithm='lut', lut_table=lut_table)
             else:
                 return GreenOnBrown(algorithm=algo)
 
@@ -663,10 +687,22 @@ class Owl:
 
         except Exception as e:
             self.logger.error(f"[ERROR] Failed to create detector for '{algorithm}': {e}")
-            self.logger.error("[ERROR] OWL will continue running without detection. Change algorithm via dashboard to recover.")
             weed_detector = None
             if self.dash:
                 self.dash.state['algorithm_error'] = str(e)
+            if algorithm == 'lut':
+                # Fail-safe: a missing/corrupt painted profile must not leave
+                # the unit without detection in the field — fall back to exhsv.
+                try:
+                    algorithm = 'exhsv'
+                    weed_detector = _create_detector(algorithm)
+                    self.logger.error("[ERROR] Falling back to 'exhsv' detection")
+                    if self.dash:
+                        self.dash.state['algorithm'] = algorithm
+                except Exception as fallback_error:
+                    self.logger.error(f"[ERROR] exhsv fallback also failed: {fallback_error}")
+            if weed_detector is None:
+                self.logger.error("[ERROR] OWL will continue running without detection. Change algorithm via dashboard to recover.")
 
         if self.show_display:
             self.relay_vis = self.relay_controller.relay_vis
@@ -730,6 +766,43 @@ class Owl:
                     self.brightness_min = cv2.getTrackbarPos("Bright-Min", self.window_name)
                     self.brightness_max = cv2.getTrackbarPos("Bright-Max", self.window_name)
 
+                # Live LUT profile / sensitivity updates. Drained BEFORE the
+                # algorithm drain so a set_lut_profile + set_algorithm pair
+                # arriving together builds the new detector from the new profile.
+                if self._pending_lut_sensitivity is not None:
+                    self.lut_sensitivity = self._pending_lut_sensitivity
+                    self._pending_lut_sensitivity = None
+                    # Re-bake now unless a profile switch is also pending
+                    # (that drain bakes at the new sensitivity anyway).
+                    if (self._pending_lut_profile is None and algorithm == 'lut'
+                            and weed_detector is not None
+                            and hasattr(weed_detector, 'set_lut') and self.lut_profile):
+                        try:
+                            weed_detector.set_lut(self.lut_manager.load_and_bake(
+                                self.lut_profile, self.lut_sensitivity))
+                            self.logger.info(f"LUT re-baked at sensitivity {self.lut_sensitivity}")
+                        except Exception as e:
+                            self.logger.error(f"LUT sensitivity re-bake failed: {e}")
+
+                if self._pending_lut_profile is not None:
+                    new_lut_profile = self._pending_lut_profile
+                    self._pending_lut_profile = None
+                    try:
+                        lut_table = self.lut_manager.load_and_bake(
+                            new_lut_profile, self.lut_sensitivity)
+                        self.lut_profile = new_lut_profile
+                        if algorithm == 'lut' and weed_detector is not None \
+                                and hasattr(weed_detector, 'set_lut'):
+                            weed_detector.set_lut(lut_table)
+                        self.logger.info(f"LUT profile switched to: {new_lut_profile}")
+                        if self.dash:
+                            self.dash.state.pop('algorithm_error', None)
+                    except Exception as e:
+                        self.logger.error(f"Failed to load LUT profile '{new_lut_profile}': {e}")
+                        if self.dash:
+                            self.dash.state['lut_profile'] = self.lut_profile
+                            self.dash.state['algorithm_error'] = str(e)
+
                 # Pre-load detectors/models outside detection guard so they're
                 # ready instantly when the user enables detection.
                 # Live algorithm switching
@@ -786,6 +859,15 @@ class Owl:
                 if self._detection_enable and weed_detector is not None:
                     cropped_frame = frame[self.crop_slice]
 
+                    # Min weed size: % of the detection frame wins over the
+                    # legacy px value (resolution/crop independent)
+                    if self.min_detection_area_percent > 0:
+                        min_detection_area = max(1, int(round(
+                            self.min_detection_area_percent / 100.0
+                            * self.cropped_width * self.cropped_height)))
+                    else:
+                        min_detection_area = self.min_detection_area
+
                     return_image_out = self.show_display or bool(self.dash)
 
                     if algorithm == 'gog':
@@ -835,7 +917,7 @@ class Owl:
                             hue_min=self.hue_min, hue_max=self.hue_max,
                             saturation_min=self.saturation_min, saturation_max=self.saturation_max,
                             brightness_min=self.brightness_min, brightness_max=self.brightness_max,
-                            min_detection_area=self.min_detection_area, invert_hue=self.invert_hue
+                            min_detection_area=min_detection_area, invert_hue=self.invert_hue
                         )
                     else:
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
@@ -850,7 +932,7 @@ class Owl:
                             brightness_max=self.brightness_max,
                             show_display=return_image_out,
                             algorithm=algorithm,
-                            min_detection_area=self.min_detection_area,
+                            min_detection_area=min_detection_area,
                             invert_hue=self.invert_hue,
                             label='WEED'
                         )

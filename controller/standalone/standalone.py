@@ -27,7 +27,12 @@ from utils.input_manager import get_rpi_version
 from utils.directory_manager import scan_sessions
 from utils.config_manager import (
     build_config_filename, parse_config_meta, strip_geometry_keys, GEOMETRY_FILE,
-    stamp_config_meta, atomic_write_config,
+    stamp_config_meta, atomic_write_config, AUTOSAVE_CONFIG, seed_autosave,
+)
+from utils.lut_manager import LUTProfileManager, LUTProfileError, MIN_CLASS_PIXELS
+from utils.painter_sessions import (
+    PainterSessionStore, PainterError, validate_strokes,
+    collect_class_pixels, preview_images, make_thumbnail_jpeg,
 )
 
 try:
@@ -74,6 +79,15 @@ class OWLDashboard:
         except Exception as e:
             self.logger.error(f"Failed to connect to MQTT: {e}")
             self.mqtt_client = None
+
+        # Weed painter: in-memory painting sessions + LUT profile storage.
+        # Standalone runs on the same Pi as owl.py, so profiles are written
+        # straight to the directory the detection loop reads from.
+        self.painter_store = PainterSessionStore()
+        repo_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')
+        self.lut_profile_manager = LUTProfileManager(
+            os.path.abspath(os.path.join(repo_root, 'config', 'lut_profiles')))
+        self.lut_profile_manager.ensure_builtin_profiles()
 
         self.setup_routes()
 
@@ -480,6 +494,204 @@ class OWLDashboard:
                 self.logger.error(f"Error deleting sensitivity preset: {e}")
                 return jsonify({'success': False, 'error': str(e)}), 500
 
+        # ==================== Weed painter ====================
+
+        @self.app.route('/api/painter/session', methods=['POST'])
+        def painter_session_start():
+            """Start a painting session (frozen frames held server-side)."""
+            return jsonify({'success': True,
+                            'session_id': self.painter_store.new_session()})
+
+        @self.app.route('/api/painter/session/end', methods=['POST'])
+        def painter_session_end():
+            data = request.get_json() or {}
+            self.painter_store.end_session(str(data.get('session_id', '')))
+            return jsonify({'success': True})
+
+        @self.app.route('/api/painter/frame', methods=['POST'])
+        def painter_grab_frame():
+            """Freeze the current camera frame into the painting session."""
+            import base64 as b64mod
+            data = request.get_json() or {}
+            session_id = str(data.get('session_id', ''))
+            try:
+                with urllib.request.urlopen('http://127.0.0.1:8001/latest_frame.jpg',
+                                            timeout=2) as resp:
+                    jpeg = resp.read()
+                frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+                if frame is None:
+                    raise PainterError('Could not decode camera frame')
+                frame_id = self.painter_store.add_frame(session_id, frame)
+                return jsonify({'success': True, 'frame_id': frame_id,
+                                'image': b64mod.b64encode(jpeg).decode('ascii'),
+                                'width': frame.shape[1], 'height': frame.shape[0]})
+            except PainterError as e:
+                return jsonify({'success': False, 'error': str(e)}), 400
+            except Exception as e:
+                self.logger.error(f"Painter frame grab failed: {e}")
+                return jsonify({'success': False,
+                                'error': f'Could not grab frame: {e}'}), 502
+
+        @self.app.route('/api/painter/session/frames', methods=['GET'])
+        def painter_session_frames():
+            """Re-fetch a session's frozen frames (browser reload recovery)."""
+            import base64 as b64mod
+            session_id = request.args.get('session_id', '')
+            if not self.painter_store.has_session(session_id):
+                return jsonify({'success': False, 'error': 'Session not found'}), 404
+            frames = []
+            for frame_id, frame in self.painter_store.list_frames(session_id):
+                ok, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                if ok:
+                    frames.append({
+                        'frame_id': frame_id,
+                        'image': b64mod.b64encode(jpeg.tobytes()).decode('ascii'),
+                        'width': frame.shape[1], 'height': frame.shape[0]})
+            return jsonify({'success': True, 'frames': frames})
+
+        @self.app.route('/api/painter/preview', methods=['POST'])
+        def painter_preview():
+            """Bake a LUT from the current strokes; return the spray-preview
+            overlay (BGRA PNG, alpha = mask) for the displayed frame."""
+            import base64 as b64mod
+            data = request.get_json() or {}
+            try:
+                session_id = str(data.get('session_id', ''))
+                frame_id = str(data.get('frame_id', ''))
+                sensitivity = max(0, min(100, int(data.get('sensitivity', 50))))
+                strokes = validate_strokes(data.get('strokes', []))
+                base_profile = None
+                base_name = str(data.get('base_profile', '') or '').strip()
+                if base_name:
+                    base_profile = self.lut_profile_manager.load(base_name)
+                fg, bg = collect_class_pixels(
+                    self.painter_store, session_id, strokes, base_profile)
+                counts = {'weed': int(fg.shape[0]), 'background': int(bg.shape[0]),
+                          'required': MIN_CLASS_PIXELS}
+                if fg.shape[0] == 0 or bg.shape[0] == 0:
+                    # Painting has just started — report what's still missing
+                    return jsonify({'success': True, 'overlay': None,
+                                    'swatch': None, 'counts': counts})
+                frame = self.painter_store.get_frame(session_id, frame_id)
+                overlay, swatch, coverage = preview_images(frame, fg, bg, sensitivity)
+                return jsonify({'success': True,
+                                'overlay': b64mod.b64encode(overlay).decode('ascii'),
+                                'swatch': b64mod.b64encode(swatch).decode('ascii'),
+                                'coverage': round(coverage * 100, 1),
+                                'counts': counts})
+            except (PainterError, LUTProfileError) as e:
+                return jsonify({'success': False, 'error': str(e)}), 400
+            except Exception as e:
+                self.logger.error(f"Painter preview failed: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/painter/save', methods=['POST'])
+        def painter_save():
+            """Persist the painted profile; optionally apply it to the OWL."""
+            data = request.get_json() or {}
+            try:
+                session_id = str(data.get('session_id', ''))
+                name = str(data.get('name', '')).strip().lower()
+                sensitivity = max(0, min(100, int(data.get('sensitivity', 50))))
+                apply_now = bool(data.get('apply', False))
+                strokes = validate_strokes(data.get('strokes', []))
+                base_profile = None
+                base_name = str(data.get('base_profile', '') or '').strip()
+                if base_name:
+                    base_profile = self.lut_profile_manager.load(base_name)
+                fg, bg = collect_class_pixels(
+                    self.painter_store, session_id, strokes, base_profile)
+                thumb = None
+                thumb_frame_id = str(data.get('thumbnail_frame_id', '') or '')
+                if thumb_frame_id:
+                    try:
+                        thumb = make_thumbnail_jpeg(
+                            self.painter_store.get_frame(session_id, thumb_frame_id))
+                    except PainterError:
+                        pass
+                frames_count = len({s['frame_id'] for s in strokes})
+                meta = self.lut_profile_manager.save(
+                    name, fg, bg, strokes=strokes, thumbnail_jpeg=thumb,
+                    frames=frames_count)
+                if apply_now and self.mqtt_client:
+                    self._apply_lut_profile(name, sensitivity)
+                return jsonify({'success': True, 'meta': meta, 'applied': apply_now})
+            except (PainterError, LUTProfileError) as e:
+                return jsonify({'success': False, 'error': str(e)}), 400
+            except Exception as e:
+                self.logger.error(f"Painter save failed: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/painter/profiles', methods=['GET'])
+        def painter_profiles():
+            """List saved LUT profiles plus the active one."""
+            state = self.mqtt_client.get_state() if self.mqtt_client else {}
+            return jsonify({'success': True,
+                            'profiles': self.lut_profile_manager.list_profiles(),
+                            'active': state.get('lut_profile', ''),
+                            'sensitivity': state.get('lut_sensitivity', 50)})
+
+        @self.app.route('/api/painter/profiles/delete', methods=['POST'])
+        def painter_profile_delete():
+            data = request.get_json() or {}
+            name = str(data.get('name', '')).strip().lower()
+            try:
+                self.lut_profile_manager.delete(name)
+                if self.mqtt_client:
+                    self.mqtt_client._send_command('list_lut_profiles')
+                return jsonify({'success': True})
+            except LUTProfileError as e:
+                return jsonify({'success': False, 'error': str(e)}), 400
+
+        @self.app.route('/api/painter/apply', methods=['POST'])
+        def painter_apply():
+            """Make a saved profile active on the OWL (and persist)."""
+            data = request.get_json() or {}
+            name = str(data.get('name', '')).strip().lower()
+            try:
+                sensitivity = max(0, min(100, int(data.get('sensitivity', 50))))
+            except (TypeError, ValueError):
+                return jsonify({'success': False, 'error': 'Invalid sensitivity'}), 400
+            if not name or not self.lut_profile_manager.exists(name):
+                return jsonify({'success': False, 'error': f'Unknown profile: {name}'}), 400
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            self._apply_lut_profile(name, sensitivity)
+            return jsonify({'success': True})
+
+        @self.app.route('/api/painter/swatch')
+        def painter_swatch():
+            """PNG swatch of the colours a saved profile sprays at a given
+            sensitivity — the LUT made visible."""
+            from utils.lut_manager import lut_swatch_png
+            name = str(request.args.get('name', '')).strip().lower()
+            try:
+                sensitivity = max(0, min(100, int(request.args.get('sensitivity', 50))))
+            except (TypeError, ValueError):
+                sensitivity = 50
+            try:
+                lut = self.lut_profile_manager.load_and_bake(name, sensitivity)
+                png, _ = lut_swatch_png(lut)
+                return Response(png, mimetype='image/png',
+                                headers={'Cache-Control': 'no-store'})
+            except LUTProfileError as e:
+                return jsonify({'success': False, 'error': str(e)}), 404
+
+        @self.app.route('/api/painter/sensitivity', methods=['POST'])
+        def painter_sensitivity():
+            """Live sensitivity slider (config tab, LUT mode)."""
+            data = request.get_json() or {}
+            try:
+                sensitivity = max(0, min(100, int(data.get('value', 50))))
+            except (TypeError, ValueError):
+                return jsonify({'success': False, 'error': 'Invalid sensitivity'}), 400
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            self.mqtt_client._send_command('set_lut_sensitivity', value=sensitivity)
+            self._persist_config_change('GreenOnBrown', 'lut_sensitivity',
+                                        str(sensitivity))
+            return jsonify({'success': True})
+
         @self.app.route('/api/update_gps', methods=['POST'])
         def update_gps():
             if not self.mqtt_client:
@@ -527,10 +739,17 @@ class OWLDashboard:
                 'brightness_min': mqtt_state.get('brightness_min'),
                 'brightness_max': mqtt_state.get('brightness_max'),
                 'min_detection_area': mqtt_state.get('min_detection_area', 10),
+                'min_detection_area_percent': mqtt_state.get('min_detection_area_percent', 0.0),
                 'confidence': mqtt_state.get('confidence', 0.5),
                 'crop_buffer_px': mqtt_state.get('crop_buffer_px', 20),
                 'algorithm_error': mqtt_state.get('algorithm_error'),
                 'config_name': mqtt_state.get('config_name', ''),
+                'config_unsaved': mqtt_state.get('config_unsaved', False),
+                'config_source': mqtt_state.get('config_source', ''),
+                # Painted LUT profiles
+                'lut_profile': mqtt_state.get('lut_profile', ''),
+                'lut_sensitivity': mqtt_state.get('lut_sensitivity', 50),
+                'available_lut_profiles': mqtt_state.get('available_lut_profiles', []),
                 # Tracking
                 'tracking_enabled': mqtt_state.get('tracking_enabled', False),
                 # Camera resolution
@@ -1246,11 +1465,15 @@ class OWLDashboard:
                 # Check if current is the default
                 is_default = (active_config == DEFAULT_CONFIG)
 
+                basename = os.path.basename(config_path)
                 return jsonify({
                     'success': True,
                     'config': config_dict,
                     'config_path': config_path,
-                    'config_name': os.path.basename(config_path),
+                    'config_name': basename,
+                    'config_unsaved': basename == AUTOSAVE_CONFIG,
+                    'config_source': (config_dict.get('Meta', {}).get('source', '')
+                                      if basename == AUTOSAVE_CONFIG else ''),
                     'active_config': active_config,
                     'is_default': is_default,
                     'available_configs': available_configs,
@@ -1827,13 +2050,21 @@ class OWLDashboard:
 
         return os.path.normpath(possible_dirs[0])
 
-    def _set_active_config(self, config_path):
-        """Set the active config by writing to pointer file."""
+    def _set_active_config(self, config_path, seed=True):
+        """Set the active config by writing to pointer file.
+
+        Loading a config also re-seeds the autosave working file from it
+        (Word-doc model — presets stay frozen; the working copy mirrors
+        what was loaded and absorbs subsequent live changes)."""
         config_dir = self._get_config_dir()
         pointer_path = os.path.join(config_dir, 'active_config.txt')
 
         with open(pointer_path, 'w') as f:
             f.write(config_path)
+
+        if seed:
+            seed_autosave(config_dir,
+                          os.path.join(config_dir, os.path.basename(config_path)))
 
         self.logger.info(f"Active config set to: {config_path}")
 
@@ -1870,6 +2101,16 @@ class OWLDashboard:
 
         return configs
 
+    def _apply_lut_profile(self, name, sensitivity):
+        """Make a painted profile the live detector: set profile + sensitivity,
+        switch the algorithm to 'lut', and persist all three."""
+        self.mqtt_client._send_command('set_lut_profile', name=name)
+        self.mqtt_client._send_command('set_lut_sensitivity', value=sensitivity)
+        self.mqtt_client._send_command('set_algorithm', value='lut')
+        self._persist_config_change('GreenOnBrown', 'lut_profile', name)
+        self._persist_config_change('GreenOnBrown', 'lut_sensitivity', str(sensitivity))
+        self._persist_config_change('System', 'algorithm', 'lut')
+
     def _persist_config_change(self, section, key, value):
         """Persist a single config parameter change to the active config file.
         If the active config is a protected default, saves as a new file and sets it active.
@@ -1891,18 +2132,24 @@ class OWLDashboard:
             config.set(section, key, str(value))
 
             basename = os.path.basename(config_path)
-            protected = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini', GEOMETRY_FILE]
 
-            if basename in protected:
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                new_name = f'config_{timestamp}.ini'
+            if basename != AUTOSAVE_CONFIG:
+                # Frozen-preset model: templates AND named presets stay
+                # untouched — live changes divert to the single autosave
+                # working file, overwritten in place
                 config_dir = self._get_config_dir()
-                new_path = os.path.join(config_dir, new_name)
+                new_path = os.path.join(config_dir, AUTOSAVE_CONFIG)
+
+                # Record which file the working copy derives from
+                if not config.has_section('Meta'):
+                    config.add_section('Meta')
+                config.set('Meta', 'source', basename)
 
                 atomic_write_config(new_path, config.write)
 
-                self._set_active_config(f'config/{new_name}')
-                self.logger.info(f"Config saved to new file: {new_name} (was protected default)")
+                self._set_active_config(f'config/{AUTOSAVE_CONFIG}', seed=False)
+                self.logger.info(
+                    f"Unsaved change to {basename} — written to {AUTOSAVE_CONFIG}")
             else:
                 atomic_write_config(config_path, config.write)
                 self.logger.info(f"Config updated: {basename} [{section}] {key}={value}")

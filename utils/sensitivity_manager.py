@@ -213,15 +213,22 @@ class SensitivityManager:
             target_path = self.config_path
             basename = os.path.basename(target_path)
 
-            if basename in PROTECTED_CONFIGS:
-                # Copy-on-write: create a new config file
+            from utils.config_manager import AUTOSAVE_CONFIG
+            if basename != AUTOSAVE_CONFIG:
+                # Frozen-preset model: templates AND named presets stay
+                # untouched — live changes divert to the single autosave
+                # working file, overwritten in place
                 config_dir = os.path.dirname(target_path)
-                timestamp = time.strftime('%Y%m%d_%H%M%S')
-                new_name = f'config_{timestamp}.ini'
+                new_name = AUTOSAVE_CONFIG
                 target_path = os.path.join(config_dir, new_name)
                 logger.info(
-                    f"Protected config {basename} — writing to {new_name}"
+                    f"Unsaved change to {basename} — writing to {new_name}"
                 )
+
+                # Record which file the working copy derives from
+                if not self.config.has_section('Meta'):
+                    self.config.add_section('Meta')
+                self.config.set('Meta', 'source', basename)
 
                 # Update active_config.txt so owl.py uses the new file
                 pointer_path = os.path.join(config_dir, 'active_config.txt')

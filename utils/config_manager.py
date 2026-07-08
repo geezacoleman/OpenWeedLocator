@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 GREENONBROWN_PARAMS = frozenset({
     'exg_min', 'exg_max', 'hue_min', 'hue_max',
     'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
-    'min_detection_area', 'invert_hue',
+    'min_detection_area', 'min_detection_area_percent', 'invert_hue',
+    'lut_sensitivity',
 })
 
 # Per-unit MOUNT geometry. Lives in GEOMETRY.ini (device-resident), NOT in named
@@ -26,6 +27,11 @@ GEOMETRY_SECTION_KEYS = {
 }
 GEOMETRY_KEYS = frozenset(k for keys in GEOMETRY_SECTION_KEYS.values() for k in keys)
 GEOMETRY_FILE = 'GEOMETRY.ini'
+
+# Live (unsaved) changes made while a protected template is active land in
+# this single working file, overwritten in place — never a new timestamped
+# file per slider move. Explicit "Save As" still creates named presets.
+AUTOSAVE_CONFIG = 'config_autosave.ini'
 
 
 def strip_geometry_keys(config_dict):
@@ -78,12 +84,37 @@ def parse_config_meta(path):
         if not cp.has_section('Meta'):
             return {}
         meta = {}
-        for k in ('display_name', 'notes', 'created'):
+        for k in ('display_name', 'notes', 'created', 'source'):
             if cp.has_option('Meta', k):
                 meta[k] = cp.get('Meta', k)
         return meta
     except Exception:
         return {}
+
+
+def seed_autosave(config_dir, source_path):
+    """Copy a just-loaded config into the autosave working file.
+
+    Named presets and templates are frozen (Word-doc model): the running
+    state lives in AUTOSAVE_CONFIG, which is re-seeded from the source
+    whenever a config is loaded and then overwritten in place by live
+    changes. [Meta] source records which file the working copy derives
+    from. No-op when the source IS the autosave file or doesn't exist.
+    Returns the autosave path.
+    """
+    autosave_path = os.path.join(str(config_dir), AUTOSAVE_CONFIG)
+    source_path = str(source_path)
+    basename = os.path.basename(source_path)
+    if basename == AUTOSAVE_CONFIG or not os.path.isfile(source_path):
+        return autosave_path
+    cp = ConfigParser()
+    cp.optionxform = str
+    cp.read(source_path)
+    if not cp.has_section('Meta'):
+        cp.add_section('Meta')
+    cp.set('Meta', 'source', basename)
+    atomic_write_config(autosave_path, cp.write)
+    return autosave_path
 
 
 def stamp_config_meta(config, display_name, notes, existing_path=None):
@@ -205,7 +236,8 @@ class ConfigValidator:
                 'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
                 'min_detection_area'
             },
-            'optional_keys': {'invert_hue'}
+            'optional_keys': {'invert_hue', 'lut_profile', 'lut_sensitivity',
+                              'min_detection_area_percent'}
         },
         'DataCollection': {
             'required_keys': {'image_sample_enable', 'sample_method', 'save_directory'},
@@ -240,6 +272,11 @@ class ConfigValidator:
         'inference_resolution': ('int', 160, 1280),
         'crop_buffer_px': ('int', 0, 50),
         'actuation_zone': ('int', 1, 100),
+        # Painted LUT detection (lut_profile is a string key — optional_keys only)
+        'lut_sensitivity': ('int', 0, 100),
+        # Min weed size as % of the detection (cropped) frame area.
+        # 0 disables it (legacy min_detection_area px value applies instead).
+        'min_detection_area_percent': ('float', 0, 5),
         # Per-edge crop fractions (inset from each edge, 0.0-0.49)
         'crop_left': ('float', 0, 0.49),
         'crop_right': ('float', 0, 0.49),
@@ -273,7 +310,7 @@ class ConfigValidator:
         'tracking_enabled': ('bool', None, None),
     }
 
-    VALID_ALGORITHMS = {'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'gog', 'gog-hybrid'}
+    VALID_ALGORITHMS = {'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'lut', 'gog', 'gog-hybrid'}
 
     @classmethod
     def get_valid_algorithms(cls):

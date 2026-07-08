@@ -19,6 +19,7 @@ from collections import deque
 from utils.config_manager import (
     GREENONBROWN_PARAMS, GEOMETRY_KEYS as MOUNT_GEOMETRY_KEYS,
     GEOMETRY_SECTION_KEYS, GEOMETRY_FILE, atomic_write_config,
+    AUTOSAVE_CONFIG, seed_autosave, parse_config_meta,
 )
 from utils.directory_manager import scan_sessions, collect_session_files, select_preview_images
 
@@ -214,6 +215,10 @@ class OWLMQTTPublisher:
             'model_available': False,
             'crop_buffer_px': 20,
             'inference_resolution': 320,
+            # Painted LUT detection profiles
+            'lut_profile': '',
+            'lut_sensitivity': 50,
+            'available_lut_profiles': [],
             # GreenOnGreen parameters
             'confidence': 0.5,
             # AI tab: model + class info
@@ -365,6 +370,9 @@ class OWLMQTTPublisher:
             self.state['brightness_max'] = self.owl_instance.brightness_max
             self.state['min_detection_area'] = getattr(
                 self.owl_instance, 'min_detection_area', 10)
+            mda_pct = getattr(self.owl_instance, 'min_detection_area_percent', 0.0)
+            self.state['min_detection_area_percent'] = (
+                mda_pct if isinstance(mda_pct, (int, float)) else 0.0)
 
             self.state['confidence'] = getattr(
                 self.owl_instance, '_gog_confidence', 0.5)
@@ -380,12 +388,21 @@ class OWLMQTTPublisher:
             # Save directory (runtime-resolved — may differ from config if USB path changed)
             self.state['save_directory'] = getattr(self.owl_instance, 'save_directory', '')
 
-            # Active config filename (basename) so the dashboard can show what's running.
+            # Active config filename (basename) so the dashboard can show what's
+            # running. The autosave working file reports the preset it derives
+            # from plus an unsaved flag (frozen-preset model).
             try:
                 active = self._resolve_config_path()
-                self.state['config_name'] = os.path.basename(active) if active else ''
+                basename = os.path.basename(active) if active else ''
+                self.state['config_name'] = basename
+                self.state['config_unsaved'] = (basename == AUTOSAVE_CONFIG)
+                self.state['config_source'] = (
+                    parse_config_meta(active).get('source', '')
+                    if basename == AUTOSAVE_CONFIG else '')
             except Exception:
                 self.state['config_name'] = ''
+                self.state['config_unsaved'] = False
+                self.state['config_source'] = ''
 
             # Hardware controller info (for networked controller to detect incompatible setups)
             ct = getattr(self.owl_instance, 'controller_type', None)
@@ -449,6 +466,23 @@ class OWLMQTTPublisher:
             if self.sensitivity_manager:
                 self.state['sensitivity_level'] = self.sensitivity_manager.get_active_preset()
                 self.state['sensitivity_presets'] = self.sensitivity_manager.list_presets()
+
+            # LUT profile state. Skip while a switch is pending so the
+            # dashboard doesn't snap back to the old profile mid-drain.
+            if getattr(self.owl_instance, '_pending_lut_profile', None) is None:
+                lut_profile = getattr(self.owl_instance, 'lut_profile', '')
+                self.state['lut_profile'] = lut_profile if isinstance(lut_profile, str) else ''
+            if getattr(self.owl_instance, '_pending_lut_sensitivity', None) is None:
+                lut_sens = getattr(self.owl_instance, 'lut_sensitivity', 50)
+                self.state['lut_sensitivity'] = lut_sens if isinstance(lut_sens, int) else 50
+            lut_mgr = getattr(self.owl_instance, 'lut_manager', None)
+            if lut_mgr is not None:
+                try:
+                    profiles = lut_mgr.list_profiles()
+                    self.state['available_lut_profiles'] = (
+                        profiles if isinstance(profiles, list) else [])
+                except Exception:
+                    self.state['available_lut_profiles'] = []
 
     def start(self):
         """Start the MQTT IPC server.
@@ -661,7 +695,7 @@ class OWLMQTTPublisher:
                     from utils.config_manager import ConfigValidator
                     valid = ConfigValidator.get_valid_algorithms()
                 except Exception:
-                    valid = {'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'gog', 'gog-hybrid'}
+                    valid = {'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'lut', 'gog', 'gog-hybrid'}
                 if value in valid:
                     self.state['algorithm'] = value
                     if self.owl_instance:
@@ -807,6 +841,79 @@ class OWLMQTTPublisher:
                     ).start()
                 else:
                     self.logger.error("download_model missing url or filename")
+
+            elif action == 'set_lut_profile':
+                name = str(command.get('name', '')).strip().lower()
+                if not name:
+                    self.logger.error("set_lut_profile missing name")
+                else:
+                    self.state['lut_profile'] = name
+                    if self.owl_instance:
+                        self.owl_instance._pending_lut_profile = name
+                        # Mirror into config so heartbeat/persist see it immediately
+                        if hasattr(self.owl_instance, 'config'):
+                            self.owl_instance.config.set(
+                                'GreenOnBrown', 'lut_profile', name)
+                    self.logger.info(f"LUT profile queued: {name}")
+
+            elif action == 'set_lut_sensitivity':
+                try:
+                    value = max(0, min(100, int(command.get('value', 50))))
+                except (TypeError, ValueError):
+                    self.logger.error(
+                        f"Invalid lut_sensitivity: {command.get('value')!r}")
+                else:
+                    self.state['lut_sensitivity'] = value
+                    if self.owl_instance:
+                        self.owl_instance._pending_lut_sensitivity = value
+                        if hasattr(self.owl_instance, 'config'):
+                            self.owl_instance.config.set(
+                                'GreenOnBrown', 'lut_sensitivity', str(value))
+                    self.logger.info(f"LUT sensitivity queued: {value}")
+
+            elif action == 'download_lut_profile':
+                url = command.get('url')
+                filename = command.get('filename')
+                sha256 = command.get('sha256', '')
+                # apply=True activates the profile (and the lut algorithm)
+                # once the download verifies — avoids the race where a
+                # set_lut_profile lands before the file exists on disk.
+                apply_profile = bool(command.get('apply', False))
+                try:
+                    apply_sensitivity = max(0, min(100, int(command.get('sensitivity', 50))))
+                except (TypeError, ValueError):
+                    apply_sensitivity = 50
+                if url and filename:
+                    threading.Thread(
+                        target=self._download_lut_profile,
+                        args=(url, filename, sha256, apply_profile, apply_sensitivity),
+                        daemon=True
+                    ).start()
+                else:
+                    self.logger.error("download_lut_profile missing url or filename")
+
+            elif action == 'delete_lut_profile':
+                name = str(command.get('name', '')).strip().lower()
+                lut_mgr = getattr(self.owl_instance, 'lut_manager', None) \
+                    if self.owl_instance else None
+                if name and lut_mgr:
+                    try:
+                        lut_mgr.delete(name)
+                        self.logger.info(f"Deleted LUT profile: {name}")
+                        if self.state.get('lut_profile') == name:
+                            self.logger.warning(
+                                f"Deleted the active LUT profile '{name}' — "
+                                "detection keeps the in-memory table until a "
+                                "new profile is applied")
+                        self._sync_parameters_to_state()
+                    except Exception as e:
+                        self.logger.error(f"Failed to delete LUT profile '{name}': {e}")
+                else:
+                    self.logger.error("delete_lut_profile missing name or manager")
+
+            elif action == 'list_lut_profiles':
+                # Just sync — profiles are published as part of state
+                self._sync_parameters_to_state()
 
             elif action == 'save_sensitivity_preset':
                 name = command.get('name', '').strip()
@@ -974,10 +1081,14 @@ class OWLMQTTPublisher:
             for section in config.sections():
                 config_dict[section] = dict(config[section])
 
+            basename = os.path.basename(config_path)
             payload = {
                 'config': config_dict,
                 'config_path': str(config_path),
-                'config_name': os.path.basename(config_path),
+                'config_name': basename,
+                'config_unsaved': basename == AUTOSAVE_CONFIG,
+                'config_source': (config_dict.get('Meta', {}).get('source', '')
+                                  if basename == AUTOSAVE_CONFIG else ''),
                 'device_id': self.device_id,
                 'timestamp': time.time()
             }
@@ -1148,24 +1259,35 @@ class OWLMQTTPublisher:
                 if basename in protected:
                     self.logger.error(f"Cannot overwrite default preset: {basename}")
                     return
+
+                # Named presets never carry working-copy provenance
+                cfg = self.owl_instance.config
+                if cfg.has_section('Meta') and cfg.has_option('Meta', 'source'):
+                    cfg.remove_option('Meta', 'source')
             else:
                 save_path = self._resolve_config_path()
                 if not save_path:
                     self.logger.error("Cannot save config - no config file path")
                     return
 
-                # Copy-on-write: protected defaults get a timestamped copy
+                # Frozen-preset model: live (unsaved) changes never touch the
+                # loaded file — templates AND named presets alike. They divert
+                # to the single autosave working file, overwritten in place.
                 basename = os.path.basename(save_path)
-                if basename in protected:
-                    from datetime import datetime
-                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    new_name = f'config_{timestamp}.ini'
-                    save_path = os.path.join(config_dir, new_name)
+                if basename != AUTOSAVE_CONFIG:
+                    save_path = os.path.join(config_dir, AUTOSAVE_CONFIG)
                     self.logger.info(
-                        f"Protected default {basename} — saving as {new_name}")
+                        f"Unsaved change to {basename} — writing to {AUTOSAVE_CONFIG}")
 
-                    # Update active_config.txt to point to the new file
-                    self._handle_set_active_config(f'config/{new_name}')
+                    # Record which file the working copy derives from
+                    cfg = self.owl_instance.config
+                    if not cfg.has_section('Meta'):
+                        cfg.add_section('Meta')
+                    cfg.set('Meta', 'source', basename)
+
+                    # Update active_config.txt to point to the autosave file
+                    self._handle_set_active_config(f'config/{AUTOSAVE_CONFIG}',
+                                                   seed=False)
 
             with self.config_lock:
                 atomic_write_config(
@@ -1248,8 +1370,12 @@ class OWLMQTTPublisher:
         except Exception as e:
             self.logger.error(f"Error saving geometry: {e}")
 
-    def _handle_set_active_config(self, config_path):
-        """Write config path to active_config.txt"""
+    def _handle_set_active_config(self, config_path, seed=True):
+        """Write config path to active_config.txt.
+
+        Loading a config also re-seeds the autosave working file from it
+        (Word-doc model: the working copy always mirrors what was loaded;
+        subsequent live changes diverge only in the working copy)."""
         try:
             config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
             active_path = os.path.join(config_dir, 'active_config.txt')
@@ -1257,6 +1383,10 @@ class OWLMQTTPublisher:
             with self.config_lock:
                 with open(active_path, 'w') as f:
                     f.write(config_path.strip() + '\n')
+                if seed:
+                    seed_autosave(config_dir,
+                                  os.path.join(config_dir,
+                                               os.path.basename(config_path.strip())))
 
             self.logger.info(f"Active config set to: {config_path}")
 
@@ -1620,6 +1750,99 @@ class OWLMQTTPublisher:
                     'progress': 0,
                     'error': str(e)
                 }
+            self._publish_state()
+
+    def _download_lut_profile(self, url, filename, expected_sha256,
+                              apply_profile=False, apply_sensitivity=50):
+        """Download a painted LUT profile from the controller. Background thread.
+
+        Profiles are small (<1MB) .npz files — no progress ticks, just
+        pending/complete/error via state['lut_download']. With
+        *apply_profile* the profile (and the lut algorithm) activate once
+        the download verifies.
+        """
+        import urllib.request
+        import ssl
+        import hashlib
+        import tempfile
+
+        lut_mgr = getattr(self.owl_instance, 'lut_manager', None) \
+            if self.owl_instance else None
+        if lut_mgr is not None:
+            profiles_dir = lut_mgr.profile_dir
+        else:
+            profiles_dir = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)), 'config', 'lut_profiles')
+        os.makedirs(profiles_dir, exist_ok=True)
+
+        tmp_path = None
+        try:
+            with self.state_lock:
+                self.state['lut_download'] = {
+                    'status': 'downloading', 'profile': filename, 'error': ''}
+            self._publish_state()
+
+            # SSL context for self-signed certs (same trust model as models)
+            ssl_ctx = ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+
+            response = urllib.request.urlopen(
+                urllib.request.Request(url), context=ssl_ctx)
+
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=profiles_dir, suffix='.tmp')
+            h = hashlib.sha256()
+            with os.fdopen(tmp_fd, 'wb') as f:
+                while True:
+                    chunk = response.read(65536)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    h.update(chunk)
+
+            if expected_sha256 and h.hexdigest() != expected_sha256:
+                raise ValueError(
+                    f'SHA256 mismatch: expected {expected_sha256[:12]}..., '
+                    f'got {h.hexdigest()[:12]}...')
+
+            final_path = os.path.join(profiles_dir, os.path.basename(filename))
+            os.replace(tmp_path, final_path)
+            tmp_path = None
+            self.logger.info(f"LUT profile saved to {final_path}")
+
+            with self.state_lock:
+                self.state['lut_download'] = {
+                    'status': 'complete', 'profile': filename, 'error': ''}
+                if apply_profile and self.owl_instance:
+                    name = os.path.basename(filename)
+                    if name.endswith('.npz'):
+                        name = name[:-4]
+                    self.state['lut_profile'] = name
+                    self.state['lut_sensitivity'] = apply_sensitivity
+                    self.state['algorithm'] = 'lut'
+                    self.owl_instance._pending_lut_sensitivity = apply_sensitivity
+                    self.owl_instance._pending_lut_profile = name
+                    self.owl_instance._pending_algorithm = 'lut'
+                    if hasattr(self.owl_instance, 'config'):
+                        self.owl_instance.config.set('GreenOnBrown', 'lut_profile', name)
+                        self.owl_instance.config.set('GreenOnBrown', 'lut_sensitivity',
+                                                     str(apply_sensitivity))
+                        self.owl_instance.config.set('System', 'algorithm', 'lut')
+                    self.logger.info(f"LUT profile '{name}' queued for activation "
+                                     f"(sensitivity {apply_sensitivity})")
+            self._sync_parameters_to_state()
+            self._publish_state()
+
+        except Exception as e:
+            self.logger.error(f"LUT profile download failed: {e}")
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+            with self.state_lock:
+                self.state['lut_download'] = {
+                    'status': 'error', 'profile': filename, 'error': str(e)}
             self._publish_state()
 
     def _write_session_metadata(self, metadata):
@@ -2124,7 +2347,8 @@ class OWLMQTTPublisher:
         valid_params = [
             'exg_min', 'exg_max', 'hue_min', 'hue_max',
             'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
-            'min_detection_area', 'invert_hue'
+            'min_detection_area', 'min_detection_area_percent', 'invert_hue',
+            'lut_sensitivity'
         ]
 
         if param_name not in valid_params:
@@ -2132,12 +2356,28 @@ class OWLMQTTPublisher:
             return
 
         try:
+            if param_name == 'lut_sensitivity':
+                # Routed through the pending drain so the detection loop
+                # re-bakes the LUT table (a plain setattr would not)
+                param_value = max(0, min(100, int(float(param_value))))
+                self.owl_instance._pending_lut_sensitivity = param_value
+                if hasattr(self.owl_instance, 'config'):
+                    self.owl_instance.config.set('GreenOnBrown', 'lut_sensitivity',
+                                                 str(param_value))
+                with self.state_lock:
+                    self.state['lut_sensitivity'] = param_value
+                self.logger.info(f"Updated lut_sensitivity = {param_value} (re-bake queued)")
+                return
+
             # Boolean params
             if param_name == 'invert_hue':
                 param_value = str(param_value).lower() in ('true', '1', 'yes')
+            elif param_name == 'min_detection_area_percent':
+                # % of the detection frame area (float; 0 = use px value)
+                param_value = max(0.0, min(5.0, float(param_value)))
             else:
                 # Convert to int
-                param_value = int(param_value)
+                param_value = int(float(param_value))
 
             # Update the Owl instance attribute directly
             setattr(self.owl_instance, param_name, param_value)

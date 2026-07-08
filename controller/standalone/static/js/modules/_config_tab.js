@@ -15,9 +15,48 @@ const configParams = {
     brightness_min: { value: 60, min: 0, max: 255 },
     brightness_max: { value: 190, min: 0, max: 255 },
     min_detection_area: { value: 10, min: 1, max: 1000 },
+    // Min weed size as % of the detection frame — log scale because useful
+    // values span ~3 orders of magnitude (0.0005% ≈ 1px … 2% ≈ huge patch)
+    min_detection_area_percent: { value: 0.003, min: 0.0005, max: 2, scale: 'log', decimals: 4, unit: '%' },
+    lut_sensitivity: { value: 50, min: 0, max: 100 },
     crop_buffer_px: { value: 20, min: 0, max: 50 },
     confidence: { value: 50, min: 5, max: 100 }
 };
+
+// ── Log-scale aware slider maths (linear when p.scale is undefined) ──
+
+function roundParamValue(p, val) {
+    if (p.decimals) {
+        var f = Math.pow(10, p.decimals);
+        return Math.round(val * f) / f;
+    }
+    return Math.round(val);
+}
+
+function sliderPctToValue(p, pct) {
+    var val = (p.scale === 'log')
+        ? p.min * Math.pow(p.max / p.min, pct / 100)
+        : (pct / 100) * (p.max - p.min) + p.min;
+    return roundParamValue(p, Math.max(p.min, Math.min(p.max, val)));
+}
+
+function sliderValueToPct(p, val) {
+    var v = Math.max(p.min, Math.min(p.max, val));
+    return (p.scale === 'log')
+        ? Math.log(v / p.min) / Math.log(p.max / p.min) * 100
+        : ((v - p.min) / (p.max - p.min)) * 100;
+}
+
+function sliderStepValue(p, val, delta) {
+    // Fine-tune: additive for linear params, multiplicative for log params
+    var next = (p.scale === 'log') ? val * Math.pow(1.12, delta) : val + delta;
+    return roundParamValue(p, Math.max(p.min, Math.min(p.max, next)));
+}
+
+function sliderDisplayValue(p) {
+    var text = p.decimals ? Number(p.value).toFixed(p.decimals) : p.value;
+    return p.unit ? text + p.unit : String(text);
+}
 
 let sliderDragState = null;
 let slidersInitialised = false;
@@ -87,7 +126,7 @@ function onKnobDrag(e) {
 
     var x = e.clientX - railRect.left;
     var pct = Math.max(0, Math.min(100, (x / railRect.width) * 100));
-    var val = Math.round((pct / 100) * (p.max - p.min) + p.min);
+    var val = sliderPctToValue(p, pct);
 
     val = constrainRangeValue(sliderDragState.knob, param, val);
 
@@ -129,8 +168,7 @@ function handleTrackClick(e) {
         var p = configParams[param];
         if (!p) return;
 
-        var val = Math.round((pct / 100) * (p.max - p.min) + p.min);
-        configParams[param].value = Math.max(p.min, Math.min(p.max, val));
+        configParams[param].value = sliderPctToValue(p, pct);
         updateSlider(param);
         sendSliderUpdate(param, configParams[param].value);
     } else {
@@ -140,12 +178,12 @@ function handleTrackClick(e) {
         var pMax = configParams[maxParam];
         if (!pMin || !pMax) return;
 
-        var minPct = ((pMin.value - pMin.min) / (pMin.max - pMin.min)) * 100;
-        var maxPct = ((pMax.value - pMax.min) / (pMax.max - pMax.min)) * 100;
+        var minPct = sliderValueToPct(pMin, pMin.value);
+        var maxPct = sliderValueToPct(pMax, pMax.value);
 
         var targetParam = (Math.abs(pct - minPct) <= Math.abs(pct - maxPct)) ? minParam : maxParam;
         var tp = configParams[targetParam];
-        var newVal = Math.round((pct / 100) * (tp.max - tp.min) + tp.min);
+        var newVal = sliderPctToValue(tp, pct);
 
         var knob = document.getElementById(targetParam + '-knob');
         newVal = constrainRangeValue(knob, targetParam, newVal);
@@ -179,7 +217,7 @@ function handleFineTune(e) {
     var p = configParams[param];
     if (!p) return;
 
-    var newVal = Math.max(p.min, Math.min(p.max, p.value + delta));
+    var newVal = sliderStepValue(p, p.value, delta);
     newVal = constrainRangeValue(activeKnob, param, newVal);
 
     p.value = newVal;
@@ -216,12 +254,12 @@ function updateSlider(param) {
     var p = configParams[param];
     if (!p) return;
 
-    var pct = ((p.value - p.min) / (p.max - p.min)) * 100;
+    var pct = sliderValueToPct(p, p.value);
 
     // Update ALL value displays with IDs ending in param-value
     // (supports duplicate sliders across dashboard + config tabs)
     document.querySelectorAll('[id$="' + param + '-value"]').forEach(function(el) {
-        el.textContent = p.value;
+        el.textContent = sliderDisplayValue(p);
     });
 
     // Update ALL knobs + fills for this param
@@ -240,8 +278,8 @@ function updateSlider(param) {
             var pMin = configParams[minParam];
             var pMax = configParams[maxParam];
             if (pMin && pMax) {
-                var minPct = ((pMin.value - pMin.min) / (pMin.max - pMin.min)) * 100;
-                var maxPct = ((pMax.value - pMax.min) / (pMax.max - pMax.min)) * 100;
+                var minPct = sliderValueToPct(pMin, pMin.value);
+                var maxPct = sliderValueToPct(pMax, pMax.value);
                 fill.style.left = minPct + '%';
                 fill.style.width = Math.max(0, maxPct - minPct) + '%';
             }
@@ -264,6 +302,9 @@ function updateAllSliders() {
 
 function sendSliderUpdate(param, value) {
     lastSliderSendTime = Date.now();
+    if (param === 'lut_sensitivity' && typeof updateLutSwatch === 'function') {
+        updateLutSwatch();
+    }
     if (param === 'crop_buffer_px') {
         apiRequest('/api/config/crop_buffer', {
             method: 'POST',
@@ -297,7 +338,7 @@ function syncSlidersFromStats(data) {
     var changed = false;
     var fields = ['exg_min', 'exg_max', 'hue_min', 'hue_max',
                   'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
-                  'min_detection_area', 'crop_buffer_px'];
+                  'min_detection_area', 'crop_buffer_px', 'lut_sensitivity'];
 
     for (var i = 0; i < fields.length; i++) {
         var key = fields[i];
@@ -307,6 +348,22 @@ function syncSlidersFromStats(data) {
                 configParams[key].value = val;
                 changed = true;
             }
+        }
+    }
+
+    // Min weed size % is a float; when unset (0 = legacy px mode) seed the
+    // slider from the px value converted against the frame area
+    var mp = configParams.min_detection_area_percent;
+    if (mp && typeof data.min_detection_area_percent === 'number') {
+        var pctVal = data.min_detection_area_percent;
+        if (pctVal <= 0) {
+            var area = (data.resolution_width || 640) * (data.resolution_height || 480);
+            pctVal = (data.min_detection_area || 10) / area * 100;
+        }
+        pctVal = roundParamValue(mp, Math.max(mp.min, Math.min(mp.max, pctVal)));
+        if (pctVal !== mp.value) {
+            mp.value = pctVal;
+            changed = true;
         }
     }
 
@@ -321,11 +378,14 @@ function syncSlidersFromStats(data) {
 
     if (changed) {
         updateAllSliders();
+        if (typeof updateLutSwatch === 'function') updateLutSwatch();
     }
 
-    // Update slider visibility based on algorithm
+    // Update slider visibility based on algorithm (a locally-forced Painted
+    // panel shows the LUT layout even while the OWL still reports GoB)
     if (data.algorithm) {
-        updateSliderVisibility(data.algorithm);
+        var forced = (typeof isLutPanelForced === 'function' && isLutPanelForced());
+        updateSliderVisibility(forced ? 'lut' : data.algorithm);
     }
 }
 
@@ -334,10 +394,25 @@ function syncSlidersFromStats(data) {
 // ============================================
 
 function updateSliderVisibility(algorithm) {
-    var gobSliders = document.querySelectorAll('.config-slider-group:not(#crop-buffer-slider-group):not(#confidence-slider-group)');
+    var gobSliders = document.querySelectorAll('.config-slider-group:not(#crop-buffer-slider-group):not(#confidence-slider-group):not(#lut-sensitivity-slider-group)');
     var bufferSlider = document.getElementById('crop-buffer-slider-group');
     var confidenceSlider = document.getElementById('confidence-slider-group');
     var dashConfidence = document.getElementById('dash-confidence-group');
+    var lutSlider = document.getElementById('lut-sensitivity-slider-group');
+    if (lutSlider) lutSlider.style.display = (algorithm === 'lut') ? '' : 'none';
+
+    if (algorithm === 'lut') {
+        // Painted: sensitivity + min weed size only — the LUT profile
+        // replaces the colour thresholds
+        var minSizeGroup = document.getElementById('min-weed-size-slider-group');
+        gobSliders.forEach(function(el) {
+            el.style.display = (el === minSizeGroup) ? '' : 'none';
+        });
+        if (bufferSlider) bufferSlider.style.display = 'none';
+        if (confidenceSlider) confidenceSlider.style.display = 'none';
+        if (dashConfidence) dashConfidence.style.display = 'none';
+        return;
+    }
 
     if (algorithm === 'gog') {
         gobSliders.forEach(function(el) { el.style.display = 'none'; });

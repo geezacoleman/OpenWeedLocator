@@ -160,6 +160,11 @@ config/GEOMETRY.ini
 # User-saved config presets (created from dashboard Save As)
 config/config_*
 
+# Painted LUT detection profiles (device/site-specific, created by the weed
+# painter on OWLs and in the controller library)
+config/lut_profiles/
+uploads/lut_profiles/
+
 # OWL collected images (created during detection/recording)
 owl_data/
 

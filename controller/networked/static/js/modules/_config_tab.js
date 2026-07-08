@@ -67,7 +67,7 @@ function onKnobDrag(e) {
 
     var x = e.clientX - railRect.left;
     var pct = Math.max(0, Math.min(100, (x / railRect.width) * 100));
-    var val = Math.round((pct / 100) * (p.max - p.min) + p.min);
+    var val = sliderPctToValue(p, pct);
 
     // Constrain range slider pairs
     val = constrainRangeValue(dragState.knob, param, val);
@@ -110,8 +110,7 @@ function handleTrackClick(e) {
         var p = configParams[param];
         if (!p) return;
 
-        var val = Math.round((pct / 100) * (p.max - p.min) + p.min);
-        configParams[param].value = Math.max(p.min, Math.min(p.max, val));
+        configParams[param].value = sliderPctToValue(p, pct);
         updateSlider(param);
         sendConfigUpdate(param, configParams[param].value);
     } else {
@@ -122,12 +121,12 @@ function handleTrackClick(e) {
         var pMax = configParams[maxParam];
         if (!pMin || !pMax) return;
 
-        var minPct = ((pMin.value - pMin.min) / (pMin.max - pMin.min)) * 100;
-        var maxPct = ((pMax.value - pMax.min) / (pMax.max - pMax.min)) * 100;
+        var minPct = sliderValueToPct(pMin, pMin.value);
+        var maxPct = sliderValueToPct(pMax, pMax.value);
 
         var targetParam = (Math.abs(pct - minPct) <= Math.abs(pct - maxPct)) ? minParam : maxParam;
         var tp = configParams[targetParam];
-        var newVal = Math.round((pct / 100) * (tp.max - tp.min) + tp.min);
+        var newVal = sliderPctToValue(tp, pct);
 
         // Constrain
         var knob = document.getElementById(targetParam + '-knob');
@@ -192,7 +191,7 @@ function adjustParameter(param, delta) {
     var p = configParams[param];
     if (!p) return;
 
-    var newVal = Math.max(p.min, Math.min(p.max, p.value + delta));
+    var newVal = sliderStepValue(p, p.value, delta);
 
     // Constrain range slider pairs
     var knob = document.getElementById(param + '-knob');
@@ -209,11 +208,11 @@ function updateSlider(param) {
     var p = configParams[param];
     if (!p) return;
 
-    var pct = ((p.value - p.min) / (p.max - p.min)) * 100;
+    var pct = sliderValueToPct(p, p.value);
 
     // Update value display
     var valueEl = document.getElementById(param + '-value');
-    if (valueEl) valueEl.textContent = p.value;
+    if (valueEl) valueEl.textContent = sliderDisplayValue(p);
 
     // Position knob
     var knob = document.getElementById(param + '-knob');
@@ -233,8 +232,8 @@ function updateSlider(param) {
         var pMin = configParams[minParam];
         var pMax = configParams[maxParam];
         if (pMin && pMax) {
-            var minPct = ((pMin.value - pMin.min) / (pMin.max - pMin.min)) * 100;
-            var maxPct = ((pMax.value - pMax.min) / (pMax.max - pMax.min)) * 100;
+            var minPct = sliderValueToPct(pMin, pMin.value);
+            var maxPct = sliderValueToPct(pMax, pMax.value);
             fill.style.left = minPct + '%';
             fill.style.width = Math.max(0, maxPct - minPct) + '%';
         }
@@ -258,6 +257,9 @@ function sendConfigUpdate(param, value) {
     var target = 'all';
 
     lastSliderSendTime = Date.now();
+    if (param === 'lut_sensitivity' && typeof updateLutSwatch === 'function') {
+        updateLutSwatch();
+    }
 
     // Route each param to its correct config section via set_config_section
     // This updates BOTH the live instance AND ConfigParser on the OWL,
@@ -938,9 +940,23 @@ function sendToSingleDevice() {
 // ============================================
 
 function updateSliderVisibility(algorithm) {
-    var gobSliders = document.querySelectorAll('.config-slider-group:not(#crop-buffer-slider-group):not(#confidence-slider-group)');
+    var gobSliders = document.querySelectorAll('.config-slider-group:not(#crop-buffer-slider-group):not(#confidence-slider-group):not(#lut-sensitivity-slider-group)');
     var bufferSlider = document.getElementById('crop-buffer-slider-group');
     var confidenceSlider = document.getElementById('confidence-slider-group');
+    var lutSlider = document.getElementById('lut-sensitivity-slider-group');
+    if (lutSlider) lutSlider.style.display = (algorithm === 'lut') ? '' : 'none';
+
+    if (algorithm === 'lut') {
+        // Painted: sensitivity + min weed size only — the LUT profile
+        // replaces the colour thresholds
+        var minSizeGroup = document.getElementById('min-weed-size-slider-group');
+        gobSliders.forEach(function(el) {
+            el.style.display = (el === minSizeGroup) ? '' : 'none';
+        });
+        if (bufferSlider) bufferSlider.style.display = 'none';
+        if (confidenceSlider) confidenceSlider.style.display = 'none';
+        return;
+    }
 
     if (algorithm === 'gog') {
         // Pure AI: hide GoB sliders, show confidence only
