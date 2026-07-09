@@ -188,6 +188,10 @@ class OWLMQTTPublisher:
             'detection_mode': 1,  # 0=spot spray, 1=off, 2=blanket
             'owl_running': False,
             'stream_active': False,
+            # Comma-joined config keys needing a restart to apply. Seeded empty
+            # so a freshly (re)started OWL actively publishes "nothing pending"
+            # and controllers can drop any notice cached from before the restart.
+            'restart_required': '',
             # System statistics
             'cpu_percent': 0,
             'cpu_temp': 0,
@@ -1126,9 +1130,18 @@ class OWLMQTTPublisher:
                 elif key in RESTART_REQUIRED_KEYS:
                     # Can't apply live — applying relay_num/resolution to the running
                     # instance would leave lane/camera state inconsistent. Persist to
-                    # config below and flag a restart instead.
-                    restart_keys.add(key)
-                    self.logger.info(f"{section}.{key} change needs a restart to take effect")
+                    # config below and flag a restart instead. Only a REAL value
+                    # change is flagged: the config tab's "Apply to OWLs" resends
+                    # unchanged keys on every press, and those must not re-raise
+                    # the restart notice.
+                    with self.config_lock:
+                        cfg = getattr(self.owl_instance, 'config', None)
+                        current = (cfg.get(section, key)
+                                   if cfg is not None and cfg.has_option(section, key)
+                                   else None)
+                    if current is None or str(current).strip() != str(value).strip():
+                        restart_keys.add(key)
+                        self.logger.info(f"{section}.{key} change needs a restart to take effect")
                 elif hasattr(self.owl_instance, key):
                     # Type-convert to match existing attribute type (INI values are strings)
                     current = getattr(self.owl_instance, key)

@@ -33,11 +33,14 @@ from utils.lut_manager import (
     LUT_SHIFT,
     LUT_SIZE,
     LUTProfileManager,
+    _fit_gmm_em,
+    _gmm_log_density,
     _smooth3,
     bake_from_model,
     generate_starter_pixels,
     pixel_histogram,
     sensitivity_to_miss_rate,
+    subsample_pixels,
     train_model,
 )
 
@@ -93,27 +96,22 @@ def current_ratio_grid(train_fg, train_bg):
 
 
 # ------------------------------------------------------------------
-# Model 2: GMM per class (cv2.ml.EM — ships with OpenCV, no new deps),
-# scored at bin centres exactly as it would be baked into the LUT.
+# Model 2: GMM per class fitted on raw BGR (no Lab, no gate) — reference
+# for how much of the shipped trainer's robustness comes from the mixture
+# maths vs the colour space. Reuses lut_manager's numpy EM: cv2.ml is no
+# longer in plain opencv-python(-headless) 5.x builds (moved to contrib).
 # ------------------------------------------------------------------
 
-def fit_gmm(pixels, rng):
-    if pixels.shape[0] > GMM_TRAIN_CAP:
-        pick = rng.choice(pixels.shape[0], GMM_TRAIN_CAP, replace=False)
-        pixels = pixels[pick]
-    em = cv2.ml.EM_create()
-    em.setClustersNumber(GMM_COMPONENTS)
-    em.setCovarianceMatrixType(cv2.ml.EM_COV_MAT_GENERIC)
-    em.trainEM(pixels.astype(np.float32))
-    return em
+def fit_gmm(pixels):
+    pixels = subsample_pixels(pixels, GMM_TRAIN_CAP)
+    return _fit_gmm_em(pixels.astype(np.float64), GMM_COMPONENTS,
+                       n_iters=30, seed=7)
 
 
-def gmm_score_grid(em_fg, em_bg):
+def gmm_score_grid(gmm_fg, gmm_bg):
     """Per-bin log-likelihood ratio grid, evaluated at bin centres."""
-    centres = bin_centres().astype(np.float32)
-    ll_fg = np.array([em_fg.predict2(c.reshape(1, 3))[0][0] for c in centres])
-    ll_bg = np.array([em_bg.predict2(c.reshape(1, 3))[0][0] for c in centres])
-    return ll_fg - ll_bg
+    centres = bin_centres().astype(np.float64)
+    return _gmm_log_density(gmm_fg, centres) - _gmm_log_density(gmm_bg, centres)
 
 
 def evaluate(name, score_grid, test_fg, test_bg):
@@ -185,8 +183,8 @@ def main():
              shipped_grid, test_fg, test_bg)
 
     print('\n  fitting BGR-GMM prototype for reference...')
-    em_fg = fit_gmm(train_fg, rng)
-    em_bg = fit_gmm(train_bg, rng)
+    em_fg = fit_gmm(train_fg)
+    em_bg = fit_gmm(train_bg)
     evaluate(f'REFERENCE: {GMM_COMPONENTS}-component BGR GMM (no Lab, no gate)',
              gmm_score_grid(em_fg, em_bg), test_fg, test_bg)
 

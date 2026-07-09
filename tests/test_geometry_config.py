@@ -215,6 +215,46 @@ class TestLiveGeometryTrigger:
         mqtt_publisher._handle_set_config_section('System', {'relay_num': '8'})
         assert 'relay_num' in mqtt_publisher.state.get('restart_required', '')
 
+    def test_state_seeds_restart_required_empty(self, mqtt_publisher):
+        # A freshly started OWL must actively publish "nothing pending" so
+        # controllers can drop a notice cached from before the restart.
+        assert mqtt_publisher.state.get('restart_required') == ''
+
+    def test_unchanged_restart_key_not_reflagged(self, mqtt_publisher, mock_owl):
+        # First apply writes the value into config and flags the restart…
+        mqtt_publisher._handle_set_config_section('Camera', {'resolution_width': '1280'})
+        assert 'resolution_width' in mqtt_publisher.state.get('restart_required', '')
+        # …then the OWL restarts (pending flag gone) and the config tab's
+        # "Apply to OWLs" resends the SAME value — that must not re-raise it.
+        mqtt_publisher.state['restart_required'] = ''
+        mqtt_publisher._handle_set_config_section('Camera', {'resolution_width': '1280'})
+        assert mqtt_publisher.state.get('restart_required', '') == ''
+
+    def test_changed_restart_key_flags_again(self, mqtt_publisher, mock_owl):
+        mqtt_publisher._handle_set_config_section('Camera', {'resolution_width': '1280'})
+        mqtt_publisher.state['restart_required'] = ''
+        mqtt_publisher._handle_set_config_section('Camera', {'resolution_width': '640'})
+        assert 'resolution_width' in mqtt_publisher.state.get('restart_required', '')
+
+    def test_controller_drops_stale_restart_notice(self):
+        # networked.py can't be imported (instantiates CentralController at
+        # import) — source-level check like the heartbeat tests: a state
+        # payload WITHOUT restart_required must evict the cached copy,
+        # otherwise the notice outlives the restart it asked for.
+        net = (PROJECT_ROOT / 'controller' / 'networked' / 'networked.py'
+               ).read_text(encoding='utf-8')
+        assert "if 'restart_required' not in payload:" in net
+        assert ".pop('restart_required', None)" in net
+
+    def test_frontend_labels_cover_all_restart_keys(self):
+        # The notice shows operator language, not config keys — every key the
+        # OWL can flag needs an entry in the frontend label map.
+        from utils.mqtt_manager import RESTART_REQUIRED_KEYS
+        js = (PROJECT_ROOT / 'controller' / 'networked' / 'static' / 'js' /
+              'modules' / '_config_editor.js').read_text(encoding='utf-8')
+        for key in RESTART_REQUIRED_KEYS:
+            assert f'{key}:' in js, f'RESTART_KEY_LABELS missing {key}'
+
 
 # ---------------------------------------------------------------------------
 # Hot-path timing guard — per-frame crop slice + actuation-band filter must stay

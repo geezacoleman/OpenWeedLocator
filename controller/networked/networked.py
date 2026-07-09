@@ -517,6 +517,13 @@ class CentralController:
                 # Merge payload into state
                 if topic_type == 'state':
                     self.owls_state[device_id].update(payload)
+                    # 'restart_required' is only meaningful while the OWL
+                    # process that set it is alive. A restarted OWL publishes
+                    # it empty (or, on older firmware, not at all) — drop the
+                    # cached copy when absent so a stale "restart needed"
+                    # notice can't outlive the restart it asked for.
+                    if 'restart_required' not in payload:
+                        self.owls_state[device_id].pop('restart_required', None)
                 elif topic_type == 'status':
                     self.owls_state[device_id]['status'] = payload
                 elif topic_type == 'detection':

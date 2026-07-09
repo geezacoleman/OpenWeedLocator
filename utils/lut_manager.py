@@ -151,6 +151,60 @@ def _lab_features(bgr_pixels):
     return feats
 
 
+def _fit_gmm_em(feats, n_components, n_iters, seed):
+    """Deterministic EM fit of a small Gaussian mixture, in pure numpy.
+
+    Self-contained on purpose: OpenCV 5 moved the classic `ml` module out
+    of the main build into opencv_contrib, so `cv2.ml.EM` is absent from
+    plain opencv-python(-headless) 5.x installs. A seeded numpy Generator
+    also makes fits bit-identical across platforms and OpenCV versions,
+    which cv2.setRNGSeed never guaranteed.
+
+    Seeded k-means++-style init, fixed iteration count, covariances floored
+    by GMM_COV_REG each step (single-colour strokes stay invertible).
+    Returns {'means', 'covs', 'weights'} (float64).
+    """
+    rng = np.random.default_rng(seed)
+    feats = np.asarray(feats, dtype=np.float64)
+    n, d = feats.shape
+    k = int(min(n_components, n))
+
+    # k-means++-style init: spread the initial means over the data
+    means = feats[[int(rng.integers(n))]]
+    while means.shape[0] < k:
+        d2 = ((feats[:, None, :] - means[None]) ** 2).sum(-1).min(1)
+        total = d2.sum()
+        idx = int(rng.choice(n, p=d2 / total)) if total > 0 else int(rng.integers(n))
+        means = np.vstack([means, feats[idx]])
+
+    reg = np.eye(d) * GMM_COV_REG
+    var0 = max(float(feats.var(axis=0).mean()), 1.0)
+    covs = np.tile(np.eye(d) * var0 + reg, (k, 1, 1))
+    weights = np.full(k, 1.0 / k)
+
+    for _ in range(n_iters):
+        # E-step: responsibilities from per-component log densities
+        log_r = np.stack([
+            np.log(weights[j] + 1e-300)
+            - 0.5 * (np.log(np.linalg.det(covs[j])) + d * np.log(2 * np.pi)
+                     + np.einsum('ij,jk,ik->i', feats - means[j],
+                                 np.linalg.inv(covs[j]), feats - means[j]))
+            for j in range(k)
+        ])
+        log_r -= np.logaddexp.reduce(log_r, axis=0)
+        resp = np.exp(log_r)
+
+        # M-step
+        nk = resp.sum(axis=1) + 1e-12
+        weights = nk / n
+        means = (resp @ feats) / nk[:, None]
+        for j in range(k):
+            diff = feats - means[j]
+            covs[j] = (resp[j][:, None] * diff).T @ diff / nk[j] + reg
+
+    return {'means': means, 'covs': covs, 'weights': weights / weights.sum()}
+
+
 def fit_class_gmm(pixels):
     """Fit a deterministic GMM to one class's (N, 3) uint8 BGR samples.
 
@@ -163,27 +217,15 @@ def fit_class_gmm(pixels):
     if pixels.shape[0] == 0:
         raise LUTProfileError('profile has an empty class')
     feats = _lab_features(subsample_pixels(pixels, GMM_TRAIN_CAP))
+    gmm = _fit_gmm_em(feats, GMM_COMPONENTS, GMM_EM_ITERS, LUT_TRAIN_SEED)
 
-    cv2.setRNGSeed(LUT_TRAIN_SEED)
-    em = cv2.ml.EM_create()
-    em.setClustersNumber(int(min(GMM_COMPONENTS, feats.shape[0])))
-    em.setCovarianceMatrixType(cv2.ml.EM_COV_MAT_GENERIC)
-    em.setTermCriteria((cv2.TERM_CRITERIA_COUNT + cv2.TERM_CRITERIA_EPS,
-                        GMM_EM_ITERS, 1e-3))
-    em.trainEM(feats)
-
-    weights = np.asarray(em.getWeights(), dtype=np.float64).ravel()
-    means = np.asarray(em.getMeans(), dtype=np.float64)
-    covs = np.asarray(em.getCovs(), dtype=np.float64)
     # Drop degenerate components (empty clusters on tiny/uniform paintings)
-    # and floor the covariance so single-colour strokes stay invertible.
-    keep = np.isfinite(weights) & (weights > 1e-12) \
-        & np.all(np.isfinite(means), axis=1)
+    keep = np.isfinite(gmm['weights']) & (gmm['weights'] > 1e-6) \
+        & np.all(np.isfinite(gmm['means']), axis=1)
     if not keep.any():
         raise LUTProfileError('could not fit a colour model to the samples')
-    covs = covs[keep] + np.eye(3) * GMM_COV_REG
-    return {'means': means[keep], 'covs': covs,
-            'weights': weights[keep] / weights[keep].sum()}
+    return {'means': gmm['means'][keep], 'covs': gmm['covs'][keep],
+            'weights': gmm['weights'][keep] / gmm['weights'][keep].sum()}
 
 
 def _gmm_log_density(gmm, feats):

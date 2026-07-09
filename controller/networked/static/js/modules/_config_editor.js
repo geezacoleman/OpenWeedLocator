@@ -264,6 +264,15 @@ async function setDefaultConfig() {
  * Show/hide the restart-required notice based on any OWL reporting restart_required
  * in its state (set when resolution/relay_num change live).
  */
+
+// Human names for the notice — config keys are not operator language. Width and
+// height deliberately share one label so they collapse to "camera resolution".
+const RESTART_KEY_LABELS = {
+    resolution_width: 'camera resolution',
+    resolution_height: 'camera resolution',
+    relay_num: 'number of nozzles',
+};
+
 function updateRestartNotice() {
     const notice = document.getElementById('config-restart-notice');
     const textEl = document.getElementById('config-restart-text');
@@ -277,7 +286,14 @@ function updateRestartNotice() {
 
     if (keys.size > 0) {
         notice.classList.remove('hidden');
-        if (textEl) textEl.textContent = 'Restart needed to apply: ' + Array.from(keys).join(', ');
+        if (textEl) {
+            const labels = Array.from(new Set(
+                Array.from(keys).map(k => RESTART_KEY_LABELS[k] || k.replace(/_/g, ' '))));
+            const list = labels.length > 1
+                ? labels.slice(0, -1).join(', ') + ' and ' + labels[labels.length - 1]
+                : labels[0];
+            textEl.textContent = 'Restart the OWLs to apply the new ' + list + '.';
+        }
     } else {
         notice.classList.add('hidden');
     }
