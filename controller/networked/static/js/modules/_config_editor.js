@@ -188,9 +188,9 @@ function updateConfigEditorChangeState() {
 function updateActiveBadge(configName) {
     const badge = document.getElementById('config-active-badge');
     if (badge) {
-        // Show the friendly [Meta] name for the active file if we have it.
-        var pretty = prettyConfigName(configName);
-        badge.textContent = '★ On reboot: ' + pretty;
+        // The Profile button shows just the friendly [Meta] name; its "startup"
+        // meaning lives in the button tooltip and the "Use on startup" action.
+        badge.textContent = prettyConfigName(configName);
     }
 }
 
@@ -250,6 +250,7 @@ async function setDefaultConfig() {
         const data = await res.json();
         if (data && data.success !== false) {
             updateActiveBadge(configName);
+            if (typeof closeProfileMenu === 'function') closeProfileMenu();
             showToast('Set as default on reboot', 'success');
         } else {
             showToast('Failed: ' + (data.error || 'unknown'), 'error');
@@ -350,6 +351,7 @@ async function deleteLibraryConfig() {
         const data = await res.json();
 
         if (data.success) {
+            if (typeof closeProfileMenu === 'function') closeProfileMenu();
             showToast('Deleted: ' + configName, 'success');
             await loadConfigLibrary();
         } else {

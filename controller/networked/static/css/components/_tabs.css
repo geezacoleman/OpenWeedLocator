@@ -39,6 +39,12 @@
     transform: scale(0.98);
 }
 
+/* Short kiosk displays (1280x720): slimmer tab strip, still glove-tappable */
+@media (max-height: 760px) {
+    .view-toggle { padding: 0.3rem 0.75rem 0; }
+    .view-tab { padding: 0.45rem 1.6rem; }
+}
+
 /* View panels */
 .view-panel {
     width: 100%;

@@ -96,6 +96,9 @@ except ImportError as e:
 
 logger.info("All required modules imported successfully")
 
+# The dashboard MJPEG stream consumes every Nth frame of the detection loop
+STREAM_FRAME_INTERVAL = 5
+
 
 def nothing(x):
     pass
@@ -724,6 +727,11 @@ class Owl:
 
                 # Reset tracker when detection toggled off
                 if prev_detection_enable and not self._detection_enable:
+                    # Loop stats measure detection throughput only — reset so
+                    # the dashboard frame-rate reads '--' while idle instead
+                    # of the (near-instant) empty loop rate.
+                    self._loop_times.clear()
+                    self._avg_loop_time_ms = 0.0
                     if (self.tracking_enabled and weed_detector
                             and hasattr(weed_detector, 'reset_tracker')):
                         weed_detector.reset_tracker()
@@ -856,7 +864,8 @@ class Owl:
                         and weed_detector.crop_buffer_px != self.crop_buffer_px):
                     weed_detector.set_crop_buffer(self.crop_buffer_px)
 
-                if self._detection_enable and weed_detector is not None:
+                detection_ran = self._detection_enable and weed_detector is not None
+                if detection_ran:
                     cropped_frame = frame[self.crop_slice]
 
                     # Min weed size: % of the detection frame wins over the
@@ -868,7 +877,11 @@ class Owl:
                     else:
                         min_detection_area = self.min_detection_area
 
-                    return_image_out = self.show_display or bool(self.dash)
+                    # Annotated output costs an image.copy() + drawing, but the
+                    # dashboard stream only reads every STREAM_FRAME_INTERVAL-th
+                    # frame — skip the copy on frames nobody will see.
+                    return_image_out = self.show_display or (
+                        bool(self.dash) and frame_count % STREAM_FRAME_INTERVAL == 0)
 
                     if algorithm == 'gog':
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
@@ -1028,7 +1041,7 @@ class Owl:
                         except Exception as e:
                             self.logger.debug(f"Error updating system stats: {e}")
 
-                if self.dash and frame_count % 5 == 0:  # send every 5th frame to the streamer to reduce overhead
+                if self.dash and frame_count % STREAM_FRAME_INTERVAL == 0:  # reduce streamer overhead
                     try:
                         if self._stream_full_frame:
                             # Geometry editor wants the full, uncropped frame so its
@@ -1120,10 +1133,12 @@ class Owl:
 
                 frame_count += 1
 
-                # Loop time tracking
-                loop_time_ms = (time.time() - loop_start) * 1000
-                self._loop_times.append(loop_time_ms)
-                self._avg_loop_time_ms = sum(self._loop_times) / len(self._loop_times)
+                # Loop time tracking — detection frames only, so the
+                # published average is real detection throughput
+                if detection_ran:
+                    loop_time_ms = (time.time() - loop_start) * 1000
+                    self._loop_times.append(loop_time_ms)
+                    self._avg_loop_time_ms = sum(self._loop_times) / len(self._loop_times)
 
                 # FPS logging (time-based, replaces imutils FPS)
                 if log_fps:

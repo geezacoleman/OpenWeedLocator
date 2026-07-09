@@ -32,9 +32,9 @@ from utils.lut_manager import (
     LUT_SHIFT,
     LUTProfileManager,
     apply_lut,
-    bake_lut,
-    build_histograms,
+    bake_from_model,
     generate_starter_pixels,
+    train_model,
 )
 from utils.greenonbrown import GreenOnBrown
 
@@ -71,27 +71,15 @@ def timeit(func, rounds=100, warmup=10, label=''):
 # apply_lut variants
 # ------------------------------------------------------------------
 
-# cv2.LUT-based index build: per-channel 256-entry uint16 tables, then two
-# adds. All cv2 ops are SIMD + multithreaded, unlike numpy shifts.
-_LUT_R = (np.arange(256, dtype=np.uint16) >> LUT_SHIFT) << 10
-_LUT_G = (np.arange(256, dtype=np.uint16) >> LUT_SHIFT) << 5
-_LUT_B = np.arange(256, dtype=np.uint16) >> LUT_SHIFT
-
-
-def apply_lut_cv2_index(image, lut):
-    b, g, r = cv2.split(image)
-    idx = cv2.add(cv2.LUT(r, _LUT_R), cv2.LUT(g, _LUT_G))
-    idx = cv2.add(idx, cv2.LUT(b, _LUT_B))
-    return lut.take(idx)
-
-
-def apply_lut_take_out(image, lut, idx_buf, out_buf):
+def apply_lut_numpy_index(image, lut, idx_buf):
+    """The pre-3.4.0 numpy shift/or index build, kept for comparison
+    against the shipped cv2.LUT-based implementation."""
     np.right_shift(image[:, :, 2], LUT_SHIFT, out=idx_buf, casting='unsafe')
     idx_buf <<= 5
     idx_buf |= image[:, :, 1] >> LUT_SHIFT
     idx_buf <<= 5
     idx_buf |= image[:, :, 0] >> LUT_SHIFT
-    return lut.take(idx_buf, out=out_buf)
+    return lut.take(idx_buf)
 
 
 def main():
@@ -132,17 +120,19 @@ def main():
     if args.profile:
         mgr = LUTProfileManager(os.path.join(PROJECT_ROOT, 'config', 'lut_profiles'))
         lut = mgr.load_and_bake(args.profile, args.sensitivity)
+        prof = mgr.load(args.profile)
+        model = {k: prof[k] for k in ('log_ratio', 'fg_gate', 'score_thresholds')}
+        fg, bg = prof['fg_pixels'], prof['bg_pixels']
         print(f'LUT profile: {args.profile} @ sensitivity {args.sensitivity}')
     else:
         fg, bg = generate_starter_pixels()
-        hist_fg, hist_bg = build_histograms(fg, bg)
-        lut = bake_lut(hist_fg, hist_bg, args.sensitivity)
+        model = train_model(fg, bg)
+        lut = bake_from_model(model, args.sensitivity)
         print(f'LUT profile: synthesised starter @ sensitivity {args.sensitivity}')
 
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     kernel5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     idx_buf = np.empty((ch, cw), np.uint16)
-    out_buf = np.empty((ch, cw), np.uint8)
     rounds, warmup = args.rounds, args.warmup
 
     print()
@@ -162,15 +152,13 @@ def main():
     print()
     print('=== 2. apply_lut variants ===')
     t_strided = timeit(lambda: apply_lut(crop_view, lut, idx_buf),
-                       rounds, warmup, 'CURRENT: strided crop view')
+                       rounds, warmup, 'CURRENT (cv2.LUT index): strided view')
     t_contig = timeit(lambda: apply_lut(contig, lut, idx_buf),
                       rounds, warmup, 'contiguous input')
     t_copy_first = timeit(lambda: apply_lut(np.ascontiguousarray(crop_view), lut, idx_buf),
                           rounds, warmup, 'ascontiguousarray copy + apply')
-    t_cv2idx = timeit(lambda: apply_lut_cv2_index(crop_view, lut),
-                      rounds, warmup, 'cv2.LUT-built index (SIMD/mt)')
-    t_takeout = timeit(lambda: apply_lut_take_out(contig, lut, idx_buf, out_buf),
-                       rounds, warmup, 'contiguous + take(out=buf)')
+    t_npidx = timeit(lambda: apply_lut_numpy_index(contig, lut, idx_buf),
+                     rounds, warmup, 'pre-3.4.0 numpy shift/or index')
 
     def half_res():
         small = cv2.resize(crop_view, (cw // 2, ch // 2),
@@ -181,8 +169,7 @@ def main():
     # Correctness: variants must produce identical masks
     ref = apply_lut(contig, lut, idx_buf).copy()
     assert np.array_equal(ref, apply_lut(crop_view, lut))
-    assert np.array_equal(ref, apply_lut_cv2_index(contig, lut))
-    assert np.array_equal(ref, apply_lut_take_out(contig, lut, idx_buf, out_buf))
+    assert np.array_equal(ref, apply_lut_numpy_index(contig, lut, idx_buf))
     print('  correctness: all full-res variants produce identical masks')
 
     print()
@@ -204,14 +191,14 @@ def main():
            rounds, warmup, 'connectedComponentsWithStats')
 
     print()
-    print('=== 4. Bake / load costs (not per-frame, sanity only) ===')
+    print('=== 4. Bake / load / fit costs (not per-frame, sanity only) ===')
     if args.profile:
         timeit(lambda: mgr.load_and_bake(args.profile, args.sensitivity),
                20, 3, 'load_and_bake (profile switch)')
-        prof = mgr.load(args.profile)
-        hist_fg, hist_bg = prof['hist_fg'], prof['hist_bg']
-    timeit(lambda: bake_lut(hist_fg, hist_bg, args.sensitivity),
-           20, 3, 'bake_lut (sensitivity re-bake)')
+    timeit(lambda: bake_from_model(model, args.sensitivity),
+           20, 3, 'bake_from_model (sensitivity re-bake)')
+    timeit(lambda: train_model(fg, bg),
+           5, 1, 'train_model (save / v1-migration fit)')
 
     print()
     print('=== 5. Loop overheads outside the detector ===')
@@ -229,9 +216,8 @@ def main():
     print('=' * 70)
     print(f'  End-to-end lut:   {t_lut_e2e:7.2f}ms   exhsv: {t_ex_e2e:7.2f}ms   '
           f'(lut is {t_ex_e2e - t_lut_e2e:+.2f}ms vs exhsv)')
-    best_apply = min(t_contig, t_copy_first, t_cv2idx, t_takeout)
-    print(f'  apply_lut:        {t_strided:7.2f}ms current -> {best_apply:7.2f}ms best '
-          f'full-res variant ({t_strided - best_apply:+.2f}ms)')
+    print(f'  apply_lut:        {t_strided:7.2f}ms shipped vs {t_npidx:7.2f}ms '
+          f'numpy index ({t_npidx - t_strided:+.2f}ms saved by cv2.LUT build)')
     print(f'  half-res apply:   {t_half:7.2f}ms ({t_strided - t_half:+.2f}ms; '
           f'boxes/areas need x2/x4 rescale)')
     print(f'  morphology:       {t_m5:7.2f}ms (x5) -> {t_m1:7.2f}ms (x1) '

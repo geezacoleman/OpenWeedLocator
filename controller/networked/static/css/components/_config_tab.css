@@ -12,66 +12,144 @@
     overflow: hidden;
 }
 
-/* Toolbar - device selector, load, preview toggle, active badge */
-.config-toolbar {
+/* Context bar — "Detect by" method chips (left) + Profile control (right).
+   Replaces the old two-row toolbar + detection-mode bar. */
+.config-context-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.4rem 1rem;
+    background: var(--light);
+    border-bottom: 1px solid #dfe6e9;
+    flex-shrink: 0;
+}
+
+.config-context-left {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    padding: 0.5rem 1rem;
-    background: var(--light);
-    border-bottom: 2px solid #dfe6e9;
-    flex-shrink: 0;
 }
 
-.config-toolbar-group {
+.config-context-right {
     display: flex;
     align-items: center;
+    gap: 0.6rem;
+}
+
+/* Quiet fleet-scope reminder (config always applies to all OWLs) */
+.config-target-note {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-light);
+    white-space: nowrap;
+}
+
+/* Profile control — current profile + unsaved marker; opens a menu of saved
+   profiles with Load / Use on startup / Delete. */
+.config-profile {
+    position: relative;
+}
+
+.config-profile-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.8rem;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-weight: 700;
+    font-size: 0.85rem;
+    color: var(--text-dark);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background var(--transition-fast);
+}
+
+.config-profile-btn:hover {
+    background: var(--light);
+}
+
+.config-profile-prefix {
+    color: var(--text-light);
+    font-weight: 600;
+}
+
+.config-profile-name {
+    color: var(--text-dark);
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.config-profile .config-unsaved {
+    color: var(--warning);
+    font-weight: 700;
+}
+
+.config-profile .config-unsaved.hidden {
+    display: none;
+}
+
+.config-profile-caret {
+    color: var(--text-light);
+    font-size: 0.7rem;
+}
+
+.config-profile-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 30;
+    width: 280px;
+    padding: 0.75rem;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+    display: flex;
+    flex-direction: column;
     gap: 0.5rem;
 }
 
-.config-toolbar-spacer {
-    flex: 1;
+.config-profile-menu.hidden {
+    display: none;
 }
 
-.config-toolbar .config-action-btn {
-    flex: 0 0 auto;
-    padding: 0.5rem 1rem;
-    font-size: 0.85rem;
+.config-profile-menu-label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-light);
 }
 
-/* Preview device selector in toolbar */
-#config-preview-device {
-    padding: 0.4rem 0.6rem;
-    border: 2px solid #bdc3c7;
-    border-radius: var(--radius-md);
+.config-profile-menu select {
+    width: 100%;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
     font-size: 0.85rem;
     font-weight: 600;
-    background: white;
-    min-width: 120px;
-    max-width: 180px;
+    background: #fff;
 }
 
-.config-toolbar .config-badge {
-    font-size: 0.75rem;
-    white-space: nowrap;
-}
-
-.config-toolbar .config-unsaved {
-    font-size: 0.75rem;
-    color: var(--warning);
-    font-weight: 700;
-    white-space: nowrap;
-}
-
-/* Detection mode bar */
-.config-mode-bar {
+.config-profile-menu-actions {
     display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 0.4rem 1rem;
-    background: white;
-    border-bottom: 1px solid #dfe6e9;
-    flex-shrink: 0;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+
+.config-profile-menu-actions .config-action-btn {
+    flex: 1 1 auto;
+    padding: 0.45rem 0.6rem;
+    font-size: 0.8rem;
+}
+
+.config-profile-menu .config-library-caption {
+    font-size: 0.75rem;
+    color: var(--text-light);
+    line-height: 1.3;
 }
 
 .config-mode-label {
@@ -107,34 +185,30 @@
     padding: 0.75rem 1rem;
 }
 
-/* When preview is hidden, sliders get full width */
-.config-split:not(.preview-active) .config-sliders-col {
-    max-width: 100%;
-}
-
-/* When preview is active, sliders column narrows */
-.config-split.preview-active .config-sliders-col {
-    flex: 0 0 450px;
-    max-width: 450px;
-}
-
-/* Slider grid - 2 columns by default, 1 when preview active */
+/* Sliders keep a comfortable 2-column grid; the feed rail is a fixed narrow
+   column, so sliders never collapse to a single cramped column. */
 .config-sliders-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
     gap: 0.75rem;
 }
 
-.config-split.preview-active .config-sliders-grid {
-    grid-template-columns: 1fr;
-}
-
-/* Individual slider group card */
+/* Individual slider group card — brand card recipe (border + subtle shadow) */
 .config-slider-group {
     background: white;
     border-radius: var(--radius-md);
-    border: 2px solid var(--light);
+    border: 1px solid var(--border);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
     padding: 0.75rem 1rem;
+}
+
+/* Short kiosk displays (1280x720): tighten the slider grid so the full GoB
+   slider set fits the column without a scrollbar */
+@media (max-height: 760px) {
+    .config-sliders-col { padding: 0.5rem 1rem; }
+    .config-sliders-grid { gap: 0.5rem; }
+    .config-slider-group { padding: 0.4rem 1rem; }
+    .config-sliders-col .config-advanced-toggle { margin-top: 6px; }
 }
 
 /* Slider header - title left, values right */
@@ -306,36 +380,75 @@
     overflow: visible;
 }
 
-/* Preview column */
+/* Feed rail — always-on narrow column with a mini snapshot preview. */
 .config-preview-col {
-    display: none;
-    flex: 1;
+    display: flex;
+    flex: 0 0 300px;
+    max-width: 300px;
     min-width: 0;
     padding: 0.75rem;
     background: #1a1a2e;
-    border-left: 2px solid #2c3e50;
-    align-items: center;
-    justify-content: center;
+    border-left: 1px solid #2c3e50;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
     position: relative;
+    overflow: hidden;
 }
 
-.config-split.preview-active .config-preview-col {
+.config-feed-rail {
     display: flex;
-}
-
-.config-preview-label {
-    position: absolute;
-    top: 0.5rem;
-    left: 0.75rem;
-    font-size: 0.75rem;
-    font-weight: 700;
-    color: rgba(255, 255, 255, 0.7);
-    z-index: 1;
-}
-
-.config-split.preview-active .config-preview-col {
     flex-direction: column;
     gap: 0.5rem;
+    min-height: 0;
+}
+
+.config-feed-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.75);
+}
+
+/* Mini snapshot frame — 4:3, tap to open the full live feed */
+.config-feed-rail .config-preview-frame {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    background: #000;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.config-feed-rail .config-preview-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.config-feed-hint {
+    position: absolute;
+    color: #7f8c8d;
+    font-size: 0.85rem;
+    text-align: center;
+    padding: 0 0.5rem;
+}
+
+.config-feed-rail select {
+    width: 100%;
+    padding: 0.4rem 0.55rem;
+    border: 1px solid #3a3f5a;
+    border-radius: var(--radius-sm);
+    font-size: 0.82rem;
+    font-weight: 600;
+    background: #fff;
+}
+
+.config-geo-btn {
+    width: 100%;
 }
 
 /* Geometry editing — feed and controls flow SIDE BY SIDE on a wide (landscape
@@ -369,6 +482,8 @@
 .config-split.geo-mode .config-sliders-col { display: none; }
 .config-split.geo-mode .config-preview-col {
     display: flex;
+    flex: 1 1 auto;              /* expand to full width for the geometry editor */
+    max-width: none;
     flex-direction: column;
     align-items: stretch;
     justify-content: flex-start;
@@ -376,6 +491,8 @@
     overflow: hidden;
     padding: 0.5rem 0.75rem;
 }
+/* The mini-feed rail is replaced by the large geometry feeds while editing. */
+.config-split.geo-mode .config-feed-rail { display: none; }
 .geo-multi {
     flex: 1 1 auto;
     min-height: 0;
@@ -438,7 +555,7 @@
 .config-split.geo-mode .geo-panel {
     position: absolute;
     right: 12px;
-    bottom: 12px;
+    bottom: 24px;     /* keep Done/Cancel clear of the kiosk's bottom bezel */
     width: 300px;
     max-width: 70%;
     max-height: 80%;
@@ -474,7 +591,7 @@
     gap: 0.5rem;
     padding: 0.5rem 1rem;
     background: var(--light);
-    border-top: 2px solid #dfe6e9;
+    border-top: 1px solid #dfe6e9;
     flex-shrink: 0;
 }
 
@@ -519,67 +636,49 @@
     cursor: not-allowed;
 }
 
-.config-action-btn.primary {
-    background: linear-gradient(135deg, var(--success) 0%, var(--success-dark) 100%);
+/* ── Calm palette: ONE filled accent (brand blue) for the primary action of a
+   context; everything else neutral/ghost; red reserved for destructive; orange
+   only for the genuine restart warning. ─────────────────────────────────────── */
+
+/* Primary filled action — Apply, Push to device, Paint/Apply LUT, modal Save */
+.config-action-btn.apply,
+.config-action-btn.primary,
+.config-action-btn.send {
+    background: linear-gradient(135deg, var(--owl-primary-light, #034694) 0%, var(--owl-primary, #022775) 100%);
     color: white;
-    box-shadow: 0 2px 8px rgba(46, 204, 113, 0.3);
+    box-shadow: 0 1px 4px rgba(2, 39, 117, 0.3);
 }
 
+.config-action-btn.apply:hover,
+.config-action-btn.primary:hover,
+.config-action-btn.send:hover {
+    filter: brightness(1.08);
+}
+
+/* Secondary / neutral ghost */
 .config-action-btn.secondary {
     background: white;
-    color: var(--text-light);
-    border: 2px solid #bdc3c7;
+    color: var(--text-dark);
+    border: 1px solid var(--border);
 }
 
+.config-action-btn.secondary:hover {
+    background: var(--light);
+}
+
+/* Destructive — red text ghost (lives in the profile menu) */
 .config-action-btn.danger {
-    background: linear-gradient(135deg, var(--danger) 0%, var(--danger-dark) 100%);
-    color: white;
+    background: white;
+    color: var(--danger);
+    border: 1px solid #f0b4ae;
     flex: 0 0 auto;
-    min-width: 50px;
 }
 
-.config-action-btn.save-as {
-    background: linear-gradient(135deg, var(--accent) 0%, #2980b9 100%);
-    color: white;
-    box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
+.config-action-btn.danger:hover {
+    background: #fdecea;
 }
 
-.config-action-btn.preview {
-    background: linear-gradient(135deg, #8e44ad 0%, #6c3483 100%);
-    color: white;
-}
-
-.config-action-btn.preview.active {
-    background: linear-gradient(135deg, #6c3483 0%, #4a235a 100%);
-}
-
-.config-action-btn.send {
-    background: linear-gradient(135deg, var(--success) 0%, var(--success-dark) 100%);
-    color: white;
-    box-shadow: 0 2px 8px rgba(46, 204, 113, 0.3);
-}
-
-.config-action-btn.save {
-    background: linear-gradient(135deg, var(--accent) 0%, #2980b9 100%);
-    color: white;
-    box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
-}
-
-/* Test — apply live to all OWLs without saving (purple, matches preview) */
-.config-action-btn.test {
-    background: linear-gradient(135deg, #8e44ad 0%, #6c3483 100%);
-    color: white;
-    box-shadow: 0 2px 8px rgba(142, 68, 173, 0.3);
-}
-
-/* Set-as-default star button */
-.config-action-btn.star {
-    background: #fef9e7;
-    color: #b9770e;
-    border: 2px solid #f1c40f;
-}
-
-/* Restart button (in the restart-required notice) */
+/* Restart button — the one legitimate warning colour */
 .config-action-btn.restart {
     background: linear-gradient(135deg, var(--warning) 0%, #d68910 100%);
     color: white;

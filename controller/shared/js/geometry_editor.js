@@ -351,7 +351,7 @@ const GeometryEditor = (function () {
         panelEl.classList.add('geo-panel-pop', 'geo-min');
         panelEl.innerHTML =
             '<div class="geo-panel-head">' +
-            '<button class="geo-min-btn" id="geo-min" title="Show/hide fine-tune">&#9874; Fine-tune</button>' +
+            '<button class="geo-min-btn" id="geo-min" title="Show/hide fine-tune">Fine-tune</button>' +
             '<div class="geo-panel-actions">' +
             '<button class="geo-btn geo-btn-secondary" id="geo-cancel">Cancel</button>' +
             '<button class="geo-btn geo-btn-primary" id="geo-done">Done</button>' +

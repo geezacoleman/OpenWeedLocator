@@ -118,8 +118,8 @@
                                 <path class="gauge-arc-fill loop-good" d="" id="loop-gauge-fill"></path>
                             </svg>
                             <div class="gauge-value" id="loop-gauge-value">--</div>
-                            <div class="gauge-unit">ms</div>
-                            <div class="gauge-label">Avg Loop Time</div>
+                            <div class="gauge-unit">fps</div>
+                            <div class="gauge-label">Frame Rate</div>
                         </div>
 
                         <!-- Duration Gauge -->
@@ -359,25 +359,41 @@
     <!-- Config View -->
     <div id="view-config" class="view-panel" style="display:none;">
         <div class="config-tab-content">
-            <!-- Toolbar -->
-            <div class="config-toolbar">
-                <div class="config-toolbar-group">
-                    <span class="config-target-badge" id="config-target-badge">All OWLs</span>
-                    <span class="config-mismatch-badge hidden" id="config-mismatch-badge">Config mismatch</span>
-                    <select id="config-preview-device">
-                        <option value="" disabled>No OWLs connected</option>
-                    </select>
-                    <button class="config-action-btn preview" id="config-preview-btn" onclick="toggleConfigPreview()">Preview</button>
-                    <button class="config-action-btn secondary" id="config-geometry-btn" onclick="toggleGeometryEditor()">Adjust geometry</button>
-                    <div class="geo-feed-toggle geo-updown" id="geo-feed-toggle" style="display:none;">
-                        <button class="geo-updown-btn" data-up="1">1 feed</button>
-                        <button class="geo-updown-btn active" data-up="2">2 feeds</button>
+            <!-- Context bar: "Detect by" method chips (left) + Profile control (right) -->
+            <div class="config-context-bar">
+                <div class="config-context-left">
+                    <span class="config-mode-label">Detect by</span>
+                    <div class="config-mode-buttons">
+                        <button class="mode-btn active" data-mode="gob" onclick="setPipelineMode('gob')">Colour</button>
+                        <button class="mode-btn" data-mode="gog" onclick="setPipelineMode('gog')">AI</button>
+                        <button class="mode-btn" data-mode="hybrid" onclick="setPipelineMode('hybrid')">Hybrid</button>
+                        <button class="mode-btn" data-mode="lut" onclick="setPipelineMode('lut')">Painted</button>
                     </div>
                 </div>
-                <div class="config-toolbar-spacer"></div>
-                <span class="config-badge" id="config-active-badge">--</span>
-                <div id="config-editor-unsaved" class="config-unsaved hidden">
-                    <span>Unsaved changes</span>
+                <div class="config-context-right">
+                    <span class="config-mismatch-badge hidden" id="config-mismatch-badge">Config mismatch</span>
+                    <span class="config-target-note" id="config-target-badge">All OWLs</span>
+                    <div class="config-profile" id="config-profile">
+                        <button class="config-profile-btn" id="config-profile-btn" onclick="toggleProfileMenu()"
+                                title="The saved configuration profile your OWLs use">
+                            <span class="config-profile-prefix">Profile</span>
+                            <span class="config-profile-name" id="config-active-badge">--</span>
+                            <span class="config-unsaved hidden" id="config-editor-unsaved">&bull; unsaved</span>
+                            <span class="config-profile-caret">&#9662;</span>
+                        </button>
+                        <div class="config-profile-menu hidden" id="config-profile-menu">
+                            <span class="config-profile-menu-label">Saved profiles</span>
+                            <select id="config-library-selector">
+                                <option value="">Library&hellip;</option>
+                            </select>
+                            <div class="config-library-caption" id="config-library-caption"></div>
+                            <div class="config-profile-menu-actions">
+                                <button class="config-action-btn secondary" id="load-preset-btn">Load</button>
+                                <button class="config-action-btn secondary" id="set-default-btn" title="Make this the config OWLs load on reboot">&#9733; Use on startup</button>
+                                <button class="config-action-btn danger" id="delete-preset-btn">Delete</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -387,21 +403,10 @@
                 <button class="config-action-btn restart" id="config-restart-btn">Restart OWLs</button>
             </div>
 
-            <!-- Detection Mode (syncs with Dashboard mode buttons) -->
-            <div class="config-mode-bar">
-                <span class="config-mode-label">Detection Mode</span>
-                <div class="config-mode-buttons">
-                    <button class="mode-btn active" data-mode="gob" onclick="setPipelineMode('gob')">Colour</button>
-                    <button class="mode-btn" data-mode="gog" onclick="setPipelineMode('gog')">AI</button>
-                    <button class="mode-btn" data-mode="hybrid" onclick="setPipelineMode('hybrid')">Hybrid</button>
-                    <button class="mode-btn" data-mode="lut" onclick="setPipelineMode('lut')">Painted</button>
-                </div>
-            </div>
-
             <!-- Painted LUT profile panel — visible only in Painted mode -->
             <div class="card lut-panel" id="lut-panel" style="display:none;">
                 <div class="lut-panel-row">
-                    <span class="lut-panel-label">Profile</span>
+                    <span class="lut-panel-label">Painted profile</span>
                     <select id="lutProfileSelect" class="config-select">
                         <option value="">No painted profiles yet</option>
                     </select>
@@ -628,16 +633,30 @@
                     </div>
                 </div>
 
-                <!-- Preview column -->
+                <!-- Feed rail: always-on mini snapshot + OWL switcher + geometry pop-in -->
                 <div class="config-preview-col">
-                    <!-- Normal single preview (Preview button) -->
-                    <span class="config-preview-label" id="config-preview-label"></span>
-                    <div class="config-preview-frame" id="config-preview-frame">
-                        <img id="config-preview-img" class="config-preview-img" src="" alt="Live Preview" />
+                    <div class="config-feed-rail">
+                        <span class="config-feed-title">Live view</span>
+                        <div class="config-preview-frame" id="config-preview-frame"
+                             onclick="enlargeConfigFeed()" title="Tap for the full live feed">
+                            <img id="config-preview-img" class="config-preview-img" src="" alt="Live preview" />
+                            <div class="config-feed-hint" id="config-feed-hint">No OWL connected</div>
+                        </div>
+                        <select id="config-preview-device">
+                            <option value="" disabled>No OWLs connected</option>
+                        </select>
+                        <button class="config-action-btn secondary config-geo-btn"
+                                id="config-geometry-btn" onclick="toggleGeometryEditor()">&#9678; Crop &amp; spray zone</button>
                     </div>
 
-                    <!-- Geometry editor — up to two feeds side by side -->
+                    <!-- Geometry editor — up to two feeds side by side (geometry mode only) -->
                     <div class="geo-multi" id="geo-multi" style="display:none;">
+                        <div class="geo-multi-bar">
+                            <div class="geo-feed-toggle geo-updown" id="geo-feed-toggle" style="display:none;">
+                                <button class="geo-updown-btn" data-up="1">1 feed</button>
+                                <button class="geo-updown-btn active" data-up="2">2 feeds</button>
+                            </div>
+                        </div>
                         <div class="geo-feeds" id="geo-feeds">
                             <div class="geo-slot" data-slot="0">
                                 <select class="geo-slot-pick" data-slot="0"></select>
@@ -658,19 +677,12 @@
                 </div>
             </div>
 
-            <!-- Action bar -->
+            <!-- Action bar: one primary action + save -->
             <div class="config-action-bar">
-                <button class="config-action-btn test" id="apply-all-btn">Test on OWLs</button>
-                <button class="config-action-btn save" id="save-all-btn">Save&hellip;</button>
+                <button class="config-action-btn apply" id="apply-all-btn">Apply to OWLs</button>
+                <button class="config-action-btn secondary" id="save-all-btn">Save&hellip;</button>
                 <div class="config-action-bar-spacer"></div>
-                <select id="config-library-selector">
-                    <option value="">Library&hellip;</option>
-                </select>
-                <button class="config-action-btn secondary" id="load-preset-btn">Load</button>
-                <button class="config-action-btn star" id="set-default-btn" title="Make this the config OWLs load on reboot">&#9733; Set default</button>
-                <button class="config-action-btn danger" id="delete-preset-btn">Delete</button>
             </div>
-            <div class="config-library-caption" id="config-library-caption"></div>
         </div>
     </div>
 
@@ -703,7 +715,7 @@
             </div>
             <div class="config-modal-actions">
                 <button class="config-action-btn secondary" id="config-save-cancel">Cancel</button>
-                <button class="config-action-btn save" id="config-save-confirm">Save</button>
+                <button class="config-action-btn apply" id="config-save-confirm">Save</button>
             </div>
         </div>
     </div>

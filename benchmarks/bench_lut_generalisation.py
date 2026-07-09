@@ -34,11 +34,11 @@ from utils.lut_manager import (
     LUT_SIZE,
     LUTProfileManager,
     _smooth3,
-    bake_lut,
-    build_histograms,
+    bake_from_model,
     generate_starter_pixels,
     pixel_histogram,
-    sensitivity_to_ratio,
+    sensitivity_to_miss_rate,
+    train_model,
 )
 
 MATCHED_FPR = 0.01          # compare recall at 1% background false positives
@@ -163,35 +163,39 @@ def main():
     print(f'Split: train fg={train_fg.shape[0]:,} bg={train_bg.shape[0]:,} / '
           f'test fg={test_fg.shape[0]:,} bg={test_bg.shape[0]:,}')
 
-    # 1. Slider responsiveness of the shipped bake
-    print('\n=== Coverage & held-out recall vs sensitivity (current bake) ===')
-    hist_fg, hist_bg = build_histograms(train_fg, train_bg)
+    # 1. Slider responsiveness of the shipped trainer
+    print('\n=== Coverage & held-out recall vs sensitivity (shipped trainer) ===')
+    model = train_model(train_fg, train_bg)
     fg_idx, bg_idx = bin_indices(test_fg), bin_indices(test_bg)
     print(f'  {"sens":>4s} {"coverage":>9s} {"recall":>8s} {"bg FPR":>8s} '
-          f'{"ratio thresh":>13s}')
+          f'{"miss rate":>10s}')
     for s in range(0, 101, 10):
-        lut = bake_lut(hist_fg, hist_bg, s)
+        lut = bake_from_model(model, s)
         print(f'  {s:4d} {np.mean(lut > 0):9.2%} {np.mean(lut[fg_idx] > 0):8.1%} '
-              f'{np.mean(lut[bg_idx] > 0):8.2%} {sensitivity_to_ratio(s):13.2f}')
+              f'{np.mean(lut[bg_idx] > 0):8.2%} {sensitivity_to_miss_rate(s):10.3f}')
 
-    # 2/3. Matched-FPR comparison: current bake vs GMM bake
+    # 2/3. Matched-FPR comparison: legacy histogram vs shipped Lab-GMM
     print('\n=== Matched-FPR comparison (held-out test pixels) ===')
-    evaluate('CURRENT: smoothed-histogram Bayes ratio',
+    evaluate('LEGACY: smoothed-histogram Bayes ratio (pre-3.4.0)',
              current_ratio_grid(train_fg, train_bg), test_fg, test_bg)
 
-    print('\n  fitting GMMs (this takes a moment on a Pi)...')
+    shipped_grid = model['log_ratio'].astype(np.float64).copy()
+    shipped_grid[model['fg_gate'] == 0] = -1e30
+    evaluate('SHIPPED: Lab-GMM trainer (utils.lut_manager.train_model)',
+             shipped_grid, test_fg, test_bg)
+
+    print('\n  fitting BGR-GMM prototype for reference...')
     em_fg = fit_gmm(train_fg, rng)
     em_bg = fit_gmm(train_bg, rng)
-    evaluate(f'PROTOTYPE: {GMM_COMPONENTS}-component GMM per class '
-             f'(bakes into the same 32KB LUT)',
+    evaluate(f'REFERENCE: {GMM_COMPONENTS}-component BGR GMM (no Lab, no gate)',
              gmm_score_grid(em_fg, em_bg), test_fg, test_bg)
 
     print('\nReading the numbers:')
     print('  - Recall that collapses under brightness shifts = the profile only')
-    print('    knows the exact painted colours; operators must repaint per light.')
-    print('  - If the GMM holds recall under shifts at the same FPR, upgrading')
-    print('    bake_lut generalises better with zero runtime cost.')
-    print('  - Coverage that barely moves across sensitivity = dead slider.')
+    print('    knows the exact painted colours; paint extra frames per light.')
+    print('  - The SHIPPED row should hold recall under shifts at matched FPR,')
+    print('    beating LEGACY. Its gate may cost a little vs the ungated BGR row.')
+    print('  - Coverage/recall that barely move across sensitivity = dead slider.')
 
 
 if __name__ == '__main__':

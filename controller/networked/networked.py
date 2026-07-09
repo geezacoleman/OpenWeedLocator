@@ -2405,7 +2405,9 @@ def painter_preview():
             return jsonify({'success': True, 'overlay': None,
                             'swatch': None, 'counts': counts})
         frame = painter_store.get_frame(session_id, frame_id)
-        overlay, swatch, coverage = preview_images(frame, fg, bg, sensitivity)
+        overlay, swatch, coverage = preview_images(
+            frame, fg, bg, sensitivity,
+            store=painter_store, session_id=session_id)
         return jsonify({'success': True,
                         'overlay': base64.b64encode(overlay).decode('ascii'),
                         'swatch': base64.b64encode(swatch).decode('ascii'),

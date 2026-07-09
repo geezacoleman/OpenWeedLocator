@@ -91,22 +91,31 @@ function updateSpeedGauge(speedKmh, gpsStatus) {
 }
 
 function updateLoopTimeGauge(avgMs) {
+    // Shown as frames per second: the OWL's camera read blocks per frame,
+    // so 1000 / avg loop time is true detection throughput
     var valueEl = document.getElementById('loop-gauge-value');
     var fillEl = document.getElementById('loop-gauge-fill');
 
     if (!valueEl || !fillEl) return;
 
-    var maxMs = 200;
-    var fraction = Math.min(avgMs / maxMs, 1);
+    // A YOLO model on a Pi legitimately runs ~8-15 fps — hold AI/Hybrid mode
+    // to an honest bar so the gauge doesn't cry wolf all season.
+    var aiMode = dialMode() === 'gog' || dialMode() === 'hybrid';
+    var maxFps = aiMode ? 20 : 40;
+    var goodFps = aiMode ? 8 : 20;
+    var warnFps = aiMode ? 4 : 10;
 
-    valueEl.textContent = avgMs > 0 ? avgMs.toFixed(0) : '--';
+    var fps = avgMs > 0 ? 1000 / avgMs : 0;
+    var fraction = Math.min(fps / maxFps, 1);
+
+    valueEl.textContent = fps > 0 ? fps.toFixed(0) : '--';
     updateGaugeArc(fillEl, fraction);
 
-    // Colour thresholds
-    fillEl.classList.remove('loop-good', 'loop-warn', 'loop-danger');
-    if (avgMs > 100) fillEl.classList.add('loop-danger');
-    else if (avgMs > 50) fillEl.classList.add('loop-warn');
-    else fillEl.classList.add('loop-good');
+    fillEl.classList.remove('loop-good', 'loop-warn', 'loop-danger', 'loop-idle');
+    if (fps <= 0) fillEl.classList.add('loop-idle');   // no data — neutral, not "good"
+    else if (fps >= goodFps) fillEl.classList.add('loop-good');
+    else if (fps >= warnFps) fillEl.classList.add('loop-warn');
+    else fillEl.classList.add('loop-danger');
 }
 
 function updateDurationGauge(durationSec) {

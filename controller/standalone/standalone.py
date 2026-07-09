@@ -573,7 +573,9 @@ class OWLDashboard:
                     return jsonify({'success': True, 'overlay': None,
                                     'swatch': None, 'counts': counts})
                 frame = self.painter_store.get_frame(session_id, frame_id)
-                overlay, swatch, coverage = preview_images(frame, fg, bg, sensitivity)
+                overlay, swatch, coverage = preview_images(
+                    frame, fg, bg, sensitivity,
+                    store=self.painter_store, session_id=session_id)
                 return jsonify({'success': True,
                                 'overlay': b64mod.b64encode(overlay).decode('ascii'),
                                 'swatch': b64mod.b64encode(swatch).decode('ascii'),

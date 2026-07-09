@@ -160,6 +160,11 @@ config/GEOMETRY.ini
 # User-saved config presets (created from dashboard Save As)
 config/config_*
 
+# Active-config pointer (device state written by the dashboard; readers fall
+# back to config/GENERAL_CONFIG.ini when it's absent, so a fresh clone needs
+# no copy of it)
+config/active_config.txt
+
 # Painted LUT detection profiles (device/site-specific, created by the weed
 # painter on OWLs and in the controller library)
 config/lut_profiles/

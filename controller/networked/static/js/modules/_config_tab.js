@@ -329,7 +329,7 @@ function sendAllToDevice() {
         if (typeof updateConfigEditorChangeState === 'function') updateConfigEditorChangeState();
     }
 
-    showToast('Testing on all OWLs — not saved', 'info');
+    showToast('Applied to all OWLs — not saved', 'info');
 }
 
 /**
@@ -495,6 +495,7 @@ async function loadPresetToDevice() {
         }
 
         lastSliderSendTime = Date.now();
+        if (typeof closeProfileMenu === 'function') closeProfileMenu();
         showToast('Applied ' + presetName + ' to all OWLs (not saved)', 'success');
 
     } catch (err) {
@@ -530,10 +531,21 @@ function syncSlidersFromConfig(config) {
 }
 
 // ============================================
-// LIVE PREVIEW TOGGLE
+// LIVE MINI FEED (always-on snapshot preview)
+//   Polls the cheap /api/snapshot proxy (one-shot JPEG, no held gunicorn
+//   threads) rather than a live MJPEG stream, so it scales and stays light on
+//   the 7" kiosk. Tapping the feed opens the full live stream in the video modal.
 // ============================================
 
-let configPreviewActive = false;
+let configFeedTimer = null;
+const CONFIG_FEED_MS = 1500;
+// After a few straight failures (OWL offline), each poll still costs the
+// controller a hung upstream fetch + an error log line — back off to a slow
+// retry until a snapshot succeeds again.
+const CONFIG_FEED_BACKOFF_AFTER = 3;
+const CONFIG_FEED_SLOW_MS = 10000;
+let configFeedErrors = 0;
+let configFeedLastAttempt = 0;
 
 function getFirstConnectedOwl() {
     for (var id in owlsData) {
@@ -547,86 +559,97 @@ function getSelectedPreviewDevice() {
     return (sel && sel.value) ? sel.value : getFirstConnectedOwl();
 }
 
-function toggleConfigPreview() {
-    var split = document.getElementById('config-split');
+function pollConfigFeed() {
+    // Geometry mode streams its own full feeds; leave the rail alone.
+    if (geometryEditorActive) return;
     var img = document.getElementById('config-preview-img');
-    var btn = document.getElementById('config-preview-btn');
-
-    if (!split || !img) return;
-
-    configPreviewActive = !configPreviewActive;
-
-    var label = document.getElementById('config-preview-label');
-
-    if (configPreviewActive) {
-        split.classList.add('preview-active');
-        if (btn) {
-            btn.textContent = 'Hide Preview';
-            btn.classList.add('active');
-        }
-        var deviceId = getSelectedPreviewDevice();
-        if (deviceId) {
-            img.src = '/api/video_feed/' + deviceId;
-            if (label) label.textContent = deviceId;
-        }
-    } else {
-        split.classList.remove('preview-active');
-        if (btn) {
-            btn.textContent = 'Preview';
-            btn.classList.remove('active');
-        }
-        img.src = '';
-        if (label) label.textContent = '';
-    }
-}
-
-function updateConfigPreviewDevice() {
-    if (!configPreviewActive) return;
-
-    var img = document.getElementById('config-preview-img');
-    var label = document.getElementById('config-preview-label');
-    if (!img) return;
-
-    var deviceId = getSelectedPreviewDevice();
-    img.src = deviceId ? '/api/video_feed/' + deviceId : '';
-    if (label) label.textContent = deviceId || '';
-}
-
-function onPreviewDeviceChanged() {
-    if (!configPreviewActive) return;
-
-    var img = document.getElementById('config-preview-img');
-    var label = document.getElementById('config-preview-label');
+    var hint = document.getElementById('config-feed-hint');
     if (!img) return;
 
     var deviceId = getSelectedPreviewDevice();
     if (deviceId) {
-        img.src = '/api/video_feed/' + deviceId;
-        if (label) label.textContent = deviceId;
+        if (configFeedErrors >= CONFIG_FEED_BACKOFF_AFTER &&
+                Date.now() - configFeedLastAttempt < CONFIG_FEED_SLOW_MS) {
+            return;   // backing off — keep the "Feed unavailable" hint up
+        }
+        configFeedLastAttempt = Date.now();
+        img.src = '/api/snapshot/' + deviceId + '?t=' + Date.now();
+        img.style.display = '';
+        if (hint) hint.style.display = 'none';
     } else {
-        img.src = '';
-        if (label) label.textContent = '';
+        img.removeAttribute('src');
+        img.style.display = 'none';
+        if (hint) { hint.style.display = ''; hint.textContent = 'No OWL connected'; }
     }
+}
+
+function startConfigPreview() {
+    var img = document.getElementById('config-preview-img');
+    if (img && !img.dataset.errWired) {
+        img.dataset.errWired = '1';
+        img.onerror = function () {
+            configFeedErrors++;
+            var hint = document.getElementById('config-feed-hint');
+            img.style.display = 'none';
+            if (hint) { hint.style.display = ''; hint.textContent = 'Feed unavailable'; }
+        };
+        img.onload = function () {
+            configFeedErrors = 0;
+        };
+    }
+    pollConfigFeed();
+    if (configFeedTimer) return;
+    configFeedTimer = setInterval(pollConfigFeed, CONFIG_FEED_MS);
 }
 
 function stopConfigPreview() {
     if (geometryEditorActive) {
         geoCloseEditor();
     }
-    if (!configPreviewActive) return;
-
-    configPreviewActive = false;
-    var split = document.getElementById('config-split');
+    if (configFeedTimer) {
+        clearInterval(configFeedTimer);
+        configFeedTimer = null;
+    }
     var img = document.getElementById('config-preview-img');
-    var btn = document.getElementById('config-preview-btn');
+    if (img) img.removeAttribute('src');
+}
 
-    if (split) split.classList.remove('preview-active');
-    if (img) img.src = '';
-    if (btn) {
-        btn.textContent = 'Preview';
-        btn.classList.remove('active');
+// OWL switcher changed — repoint the snapshot immediately.
+function onPreviewDeviceChanged() {
+    pollConfigFeed();
+}
+
+// Tap the mini feed → open the full live MJPEG stream in the video modal.
+function enlargeConfigFeed() {
+    var deviceId = getSelectedPreviewDevice();
+    if (deviceId && typeof openVideoFeed === 'function') {
+        openVideoFeed(deviceId);
+    } else {
+        showToast('No OWL connected', 'warning');
     }
 }
+
+// ============================================
+// PROFILE CONTROL MENU (Load / Use on startup / Delete)
+// ============================================
+
+function toggleProfileMenu() {
+    var menu = document.getElementById('config-profile-menu');
+    if (menu) menu.classList.toggle('hidden');
+}
+
+function closeProfileMenu() {
+    var menu = document.getElementById('config-profile-menu');
+    if (menu) menu.classList.add('hidden');
+}
+
+// Close the profile menu on a click outside it.
+document.addEventListener('click', function (e) {
+    var wrap = document.getElementById('config-profile');
+    var menu = document.getElementById('config-profile-menu');
+    if (!wrap || !menu || menu.classList.contains('hidden')) return;
+    if (!wrap.contains(e.target)) menu.classList.add('hidden');
+});
 
 // ============================================
 // VISUAL GEOMETRY EDITOR (up to 2 feeds side by side)
@@ -775,6 +798,13 @@ async function geoBuildSlots() {
     if (geoInstances.length) geoSetActive(geoInstances[0].editor);
 }
 
+// Everything above/below the feeds that geometry editing doesn't need — hiding
+// them reclaims vertical space on the 720px kiosk and keeps "Restart OWLs" out
+// of reach mid-edit. The LUT panel's display is mode-dependent (Painted only),
+// so the previous inline display is stashed and restored rather than reset.
+var GEO_HIDE_SELECTORS = ['.config-action-bar', '.config-context-bar',
+                          '#config-restart-notice', '#lut-panel'];
+
 function geoCloseEditor() {
     geoDestroyInstances();
     if (geoControls) { geoControls.destroy(); geoControls = null; }
@@ -783,22 +813,24 @@ function geoCloseEditor() {
     if (split) split.classList.remove('geo-mode');
     var multi = document.getElementById('geo-multi');
     if (multi) multi.style.display = 'none';
-    var frame = document.getElementById('config-preview-frame');
-    var label = document.getElementById('config-preview-label');
-    if (frame) frame.style.display = '';
-    if (label) label.style.display = '';
-    // Restore the bits hidden during geometry.
-    ['.config-action-bar', '.config-mode-bar', '#config-preview-device',
-     '#config-preview-btn'].forEach(function (sel) {
+    // Restore the siblings hidden during geometry (the feed rail comes back
+    // on its own when .geo-mode drops off #config-split).
+    GEO_HIDE_SELECTORS.forEach(function (sel) {
         var el = document.querySelector(sel);
-        if (el) el.style.display = '';
+        if (el) {
+            el.style.display = el.dataset.geoPrevDisplay || '';
+            delete el.dataset.geoPrevDisplay;
+        }
     });
     var feedToggle = document.getElementById('geo-feed-toggle');
     if (feedToggle) feedToggle.style.display = 'none';
 
     geometryEditorActive = false;
     var btn = document.getElementById('config-geometry-btn');
-    if (btn) { btn.textContent = 'Adjust geometry'; btn.classList.remove('active'); }
+    if (btn) { btn.textContent = '◎ Crop & spray zone'; btn.classList.remove('active'); }
+
+    // Resume the mini-feed snapshot poll.
+    pollConfigFeed();
 }
 
 async function toggleGeometryEditor() {
@@ -811,22 +843,21 @@ async function toggleGeometryEditor() {
     geometryEditorActive = true;
     geoMode = (owls.length >= 2) ? 2 : 1;
 
-    // Switch the layout into geometry mode (hide sliders + single preview).
+    // Switch the layout into geometry mode: .geo-mode hides the sliders and the
+    // mini-feed rail (CSS) and expands the preview column to full width.
     var split = document.getElementById('config-split');
     if (split) split.classList.add('geo-mode');
-    var frame = document.getElementById('config-preview-frame');
-    var label = document.getElementById('config-preview-label');
-    if (frame) frame.style.display = 'none';
-    if (label) label.style.display = 'none';
     var multi = document.getElementById('geo-multi');
     if (multi) multi.style.display = 'flex';
-    // Hide everything not relevant to geometry to reclaim space.
-    [['.config-action-bar', null], ['.config-mode-bar', null],
-     ['#config-preview-device', null], ['#config-preview-btn', null]].forEach(function (pair) {
-        var el = document.querySelector(pair[0]);
-        if (el) el.style.display = 'none';
+    // Hide the siblings of #config-split (out of .geo-mode's CSS reach).
+    GEO_HIDE_SELECTORS.forEach(function (sel) {
+        var el = document.querySelector(sel);
+        if (el) {
+            el.dataset.geoPrevDisplay = el.style.display;
+            el.style.display = 'none';
+        }
     });
-    // 1-up / 2-up toggle lives in the toolbar so it's always reachable.
+    // 1-up / 2-up toggle sits above the feeds while editing.
     var feedToggle = document.getElementById('geo-feed-toggle');
     if (feedToggle) feedToggle.style.display = '';
     document.querySelectorAll('#geo-feed-toggle .geo-updown-btn').forEach(function (b) {

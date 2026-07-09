@@ -99,21 +99,71 @@
     max-width: 120px;
 }
 
-.owl-compact-stats {
+/* Automotive micro-dials on the OWL cards: fixed band with painted
+   amber/red zones, needle at the value (built in _dashboard.js) */
+.owl-mini-dials {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 0.25rem;
+    margin: 0.2rem 0 0.1rem;
 }
 
-.owl-compact-stat {
-    font-size: 0.65rem;
+.owl-mini-dial {
+    text-align: center;
+    min-width: 0;
+}
+
+.owl-mini-dial svg {
+    width: 100%;
+    max-width: 56px;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+}
+
+.owl-mini-dial path {
+    fill: none;
+    stroke-linecap: round;
+}
+
+.mini-dial-track { stroke: #e8ecf0; stroke-width: 14; }
+.mini-dial-amber { stroke: var(--warning); stroke-width: 14; }
+.mini-dial-red   { stroke: var(--danger); stroke-width: 14; }
+
+.mini-dial-needle {
+    stroke: var(--text-dark);
+    stroke-width: 6;
+    stroke-linecap: round;
+}
+
+.mini-dial-hub { fill: var(--text-dark); }
+
+/* No live value (offline, or FPS while not detecting): needle rests grey */
+.owl-mini-dial.idle .mini-dial-needle { stroke: #b6bec7; }
+.owl-mini-dial.idle .mini-dial-hub { fill: #b6bec7; }
+
+.mini-dial-end {
+    font-size: 26px;
+    font-weight: 700;
+    fill: var(--text-light);
+}
+
+.mini-dial-value {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--text-dark);
+    line-height: 1.15;
+}
+
+.owl-mini-dial.in-amber .mini-dial-value { color: var(--warning-dark); }
+.owl-mini-dial.in-red .mini-dial-value { color: var(--danger-dark); }
+
+.mini-dial-label {
+    font-size: 0.6rem;
     color: var(--text-light);
 }
 
-.owl-compact-stat strong {
-    color: var(--text-dark);
-    font-weight: 700;
-}
+.owl-card-compact.offline .owl-mini-dials { opacity: 0.45; }
 
 .owl-compact-actions {
     display: flex;
@@ -210,6 +260,7 @@
 .gauge-arc-fill.loop-good { stroke: #27ae60; }
 .gauge-arc-fill.loop-warn { stroke: #f39c12; }
 .gauge-arc-fill.loop-danger { stroke: #e74c3c; }
+.gauge-arc-fill.loop-idle { stroke: #b6bec7; }   /* no data — neutral */
 
 .gauge-arc-fill.duration-normal { stroke: #27ae60; }
 .gauge-arc-fill.duration-medium { stroke: #f39c12; }
@@ -314,6 +365,13 @@
 .hero-buttons .action-button {
     width: 100%;
     height: 64px;
+}
+
+/* Short kiosk displays (1280x720): the controls column must fit without a
+   scrollbar — full-width 56px buttons are still an easy glove target */
+@media (max-height: 760px) {
+    .hero-buttons .action-button { height: 56px; }
+    .controls-panel { padding: 0.4rem 1rem; gap: 0.4rem; }
 }
 
 /* Detection Mode panel — own box at bottom of controls */

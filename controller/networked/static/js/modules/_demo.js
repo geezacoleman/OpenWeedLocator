@@ -72,7 +72,7 @@
     function buildMeta(state) {
         var parts = [];
         var lt = state.avg_loop_time_ms;
-        if (lt && lt > 0) parts.push(Math.round(lt) + ' ms/frame');
+        if (lt && lt > 0) parts.push(Math.round(1000 / lt) + ' fps');
         var algo = state.algorithm;
         if (algo) parts.push(algo.toUpperCase());
         return parts.join(' | ') || '';

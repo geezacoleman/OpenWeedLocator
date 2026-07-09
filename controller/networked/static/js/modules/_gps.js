@@ -56,6 +56,7 @@ function switchToConfigTab() {
     document.getElementById('view-agent').style.display = 'none';
     aiTabActive = false;
     stopGPSPolling();
+    if (typeof startConfigPreview === 'function') startConfigPreview();
 }
 
 // ============================================

@@ -1,6 +1,7 @@
-"""Tests for the LUT detection engine — histogram build, bake, apply,
+"""Tests for the LUT detection engine — GMM trainer, bake, apply,
 stroke sampling and profile persistence."""
 
+import json
 import os
 
 import numpy as np
@@ -11,17 +12,21 @@ from utils.lut_manager import (
     LUT_BINS,
     LUT_SIZE,
     MIN_CLASS_PIXELS,
+    PROFILE_VERSION,
     LUTProfileError,
     LUTProfileManager,
     apply_lut,
-    bake_lut,
+    bake_from_model,
     build_histograms,
+    fit_class_gmm,
+    model_from_gmms,
     lut_swatch,
     lut_swatch_png,
     pixel_histogram,
     sample_stroke_pixels,
-    sensitivity_to_ratio,
+    sensitivity_to_miss_rate,
     subsample_pixels,
+    train_model,
 )
 
 
@@ -40,6 +45,23 @@ def _pixels(colour, n=1000, jitter=0):
         rng = np.random.default_rng(0)
         px += rng.normal(0, jitter, px.shape)
     return np.clip(px, 0, 255).astype(np.uint8)
+
+
+def _bake(fg, bg, sensitivity=50):
+    """Train + bake in one step (the save-time path, uncached)."""
+    return bake_from_model(train_model(fg, bg), sensitivity)
+
+
+def _flat(colour):
+    """Flat LUT index of one BGR colour."""
+    b, g, r = colour
+    return (r >> 3) * 1024 + (g >> 3) * 32 + (b >> 3)
+
+
+def _flat_indices(pixels):
+    """Flat LUT indices for an (N, 3) uint8 pixel array."""
+    px = np.asarray(pixels, np.int64)
+    return (px[:, 2] >> 3) * 1024 + (px[:, 1] >> 3) * 32 + (px[:, 0] >> 3)
 
 
 def _disc_scene(h=240, w=320):
@@ -81,66 +103,111 @@ class TestHistograms:
 
 class TestBake:
     def test_painted_colours_classified(self):
-        hf, hb = build_histograms(_pixels(GREEN), _pixels(BROWN))
-        lut = bake_lut(hf, hb, sensitivity=50)
+        lut = _bake(_pixels(GREEN), _pixels(BROWN), sensitivity=50)
         assert lut.shape == (LUT_SIZE,)
         assert lut.dtype == np.uint8
-        b, g, r = GREEN
-        assert lut[(r >> 3) * 1024 + (g >> 3) * 32 + (b >> 3)] == 255
-        b, g, r = BROWN
-        assert lut[(r >> 3) * 1024 + (g >> 3) * 32 + (b >> 3)] == 0
+        assert lut[_flat(GREEN)] == 255
+        assert lut[_flat(BROWN)] == 0
 
     def test_unseen_colours_never_weed_even_at_max_sensitivity(self):
-        hf, hb = build_histograms(_pixels(GREEN), _pixels(BROWN))
-        lut = bake_lut(hf, hb, sensitivity=100)
-        # blue: far from anything painted — must stay off at any sensitivity
-        b, g, r = 250, 10, 10
-        assert lut[(r >> 3) * 1024 + (g >> 3) * 32 + (b >> 3)] == 0
+        lut = _bake(_pixels(GREEN), _pixels(BROWN), sensitivity=100)
+        # blue: far from anything painted — the Mahalanobis gate must keep
+        # it off at any sensitivity
+        assert lut[_flat((250, 10, 10))] == 0
 
     def test_sensitivity_monotonic(self):
-        hf, hb = build_histograms(
-            _pixels(GREEN, 2000, jitter=25), _pixels(BROWN, 2000, jitter=25))
-        counts = [int((bake_lut(hf, hb, s) > 0).sum()) for s in (0, 25, 50, 75, 100)]
+        model = train_model(_pixels(GREEN, 2000, jitter=25),
+                            _pixels(BROWN, 2000, jitter=25))
+        counts = [int((bake_from_model(model, s) > 0).sum())
+                  for s in (0, 25, 50, 75, 100)]
         assert counts == sorted(counts), f'not monotonic: {counts}'
         assert counts[0] < counts[-1]
 
-    def test_smoothing_generalises_to_neighbour_bins(self):
-        hf, hb = build_histograms(_pixels(GREEN), _pixels(BROWN))
-        lut3d = bake_lut(hf, hb, sensitivity=80).reshape(
-            LUT_BINS, LUT_BINS, LUT_BINS)
-        b, g, r = GREEN
-        # a colour one bin greener than anything painted still classifies
-        assert lut3d[(r >> 3), (g >> 3) + 1, (b >> 3)] == 255
+    def test_generalises_to_brightness_shift(self):
+        """The point of the GMM-in-Lab trainer: moderate lighting change
+        keeps detection alive (the old histogram bake reached ±1 bin, about
+        ±4% brightness), and painting the same weed under a second lighting
+        condition extends the reach much further."""
+        fg = _pixels(GREEN, 3000, jitter=12)
+        bg = _pixels(BROWN, 3000, jitter=12)
+        lut = _bake(fg, bg, sensitivity=50)
+        for gain in (0.9, 1.1):
+            shifted = np.clip(fg.astype(np.float32) * gain,
+                              0, 255).astype(np.uint8)
+            recall = (lut[_flat_indices(shifted)] > 0).mean()
+            assert recall > 0.6, f'recall {recall:.2f} at gain {gain}'
+
+        # A second, darker painting of the same weed covers the dark shift
+        darker_green = tuple(int(c * 0.75) for c in GREEN)
+        fg2 = np.vstack([fg, _pixels(darker_green, 3000, jitter=12)])
+        lut2 = _bake(fg2, bg, sensitivity=50)
+        shifted = np.clip(fg.astype(np.float32) * 0.8, 0, 255).astype(np.uint8)
+        recall = (lut2[_flat_indices(shifted)] > 0).mean()
+        assert recall > 0.8, f'multi-light recall {recall:.2f}'
 
     def test_empty_class_raises(self):
-        hf, hb = build_histograms(_pixels(GREEN), np.empty((0, 3), np.uint8))
         with pytest.raises(LUTProfileError):
-            bake_lut(hf, hb)
+            train_model(_pixels(GREEN), np.empty((0, 3), np.uint8))
 
-    def test_sensitivity_to_ratio_endpoints(self):
-        assert sensitivity_to_ratio(0) == pytest.approx(20.0)
-        assert sensitivity_to_ratio(50) == pytest.approx(2.0)
-        assert sensitivity_to_ratio(100) == pytest.approx(0.2)
+    def test_sensitivity_to_miss_rate_endpoints(self):
+        assert sensitivity_to_miss_rate(0) == pytest.approx(0.5)
+        assert sensitivity_to_miss_rate(100) == pytest.approx(0.005)
+        rates = [sensitivity_to_miss_rate(s) for s in range(0, 101, 10)]
+        assert rates == sorted(rates, reverse=True)
 
-    def test_spill_only_bins_not_sprayed_at_low_sensitivity(self):
-        """A handful of stray dark pixels must not spray their bins at
-        strict sensitivities (the eps-ratio blow-up regression)."""
+    def test_bake_deterministic(self):
+        """Identical samples always produce an identical LUT — painter
+        preview, saved profile and OWL field bake cannot diverge."""
+        fg = _pixels(GREEN, 3000, jitter=20)
+        bg = _pixels(BROWN, 3000, jitter=20)
+        assert np.array_equal(_bake(fg, bg, 50), _bake(fg, bg, 50))
+
+    def test_stray_pixels_not_sprayed(self):
+        """A handful of stray dark pixels among a clean green painting must
+        not spray their colour at any sensitivity (mispainted-edge guard)."""
         dark = (10, 10, 10)
-        fg = np.vstack([_pixels(GREEN, 100_000), _pixels(dark, 10)])
-        hb = pixel_histogram(_pixels(BROWN, 100_000))
-        hf = pixel_histogram(fg)
-        b, g, r = dark
-        flat = (r >> 3) * 1024 + (g >> 3) * 32 + (b >> 3)
-        for sensitivity in (25, 50):
-            lut = bake_lut(hf, hb, sensitivity)
-            assert lut[flat] == 0, f'dark bin sprayed at sensitivity {sensitivity}'
+        fg = np.vstack([_pixels(GREEN, 100_000, jitter=10), _pixels(dark, 10)])
+        model = train_model(fg, _pixels(BROWN, 100_000, jitter=10))
+        for sensitivity in (25, 50, 100):
+            lut = bake_from_model(model, sensitivity)
+            assert lut[_flat(dark)] == 0, \
+                f'dark bin sprayed at sensitivity {sensitivity}'
+
+    def test_stray_heavy_painting_keeps_strict_sensitivity_meaningful(self):
+        """When MOST painted weed pixels sit outside their own spray gate
+        (heavy accidental spill), the strict end of the slider must not
+        collapse below every reachable score — that would invert its
+        meaning and spray the entire gate at the strictest setting."""
+        clean = _pixels(GREEN, 3000, jitter=10)
+        strays = _pixels((250, 10, 10), 7000)   # blue spill, far out of gate
+        gmm_fg = fit_class_gmm(clean)
+        gmm_bg = fit_class_gmm(_pixels(BROWN, 3000, jitter=10))
+        contaminated = np.vstack([clean, strays])
+        model = model_from_gmms(gmm_fg, gmm_bg, contaminated)
+
+        idx = _flat_indices(contaminated)
+        reachable = model['log_ratio'][idx][model['fg_gate'][idx] > 0]
+        thresholds = model['score_thresholds']
+        assert np.all(thresholds[:-1] >= thresholds[1:] - 1e-6), \
+            'thresholds not monotonic in sensitivity'
+        assert thresholds[0] >= reachable.min() - 1e-6, \
+            'strict threshold collapsed below every reachable painted score'
+
+    def test_all_pixels_gated_out_bakes_empty_lut(self):
+        """Degenerate profile (no painted pixel inside its own gate) fails
+        safe: sprays nothing at any sensitivity."""
+        gmm_fg = fit_class_gmm(_pixels(GREEN, 2000, jitter=10))
+        gmm_bg = fit_class_gmm(_pixels(BROWN, 2000, jitter=10))
+        model = model_from_gmms(gmm_fg, gmm_bg, _pixels((250, 10, 10), 1000))
+        for s in (0, 50, 100):
+            assert (bake_from_model(model, s) > 0).sum() == 0
 
     def test_swatch_no_near_black_colours_at_default_sensitivity(self):
         """Swatch of a green profile with stray dark pixels has no black bars."""
-        fg = np.vstack([_pixels(GREEN, 100_000, jitter=15), _pixels((10, 10, 10), 10)])
-        hf = pixel_histogram(fg)
-        hb = pixel_histogram(_pixels(BROWN, 100_000, jitter=15))
-        lut3d = bake_lut(hf, hb, 50).reshape(LUT_BINS, LUT_BINS, LUT_BINS)
+        fg = np.vstack([_pixels(GREEN, 100_000, jitter=15),
+                        _pixels((10, 10, 10), 10)])
+        bg = _pixels(BROWN, 100_000, jitter=15)
+        lut3d = _bake(fg, bg, 50).reshape(LUT_BINS, LUT_BINS, LUT_BINS)
         r_bins, g_bins, b_bins = np.nonzero(lut3d)
         centres = np.stack([b_bins, g_bins, r_bins], axis=1) * 8 + 4
         assert centres.max(axis=1).min() > 40, 'near-black bin in swatch'
@@ -185,8 +252,7 @@ class TestApply:
 
         fg = noisy[inside]
         bg = noisy[~inside]
-        hf, hb = build_histograms(fg, bg)
-        lut = bake_lut(hf, hb, sensitivity=50)
+        lut = _bake(fg, bg, sensitivity=50)
         mask = apply_lut(noisy, lut)
 
         assert mask[inside].mean() / 255 > 0.90
@@ -199,9 +265,9 @@ class TestApply:
 
 class TestSwatch:
     def test_green_profile_swatch_is_green(self):
-        hf, hb = build_histograms(_pixels(GREEN, 2000, jitter=15),
-                                  _pixels(BROWN, 2000, jitter=15))
-        image, coverage = lut_swatch(bake_lut(hf, hb, 50), width=64, height=8)
+        lut = _bake(_pixels(GREEN, 2000, jitter=15),
+                    _pixels(BROWN, 2000, jitter=15), 50)
+        image, coverage = lut_swatch(lut, width=64, height=8)
         assert image.shape == (8, 64, 3)
         assert 0 < coverage < 0.5
         # dominant channel across the strip is green (BGR index 1)
@@ -214,17 +280,16 @@ class TestSwatch:
         assert (image == image[0, 0]).all()   # uniform placeholder
 
     def test_png_round_trip(self):
-        hf, hb = build_histograms(_pixels(GREEN), _pixels(BROWN))
-        png, coverage = lut_swatch_png(bake_lut(hf, hb, 50))
+        png, coverage = lut_swatch_png(_bake(_pixels(GREEN), _pixels(BROWN), 50))
         decoded = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
         assert decoded is not None and decoded.shape[1] == 256
         assert coverage > 0
 
     def test_coverage_grows_with_sensitivity(self):
-        hf, hb = build_histograms(_pixels(GREEN, 2000, jitter=25),
-                                  _pixels(BROWN, 2000, jitter=25))
-        _, low = lut_swatch(bake_lut(hf, hb, 10))
-        _, high = lut_swatch(bake_lut(hf, hb, 90))
+        model = train_model(_pixels(GREEN, 2000, jitter=25),
+                            _pixels(BROWN, 2000, jitter=25))
+        _, low = lut_swatch(bake_from_model(model, 10))
+        _, high = lut_swatch(bake_from_model(model, 90))
         assert high >= low
 
 
@@ -282,6 +347,7 @@ class TestProfileManager:
         mgr = self._manager(tmp_path)
         meta = self._save_valid(mgr)
         assert meta['fg_pixels'] == 1000
+        assert meta['version'] == PROFILE_VERSION
 
         profile = mgr.load('paddock_one')
         assert profile['hist_fg'].sum() == 1000
@@ -289,13 +355,43 @@ class TestProfileManager:
         assert profile['meta']['frames'] == 2
         assert profile['strokes'][0]['label'] == 'weed'
         assert profile['fg_pixels'].shape == (1000, 3)
+        # v2 model grids are cached in the file
+        assert profile['log_ratio'].shape == (LUT_SIZE,)
+        assert profile['fg_gate'].shape == (LUT_SIZE,)
+        assert profile['score_thresholds'].shape == (101,)
 
     def test_load_and_bake(self, tmp_path):
         mgr = self._manager(tmp_path)
         self._save_valid(mgr)
         lut = mgr.load_and_bake('paddock_one', sensitivity=50)
-        b, g, r = GREEN
-        assert lut[(r >> 3) * 1024 + (g >> 3) * 32 + (b >> 3)] == 255
+        assert lut[_flat(GREEN)] == 255
+
+    def test_v1_profile_migrates_on_load(self, tmp_path):
+        """Pre-v2 profiles (histograms + pixels, no model grids) are refitted
+        from their stored pixels and re-persisted on first load."""
+        mgr = self._manager(tmp_path)
+        self._save_valid(mgr)
+        path = mgr.profile_path('paddock_one')
+
+        # Strip the v2 arrays to simulate a pre-upgrade file
+        with np.load(path, allow_pickle=False) as data:
+            arrays = {k: data[k] for k in data.files
+                      if k not in ('log_ratio', 'fg_gate', 'score_thresholds')}
+        meta = json.loads(bytes(arrays['meta'].tobytes()))
+        meta['version'] = 1
+        arrays['meta'] = np.frombuffer(json.dumps(meta).encode(), np.uint8)
+        np.savez_compressed(path, **arrays)
+
+        profile = mgr.load('paddock_one')
+        assert profile['meta']['version'] == PROFILE_VERSION
+        assert profile['log_ratio'].shape == (LUT_SIZE,)
+        # Migration persisted: the file itself now carries the model
+        with np.load(path, allow_pickle=False) as data:
+            assert 'log_ratio' in data.files
+        # And the migrated profile detects like a native v2 save
+        lut = mgr.load_and_bake('paddock_one', 50)
+        assert lut[_flat(GREEN)] == 255
+        assert lut[_flat(BROWN)] == 0
 
     def test_save_refuses_insufficient_pixels(self, tmp_path):
         mgr = self._manager(tmp_path)
@@ -378,6 +474,22 @@ class TestProfileManager:
             mgr.delete('starter')
         mgr.ensure_builtin_profiles()
         assert len(mgr.list_profiles()) == 1
+
+    def test_builtin_starter_regenerated_for_old_version(self, tmp_path):
+        mgr = self._manager(tmp_path)
+        mgr.ensure_builtin_profiles()
+        path = mgr.profile_path('starter')
+        # Rewrite meta as an old version — ensure must rebuild it
+        with np.load(path, allow_pickle=False) as data:
+            arrays = {k: data[k] for k in data.files}
+        meta = json.loads(bytes(arrays['meta'].tobytes()))
+        meta['version'] = 1
+        arrays['meta'] = np.frombuffer(json.dumps(meta).encode(), np.uint8)
+        np.savez_compressed(path, **arrays)
+
+        mgr.ensure_builtin_profiles()
+        profile = mgr.load('starter')
+        assert profile['meta']['version'] == PROFILE_VERSION
 
     def test_custom_profiles_not_flagged_builtin(self, tmp_path):
         mgr = self._manager(tmp_path)

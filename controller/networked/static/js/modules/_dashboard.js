@@ -302,6 +302,49 @@ function updateOWLGrid() {
     grid.innerHTML = ids.map(id => buildOWLCard(id, owlsData[id])).join('');
 }
 
+function buildMiniDial(opts) {
+    // Automotive micro-dial: fixed grey band with painted amber/red zones,
+    // needle at the value. Baked as a static SVG string because the card
+    // list is rebuilt via innerHTML every update cycle.
+    // opts: {value (null = idle), min, max, amber: [a,b], red: [a,b],
+    //        display, label, endLabels: [lo,hi]}
+    const span = opts.max - opts.min;
+    const frac = v => Math.max(0, Math.min(1, (v - opts.min) / span));
+    const arc = (f0, f1, cls) =>
+        `<path class="${cls}" d="${describeArc(70, 80, 55, -90 + f0 * 180, -90 + f1 * 180)}"></path>`;
+
+    const hasValue = opts.value !== null && opts.value !== undefined;
+    const angle = -90 + (hasValue ? frac(opts.value) : 0) * 180;
+
+    let zones = arc(0, 1, 'mini-dial-track');
+    if (opts.amber) zones += arc(frac(opts.amber[0]), frac(opts.amber[1]), 'mini-dial-amber');
+    if (opts.red) zones += arc(frac(opts.red[0]), frac(opts.red[1]), 'mini-dial-red');
+
+    const within = z => hasValue && z && opts.value >= z[0] && opts.value <= z[1];
+    const stateClass = !hasValue ? ' idle'
+        : within(opts.red) ? ' in-red'
+        : within(opts.amber) ? ' in-amber' : '';
+
+    const ends = opts.endLabels
+        ? `<text x="6" y="76" class="mini-dial-end">${opts.endLabels[0]}</text>` +
+          `<text x="134" y="76" class="mini-dial-end" text-anchor="end">${opts.endLabels[1]}</text>`
+        : '';
+
+    return `
+        <div class="owl-mini-dial${stateClass}">
+            <svg viewBox="0 0 140 90">
+                ${zones}
+                ${ends}
+                <g transform="rotate(${angle} 70 80)">
+                    <line class="mini-dial-needle" x1="70" y1="80" x2="70" y2="34"></line>
+                    <circle class="mini-dial-hub" cx="70" cy="80" r="8"></circle>
+                </g>
+            </svg>
+            <div class="mini-dial-value">${opts.display}</div>
+            <div class="mini-dial-label">${opts.label}</div>
+        </div>`;
+}
+
 function buildOWLCard(deviceId, owl) {
     const isOnline = !!owl.connected;
     const onlineClass = isOnline ? 'online' : 'offline';
@@ -311,11 +354,12 @@ function buildOWLCard(deviceId, owl) {
     const cpu = owl.cpu_percent ?? 0;
     const mem = owl.memory_percent ?? 0;
     const loopMs = owl.avg_loop_time_ms ?? 0;
-
-    // Determine temp class
-    let tempClass = '';
-    if (temp > 70) tempClass = ' style="color:#c0392b"';
-    else if (temp > 60) tempClass = ' style="color:#d4820a"';
+    const fps = loopMs > 0 ? 1000 / loopMs : null;  // null while not detecting
+    // AI inference legitimately runs ~8-15 fps on a Pi — judge it on its own scale
+    const aiAlgo = owl.algorithm === 'gog' || owl.algorithm === 'gog-hybrid';
+    const fpsDial = aiAlgo
+        ? {max: 20, red: [0, 4], amber: [4, 8]}
+        : {max: 40, red: [0, 10], amber: [10, 20]};
 
     const disAttr = isOnline ? '' : 'disabled';
     const ctrlType = owl.controller_type || 'none';
@@ -345,11 +389,19 @@ function buildOWLCard(deviceId, owl) {
                 ${hwWarning}
             </div>
             ${cfgLine}
-            <div class="owl-compact-stats">
-                <div class="owl-compact-stat"><strong${tempClass}>${temp.toFixed(0)}°C</strong> CPU</div>
-                <div class="owl-compact-stat"><strong>${cpu.toFixed(0)}%</strong> Load</div>
-                <div class="owl-compact-stat"><strong>${mem.toFixed(0)}%</strong> Mem</div>
-                <div class="owl-compact-stat"><strong>${loopMs > 0 ? loopMs.toFixed(0) + 'ms' : '--'}</strong> Loop</div>
+            <div class="owl-mini-dials">
+                ${buildMiniDial({value: isOnline ? temp : null, min: 30, max: 90,
+                                 amber: [60, 70], red: [70, 90], endLabels: ['C', 'H'],
+                                 display: isOnline ? temp.toFixed(0) + '°C' : '--', label: 'CPU'})}
+                ${buildMiniDial({value: isOnline ? cpu : null, min: 0, max: 100,
+                                 amber: [80, 90], red: [90, 100],
+                                 display: isOnline ? cpu.toFixed(0) + '%' : '--', label: 'Load'})}
+                ${buildMiniDial({value: isOnline ? mem : null, min: 0, max: 100,
+                                 amber: [80, 90], red: [90, 100],
+                                 display: isOnline ? mem.toFixed(0) + '%' : '--', label: 'Mem'})}
+                ${buildMiniDial({value: isOnline ? fps : null, min: 0, max: fpsDial.max,
+                                 red: fpsDial.red, amber: fpsDial.amber,
+                                 display: (isOnline && fps) ? fps.toFixed(0) : '--', label: 'FPS'})}
             </div>
             <div class="owl-compact-actions">
                 <button class="owl-compact-btn btn-video" onclick="openVideoFeed('${deviceId}')" ${disAttr}>Video</button>

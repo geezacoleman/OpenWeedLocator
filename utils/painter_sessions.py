@@ -11,6 +11,7 @@ Used identically by the standalone and networked controllers; only frame
 acquisition differs (local MJPEG server vs per-device snapshot).
 """
 
+import hashlib
 import threading
 import time
 import uuid
@@ -21,9 +22,10 @@ import numpy as np
 
 from utils.lut_manager import (
     apply_lut,
-    bake_lut,
-    build_histograms,
+    bake_from_model,
+    fit_class_gmm,
     lut_swatch_png,
+    model_from_gmms,
     sample_stroke_pixels,
 )
 
@@ -63,6 +65,7 @@ class PainterSessionStore:
             self._sessions[session_id] = {
                 'created': time.time(),
                 'frames': OrderedDict(),
+                'gmm_cache': {},
             }
             return session_id
 
@@ -90,6 +93,27 @@ class PainterSessionStore:
         with self._lock:
             session = self._get(session_id)
             return list(session['frames'].items())
+
+    def fit_class_cached(self, session_id, label, pixels):
+        """Fit (or reuse) one class's GMM for the current sample set.
+
+        A stroke only changes its own class, so the other class's fit — the
+        expensive half of a preview — is reused. Fits are deterministic, so
+        caching on a content digest is exact.
+        """
+        pixels = np.ascontiguousarray(pixels, dtype=np.uint8)
+        digest = hashlib.md5(pixels.tobytes()).hexdigest()
+        with self._lock:
+            session = self._get(session_id)
+            cached = session['gmm_cache'].get(label)
+            if cached is not None and cached[0] == digest:
+                return cached[1]
+        gmm = fit_class_gmm(pixels)   # slow — run outside the lock
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is not None:
+                session['gmm_cache'][label] = (digest, gmm)
+        return gmm
 
     def has_session(self, session_id):
         with self._lock:
@@ -165,25 +189,42 @@ def collect_class_pixels(store, session_id, strokes, base_profile=None):
     return fg, bg
 
 
-def preview_overlay_png(frame, fg_pixels, bg_pixels, sensitivity):
+def _preview_model(fg_pixels, bg_pixels, store=None, session_id=None):
+    """Fit (or reuse via the session cache) both class GMMs and build the
+    colour-space model. Raises LUTProfileError if either class is empty."""
+    if store is not None and session_id is not None:
+        gmm_fg = store.fit_class_cached(session_id, 'weed', fg_pixels)
+        gmm_bg = store.fit_class_cached(session_id, 'background', bg_pixels)
+    else:
+        gmm_fg = fit_class_gmm(fg_pixels)
+        gmm_bg = fit_class_gmm(bg_pixels)
+    return model_from_gmms(gmm_fg, gmm_bg, fg_pixels)
+
+
+def preview_overlay_png(frame, fg_pixels, bg_pixels, sensitivity,
+                        store=None, session_id=None):
     """Bake a LUT from the current samples and render the spray-preview
     overlay for *frame* as a BGRA PNG (alpha = mask), ready to composite
     client-side. Returns PNG bytes.
 
-    Raises LUTProfileError (via bake_lut) if either class is still empty.
+    Raises LUTProfileError if either class is still empty.
     """
-    lut = bake_lut(*build_histograms(fg_pixels, bg_pixels), sensitivity)
+    model = _preview_model(fg_pixels, bg_pixels, store, session_id)
+    lut = bake_from_model(model, sensitivity)
     return _encode_overlay(apply_lut(frame, lut))
 
 
-def preview_images(frame, fg_pixels, bg_pixels, sensitivity):
+def preview_images(frame, fg_pixels, bg_pixels, sensitivity,
+                   store=None, session_id=None):
     """One-bake preview bundle for the painter: the spray overlay for
     *frame*, the hue-sorted "sprayed colours" swatch strip, and the
-    colour-space coverage fraction.
+    colour-space coverage fraction. Pass *store*/*session_id* so only the
+    class a stroke touched is refitted.
 
     Returns (overlay_png, swatch_png, coverage).
     """
-    lut = bake_lut(*build_histograms(fg_pixels, bg_pixels), sensitivity)
+    model = _preview_model(fg_pixels, bg_pixels, store, session_id)
+    lut = bake_from_model(model, sensitivity)
     overlay = _encode_overlay(apply_lut(frame, lut))
     swatch, coverage = lut_swatch_png(lut)
     return overlay, swatch, coverage

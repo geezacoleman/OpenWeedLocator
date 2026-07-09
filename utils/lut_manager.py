@@ -2,18 +2,23 @@
 LUT-based green detection for OWL.
 
 A painted "profile" stores weed (foreground) and background pixel samples
-collected from operator brush strokes on frozen camera frames. The samples
-build a pair of 32x32x32 colour histograms which bake into a 32KB binary
+collected from operator brush strokes on frozen camera frames. A small
+Gaussian mixture is fitted per class in Lab space (lightness down-weighted,
+so profiles survive brightness/white-balance shifts) and evaluated at the
+centres of a 32x32x32 grid over BGR colour space, baking into a 32KB binary
 lookup table: one table lookup per pixel classifies any BGR colour as
 weed / not-weed. Any colour decision boundary — including ones no threshold
-slider can express — costs the same at runtime.
+slider can express — costs the same at runtime. The LUT stays indexed by
+camera-native BGR (the CMVision pattern), so the modelling space is free.
 
+Fits are deterministic (fixed RNG seed + deterministic subsampling), so the
+painter preview, the saved profile and the OWL field bake are identical.
 The same module runs on the controller (live mask preview while painting)
 and on the OWL (detection loop), so preview and field behaviour cannot
 diverge.
 
-Sensitivity (0-100) moves the Bayes likelihood-ratio threshold and only
-requires re-baking the table (~ms), never repainting.
+Sensitivity (0-100) moves the likelihood-ratio threshold and only requires
+re-thresholding the cached model grid (~ms), never repainting or refitting.
 """
 
 import json
@@ -31,9 +36,23 @@ logger = logging.getLogger(__name__)
 LUT_BINS = 32                # 5 bits per channel
 LUT_SHIFT = 3                # quantise 8-bit channel -> 5 bits
 LUT_SIZE = LUT_BINS ** 3
-PROFILE_VERSION = 1
+PROFILE_VERSION = 2          # v2 caches the fitted model grids in the .npz
 PROFILE_SUFFIX = '.npz'
 DEFAULT_SENSITIVITY = 50
+
+# GMM trainer. Lightness is down-weighted (not dropped) so brightness shifts
+# are tolerated while deep-shadow vs bright separation survives. The train
+# cap and fixed seed make fits deterministic AND fast enough for the
+# painter's per-stroke preview (~0.5-1s on a Pi controller per class).
+LAB_L_WEIGHT = 0.3
+GMM_COMPONENTS = 4
+GMM_TRAIN_CAP = 12_000
+GMM_EM_ITERS = 20
+GMM_COV_REG = 2.0            # variance floor: keeps single-colour strokes sane
+GATE_SIGMA = 3.5             # spray gate: max Mahalanobis distance to any
+                             # weed component — unpainted colour families are
+                             # never sprayed, at any sensitivity
+LUT_TRAIN_SEED = 42
 
 # A profile must contain at least this many painted pixels per class —
 # a profile with no background evidence would classify everything as weed.
@@ -43,11 +62,13 @@ MIN_CLASS_PIXELS = 300
 # to keep profile files small while staying re-trainable.
 MAX_STORED_PIXELS = 200_000
 
-# Likelihood-ratio thresholds at sensitivity 0 and 100 (log-linear between;
-# sensitivity 50 -> ratio 2.0). Higher sensitivity -> lower threshold ->
-# more colours classified as weed.
-_RATIO_AT_0 = 20.0
-_RATIO_AT_100 = 0.2
+# Sensitivity is calibrated against the profile's own painted weed pixels:
+# the bake sprays every colour scoring at least as weed-like as all but a
+# miss-rate fraction of them (log-linear between these endpoints; higher
+# sensitivity -> smaller miss rate -> more colours sprayed). Self-calibrating,
+# so the slider is equally meaningful for tight and broad paintings.
+_MISS_RATE_AT_0 = 0.5
+_MISS_RATE_AT_100 = 0.005
 
 NAME_PATTERN = re.compile(r'^[a-z][a-z0-9_]{0,30}$')
 
@@ -107,37 +128,154 @@ def _smooth3(hist):
     return out
 
 
-def sensitivity_to_ratio(sensitivity):
-    """Map sensitivity 0-100 to a likelihood-ratio threshold (log-linear)."""
+def sensitivity_to_miss_rate(sensitivity):
+    """Map sensitivity 0-100 to a painted-weed miss-rate quantile."""
     s = float(np.clip(sensitivity, 0, 100))
-    return _RATIO_AT_0 * (_RATIO_AT_100 / _RATIO_AT_0) ** (s / 100.0)
+    return _MISS_RATE_AT_0 * (_MISS_RATE_AT_100 / _MISS_RATE_AT_0) ** (s / 100.0)
 
 
-def bake_lut(hist_fg, hist_bg, sensitivity=DEFAULT_SENSITIVITY):
-    """Bake histograms into a flat LUT_SIZE uint8 table (values 0 / 255).
+def bin_centres():
+    """(LUT_SIZE, 3) uint8 BGR centres of every LUT bin, in flat-index order."""
+    r, g, b = np.meshgrid(np.arange(LUT_BINS), np.arange(LUT_BINS),
+                          np.arange(LUT_BINS), indexing='ij')
+    centres = np.stack([b, g, r], axis=-1).reshape(-1, 3).astype(np.uint8)
+    return (centres << LUT_SHIFT) + (1 << (LUT_SHIFT - 1))
 
-    Bayes likelihood ratio on class-normalised, smoothed histograms with a
-    uniform Laplace prior (alpha = one count spread over the whole colour
-    space). Bins holding near-zero evidence in both classes get ratio ~= 1,
-    so smoothing spill alone cannot classify a colour as weed at strict
-    sensitivities. Colours with zero weed evidence (even after smoothing)
-    are never classified as weed, regardless of sensitivity.
+
+def _lab_features(bgr_pixels):
+    """(N, 3) uint8 BGR pixels -> float32 Lab features, L down-weighted."""
+    pixels = np.asarray(bgr_pixels, dtype=np.uint8).reshape(-1, 3)
+    lab = cv2.cvtColor(pixels.reshape(1, -1, 3), cv2.COLOR_BGR2LAB)
+    feats = lab.reshape(-1, 3).astype(np.float32)
+    feats[:, 0] *= LAB_L_WEIGHT
+    return feats
+
+
+def fit_class_gmm(pixels):
+    """Fit a deterministic GMM to one class's (N, 3) uint8 BGR samples.
+
+    Returns {'means', 'covs', 'weights'} as plain numpy arrays. Fits on a
+    capped, deterministic subsample with a fixed RNG seed so identical
+    samples always produce an identical model (painter preview == saved
+    profile == OWL field bake).
     """
-    hf = _smooth3(hist_fg)
-    hb = _smooth3(hist_bg)
-    fg_total = hf.sum()
-    bg_total = hb.sum()
-    if fg_total <= 0 or bg_total <= 0:
-        raise LUTProfileError('profile has an empty class histogram')
+    pixels = np.asarray(pixels, dtype=np.uint8).reshape(-1, 3)
+    if pixels.shape[0] == 0:
+        raise LUTProfileError('profile has an empty class')
+    feats = _lab_features(subsample_pixels(pixels, GMM_TRAIN_CAP))
 
-    alpha = 1.0 / LUT_SIZE
-    p_fg = hf / fg_total
-    p_bg = hb / bg_total
-    ratio = (p_fg + alpha) / (p_bg + alpha)
+    cv2.setRNGSeed(LUT_TRAIN_SEED)
+    em = cv2.ml.EM_create()
+    em.setClustersNumber(int(min(GMM_COMPONENTS, feats.shape[0])))
+    em.setCovarianceMatrixType(cv2.ml.EM_COV_MAT_GENERIC)
+    em.setTermCriteria((cv2.TERM_CRITERIA_COUNT + cv2.TERM_CRITERIA_EPS,
+                        GMM_EM_ITERS, 1e-3))
+    em.trainEM(feats)
 
-    threshold = sensitivity_to_ratio(sensitivity)
-    lut = (ratio > threshold) & (hf > 0)
-    return (lut.astype(np.uint8) * 255).ravel()
+    weights = np.asarray(em.getWeights(), dtype=np.float64).ravel()
+    means = np.asarray(em.getMeans(), dtype=np.float64)
+    covs = np.asarray(em.getCovs(), dtype=np.float64)
+    # Drop degenerate components (empty clusters on tiny/uniform paintings)
+    # and floor the covariance so single-colour strokes stay invertible.
+    keep = np.isfinite(weights) & (weights > 1e-12) \
+        & np.all(np.isfinite(means), axis=1)
+    if not keep.any():
+        raise LUTProfileError('could not fit a colour model to the samples')
+    covs = covs[keep] + np.eye(3) * GMM_COV_REG
+    return {'means': means[keep], 'covs': covs,
+            'weights': weights[keep] / weights[keep].sum()}
+
+
+def _gmm_log_density(gmm, feats):
+    """Vectorised GMM log-density at (N, 3) feature points."""
+    comps = []
+    for mu, cov, w in zip(gmm['means'], gmm['covs'], gmm['weights']):
+        ci = np.linalg.inv(cov)
+        diff = feats - mu
+        maha = np.einsum('ij,jk,ik->i', diff, ci, diff)
+        log_norm = -0.5 * (np.log(np.linalg.det(cov)) + 3 * np.log(2 * np.pi))
+        comps.append(np.log(w) + log_norm - 0.5 * maha)
+    return np.logaddexp.reduce(np.stack(comps), axis=0)
+
+
+def _min_mahalanobis(gmm, feats):
+    """Min Mahalanobis distance from each feature point to any component."""
+    dmin = None
+    for mu, cov in zip(gmm['means'], gmm['covs']):
+        ci = np.linalg.inv(cov)
+        diff = feats - mu
+        d = np.sqrt(np.einsum('ij,jk,ik->i', diff, ci, diff))
+        dmin = d if dmin is None else np.minimum(dmin, d)
+    return dmin
+
+
+def _pixel_bin_indices(pixels):
+    """Flat LUT index for (N, 3) uint8 BGR pixels — same maths as apply_lut."""
+    pixels = np.asarray(pixels, dtype=np.uint8).reshape(-1, 3)
+    b = pixels[:, 0].astype(np.int64) >> LUT_SHIFT
+    g = pixels[:, 1].astype(np.int64) >> LUT_SHIFT
+    r = pixels[:, 2].astype(np.int64) >> LUT_SHIFT
+    return (r << 10) | (g << 5) | b
+
+
+def model_from_gmms(gmm_fg, gmm_bg, fg_pixels):
+    """Evaluate fitted class GMMs over the whole colour space.
+
+    Returns the profile model:
+      log_ratio         float32 (LUT_SIZE,) — weed-vs-background log score
+      fg_gate           uint8 (LUT_SIZE,) — colours within GATE_SIGMA of a
+                        weed component; everything else is never sprayed
+      score_thresholds  float32 (101,) — bake threshold per integer
+                        sensitivity, calibrated on the painted weed pixels
+    """
+    feats = _lab_features(bin_centres())
+    log_ratio = (_gmm_log_density(gmm_fg, feats)
+                 - _gmm_log_density(gmm_bg, feats)).astype(np.float32)
+    gate = (_min_mahalanobis(gmm_fg, feats) <= GATE_SIGMA).astype(np.uint8)
+
+    idx = _pixel_bin_indices(fg_pixels)
+    in_gate = log_ratio[idx][gate[idx] > 0]
+    miss_rates = np.array([sensitivity_to_miss_rate(s) for s in range(101)])
+    if in_gate.size == 0:
+        # Pathological: every painted pixel is outside its own spray gate.
+        # Fail safe — a LUT that never sprays, not one that sprays the world.
+        thresholds = np.full(101, np.inf, dtype=np.float32)
+    else:
+        # Gated-out painted pixels can never be hit, so they are permanent
+        # misses: renormalise the miss-rate quantile over the reachable
+        # scores. Taking the quantile over raw scores with a huge-negative
+        # sentinel instead would let a profile with many stray strokes
+        # collapse its low-sensitivity thresholds and silently spray the
+        # whole gate at the STRICTEST setting.
+        gated_frac = 1.0 - in_gate.size / idx.size
+        q = np.clip((miss_rates - gated_frac) / max(1e-9, 1.0 - gated_frac),
+                    0.0, 1.0)
+        thresholds = np.quantile(in_gate, q).astype(np.float32)
+    return {'log_ratio': log_ratio, 'fg_gate': gate,
+            'score_thresholds': thresholds}
+
+
+def train_model(fg_pixels, bg_pixels):
+    """Fit both class models and return the colour-space model grids."""
+    return model_from_gmms(fit_class_gmm(fg_pixels), fit_class_gmm(bg_pixels),
+                           fg_pixels)
+
+
+def bake_from_model(model, sensitivity=DEFAULT_SENSITIVITY):
+    """Threshold a model's cached grids into a flat LUT_SIZE uint8 table
+    (values 0 / 255). Milliseconds — sensitivity changes never refit."""
+    s = int(round(np.clip(sensitivity, 0, 100)))
+    threshold = model['score_thresholds'][s]
+    lut = (model['log_ratio'] >= threshold) & (model['fg_gate'] > 0)
+    return lut.astype(np.uint8) * 255
+
+
+# Per-channel index tables: quantised channel contribution to the flat LUT
+# index. cv2.LUT + cv2.add are SIMD/multithreaded — ~25% faster on a Pi than
+# numpy shift/or at full capture resolution.
+_IDX_LUT_R = (np.arange(256, dtype=np.uint16) >> LUT_SHIFT) << 10
+_IDX_LUT_G = (np.arange(256, dtype=np.uint16) >> LUT_SHIFT) << 5
+_IDX_LUT_B = np.arange(256, dtype=np.uint16) >> LUT_SHIFT
 
 
 def apply_lut(image, lut, index_buffer=None):
@@ -148,15 +286,13 @@ def apply_lut(image, lut, index_buffer=None):
     loop) to avoid per-frame allocation; omit it from multi-threaded callers.
     """
     h, w = image.shape[:2]
+    b, g, r = cv2.split(image)
     if index_buffer is not None and index_buffer.shape == (h, w):
-        idx = index_buffer
+        idx = cv2.LUT(r, _IDX_LUT_R, dst=index_buffer)
     else:
-        idx = np.empty((h, w), dtype=np.uint16)
-    np.right_shift(image[:, :, 2], LUT_SHIFT, out=idx, casting='unsafe')
-    idx <<= 5
-    idx |= image[:, :, 1] >> LUT_SHIFT
-    idx <<= 5
-    idx |= image[:, :, 0] >> LUT_SHIFT
+        idx = cv2.LUT(r, _IDX_LUT_R)
+    cv2.add(idx, cv2.LUT(g, _IDX_LUT_G), dst=idx)
+    cv2.add(idx, cv2.LUT(b, _IDX_LUT_B), dst=idx)
     return lut.take(idx)
 
 
@@ -347,6 +483,7 @@ class LUTProfileManager:
                 f'and background (got weed={fg.shape[0]}, background={bg.shape[0]})')
 
         hist_fg, hist_bg = build_histograms(fg, bg)
+        model = train_model(fg, bg)
         meta = {
             'version': PROFILE_VERSION,
             'name': name,
@@ -358,6 +495,9 @@ class LUTProfileManager:
         arrays = {
             'hist_fg': hist_fg,
             'hist_bg': hist_bg,
+            'log_ratio': model['log_ratio'],
+            'fg_gate': model['fg_gate'],
+            'score_thresholds': model['score_thresholds'],
             'fg_pixels': fg,
             'bg_pixels': bg,
             'meta': _json_array(meta),
@@ -366,6 +506,13 @@ class LUTProfileManager:
         if thumbnail_jpeg:
             arrays['thumbnail'] = np.frombuffer(thumbnail_jpeg, dtype=np.uint8)
 
+        self._write_npz(path, arrays)
+        logger.info(f'Saved LUT profile: {name} '
+                    f'(fg={meta["fg_pixels"]}, bg={meta["bg_pixels"]})')
+        return meta
+
+    def _write_npz(self, path, arrays):
+        """Atomically write a profile npz (tempfile + rename)."""
         os.makedirs(self.profile_dir, exist_ok=True)
         fd, tmp_path = tempfile.mkstemp(
             suffix='.npz', prefix='.owl_lut_', dir=self.profile_dir)
@@ -379,9 +526,6 @@ class LUTProfileManager:
             except OSError:
                 pass
             raise
-        logger.info(f'Saved LUT profile: {name} '
-                    f'(fg={meta["fg_pixels"]}, bg={meta["bg_pixels"]})')
-        return meta
 
     def load(self, name):
         """Load a profile. Raises LUTProfileError if missing or corrupt."""
@@ -401,6 +545,11 @@ class LUTProfileManager:
                     'thumbnail': (data['thumbnail'].tobytes()
                                   if 'thumbnail' in data else None),
                 }
+                if all(k in data for k in
+                       ('log_ratio', 'fg_gate', 'score_thresholds')):
+                    profile['log_ratio'] = data['log_ratio']
+                    profile['fg_gate'] = data['fg_gate']
+                    profile['score_thresholds'] = data['score_thresholds']
         except LUTProfileError:
             raise
         except Exception as e:
@@ -409,12 +558,45 @@ class LUTProfileManager:
         if profile['hist_fg'].shape != (LUT_BINS, LUT_BINS, LUT_BINS) or \
                 profile['hist_bg'].shape != (LUT_BINS, LUT_BINS, LUT_BINS):
             raise LUTProfileError(f'Corrupt LUT profile {name}: bad histogram shape')
+
+        if 'log_ratio' not in profile:
+            self._migrate_v1(name, path, profile)
         return profile
+
+    def _migrate_v1(self, name, path, profile):
+        """Fit the model for a pre-v2 profile from its stored pixel samples
+        and cache it back to disk (one-time, deterministic). A failed
+        re-save is only logged — the fitted model still works in memory."""
+        logger.info(f'Migrating LUT profile {name} to v{PROFILE_VERSION} '
+                    f'(one-time model fit)')
+        model = train_model(profile['fg_pixels'], profile['bg_pixels'])
+        profile.update(model)
+        meta = dict(profile['meta'])
+        meta['version'] = PROFILE_VERSION
+        profile['meta'] = meta
+        arrays = {
+            'hist_fg': profile['hist_fg'],
+            'hist_bg': profile['hist_bg'],
+            'log_ratio': model['log_ratio'],
+            'fg_gate': model['fg_gate'],
+            'score_thresholds': model['score_thresholds'],
+            'fg_pixels': profile['fg_pixels'],
+            'bg_pixels': profile['bg_pixels'],
+            'meta': _json_array(meta),
+            'strokes': _json_array(profile['strokes']),
+        }
+        if profile['thumbnail']:
+            arrays['thumbnail'] = np.frombuffer(profile['thumbnail'],
+                                                dtype=np.uint8)
+        try:
+            self._write_npz(path, arrays)
+        except Exception as e:
+            logger.warning(f'Could not persist migrated LUT profile {name}: {e}')
 
     def load_and_bake(self, name, sensitivity=DEFAULT_SENSITIVITY):
         """Convenience for the detection loop: load + bake in one call."""
         profile = self.load(name)
-        return bake_lut(profile['hist_fg'], profile['hist_bg'], sensitivity)
+        return bake_from_model(profile, sensitivity)
 
     def delete(self, name):
         """Delete a profile. Built-ins are protected (regenerated anyway)."""
@@ -427,13 +609,17 @@ class LUTProfileManager:
         logger.info(f'Deleted LUT profile: {name}')
 
     def ensure_builtin_profiles(self):
-        """Create the generic 'starter' profile if missing. Never raises —
-        called at startup on OWLs and controllers alike."""
+        """Create the generic 'starter' profile if missing or from an older
+        format version. Never raises — called at startup on OWLs and
+        controllers alike."""
         try:
-            if not self.exists('starter'):
-                fg, bg = generate_starter_pixels()
-                self.save('starter', fg, bg, frames=0)
-                logger.info("Created built-in LUT profile 'starter'")
+            if self.exists('starter'):
+                meta = self._read_meta(self.profile_path('starter'))
+                if meta.get('version', 1) >= PROFILE_VERSION:
+                    return
+            fg, bg = generate_starter_pixels()
+            self.save('starter', fg, bg, frames=0)
+            logger.info("Created built-in LUT profile 'starter'")
         except Exception as e:
             logger.error(f'Could not create built-in LUT profile: {e}')
 
