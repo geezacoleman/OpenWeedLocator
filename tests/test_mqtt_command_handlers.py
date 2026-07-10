@@ -396,13 +396,34 @@ class TestSaveConfigCommand:
         # Saves to the config_path — verify file still exists
         assert mock_owl.config_path.exists()
 
-    def test_save_config_with_filename(self, mqtt_publisher, mock_owl, tmp_config_dir):
-        """save_config with filename attempts to save to that name."""
-        mqtt_publisher._handle_command({
-            'action': 'save_config',
-            'filename': 'my_saved.ini'
-        })
-        # No crash = pass (actual file save depends on path resolution)
+    def test_save_config_with_filename_sets_active(self, mqtt_publisher, mock_owl, tmp_config_dir):
+        """A NAMED save must become the active config — otherwise the OWL keeps
+        running the autosave working file and the dashboard keeps showing
+        '<old profile> — unsaved changes' right after a successful save
+        (2026-07-10 field bug)."""
+        from unittest.mock import patch
+        with patch.object(mqtt_publisher, '_handle_set_active_config') as mock_set_active, \
+             patch('utils.mqtt_manager.atomic_write_config'):
+            mqtt_publisher._handle_command({
+                'action': 'save_config',
+                'filename': 'my_saved.ini'
+            })
+        mock_set_active.assert_called_once_with('config/my_saved.ini')
+
+    def test_save_config_without_filename_keeps_autosave_pointer(self, mqtt_publisher, mock_owl, tmp_config_dir):
+        """A live (unnamed) save diverts to the autosave working file — it must
+        NOT repoint active_config.txt at a named profile."""
+        from unittest.mock import patch
+        with patch('utils.mqtt_manager.atomic_write_config'), \
+             patch.object(mqtt_publisher, '_handle_set_active_config') as mock_set_active:
+            mqtt_publisher._handle_command({
+                'action': 'save_config',
+                'filename': None
+            })
+        for call_args in mock_set_active.call_args_list:
+            assert 'config_autosave' in str(call_args), (
+                "unnamed save must only ever point the active config at the autosave file"
+            )
 
 
 # ---------------------------------------------------------------------------

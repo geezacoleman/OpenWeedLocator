@@ -405,24 +405,47 @@ async function confirmSaveToAll() {
     // Apply current settings live first.
     sendAllToDevice();
 
-    // Fold the live slider values back into deviceConfig so the library copy
-    // (which Load reads back) matches what was just applied to the OWLs.
-    // Without this the library file carries the values from when the editor
-    // last loaded — saving "correctly named" files full of stale settings.
-    syncConfigFromSliders();
-
     try {
-        // Save a named copy to the controller library (if editor data is loaded).
+        // The library copy is serialized from deviceConfig, which is only
+        // populated when the Advanced editor loads. Saving straight from the
+        // sliders must work too — fetch the running config from an OWL so the
+        // profile file can be created regardless.
+        if (typeof deviceConfig === 'undefined' || !Object.keys(deviceConfig).length) {
+            var srcId = (typeof getFirstConnectedOwl === 'function') ? getFirstConnectedOwl() : null;
+            if (srcId) {
+                var cfgRes = await apiRequest('/api/config/' + srcId, {}, 5000);
+                var cfgData = await cfgRes.json();
+                if (cfgData && cfgData.success && cfgData.config) {
+                    deviceConfig = JSON.parse(JSON.stringify(cfgData.config));
+                    originalDeviceConfig = JSON.parse(JSON.stringify(cfgData.config));
+                }
+            }
+        }
+        if (typeof deviceConfig === 'undefined' || !Object.keys(deviceConfig).length) {
+            showToast('Cannot save profile — no OWL connected to read the config from', 'error');
+            return;
+        }
+
+        // Fold the live slider values back into deviceConfig so the library copy
+        // (which Load reads back) matches what was just applied to the OWLs.
+        // Without this the library file carries the values from when the editor
+        // last loaded — saving "correctly named" files full of stale settings.
+        syncConfigFromSliders();
+
+        // Save a named copy to the controller library.
         var savedFilename = null;
-        if (typeof deviceConfig !== 'undefined' && Object.keys(deviceConfig).length > 0) {
-            var libRes = await apiRequest('/api/config/library', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ config: deviceConfig, name: name, notes: notes,
-                                       overwrite_filename: overwriteFilename })
-            });
-            var libData = await libRes.json();
-            if (libData && libData.filename) savedFilename = libData.filename;
+        var libRes = await apiRequest('/api/config/library', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config: deviceConfig, name: name, notes: notes,
+                                   overwrite_filename: overwriteFilename })
+        });
+        var libData = await libRes.json();
+        if (libData && libData.filename) savedFilename = libData.filename;
+        if (!savedFilename) {
+            // Without a filename the OWLs would divert the save to their autosave
+            // working file ("unsaved changes") — surface the failure instead.
+            throw new Error((libData && libData.error) || 'profile not saved to library');
         }
 
         // Tell all OWLs to save their current config to disk, carrying the name.

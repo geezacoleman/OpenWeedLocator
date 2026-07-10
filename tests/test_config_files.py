@@ -760,6 +760,30 @@ class TestSaveFoldsSliderValues:
             "the /api/config/library POST, or the library copy is stale"
         )
 
+    def test_networked_save_works_without_editor_loaded(self):
+        """Field bug 2026-07-10 (round 2): deviceConfig is only populated when
+        the Advanced editor loads, so saving straight from the sliders silently
+        skipped the library file — no new profile in the list — and the OWLs
+        diverted the null-filename save to their autosave working file
+        ('<old profile> — unsaved changes'). confirmSaveToAll must fetch the
+        running config from an OWL when deviceConfig is empty, and abort loudly
+        rather than fire a null-filename device save."""
+        src = self.NETWORKED_TAB.read_text(encoding='utf-8')
+        save_fn = src[src.index('async function confirmSaveToAll'):]
+        before_lib_post = save_fn[:save_fn.index('/api/config/library')]
+        assert "apiRequest('/api/config/' + srcId" in before_lib_post, (
+            "confirmSaveToAll must fetch the device config when deviceConfig is empty"
+        )
+        assert 'Cannot save profile' in before_lib_post, (
+            "confirmSaveToAll must abort with a visible error when no config source exists"
+        )
+        # The device save must never run without a library filename (a null
+        # filename makes the OWL divert to its autosave working file).
+        before_device_save = save_fn[:save_fn.index("'/save'")]
+        assert 'if (!savedFilename)' in before_device_save, (
+            "confirmSaveToAll must abort before the device save when the library save failed"
+        )
+
     def test_standalone_save_folds_sliders_before_post(self):
         src = self.STANDALONE_CFG.read_text(encoding='utf-8')
         assert 'function syncCurrentConfigFromSliders()' in src, (

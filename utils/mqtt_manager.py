@@ -1318,6 +1318,15 @@ class OWLMQTTPublisher:
 
             self.logger.info(f"Config saved to {save_path}")
 
+            if filename:
+                # The named file IS the running config now — point the active
+                # pointer at it (re-seeding the working copy to mirror it) so
+                # the dashboard stops showing "<old profile> — unsaved changes"
+                # and a reboot comes back with exactly what was saved.
+                self._handle_set_active_config(f'config/{os.path.basename(save_path)}')
+                self._sync_parameters_to_state()
+                self._publish_state()
+
         except Exception as e:
             self.logger.error(f"Error saving config: {e}")
 
