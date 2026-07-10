@@ -1068,6 +1068,11 @@ class OWLMQTTPublisher:
             self.state['last_update'] = time.time()
             self._publish_state()
 
+    def _geometry_ini_path(self):
+        """Path of the device-resident GEOMETRY.ini (repo config/ dir)."""
+        config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
+        return os.path.join(config_dir, GEOMETRY_FILE)
+
     def _handle_get_config(self):
         """Read current config from disk and publish as JSON to config topic"""
         try:
@@ -1079,6 +1084,10 @@ class OWLMQTTPublisher:
             with self.config_lock:
                 config = configparser.ConfigParser()
                 config.read(config_path)
+                # Merge device-resident mount geometry last so it wins, mirroring
+                # owl.py's load order. Without this the geometry editor seeds from
+                # defaults and a subsequent save clobbers GEOMETRY.ini.
+                config.read(self._geometry_ini_path())
 
             # Convert to dict
             config_dict = {}
@@ -1360,8 +1369,8 @@ class OWLMQTTPublisher:
                 self.owl_instance.recompute_geometry()
 
             # Persist only the geometry keys to GEOMETRY.ini (in place, atomic).
-            config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
-            geom_path = os.path.join(config_dir, GEOMETRY_FILE)
+            geom_path = self._geometry_ini_path()
+            config_dir = os.path.dirname(geom_path)
             cp = configparser.ConfigParser()
             cp.optionxform = str
             cp.read(geom_path)

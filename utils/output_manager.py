@@ -473,8 +473,9 @@ class RelayControl:
         self.clear()
         self.all_off()
 
-# this class does the hard work of receiving detection 'jobs' and queuing them to be actuated. It only turns a nozzle on
-# if the sprayDur has not elapsed or if the nozzle isn't already on.
+# this class does the hard work of receiving detection 'jobs' and scheduling the actuation. Each detection opens a
+# spray window from its detection timestamp; overlapping windows from repeated detections of the same weed/patch merge
+# into one continuous activation, so the nozzle is only switched at the true start and end of spraying.
 class RelayController:
     def __init__(self, relay_dict, vis=False, status_led=None):
         self.logger = LogManager.get_logger(__name__)
@@ -488,14 +489,15 @@ class RelayController:
         except OWLAlreadyRunningError:
             self.logger.error("Failed to initialize RelayControl: OWL is already running and using GPIO pin 7.")
             raise
-        self.relay_queue_dict = {}
+        self.relay_schedule_dict = {}
         self.relay_condition_dict = {}
+        self.running = True
 
-        # create a job queue and Condition() for each nozzle
+        # create a spray-window schedule and Condition() for each nozzle
         self.logger.info("[INFO] Setting up nozzles...")
         self.relay_vis = RelayVis(relays=len(self.relay_dict.keys()))
         for relay_number in range(0, len(self.relay_dict)):
-            self.relay_queue_dict[relay_number] = deque(maxlen=5)
+            self.relay_schedule_dict[relay_number] = {'on_at': None, 'off_at': None}
             self.relay_condition_dict[relay_number] = Condition()
 
             # create the consumer threads, setDaemon and start the threads.
@@ -509,74 +511,103 @@ class RelayController:
 
     def receive(self, relay, time_stamp, location=0, delay=0, duration=1):
         """
-        this method adds a new job to specified relay queue. GPS location data etc to be added. Time stamped
-        records the true time of weed detection from main thread, which is compared to time of relay activation for accurate
-        on durations. There will be a minimum on duration of this processing speed ~ 0.3s. Will default to 0 though.
+        Schedule a spray window for a relay. The window runs from time_stamp + delay
+        until time_stamp + delay + duration, anchored to the true detection time from
+        the main thread so processing lag never stretches the spray.
+
+        If a window is already open or pending, the new one merges into it: on_at
+        never moves later and off_at only ever extends. A continuously detected weed
+        therefore holds the nozzle on without off/on cycling, and a live drop in
+        `duration` (e.g. a GPS speed-adaptive update) can never cut short spray that
+        was already promised.
         :param relay: relay id (zero based)
         :param time_stamp: this is the time of detection
         :param location: GPS functionality to be added here
-        :param delay: on delay to be added in the future
+        :param delay: seconds between detection and the ground reaching the nozzle
         :param duration: duration of spray
         """
-        input_queue_message = [relay, time_stamp, delay, duration]
-        input_queue = self.relay_queue_dict[relay]
-        input_condition = self.relay_condition_dict[relay]
-        # notifies the consumer thread when something has been added to the queue
-        with input_condition:
-            input_queue.append(input_queue_message)
-            input_condition.notify()
+        schedule = self.relay_schedule_dict[relay]
+        condition = self.relay_condition_dict[relay]
+        on_at = time_stamp + delay
+        off_at = on_at + duration
+
+        with condition:
+            now = time.time()
+            if off_at <= now:
+                # window already in the past (stale backlog) — nothing to spray
+                return
+            if schedule['off_at'] is None or schedule['off_at'] <= now:
+                # nozzle idle: open a fresh window
+                schedule['on_at'] = on_at
+                schedule['off_at'] = off_at
+            else:
+                # window open or pending: merge
+                schedule['on_at'] = min(schedule['on_at'], on_at)
+                schedule['off_at'] = max(schedule['off_at'], off_at)
+            condition.notify()
+
+    def _set_relay(self, relay, on):
+        if on:
+            self.relay.relay_on(relay, verbose=False)
+            if self.status_led:
+                self.status_led.blink(on_time=0.1, n=1, background=True)
+        else:
+            self.relay.relay_off(relay, verbose=False)
+
+        if self.vis:
+            self.relay_vis.update(relay=relay, status=on)
 
     def consumer(self, relay):
         """
-        Takes only one parameter - nozzle, which enables the selection of the deque, condition from the dictionaries.
-        The consumer method is threaded for each nozzle and will wait until it is notified that a new job has been added
-        from the receive method. It will then compare the time of detection with time of spraying to activate that nozzle
-        for required length of time.
+        Takes only one parameter - relay, which selects the schedule and condition from the dictionaries.
+        The consumer method is threaded per nozzle and sleeps on its Condition until receive() opens or
+        extends that nozzle's spray window. It switches the relay on while now is inside the window and
+        off once off_at passes; waits use a timeout so an extension arriving mid-window simply re-arms
+        the deadline instead of cycling the relay.
         :param relay: relay id number
         """
-        self.running = True
-        input_condition = self.relay_condition_dict[relay]
-        input_condition.acquire()
+        condition = self.relay_condition_dict[relay]
+        schedule = self.relay_schedule_dict[relay]
         relay_on = False
-        relay_queue = self.relay_queue_dict[relay]
 
-        while self.running:
-            while relay_queue:
-                job = relay_queue.popleft()
-                input_condition.release()
-                # check to make sure time is positive
-                onDur = 0 if (job[3] - (time.time() - job[1])) <= 0 else (job[3] - (time.time() - job[1]))
+        with condition:
+            while self.running:
+                now = time.time()
+                off_at = schedule['off_at']
+
+                if off_at is None or off_at <= now:
+                    # no window, or window just closed
+                    if relay_on:
+                        self._set_relay(relay, on=False)
+                        relay_on = False
+                    schedule['on_at'] = None
+                    schedule['off_at'] = None
+                    condition.wait()
+                    continue
+
+                on_at = schedule['on_at']
+                if on_at is not None and on_at > now:
+                    # window scheduled but the camera-to-nozzle delay hasn't elapsed
+                    if relay_on:
+                        self._set_relay(relay, on=False)
+                        relay_on = False
+                    condition.wait(timeout=on_at - now)
+                    continue
 
                 if not relay_on:
-                    time.sleep(job[2]) # add in the delay variable
-                    self.relay.relay_on(relay, verbose=False)
-                    if self.status_led:
-                        self.status_led.blink(on_time=0.1, n=1, background=True)
-
-                    if self.vis:
-                        self.relay_vis.update(relay=relay, status=True)
-
+                    self._set_relay(relay, on=True)
                     relay_on = True
+                condition.wait(timeout=off_at - now)
 
-                try:
-                    time.sleep(onDur)
-
-                except ValueError:
-                    time.sleep(0)
-
-                input_condition.acquire()
-
-            if len(relay_queue) == 0:
-                self.relay.relay_off(relay, verbose=False)
-
-                if self.vis:
-                    self.relay_vis.update(relay=relay, status=False)
-                relay_on = False
-
-            input_condition.wait()
+            # never leave a nozzle on after shutdown
+            if relay_on:
+                self._set_relay(relay, on=False)
 
     def stop(self):
         self.running = False
+        for condition in self.relay_condition_dict.values():
+            with condition:
+                condition.notify_all()
 
 
 if __name__ == "__main__":

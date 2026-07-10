@@ -141,44 +141,186 @@ class TestRelayControl:
 
 @pytest.mark.unit
 class TestRelayController:
-    """Tests for RelayController — the thread-based actuation queue."""
+    """Tests for RelayController — spray-window (deadline) actuation.
+
+    Each detection opens a window [time_stamp + delay, time_stamp + delay + duration].
+    Overlapping windows merge: off_at only ever extends, so continuous detection
+    holds a nozzle on without off/on cycling, and a live duration drop (GPS
+    speed-adaptive update) can never cut short spray already promised.
+    """
 
     def _make_controller(self):
         from utils.output_manager import RelayController
         relay_dict = {0: 13, 1: 15}
         return RelayController(relay_dict, vis=False)
 
+    def _record_switching(self, rc):
+        """Wrap the relay board calls so tests can assert real switching events."""
+        events = []
+        rc.relay.relay_on = lambda relay, verbose=True: events.append(('on', relay, time.time()))
+        rc.relay.relay_off = lambda relay, verbose=True: events.append(('off', relay, time.time()))
+        return events
+
     def test_init_creates_consumer_threads(self):
         rc = self._make_controller()
-        # Should have queue and condition for each relay
-        assert 0 in rc.relay_queue_dict
-        assert 1 in rc.relay_queue_dict
+        # Should have a schedule and condition for each relay
+        assert 0 in rc.relay_schedule_dict
+        assert 1 in rc.relay_schedule_dict
         assert 0 in rc.relay_condition_dict
         assert 1 in rc.relay_condition_dict
         rc.stop()
 
-    def test_receive_enqueues_job(self):
+    def test_receive_opens_window(self):
         rc = self._make_controller()
-        rc.receive(relay=0, time_stamp=time.time(), delay=0, duration=0.05)
-        # Give consumer thread time to process
-        time.sleep(0.2)
+        t = time.time()
+        rc.receive(relay=0, time_stamp=t, delay=0, duration=5)
+        schedule = rc.relay_schedule_dict[0]
+        assert schedule['on_at'] == pytest.approx(t, abs=0.001)
+        assert schedule['off_at'] == pytest.approx(t + 5, abs=0.001)
         rc.stop()
 
-    def test_receive_multiple_relays(self):
+    def test_overlapping_windows_merge_and_extend(self):
         rc = self._make_controller()
+        t = time.time()
+        rc.receive(relay=0, time_stamp=t, delay=0, duration=5)
+        rc.receive(relay=0, time_stamp=t + 0.5, delay=0, duration=5)
+        schedule = rc.relay_schedule_dict[0]
+        assert schedule['on_at'] == pytest.approx(t, abs=0.001)
+        assert schedule['off_at'] == pytest.approx(t + 5.5, abs=0.001)
+        rc.stop()
+
+    def test_duration_drop_never_shrinks_open_window(self):
+        """A mid-stream GPS speed update lowering duration must not cut short
+        spray that was already promised (the field off-blip bug)."""
+        rc = self._make_controller()
+        t = time.time()
+        rc.receive(relay=0, time_stamp=t, delay=0, duration=5)
+        rc.receive(relay=0, time_stamp=t + 0.1, delay=0, duration=0.05)
+        schedule = rc.relay_schedule_dict[0]
+        assert schedule['off_at'] == pytest.approx(t + 5, abs=0.001)
+        rc.stop()
+
+    def test_stale_window_ignored(self):
+        """A detection whose whole window is already in the past schedules nothing."""
+        rc = self._make_controller()
+        rc.receive(relay=0, time_stamp=time.time() - 10, delay=0, duration=1)
+        schedule = rc.relay_schedule_dict[0]
+        assert schedule['off_at'] is None
+        rc.stop()
+
+    def test_continuous_detection_single_on_off(self):
+        """Continuous detections must hold the nozzle on: exactly one ON at the
+        start and one OFF after the last window closes — no cycling between."""
+        rc = self._make_controller()
+        events = self._record_switching(rc)
+        last_t = None
+        for _ in range(8):
+            last_t = time.time()
+            rc.receive(relay=0, time_stamp=last_t, delay=0, duration=0.3)
+            time.sleep(0.05)
+        time.sleep(0.6)  # let the final window close
+
+        ons = [e for e in events if e[0] == 'on' and e[1] == 0]
+        offs = [e for e in events if e[0] == 'off' and e[1] == 0]
+        assert len(ons) == 1
+        assert len(offs) == 1
+        # Off must come only after the final window's deadline...
+        assert offs[0][2] >= last_t + 0.3 - 0.02
+        # ...but windows must MERGE, not accumulate: off no later than the last
+        # detection + one duration (+ margin). 8 stacked 0.3s jobs would run
+        # ~2.4s — the trailing over-spray seen in the field.
+        assert offs[0][2] <= last_t + 0.3 + 0.2
+        rc.stop()
+
+    def test_continuous_detection_with_delay_no_cycling(self):
+        """Field bug repro: with a GPS-derived delay and a duration shorter than
+        the frame interval, the old queue model strobed the nozzle (off + full
+        delay re-applied between every frame) despite continuous detection.
+        Windows [ts+delay, ts+delay+duration] overlap the next frame's arrival,
+        so they must merge into one continuous activation."""
+        rc = self._make_controller()
+        events = self._record_switching(rc)
+        last_t = None
+        for _ in range(6):
+            last_t = time.time()
+            rc.receive(relay=0, time_stamp=last_t, delay=0.2, duration=0.05)
+            time.sleep(0.1)
+        time.sleep(0.6)  # let the final window close
+
+        ons = [e for e in events if e[0] == 'on' and e[1] == 0]
+        offs = [e for e in events if e[0] == 'off' and e[1] == 0]
+        assert len(ons) == 1, f"nozzle cycled during continuous detection: {events}"
+        assert len(offs) == 1
+        assert offs[0][2] >= last_t + 0.25 - 0.02
+        rc.stop()
+
+    def test_duration_drop_does_not_blip_relay(self):
+        """Field bug repro: the 1 Hz speed broadcast lowering actuation_duration
+        mid-spray must not switch an active nozzle off before the spray already
+        promised has finished (the visible off-blip on the sprayer)."""
+        rc = self._make_controller()
+        events = self._record_switching(rc)
+        t = time.time()
+        rc.receive(relay=0, time_stamp=t, delay=0, duration=0.6)
+        time.sleep(0.1)
+        # New detection arrives carrying a much smaller duration (speed rose)
         rc.receive(relay=0, time_stamp=time.time(), delay=0, duration=0.05)
-        rc.receive(relay=1, time_stamp=time.time(), delay=0, duration=0.05)
-        time.sleep(0.3)
+        time.sleep(0.2)  # t+0.3: well inside the original 0.6s window
+        assert not any(e[0] == 'off' and e[1] == 0 for e in events), (
+            "duration drop cut short an active spray window"
+        )
+        time.sleep(0.5)  # let the window close
+        offs = [e for e in events if e[0] == 'off' and e[1] == 0]
+        assert len(offs) == 1
+        assert offs[0][2] >= t + 0.6 - 0.02
+        rc.stop()
+
+    def test_relay_turns_off_after_window(self):
+        rc = self._make_controller()
+        events = self._record_switching(rc)
+        rc.receive(relay=0, time_stamp=time.time(), delay=0, duration=0.15)
+        time.sleep(0.5)
+        assert events, "relay never switched"
+        assert events[-1][0] == 'off'
+        assert rc.relay_schedule_dict[0]['off_at'] is None  # schedule reset
+        rc.stop()
+
+    def test_delay_defers_activation(self):
+        rc = self._make_controller()
+        events = self._record_switching(rc)
+        t = time.time()
+        rc.receive(relay=0, time_stamp=t, delay=0.3, duration=0.2)
+        time.sleep(0.1)
+        assert not any(e[0] == 'on' for e in events), "fired before delay elapsed"
+        time.sleep(0.5)
+        ons = [e for e in events if e[0] == 'on' and e[1] == 0]
+        assert len(ons) == 1
+        assert ons[0][2] >= t + 0.3 - 0.02
         rc.stop()
 
     def test_concurrent_activations_no_interference(self):
         """Two relays activated simultaneously should not interfere."""
         rc = self._make_controller()
+        events = self._record_switching(rc)
         t = time.time()
         rc.receive(relay=0, time_stamp=t, delay=0, duration=0.1)
         rc.receive(relay=1, time_stamp=t, delay=0, duration=0.1)
-        time.sleep(0.3)
+        time.sleep(0.4)
+        for relay in (0, 1):
+            assert any(e[0] == 'on' and e[1] == relay for e in events)
+            assert any(e[0] == 'off' and e[1] == relay for e in events)
         rc.stop()
+
+    def test_stop_turns_off_active_relay(self):
+        """stop() must never leave a nozzle on."""
+        rc = self._make_controller()
+        events = self._record_switching(rc)
+        rc.receive(relay=0, time_stamp=time.time(), delay=0, duration=5)
+        time.sleep(0.1)
+        assert any(e[0] == 'on' for e in events)
+        rc.stop()
+        time.sleep(0.2)
+        assert events[-1][0] == 'off'
 
 
 # ---------------------------------------------------------------------------

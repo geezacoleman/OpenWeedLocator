@@ -1454,6 +1454,10 @@ class OWLDashboard:
                     return jsonify({'success': False, 'error': 'Config file not found'}), 404
 
                 config.read(config_path)
+                # Merge device-resident mount geometry last so it wins, mirroring
+                # owl.py's load order. Without this the geometry editor seeds from
+                # defaults and a subsequent save clobbers GEOMETRY.ini.
+                config.read(os.path.join(self._get_config_dir(), GEOMETRY_FILE))
 
                 # Convert to nested dict for JSON
                 config_dict = {}

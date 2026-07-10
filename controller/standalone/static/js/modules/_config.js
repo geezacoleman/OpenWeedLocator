@@ -48,8 +48,54 @@ async function loadConfig() {
     }
 }
 
+/**
+ * Fold live slider values into currentConfig before a save. Sliders apply
+ * straight to the OWL via /api/config/param and never touch currentConfig,
+ * so a save serialized from currentConfig would otherwise write the values
+ * from when the page last loaded. Returns true if anything changed.
+ */
+function syncCurrentConfigFromSliders() {
+    if (typeof configParams === 'undefined' || !Object.keys(currentConfig).length) return false;
+    let changed = false;
+
+    currentConfig.GreenOnBrown = currentConfig.GreenOnBrown || {};
+    const gob = currentConfig.GreenOnBrown;
+    const gobKeys = ['exg_min', 'exg_max', 'hue_min', 'hue_max',
+                     'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
+                     'min_detection_area'];
+    gobKeys.forEach(k => {
+        if (configParams[k] && String(gob[k]) !== String(configParams[k].value)) {
+            gob[k] = String(configParams[k].value);
+            changed = true;
+        }
+    });
+    // Optional params: only fold when the config already carries the key —
+    // never invent keys this device's config doesn't have.
+    ['min_detection_area_percent', 'lut_sensitivity'].forEach(k => {
+        if (k in gob && configParams[k] && String(gob[k]) !== String(configParams[k].value)) {
+            gob[k] = String(configParams[k].value);
+            changed = true;
+        }
+    });
+
+    if (currentConfig.GreenOnGreen) {
+        const gog = currentConfig.GreenOnGreen;
+        if (configParams.confidence && String(gog.confidence) !== String(configParams.confidence.value / 100)) {
+            gog.confidence = String(configParams.confidence.value / 100);
+            changed = true;
+        }
+        if (configParams.crop_buffer_px && String(gog.crop_buffer_px) !== String(configParams.crop_buffer_px.value)) {
+            gog.crop_buffer_px = String(configParams.crop_buffer_px.value);
+            changed = true;
+        }
+    }
+    return changed;
+}
+
 async function saveConfig() {
-    if (!configHasChanges) { showNotification('Info', 'No changes', 'info'); return; }
+    // Slider moves count as saveable changes even though they bypass the editor.
+    const sliderChanges = syncCurrentConfigFromSliders();
+    if (!configHasChanges && !sliderChanges) { showNotification('Info', 'No changes', 'info'); return; }
     const result = await showSaveConfigModal();
     if (!result) return;
     try {

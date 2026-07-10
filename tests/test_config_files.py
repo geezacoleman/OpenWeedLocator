@@ -722,3 +722,75 @@ class TestSessionMetadataFlow:
             assert f"command.get('{key}'" in py, (
                 f"mqtt_manager.py handler does not read key {key!r} from command"
             )
+
+
+@pytest.mark.unit
+class TestSaveFoldsSliderValues:
+    """Guard the 2026-07-10 field-bug fix: saving a named config used to
+    serialize the stale browser-side config object — slider moves apply live
+    to the OWL but never touched that object, so saved files carried the old
+    thresholds and Load restored them over the operator's adjustments.
+
+    JS has no unit harness here, so pin the wiring at source level:
+    - networked confirmSaveToAll() must fold sliders (syncConfigFromSliders)
+      before POSTing the library copy
+    - standalone saveConfig() must fold sliders (syncCurrentConfigFromSliders)
+      before POSTing /api/config
+    - every fold's GoB key list must match the apply path's list exactly
+    """
+
+    NETWORKED_TAB = PROJECT_ROOT / 'controller' / 'networked' / 'static' / 'js' / 'modules' / '_config_tab.js'
+    STANDALONE_CFG = PROJECT_ROOT / 'controller' / 'standalone' / 'static' / 'js' / 'modules' / '_config.js'
+
+    GOB_SLIDER_KEYS = {
+        'exg_min', 'exg_max', 'hue_min', 'hue_max',
+        'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
+        'min_detection_area',
+    }
+
+    def test_networked_save_folds_sliders_before_library_post(self):
+        src = self.NETWORKED_TAB.read_text(encoding='utf-8')
+        assert 'function syncConfigFromSliders()' in src, (
+            "syncConfigFromSliders() missing from networked _config_tab.js"
+        )
+        save_fn = src[src.index('async function confirmSaveToAll'):]
+        lib_post = save_fn.index('/api/config/library')
+        assert 'syncConfigFromSliders()' in save_fn[:lib_post], (
+            "confirmSaveToAll must fold slider values into deviceConfig BEFORE "
+            "the /api/config/library POST, or the library copy is stale"
+        )
+
+    def test_standalone_save_folds_sliders_before_post(self):
+        src = self.STANDALONE_CFG.read_text(encoding='utf-8')
+        assert 'function syncCurrentConfigFromSliders()' in src, (
+            "syncCurrentConfigFromSliders() missing from standalone _config.js"
+        )
+        save_fn = src[src.index('async function saveConfig'):]
+        post = save_fn.index("fetch('/api/config'")
+        assert 'syncCurrentConfigFromSliders()' in save_fn[:post], (
+            "saveConfig must fold slider values into currentConfig BEFORE "
+            "the /api/config POST, or the saved file is stale"
+        )
+
+    def _gob_key_lists(self, source):
+        """Extract every `gobKeys = [...]` array in a JS source as a set-list."""
+        lists = []
+        for m in re.finditer(r"gobKeys\s*=\s*\[([^\]]*)\]", source):
+            lists.append(set(re.findall(r"'([\w_]+)'", m.group(1))))
+        return lists
+
+    def test_networked_fold_and_apply_key_lists_match(self):
+        lists = self._gob_key_lists(self.NETWORKED_TAB.read_text(encoding='utf-8'))
+        assert len(lists) >= 2, "expected gobKeys in sendAllToDevice and syncConfigFromSliders"
+        for key_list in lists:
+            assert key_list == self.GOB_SLIDER_KEYS, (
+                f"networked gobKeys drifted: {sorted(key_list ^ self.GOB_SLIDER_KEYS)}"
+            )
+
+    def test_standalone_fold_key_list_matches(self):
+        lists = self._gob_key_lists(self.STANDALONE_CFG.read_text(encoding='utf-8'))
+        assert lists, "expected gobKeys in syncCurrentConfigFromSliders"
+        for key_list in lists:
+            assert key_list == self.GOB_SLIDER_KEYS, (
+                f"standalone gobKeys drifted: {sorted(key_list ^ self.GOB_SLIDER_KEYS)}"
+            )

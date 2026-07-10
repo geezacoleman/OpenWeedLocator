@@ -405,6 +405,12 @@ async function confirmSaveToAll() {
     // Apply current settings live first.
     sendAllToDevice();
 
+    // Fold the live slider values back into deviceConfig so the library copy
+    // (which Load reads back) matches what was just applied to the OWLs.
+    // Without this the library file carries the values from when the editor
+    // last loaded — saving "correctly named" files full of stale settings.
+    syncConfigFromSliders();
+
     try {
         // Save a named copy to the controller library (if editor data is loaded).
         var savedFilename = null;
@@ -500,6 +506,44 @@ async function loadPresetToDevice() {
 
     } catch (err) {
         showToast('Error loading preset: ' + err.message, 'error');
+    }
+}
+
+/**
+ * Reverse of syncSlidersFromConfig: fold live slider values into deviceConfig.
+ * Slider moves update configParams and push straight to the OWLs — they never
+ * touch deviceConfig, so any save serialized from deviceConfig must fold them
+ * back in first or it writes the values from when the editor last loaded.
+ */
+function syncConfigFromSliders() {
+    if (typeof deviceConfig === 'undefined' || !Object.keys(deviceConfig).length) return;
+
+    deviceConfig.GreenOnBrown = deviceConfig.GreenOnBrown || {};
+    var gob = deviceConfig.GreenOnBrown;
+    var gobKeys = ['exg_min', 'exg_max', 'hue_min', 'hue_max',
+                   'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
+                   'min_detection_area'];
+    for (var i = 0; i < gobKeys.length; i++) {
+        var k = gobKeys[i];
+        if (configParams[k]) gob[k] = String(configParams[k].value);
+    }
+    // Optional params: only fold when the config already carries the key —
+    // never invent keys a device's config doesn't have.
+    ['min_detection_area_percent', 'lut_sensitivity'].forEach(function (k) {
+        if (k in gob && configParams[k]) gob[k] = String(configParams[k].value);
+    });
+
+    if (deviceConfig.GreenOnGreen) {
+        if (configParams.confidence)
+            deviceConfig.GreenOnGreen.confidence = String(configParams.confidence.value / 100);
+        if (configParams.crop_buffer_px)
+            deviceConfig.GreenOnGreen.crop_buffer_px = String(configParams.crop_buffer_px.value);
+    }
+
+    // Keep change tracking consistent: these values are already live on the
+    // OWLs (sendAllToDevice), so they are not "unsent editor changes".
+    if (typeof originalDeviceConfig !== 'undefined') {
+        originalDeviceConfig = JSON.parse(JSON.stringify(deviceConfig));
     }
 }
 

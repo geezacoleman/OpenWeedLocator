@@ -1,6 +1,7 @@
 """Tests for networked controller Flask API routes (config editor endpoints)."""
 
 import json
+import os
 import time
 from unittest.mock import MagicMock, patch
 
@@ -162,6 +163,46 @@ class TestGetPreset:
 
         assert resp.status_code == 404
         assert data['success'] is False
+
+
+@pytest.mark.unit
+class TestConfigLibraryRoundTrip:
+    """Save-to-library then Load must return exactly the values saved.
+
+    Backend half of the 2026-07-10 field bug: adjusted settings saved to a new
+    file came back as the OLD values on Load. (The frontend half — folding live
+    slider values into the posted config — is pinned in test_config_files.py.)
+    """
+
+    def test_saved_values_survive_load(self, networked_test_client, tmp_config_dir):
+        client, _ = networked_test_client
+        import io
+        import controller.networked.networked as net_mod
+
+        resp = client.get('/api/presets/GENERAL_CONFIG')
+        config = resp.get_json()['config']
+        config['GreenOnBrown']['exg_min'] = '42'
+        config['GreenOnBrown']['hue_max'] = '77'
+
+        # Redirect the library write to the tmp config dir (the route derives
+        # the real repo config/ from __file__) — same serialization code runs.
+        def _write_to_tmp(path, write_callable):
+            buf = io.StringIO()
+            write_callable(buf)
+            (tmp_config_dir / os.path.basename(str(path))).write_text(buf.getvalue())
+
+        with patch.object(net_mod, 'atomic_write_config', side_effect=_write_to_tmp):
+            save = client.post('/api/config/library', json={
+                'config': config, 'name': 'field test', 'notes': ''
+            })
+        save_data = save.get_json()
+        assert save.status_code == 200 and save_data['success'] is True
+        preset_name = save_data['filename'].rsplit('.ini', 1)[0]
+
+        loaded = client.get('/api/presets/' + preset_name).get_json()
+        assert loaded['success'] is True
+        assert loaded['config']['GreenOnBrown']['exg_min'] == '42'
+        assert loaded['config']['GreenOnBrown']['hue_max'] == '77'
 
 
 @pytest.mark.unit

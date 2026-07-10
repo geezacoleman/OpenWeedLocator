@@ -338,6 +338,59 @@ class TestSaveGeometryAndPreview:
         written.read(real_path)
         assert not (written.has_section('System') and written.has_option('System', 'relay_num'))
 
+    def test_config_payload_merges_geometry_ini(self, mqtt_publisher, tmp_path):
+        """get_config must seed the editor with GEOMETRY.ini values — otherwise the
+        geometry editor opens on defaults and Done re-saves defaults over the real
+        file (2026-07-10 field bug: geometry 'reverting' after save)."""
+        import json
+        geom = tmp_path / 'GEOMETRY.ini'
+        geom.write_text('[Camera]\ncrop_left = 0.11\ncrop_right = 0.07\n'
+                        '[System]\nactuation_top = 0.25\nactuation_bottom = 0.9\n')
+        with patch.object(mqtt_publisher, '_geometry_ini_path', return_value=str(geom)):
+            mqtt_publisher._handle_get_config()
+
+        mqtt_publisher.client.publish.assert_called_once()
+        payload = json.loads(mqtt_publisher.client.publish.call_args[0][1])
+        assert payload['config']['Camera']['crop_left'] == '0.11'
+        assert payload['config']['Camera']['crop_right'] == '0.07'
+        assert payload['config']['System']['actuation_top'] == '0.25'
+        assert payload['config']['System']['actuation_bottom'] == '0.9'
+        # Merging geometry must not clobber the active config's other keys
+        assert payload['config']['Camera']['resolution_width'] == '416'
+        assert payload['config']['GreenOnBrown']['exg_min'] == '25'
+
+    def test_geometry_save_then_get_round_trips(self, mqtt_publisher, mock_owl, tmp_path):
+        """Full field-bug repro: save geometry, then get_config must return the
+        SAVED values — not defaults. (The broken round trip is what made saved
+        geometry 'revert', and re-saving from the default-seeded editor then
+        destroyed the real GEOMETRY.ini.)"""
+        import json
+        geom = tmp_path / 'GEOMETRY.ini'
+        with patch.object(mqtt_publisher, '_geometry_ini_path', return_value=str(geom)):
+            mqtt_publisher._handle_save_geometry({'crop_left': '0.13', 'actuation_top': '0.31'})
+            assert geom.exists(), "save_geometry did not write GEOMETRY.ini"
+            mqtt_publisher.client.publish.reset_mock()
+            mqtt_publisher._handle_get_config()
+
+        publishes = [c for c in mqtt_publisher.client.publish.call_args_list
+                     if 'config' in c[0][0]]
+        assert publishes, "get_config published nothing"
+        payload = json.loads(publishes[-1][0][1])
+        assert payload['config']['Camera']['crop_left'] == '0.13'
+        assert payload['config']['System']['actuation_top'] == '0.31'
+
+    def test_config_payload_ok_without_geometry_ini(self, mqtt_publisher, tmp_path):
+        """A unit that has never used the geometry editor has no GEOMETRY.ini —
+        get_config must still publish normally."""
+        import json
+        with patch.object(mqtt_publisher, '_geometry_ini_path',
+                          return_value=str(tmp_path / 'GEOMETRY.ini')):
+            mqtt_publisher._handle_get_config()
+
+        mqtt_publisher.client.publish.assert_called_once()
+        payload = json.loads(mqtt_publisher.client.publish.call_args[0][1])
+        assert payload['config']['GreenOnBrown']['exg_min'] == '25'
+
     def test_set_preview_mode_toggles_flag(self, mqtt_publisher, mock_owl):
         mqtt_publisher._handle_command({'action': 'set_preview_mode', 'mode': 'full'})
         assert mock_owl._stream_full_frame is True

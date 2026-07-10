@@ -52,6 +52,25 @@ class TestGetConfig:
         for section in ['System', 'GreenOnBrown', 'Camera', 'Controller', 'DataCollection', 'Relays']:
             assert section in config, f"Missing section: {section}"
 
+    def test_merges_geometry_ini_into_config(self, standalone_test_client):
+        """GET /api/config must return GEOMETRY.ini values so the geometry editor
+        seeds from what the OWL actually runs (2026-07-10 field bug: editor
+        opened on defaults, Done re-saved defaults over the real geometry)."""
+        client, dashboard, tmp_dir = standalone_test_client
+        (tmp_dir / 'GEOMETRY.ini').write_text(
+            '[Camera]\ncrop_left = 0.11\ncrop_right = 0.07\n'
+            '[System]\nactuation_top = 0.25\nactuation_bottom = 0.9\n'
+        )
+
+        resp = client.get('/api/config')
+        data = resp.get_json()
+
+        assert resp.status_code == 200
+        assert data['config']['Camera']['crop_left'] == '0.11'
+        assert data['config']['System']['actuation_top'] == '0.25'
+        # Other keys from the active config must survive the merge
+        assert 'exg_min' in data['config']['GreenOnBrown']
+
     def test_returns_404_when_config_missing(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
 
