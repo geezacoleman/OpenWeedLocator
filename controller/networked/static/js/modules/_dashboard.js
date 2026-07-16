@@ -67,7 +67,7 @@ function syncConfigFromOWLState(owlState) {
 // ============================================
 
 /**
- * Compare 9 GreenOnBrown keys across all connected OWLs.
+ * Compare the GreenOnBrown threshold keys across all connected OWLs.
  * Shows/hides the config-mismatch-badge in the config tab toolbar.
  */
 function checkConfigMismatch() {
@@ -76,7 +76,7 @@ function checkConfigMismatch() {
 
     var keys = ['exg_min', 'exg_max', 'hue_min', 'hue_max',
                 'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
-                'min_detection_area'];
+                'min_detection_area_percent'];
 
     var connectedOwls = [];
     for (var id in owlsData) {
@@ -283,10 +283,12 @@ function updateOWLGrid() {
     const grid = document.getElementById('owls-column');
     if (!grid) return;
 
-    // Filter to only show OWLs that have been seen recently (connected=true)
+    // Show OWLs seen recently (connected=true) plus fleet-registered units
+    // (registered=true) — a registered OWL that goes quiet shows as an
+    // Offline card instead of vanishing.
     const ids = Object.keys(owlsData).filter(id => {
         const owl = owlsData[id];
-        return owl && owl.connected === true;
+        return owl && (owl.connected === true || owl.registered === true);
     });
 
     if (ids.length === 0) {
@@ -368,9 +370,9 @@ function buildOWLCard(deviceId, owl) {
         : '';
 
     // Active config "Running: <name>" (prefer the friendly [Meta] name).
-    // The autosave working file displays as its source preset + unsaved marker.
-    let cfgName = (owl.config_unsaved && owl.config_source)
-        ? owl.config_source : (owl.config_name || '');
+    // The autosave working file displays as its source preset; the unsaved
+    // marker appears only when its content actually differs from that source.
+    let cfgName = owl.config_source || owl.config_name || '';
     if (cfgName && typeof prettyConfigName === 'function') cfgName = prettyConfigName(cfgName);
     if (cfgName && owl.config_unsaved) cfgName += ' — unsaved changes';
     const esc = (typeof escapeConfigLabel === 'function') ? escapeConfigLabel : (s) => s;
@@ -378,10 +380,17 @@ function buildOWLCard(deviceId, owl) {
         ? '<div class="owl-compact-config" title="Config loaded on this OWL">Running: ' + esc(cfgName) + '</div>'
         : '';
 
+    // friendly_name is user-typed via the fleet API — must be escaped.
+    // deviceId comes from MQTT topic names (anonymous broker), so it is
+    // just as untrusted.
+    const displayName = esc(owl.friendly_name || deviceId);
+    const nameTitle = owl.assigned_ip
+        ? ` title="${esc(deviceId)} — ${esc(owl.assigned_ip)}"` : '';
+
     return `
         <div class="owl-card-compact ${onlineClass}">
             <div class="owl-card-compact-header">
-                <h4>${deviceId}</h4>
+                <h4${nameTitle}>${displayName}</h4>
                 <span class="owl-status-badge ${onlineClass}">
                     <span class="badge-dot"></span>
                     ${isOnline ? 'Online' : 'Offline'}

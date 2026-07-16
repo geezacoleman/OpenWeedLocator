@@ -74,6 +74,7 @@ function onKnobDrag(e) {
 
     configParams[param].value = val;
     updateSlider(param);
+    minSizeOverlayPing(param);
 }
 
 function endKnobDrag(e) {
@@ -88,6 +89,7 @@ function endKnobDrag(e) {
 
     // Send final value
     sendConfigUpdate(param, configParams[param].value);
+    minSizeOverlayPing(param);
     dragState = null;
 }
 
@@ -113,6 +115,7 @@ function handleTrackClick(e) {
         configParams[param].value = sliderPctToValue(p, pct);
         updateSlider(param);
         sendConfigUpdate(param, configParams[param].value);
+        minSizeOverlayPing(param);
     } else {
         // Range slider — move nearest knob
         var minParam = slider.dataset.paramMin;
@@ -202,6 +205,7 @@ function adjustParameter(param, delta) {
     p.value = newVal;
     updateSlider(param);
     sendConfigUpdate(param, newVal);
+    minSizeOverlayPing(param);
 }
 
 function updateSlider(param) {
@@ -247,6 +251,58 @@ function updateAllSliders() {
     for (var key in configParams) {
         updateSlider(key);
     }
+}
+
+// ============================================
+// MIN WEED SIZE REFERENCE BOX (live mini feed)
+//   While the Min Weed Size slider is being adjusted, a centred orange dotted
+//   square on the preview shows what the threshold actually means on the
+//   camera frame. Threshold = % of frame AREA, so side = sqrt(pct/100) of the
+//   rendered image box (object-fit: contain letterboxing accounted for).
+//   User interaction only — heartbeat/preset syncs never flash it.
+// ============================================
+
+var minSizeOverlayTimer = null;
+
+function minSizeOverlayPing(param) {
+    if (param !== 'min_detection_area_percent') return;
+    var frame = document.getElementById('config-preview-frame');
+    var img = document.getElementById('config-preview-img');
+    var p = configParams.min_detection_area_percent;
+    if (!frame || !img || !p) return;
+    // Geometry editor owns the preview while active
+    if (frame.querySelector('.geo-overlay')) return;
+
+    var box = document.getElementById('minsize-overlay-box');
+    if (!box) {
+        box = document.createElement('div');
+        box.id = 'minsize-overlay-box';
+        box.className = 'minsize-overlay-box';
+        var label = document.createElement('span');
+        label.className = 'minsize-overlay-label';
+        label.textContent = 'min weed size';
+        box.appendChild(label);
+        frame.appendChild(box);
+    }
+
+    // Rendered image content box inside the frame (object-fit: contain)
+    var fw = frame.clientWidth, fh = frame.clientHeight;
+    var iw = img.naturalWidth || 4, ih = img.naturalHeight || 3;
+    var scale = Math.min(fw / iw, fh / ih);
+    var contentW = iw * scale, contentH = ih * scale;
+
+    var side = Math.sqrt(Math.max(0, p.value) / 100)
+             * Math.sqrt(contentW * contentH);
+    side = Math.max(6, Math.round(side));
+
+    box.style.width = side + 'px';
+    box.style.height = side + 'px';
+    box.classList.add('visible');
+
+    if (minSizeOverlayTimer) clearTimeout(minSizeOverlayTimer);
+    minSizeOverlayTimer = setTimeout(function () {
+        box.classList.remove('visible');
+    }, 3000);
 }
 
 // ============================================
@@ -299,7 +355,7 @@ function sendAllToDevice() {
     var gobParams = {};
     var gobKeys = ['exg_min', 'exg_max', 'hue_min', 'hue_max',
                    'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
-                   'min_detection_area'];
+                   'min_detection_area_percent'];
     for (var i = 0; i < gobKeys.length; i++) {
         var k = gobKeys[i];
         if (configParams[k]) gobParams[k] = String(configParams[k].value);
@@ -332,21 +388,48 @@ function sendAllToDevice() {
     showToast('Applied to all OWLs — not saved', 'info');
 }
 
+// Which library profile the current settings derive from — set by an explicit
+// Load or a successful Save, otherwise derived from what the OWLs report.
+var loadedProfileFilename = null;
+// Two-step overwrite confirmation for save-as-new name collisions
+var saveOverwriteConfirmed = false;
+
+var PROTECTED_CONFIG_NAMES = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini', 'GEOMETRY.ini'];
+
+function getLoadedProfileFilename() {
+    if (loadedProfileFilename) return loadedProfileFilename;
+    // Fall back to the profile the first connected OWL reports it is running
+    try {
+        var first = (typeof getFirstConnectedOwl === 'function') ? getFirstConnectedOwl() : null;
+        var owl = first ? owlsData[first] : null;
+        var name = owl ? (owl.config_source || owl.config_name || '') : '';
+        if (!name || name === 'config_autosave.ini') return null;
+        if (PROTECTED_CONFIG_NAMES.indexOf(name) !== -1) return null;
+        return name;
+    } catch (e) {
+        return null;
+    }
+}
+
 /**
  * Open the Save dialog. Sliders have already applied live, so this only
- * captures a name/notes and persists.
+ * captures a name/notes and persists. When a named profile is loaded the
+ * dialog defaults to updating it, with "Save as new" as the alternative.
  */
 function openSaveModal() {
     var modal = document.getElementById('config-save-modal');
     if (!modal) return;
 
-    // Offer "Update <name>" when a non-default library config is selected.
+    // Prefer the loaded/active profile; fall back to the library selection.
+    var target = getLoadedProfileFilename();
     var sel = document.getElementById('config-library-selector');
     var selName = sel ? sel.value : '';
-    var cfg = (typeof configLibraryList !== 'undefined')
-        ? configLibraryList.find(function (c) { return c.name === selName; }) : null;
+    if (!target && selName && selName !== '__reset_defaults__') target = selName;
+
+    var cfg = (typeof configLibraryList !== 'undefined' && target)
+        ? configLibraryList.find(function (c) { return c.name === target; }) : null;
     var modeGroup = document.getElementById('config-save-mode-group');
-    var canUpdate = cfg && !cfg.is_default && selName && selName !== '__reset_defaults__';
+    var canUpdate = !!(cfg && !cfg.is_default);
     if (modeGroup) {
         modeGroup.style.display = canUpdate ? '' : 'none';
         if (canUpdate) {
@@ -361,15 +444,48 @@ function openSaveModal() {
 
     var nameInput = document.getElementById('config-save-name');
     var notesInput = document.getElementById('config-save-notes');
-    if (nameInput) nameInput.value = canUpdate ? (cfg.display_name || '') : suggestConfigName();
+    if (nameInput) {
+        nameInput.value = canUpdate ? (cfg.display_name || '') : suggestConfigName();
+        // A different name is a different save target — reset overwrite confirm
+        nameInput.oninput = clearSaveCollisionWarning;
+    }
     if (notesInput) notesInput.value = canUpdate ? (cfg.notes || '') : '';
 
+    clearSaveCollisionWarning();
     modal.classList.remove('hidden');
 }
 
 function closeSaveModal() {
     var modal = document.getElementById('config-save-modal');
     if (modal) modal.classList.add('hidden');
+    clearSaveCollisionWarning();
+}
+
+/** Filename for save-as-new: clean '<name>.ini' (no timestamp suffix). */
+function sanitizeConfigFilename(name) {
+    var base = String(name || '').toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    return base ? base + '.ini' : null;
+}
+
+function showSaveCollisionWarning(displayName) {
+    var warn = document.getElementById('config-save-collision');
+    if (warn) {
+        warn.textContent = 'A profile named “' + displayName +
+            '” already exists. Save again to overwrite it, or change the name.';
+        warn.classList.remove('hidden');
+    }
+    var btn = document.getElementById('config-save-confirm');
+    if (btn) btn.textContent = 'Overwrite';
+    saveOverwriteConfirmed = true;
+}
+
+function clearSaveCollisionWarning() {
+    var warn = document.getElementById('config-save-collision');
+    if (warn) warn.classList.add('hidden');
+    var btn = document.getElementById('config-save-confirm');
+    if (btn) btn.textContent = 'Save';
+    saveOverwriteConfirmed = false;
 }
 
 /**
@@ -401,6 +517,22 @@ async function confirmSaveToAll() {
         && document.getElementById('config-save-mode-update')
         && document.getElementById('config-save-mode-update').checked;
     var overwriteFilename = isUpdate && modeGroup ? modeGroup.dataset.filename : null;
+
+    // Save-as-new writes a clean '<name>.ini' (no timestamp). A collision with
+    // an existing profile needs a second confirming tap before overwriting.
+    if (!isUpdate) {
+        var cleanName = sanitizeConfigFilename(name);
+        if (cleanName) {
+            var clash = (typeof configLibraryList !== 'undefined')
+                ? configLibraryList.find(function (c) { return c.name === cleanName; })
+                : null;
+            if (clash && !saveOverwriteConfirmed) {
+                showSaveCollisionWarning(clash.display_name || clash.name);
+                return;
+            }
+            overwriteFilename = cleanName;
+        }
+    }
 
     // Apply current settings live first.
     sendAllToDevice();
@@ -465,6 +597,9 @@ async function confirmSaveToAll() {
             updateActiveBadge(name || savedFilename);
         }
 
+        // The saved profile is now the loaded one — Save defaults to updating it
+        loadedProfileFilename = savedFilename;
+
         closeSaveModal();
         var nameInput = document.getElementById('config-save-name');
         if (nameInput) nameInput.value = '';
@@ -489,6 +624,7 @@ async function loadPresetToDevice() {
 
     // Check for "Reset to Defaults" pseudo-entry
     if (presetName === '__reset_defaults__') {
+        loadedProfileFilename = null;
         await loadConfigDefaults();
         updateAllSliders();
         sendAllToDevice();
@@ -524,6 +660,8 @@ async function loadPresetToDevice() {
         }
 
         lastSliderSendTime = Date.now();
+        loadedProfileFilename =
+            (PROTECTED_CONFIG_NAMES.indexOf(presetName) === -1) ? presetName : null;
         if (typeof closeProfileMenu === 'function') closeProfileMenu();
         showToast('Applied ' + presetName + ' to all OWLs (not saved)', 'success');
 
@@ -545,14 +683,14 @@ function syncConfigFromSliders() {
     var gob = deviceConfig.GreenOnBrown;
     var gobKeys = ['exg_min', 'exg_max', 'hue_min', 'hue_max',
                    'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
-                   'min_detection_area'];
+                   'min_detection_area_percent'];
     for (var i = 0; i < gobKeys.length; i++) {
         var k = gobKeys[i];
         if (configParams[k]) gob[k] = String(configParams[k].value);
     }
     // Optional params: only fold when the config already carries the key —
     // never invent keys a device's config doesn't have.
-    ['min_detection_area_percent', 'lut_sensitivity'].forEach(function (k) {
+    ['lut_sensitivity'].forEach(function (k) {
         if (k in gob && configParams[k]) gob[k] = String(configParams[k].value);
     });
 
@@ -577,13 +715,30 @@ function syncSlidersFromConfig(config) {
     var gob = config.GreenOnBrown || {};
     var gog = config.GreenOnGreen || {};
 
-    var gobKeys = ['exg_min', 'exg_max', 'hue_min', 'hue_max',
-                   'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
-                   'min_detection_area'];
-    for (var i = 0; i < gobKeys.length; i++) {
-        var k = gobKeys[i];
+    var thresholdKeys = ['exg_min', 'exg_max', 'hue_min', 'hue_max',
+                         'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max'];
+    for (var i = 0; i < thresholdKeys.length; i++) {
+        var k = thresholdKeys[i];
         if (k in gob && k in configParams) {
             configParams[k].value = Number(gob[k]);
+        }
+    }
+
+    // Min weed size: the percent key is canonical. Legacy profiles carry only
+    // the px key — derive percent against the profile's camera resolution so
+    // loading an old profile still moves the on-screen slider.
+    var mp = configParams.min_detection_area_percent;
+    if (mp) {
+        var pct = Number(gob.min_detection_area_percent || 0);
+        if (pct <= 0 && gob.min_detection_area) {
+            var cam = config.Camera || {};
+            var area = (Number(cam.resolution_width) || 416)
+                     * (Number(cam.resolution_height) || 320);
+            pct = Number(gob.min_detection_area) / area * 100;
+        }
+        if (pct > 0) {
+            pct = Math.max(mp.min, Math.min(mp.max, pct));
+            mp.value = (typeof roundParamValue === 'function') ? roundParamValue(mp, pct) : pct;
         }
     }
 
@@ -1003,7 +1158,7 @@ function sendToSingleDevice() {
     var gobParams = {};
     var gobKeys = ['exg_min', 'exg_max', 'hue_min', 'hue_max',
                    'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
-                   'min_detection_area'];
+                   'min_detection_area_percent'];
     for (var i = 0; i < gobKeys.length; i++) {
         var k = gobKeys[i];
         if (configParams[k]) gobParams[k] = String(configParams[k].value);

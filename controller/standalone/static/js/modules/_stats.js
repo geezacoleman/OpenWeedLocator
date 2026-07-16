@@ -40,10 +40,9 @@ function updateSystemStats() {
             // .ini and the _YYYYMMDD_HHMMSS timestamp to a readable name.
             const cfgLine = document.getElementById('activeConfigLine');
             if (cfgLine) {
-                // The autosave working file displays as its source preset
-                // plus an unsaved marker (frozen-preset model)
-                const rawName = (data.config_unsaved && data.config_source)
-                    ? data.config_source : (data.config_name || '');
+                // The autosave working file displays as its source preset; the
+                // unsaved marker only shows when content differs from the source
+                const rawName = data.config_source || data.config_name || '';
                 let cfgName = rawName.replace(/\.ini$/, '');
                 cfgName = cfgName.replace(/_\d{8}_\d{6}$/, '').replace(/[-_]+/g, ' ').trim();
                 if (cfgName && data.config_unsaved) cfgName += ' — unsaved changes';

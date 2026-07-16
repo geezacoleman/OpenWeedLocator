@@ -686,3 +686,215 @@ class TestPainterSwatchRoute:
             assert resp.status_code == 404
         finally:
             net_mod.lut_profile_manager = old_mgr
+
+
+# ---------------------------------------------------------------------------
+# Fleet registration API (phone-app "add an OWL" flow)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def fleet_client(networked_test_client, tmp_path):
+    """networked_test_client with a REAL FleetRoster on the mock controller."""
+    from controller.networked.fleet_roster import FleetRoster
+    client, mock_ctrl = networked_test_client
+    mock_ctrl.fleet_roster = FleetRoster('192.168.1.2',
+                                         path=tmp_path / 'fleet.json')
+    mock_ctrl.get_fleet_view.return_value = ([], [], [])
+    mock_ctrl.config.getint.return_value = 1883
+    # JSON-serializable cloud fields for /api/owls responses
+    mock_ctrl.cloud_enable = False
+    mock_ctrl.cloud_connected = None
+    mock_ctrl.cloud_device_id = ''
+    mock_ctrl.cloud_portal_url = ''
+    return client, mock_ctrl
+
+
+@pytest.mark.unit
+class TestFleetApi:
+    def test_fleet_shape_identifies_controller(self, fleet_client):
+        client, mock_ctrl = fleet_client
+        data = client.get('/api/fleet').get_json()
+        assert data['success'] is True
+        assert data['controller']['device_id'] == 'owl-controller'
+        assert data['controller']['controller_ip'] == '192.168.1.2'
+        assert data['controller']['gateway'] == '192.168.1.1'
+        # App checks this on rig discovery — must never silently disappear
+        assert isinstance(data['controller']['contract_version'], int)
+        assert data['devices'] == []
+        assert data['reservations'] == []
+
+    def test_reserve_returns_full_provisioning_payload(self, fleet_client):
+        client, _ = fleet_client
+        resp = client.post('/api/fleet/reserve', json={'name': 'Left boom'})
+        assert resp.status_code == 201
+        data = resp.get_json()
+        assert data['device_id'] == 'owl-1'
+        assert data['assigned_ip'] == '192.168.1.11'
+        assert data['gateway'] == '192.168.1.1'
+        assert data['broker_ip'] == '192.168.1.2'
+        assert data['broker_port'] == 1883
+        assert data['reservation_ttl_s'] == 1800
+
+    def test_reserve_skips_live_unregistered_devices(self, fleet_client):
+        client, mock_ctrl = fleet_client
+        mock_ctrl.get_fleet_view.return_value = ([], [], ['owl-1'])
+        data = client.post('/api/fleet/reserve', json={}).get_json()
+        assert data['device_id'] == 'owl-2'
+
+    def test_reserve_invalid_name_conflicts(self, fleet_client):
+        client, _ = fleet_client
+        resp = client.post('/api/fleet/reserve', json={'name': '<script>'})
+        assert resp.status_code == 409
+
+    def test_confirm_promotes_reservation(self, fleet_client):
+        client, _ = fleet_client
+        client.post('/api/fleet/reserve', json={})
+        resp = client.post('/api/fleet/confirm/owl-1',
+                           json={'observed_ip': '192.168.1.11'})
+        assert resp.status_code == 200
+        assert resp.get_json()['device']['status'] == 'registered'
+
+    def test_confirm_unknown_404(self, fleet_client):
+        client, _ = fleet_client
+        assert client.post('/api/fleet/confirm/owl-9',
+                           json={}).status_code == 404
+
+    def test_rename_and_validation(self, fleet_client):
+        client, _ = fleet_client
+        client.post('/api/fleet/reserve', json={})
+        ok = client.patch('/api/fleet/owl-1', json={'name': 'Right boom'})
+        assert ok.get_json()['device']['name'] == 'Right boom'
+        assert client.patch('/api/fleet/owl-1',
+                            json={'name': '<x>'}).status_code == 400
+        assert client.patch('/api/fleet/owl-9',
+                            json={'name': 'ok name'}).status_code == 404
+
+    def test_delete_cancels_reservation(self, fleet_client):
+        client, mock_ctrl = fleet_client
+        client.post('/api/fleet/reserve', json={})
+        assert client.delete('/api/fleet/owl-1').status_code == 200
+        assert mock_ctrl.fleet_roster.get('owl-1') is None
+        assert client.delete('/api/fleet/owl-1').status_code == 404
+
+    def test_roster_unavailable_503(self, networked_test_client):
+        client, mock_ctrl = networked_test_client
+        mock_ctrl.fleet_roster = None
+        assert client.get('/api/fleet').status_code == 503
+        assert client.post('/api/fleet/reserve', json={}).status_code == 503
+
+    def test_fleet_is_reachable_through_access_guard(self, fleet_client):
+        """Locked-down installs (DASHBOARD_OPEN unset) must still serve
+        /api/fleet to LAN clients — the phone app depends on it."""
+        client, _ = fleet_client
+        import controller.networked.networked as net_mod
+        with patch.object(net_mod, 'DASHBOARD_OPEN', False):
+            allowed = client.get('/api/fleet',
+                                 headers={'X-Real-IP': '192.168.1.50'})
+            assert allowed.status_code == 200
+            blocked = client.get('/api/presets',
+                                 headers={'X-Real-IP': '192.168.1.50'})
+            assert blocked.status_code == 403
+
+    def test_guard_prefix_does_not_leak_to_lookalike_routes(self, fleet_client):
+        """'/api/fleetfoo' must NOT inherit the fleet public grant."""
+        client, _ = fleet_client
+        import controller.networked.networked as net_mod
+        with patch.object(net_mod, 'DASHBOARD_OPEN', False):
+            response = client.get('/api/fleetfoo',
+                                  headers={'X-Real-IP': '192.168.1.50'})
+            assert response.status_code == 403
+
+
+@pytest.mark.unit
+class TestFleetTokenAuth:
+    """Rename/remove from the LAN require the bearer token minted at
+    reserve time; the kiosk (localhost) is always allowed."""
+
+    def test_reserve_mints_a_token(self, fleet_client):
+        client, _ = fleet_client
+        data = client.post('/api/fleet/reserve', json={}).get_json()
+        assert data['fleet_token']
+
+    def test_token_never_appears_in_public_views(self, fleet_client):
+        client, mock_ctrl = fleet_client
+        client.post('/api/fleet/reserve', json={})
+        mock_ctrl.get_fleet_view.return_value = \
+            mock_ctrl.fleet_roster.snapshot() + (frozenset(),)
+        fleet = client.get('/api/fleet').get_json()
+        blob = str(fleet)
+        assert 'token' not in blob
+
+    def test_lan_mutations_need_the_token(self, fleet_client):
+        client, _ = fleet_client
+        token = client.post('/api/fleet/reserve', json={}).get_json()['fleet_token']
+        lan = {'X-Real-IP': '192.168.1.50'}
+
+        assert client.patch('/api/fleet/owl-1', json={'name': 'Boom'},
+                            headers=lan).status_code == 403
+        assert client.delete('/api/fleet/owl-1',
+                             headers=lan).status_code == 403
+        assert client.patch('/api/fleet/owl-1', json={'name': 'Boom'},
+                            headers={**lan, 'X-Fleet-Token': 'nope'}
+                            ).status_code == 403
+
+        good = {**lan, 'X-Fleet-Token': token}
+        assert client.patch('/api/fleet/owl-1', json={'name': 'Boom'},
+                            headers=good).status_code == 200
+        assert client.delete('/api/fleet/owl-1',
+                             headers=good).status_code == 200
+
+    def test_kiosk_localhost_needs_no_token(self, fleet_client):
+        client, _ = fleet_client
+        client.post('/api/fleet/reserve', json={})
+        # test_client requests come from 127.0.0.1 — the kiosk recovery path
+        assert client.patch('/api/fleet/owl-1',
+                            json={'name': 'Boom'}).status_code == 200
+        assert client.delete('/api/fleet/owl-1').status_code == 200
+
+
+@pytest.mark.unit
+class TestApiOwlsFleetOverlay:
+    def test_registered_offline_stub_appears(self, fleet_client):
+        client, mock_ctrl = fleet_client
+        mock_ctrl.get_recent_owls.return_value = {}
+        mock_ctrl.fleet_roster.reserve(name='Left boom')
+        mock_ctrl.fleet_roster.confirm('owl-1')
+
+        owls = client.get('/api/owls').get_json()['owls']
+        assert owls['owl-1']['registered'] is True
+        assert owls['owl-1']['connected'] is False
+        assert owls['owl-1']['friendly_name'] == 'Left boom'
+        assert owls['owl-1']['assigned_ip'] == '192.168.1.11'
+
+    def test_live_entry_gains_roster_fields(self, fleet_client):
+        client, mock_ctrl = fleet_client
+        mock_ctrl.get_recent_owls.return_value = {
+            'owl-1': {'device_id': 'owl-1', 'connected': True, 'cpu_temp': 61}}
+        mock_ctrl.fleet_roster.reserve(name='Left boom')
+        mock_ctrl.fleet_roster.confirm('owl-1')
+
+        owls = client.get('/api/owls').get_json()['owls']
+        assert owls['owl-1']['connected'] is True
+        assert owls['owl-1']['registered'] is True
+        assert owls['owl-1']['friendly_name'] == 'Left boom'
+        assert owls['owl-1']['cpu_temp'] == 61
+
+    def test_empty_roster_leaves_owls_untouched(self, fleet_client):
+        client, mock_ctrl = fleet_client
+        mock_ctrl.get_recent_owls.return_value = {
+            'owl-7': {'device_id': 'owl-7', 'connected': True}}
+        owls = client.get('/api/owls').get_json()['owls']
+        assert owls == {'owl-7': {'device_id': 'owl-7', 'connected': True}}
+
+    def test_absent_roster_is_byte_identical(self, fleet_client):
+        """The isolation contract: /api/owls with no roster (None) must be
+        byte-for-byte what an empty roster produces — the fleet feature is
+        invisible until someone uses the app flow."""
+        client, mock_ctrl = fleet_client
+        mock_ctrl.get_recent_owls.return_value = {
+            'owl-7': {'device_id': 'owl-7', 'connected': True, 'cpu_temp': 55}}
+
+        with_empty_roster = client.get('/api/owls').data
+        mock_ctrl.fleet_roster = None
+        with_no_roster = client.get('/api/owls').data
+        assert with_empty_roster == with_no_roster

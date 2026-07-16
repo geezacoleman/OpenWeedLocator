@@ -113,8 +113,10 @@ Used by all algorithms except `gog`. The ExG thresholds are used by `exg`, `exgr
 | `saturation_max` | `220` | 0--255 | Maximum colour saturation |
 | `brightness_min` | `60` | 0--255 | Minimum brightness. Low values include very dark pixels (shadows) |
 | `brightness_max` | `190` | 0--255 | Maximum brightness. High values include very bright pixels (glare) |
-| `min_detection_area` | `10` | 0+ (integer) | Minimum contour area in pixels to count as a weed. Higher = ignore small detections |
+| `min_detection_area_percent` | `0.0075` | 0.0005--5 (float, % of frame) | Minimum weed size as a percentage of the detection frame area. Higher = ignore small detections. Resolution-independent |
 | `invert_hue` | `False` | `True` / `False` | If True, detect pixels *outside* the hue range instead of inside. Useful for non-green targets |
+
+> **Legacy:** older configs used `min_detection_area` (contour area in pixels). It is still accepted on read — OWL converts it to `min_detection_area_percent` at startup — but it is removed from files on the next save. New configs should use the percent key only.
 
 **Tuning tips:** Start with the medium sensitivity preset and adjust using `--show-display` or the dashboard sliders. Wider ranges (lower mins, higher maxes) catch more weeds but increase false positives. Narrower ranges are more precise but may miss weeds in variable lighting.
 
@@ -195,7 +197,7 @@ The hardware switch cycles between the Low and High sensitivity presets (two-pos
 
 ### `[Sensitivity_Low]`, `[Sensitivity_Medium]`, `[Sensitivity_High]`
 
-Each preset section contains the same 9 keys as `[GreenOnBrown]` (the threshold values). When a preset is applied, these values overwrite the corresponding `[GreenOnBrown]` keys at runtime. Example:
+Each preset section contains the 8 threshold keys from `[GreenOnBrown]` plus `min_detection_area_percent`. When a preset is applied, these values overwrite the corresponding `[GreenOnBrown]` keys at runtime. (Legacy sections with `min_detection_area` in pixels still load — the value is converted to percent when applied.) Example:
 
 ```ini
 [Sensitivity_Low]
@@ -207,7 +209,7 @@ saturation_min = 52
 saturation_max = 218
 brightness_min = 62
 brightness_max = 188
-min_detection_area = 20
+min_detection_area_percent = 0.015
 ```
 
 ### `[Visualisation]`
@@ -261,7 +263,7 @@ cp config/CONTROLLER_TEMPLATE.ini config/CONTROLLER.ini
 | Section | What it controls |
 |---------|-----------------|
 | `[MQTT]` | Enable/disable MQTT, broker address, device ID |
-| `[Network]` | Operation mode (`standalone` or `networked`), IP addresses |
+| `[Network]` | Operation mode (`standalone` or `networked`), IP addresses. On the central controller, optional `subnet_prefix` (default `24`) tells the fleet roster the rig subnet size for phone-app OWL provisioning |
 | `[WebDashboard]` | Flask dashboard port |
 | `[GPS]` | GPS source, serial settings, networked GPS server config |
 | `[Actuation]` | Speed-adaptive actuation settings |

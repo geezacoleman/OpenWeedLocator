@@ -19,7 +19,7 @@ from collections import deque
 from utils.config_manager import (
     GREENONBROWN_PARAMS, GEOMETRY_KEYS as MOUNT_GEOMETRY_KEYS,
     GEOMETRY_SECTION_KEYS, GEOMETRY_FILE, atomic_write_config,
-    AUTOSAVE_CONFIG, seed_autosave, parse_config_meta,
+    AUTOSAVE_CONFIG, seed_autosave, parse_config_meta, config_unsaved_state,
 )
 from utils.directory_manager import scan_sessions, collect_session_files, select_preview_images
 
@@ -394,15 +394,16 @@ class OWLMQTTPublisher:
 
             # Active config filename (basename) so the dashboard can show what's
             # running. The autosave working file reports the preset it derives
-            # from plus an unsaved flag (frozen-preset model).
+            # from; 'unsaved' means its content actually differs from that
+            # source profile — not merely "running from the autosave file"
+            # (which persists across reboots and used to always read unsaved).
             try:
                 active = self._resolve_config_path()
                 basename = os.path.basename(active) if active else ''
+                unsaved, source = config_unsaved_state(active) if active else (False, '')
                 self.state['config_name'] = basename
-                self.state['config_unsaved'] = (basename == AUTOSAVE_CONFIG)
-                self.state['config_source'] = (
-                    parse_config_meta(active).get('source', '')
-                    if basename == AUTOSAVE_CONFIG else '')
+                self.state['config_unsaved'] = unsaved
+                self.state['config_source'] = source
             except Exception:
                 self.state['config_name'] = ''
                 self.state['config_unsaved'] = False
@@ -1095,13 +1096,13 @@ class OWLMQTTPublisher:
                 config_dict[section] = dict(config[section])
 
             basename = os.path.basename(config_path)
+            unsaved, source = config_unsaved_state(config_path)
             payload = {
                 'config': config_dict,
                 'config_path': str(config_path),
                 'config_name': basename,
-                'config_unsaved': basename == AUTOSAVE_CONFIG,
-                'config_source': (config_dict.get('Meta', {}).get('source', '')
-                                  if basename == AUTOSAVE_CONFIG else ''),
+                'config_unsaved': unsaved,
+                'config_source': source,
                 'device_id': self.device_id,
                 'timestamp': time.time()
             }
@@ -1332,14 +1333,25 @@ class OWLMQTTPublisher:
 
     def _write_config_without_geometry(self, config, fileobj):
         """Write a config to fileobj with mount-geometry keys removed, so named
-        detection configs never carry geometry (it lives in GEOMETRY.ini)."""
+        detection configs never carry geometry (it lives in GEOMETRY.ini).
+
+        Also drops the legacy min_detection_area px key from any section whose
+        canonical percent key carries a real value — files migrate to
+        percent-only on save (applies to [GreenOnBrown] and [Sensitivity_*])."""
         tmp = configparser.ConfigParser()
         tmp.optionxform = str
         for section in config.sections():
             tmp.add_section(section)
             geom = GEOMETRY_SECTION_KEYS.get(section, set())
+            try:
+                drop_legacy_px = config.getfloat(
+                    section, 'min_detection_area_percent', fallback=0.0) > 0
+            except ValueError:
+                drop_legacy_px = False
             for opt in config.options(section):
                 if opt in geom:
+                    continue
+                if drop_legacy_px and opt == 'min_detection_area':
                     continue
                 tmp.set(section, opt, config.get(section, opt, raw=True))
         tmp.write(fileobj)
@@ -2439,8 +2451,38 @@ class OWLMQTTPublisher:
             with self.state_lock:
                 self.state[param_name] = param_value
 
+            # Legacy px key: convert to the canonical percent key, otherwise the
+            # change is shadowed by the percent value in the detection loop.
+            if param_name == 'min_detection_area':
+                self._convert_px_min_area_to_percent(param_value)
+
         except Exception as e:
             self.logger.error(f"Error updating {param_name}: {e}")
+
+    def _convert_px_min_area_to_percent(self, px_value):
+        """Derive min_detection_area_percent from a legacy px value.
+
+        min_detection_area_percent is the canonical min weed size key; the px
+        key is accepted from legacy clients/configs but owl.py ignores it once
+        percent > 0, so every px set must update the percent too.
+        """
+        owl = self.owl_instance
+        area = (getattr(owl, 'cropped_width', 0) or 0) * \
+               (getattr(owl, 'cropped_height', 0) or 0)
+        if area <= 0:
+            try:
+                area = owl.resolution[0] * owl.resolution[1]
+            except (AttributeError, TypeError, IndexError):
+                area = 416 * 320
+        percent = max(0.0005, min(5.0, px_value / area * 100))
+        owl.min_detection_area_percent = percent
+        if hasattr(owl, 'config'):
+            owl.config.set('GreenOnBrown', 'min_detection_area_percent',
+                           f'{percent:.4f}')
+        with self.state_lock:
+            self.state['min_detection_area_percent'] = percent
+        self.logger.info(
+            f"Converted legacy min_detection_area {px_value}px -> {percent:.4f}%")
 
     def _update_greenongreen_param(self, param_name, param_value):
         """Update a GreenOnGreen parameter in real-time. Only confidence can be hot-updated."""

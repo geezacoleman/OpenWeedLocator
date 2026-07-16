@@ -323,20 +323,25 @@ class TestMinDetectionAreaPercent:
         owl.min_detection_area_percent = 0.001
         sm.apply_preset('high', owl)
         assert owl.min_detection_area_percent == 0.004
-        assert owl.min_detection_area == 5
+        # Builtins are percent-only — the legacy px attr is left untouched
+        assert owl.min_detection_area == 0
 
-    def test_legacy_sections_without_percent_still_load(self, tmp_path):
-        """Config [Sensitivity_*] sections predating the percent key load
-        fine and leave the owl's percent value untouched on apply."""
+    def test_legacy_sections_derive_percent_on_apply(self, tmp_path):
+        """Config [Sensitivity_*] sections predating the percent key load fine
+        and their px value is converted to the canonical percent key at apply
+        time (otherwise the preset's min-area component would be dead — owl.py
+        ignores the px value once percent > 0)."""
         config, path = _make_config(tmp_path, sections=True)
         sm = SensitivityManager(config, path)
         vals = sm.get_preset_values('high')
         assert 'min_detection_area_percent' not in vals
+        assert vals['min_detection_area'] == 5
 
         owl = _FakeOwl()
         owl.min_detection_area_percent = 0.123
         sm.apply_preset('high', owl)
-        assert owl.min_detection_area_percent == 0.123   # untouched
+        # Derived at the 416x320 fallback frame: 5 / (416*320) * 100
+        assert owl.min_detection_area_percent == pytest.approx(5 / (416 * 320) * 100)
         assert owl.min_detection_area == 5
 
     def test_save_from_owl_captures_percent(self, tmp_path):

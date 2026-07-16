@@ -15,6 +15,7 @@ function initConfigEditor() {
     document.getElementById('reloadConfig')?.addEventListener('click', loadConfig);
     document.getElementById('saveConfig')?.addEventListener('click', saveConfig);
     document.getElementById('resetDefault')?.addEventListener('click', resetToDefault);
+    document.getElementById('resetNetworkSetup')?.addEventListener('click', resetNetworkSetup);
     document.querySelector('[data-tab="config"]')?.addEventListener('click', () => {
         if (Object.keys(currentConfig).length === 0) loadConfig();
     });
@@ -32,11 +33,11 @@ async function loadConfig() {
         activeConfigPath = data.active_config;
         isDefaultConfig = data.is_default;
         availableConfigs = data.available_configs || [];
-        // The autosave working file displays as its source preset + unsaved marker
+        // The autosave working file displays as its source preset; the unsaved
+        // marker appears only when its content actually differs from that source
         document.getElementById('configFilePath').textContent =
-            (data.config_unsaved && data.config_source)
-                ? data.config_source + ' — unsaved changes'
-                : data.config_name;
+            (data.config_source || data.config_name || '')
+            + (data.config_unsaved ? ' — unsaved changes' : '');
         updateActiveConfigBadge();
         renderConfigSections();
         renderConfigSelector();
@@ -62,7 +63,7 @@ function syncCurrentConfigFromSliders() {
     const gob = currentConfig.GreenOnBrown;
     const gobKeys = ['exg_min', 'exg_max', 'hue_min', 'hue_max',
                      'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
-                     'min_detection_area'];
+                     'min_detection_area_percent'];
     gobKeys.forEach(k => {
         if (configParams[k] && String(gob[k]) !== String(configParams[k].value)) {
             gob[k] = String(configParams[k].value);
@@ -71,7 +72,7 @@ function syncCurrentConfigFromSliders() {
     });
     // Optional params: only fold when the config already carries the key —
     // never invent keys this device's config doesn't have.
-    ['min_detection_area_percent', 'lut_sensitivity'].forEach(k => {
+    ['lut_sensitivity'].forEach(k => {
         if (k in gob && configParams[k] && String(gob[k]) !== String(configParams[k].value)) {
             gob[k] = String(configParams[k].value);
             changed = true;
@@ -119,6 +120,18 @@ async function resetToDefault() {
         if (!data.success) throw new Error(data.error);
         showNotification('Success', 'Reset complete', 'success');
         loadConfig();
+    } catch (error) { showNotification('Error', error.message, 'error'); }
+}
+
+async function resetNetworkSetup() {
+    if (!await showConfigConfirmModal('Reset network setup',
+            'The OWL will re-enter first-boot setup mode on its next reboot. ' +
+            'Its hotspot password resets to the setup default. Continue?')) return;
+    try {
+        const response = await fetch('/api/network/reset-setup', { method: 'POST' });
+        const data = await response.json();
+        if (!data.success) throw new Error(data.error);
+        showNotification('Success', data.message, 'success');
     } catch (error) { showNotification('Error', error.message, 'error'); }
 }
 

@@ -10,14 +10,22 @@ from typing import Optional
 @dataclass
 class Version:
     major: int = 3
-    minor: int = 5
-    patch: int = 1
+    minor: int = 9
+    patch: int = 0
     tag: Optional[str] = None
 
     def __str__(self) -> str:
         return f"{self.major}.{self.minor}.{self.patch}" + (f"-{self.tag}" if self.tag else "")
 
 VERSION = Version()
+
+# App <-> OWL REST contract version, checked by the OWL phone app on first
+# contact (setup API info, fleet controller descriptor, dashboard stats).
+# Bump ONLY for breaking changes: a field the app relies on is renamed,
+# removed, or changes meaning; a status code the app branches on changes.
+# Purely additive fields do NOT bump it. A missing field on old servers is
+# treated by the app as version 1.
+APP_CONTRACT_VERSION = 1
 
 class SystemInfo:
     logger = logging.getLogger("SystemInfo")

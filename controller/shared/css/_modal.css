@@ -261,6 +261,18 @@
     line-height: 1.4;
 }
 
+/* Save-dialog name-collision warning (overwrite confirmation) */
+.config-modal-warning {
+    margin: 0.5rem 0 0 0;
+    padding: 0.5rem 0.65rem;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    color: #92400e;
+    background: #fef3c7;
+    border: 1px solid #f59e0b;
+    border-radius: 6px;
+}
+
 /* Save-dialog Update/Save-as-new radio lines (shared) */
 .radio-line {
     display: flex;

@@ -24,6 +24,7 @@ import time
 import logging
 import configparser
 import hashlib
+import secrets
 import shutil
 import io
 import subprocess
@@ -36,13 +37,18 @@ from werkzeug.utils import secure_filename
 
 from utils.config_manager import (
     build_config_filename, parse_config_meta, strip_geometry_keys, GEOMETRY_FILE,
-    stamp_config_meta, atomic_write_config,
+    stamp_config_meta, atomic_write_config, strip_legacy_min_area,
 )
 try:
-    from version import VERSION as _OWL_VERSION
+    from version import VERSION as _OWL_VERSION, APP_CONTRACT_VERSION
     CONTROLLER_VERSION = str(_OWL_VERSION)
 except Exception:
     CONTROLLER_VERSION = 'unknown'
+    APP_CONTRACT_VERSION = 1
+
+from controller.networked.fleet_roster import (FleetRosterError,
+                                               FleetPersistenceError,
+                                               RESERVATION_TTL_S)
 
 # Device id the controller publishes its own presence under (matches the
 # 'owl-controller' device Noktura expects). The cloud bridge forwards
@@ -338,6 +344,30 @@ class CentralController:
             'offset_cm': self.actuation_calculator.offset_cm,
         }
 
+        # Fleet roster — persistent registry behind the phone app's
+        # "add an OWL" flow. Fully additive: with no config/fleet.json the
+        # controller behaves exactly as before, and a roster failure must
+        # never take the controller down.
+        self.fleet_roster = None
+        try:
+            from controller.networked.fleet_roster import FleetRoster, ping_probe
+            controller_ip = self.config.get('Network', 'static_ip',
+                                            fallback='192.168.1.2')
+            if controller_ip in ('', 'localhost', '127.0.0.1'):
+                controller_ip = '192.168.1.2'
+            subnet_prefix = self.config.getint('Network', 'subnet_prefix',
+                                               fallback=24)
+            self.fleet_roster = FleetRoster(controller_ip,
+                                            subnet_prefix=subnet_prefix,
+                                            ip_probe=ping_probe)
+            logger.info("Fleet roster ready (controller %s/%d)",
+                        controller_ip, subnet_prefix)
+        except Exception as e:
+            # Fail-safe by design (a roster problem must not take the
+            # controller down) — but with the full traceback so a real
+            # regression isn't reduced to a one-liner.
+            logger.error(f"Fleet roster unavailable: {e}", exc_info=True)
+
         # Fleet software update orchestration (rolling, one device at a time)
         self.fleet_update_lock = threading.Lock()
         self.fleet_update = {
@@ -546,6 +576,21 @@ class CentralController:
 
                 self.owls_state[device_id]['last_seen'] = current_time
                 self.owls_state[device_id]['connected'] = True
+
+            # Fleet roster bookkeeping (guarded: roster problems must never
+            # break message handling; no-ops for unregistered devices).
+            # getattr: tests drive _on_message on partially-built controllers.
+            try:
+                roster = getattr(self, 'fleet_roster', None)
+                if roster is not None:
+                    if roster.is_reserved(device_id):
+                        roster.confirm(
+                            device_id, observed_ip=payload.get('static_ip'))
+                        logger.info(f"Fleet: {device_id} auto-confirmed via heartbeat")
+                    else:
+                        roster.touch(device_id)
+            except Exception as e:
+                logger.error(f"Fleet roster update failed: {e}")
 
             # Push desired state on reconnect (outside lock to avoid deadlock)
             # Skip if device was marked offline by LWT within 5s — that's a
@@ -829,6 +874,43 @@ class CentralController:
                     logger.debug(f"Dropping stale OWL {oid} from get_recent_owls (TTL exceeded)")
 
         return recent
+
+    def get_fleet_view(self):
+        """Roster merged with live state — feeds /api/fleet and /api/owls.
+
+        Returns (devices, reservations, live_unregistered_ids). With an
+        empty/absent roster this is equivalent to today's live view.
+        """
+        live = self.get_recent_owls(ttl=8)
+        if self.fleet_roster is None:
+            return [], [], list(live.keys())
+
+        registered, reservations = self.fleet_roster.snapshot()
+        devices = []
+        for record in registered:
+            device = {
+                'device_id': record['device_id'],
+                'number': record['number'],
+                'name': record['name'],
+                'assigned_ip': record['assigned_ip'],
+                'status': 'registered',
+                'last_seen': record.get('last_confirmed'),
+                'connected': False,
+            }
+            live_state = live.get(record['device_id'])
+            if live_state:
+                device.update({
+                    'connected': live_state.get('connected', True),
+                    'last_seen': live_state.get('last_seen'),
+                    'cpu_temp': live_state.get('cpu_temp'),
+                    'cpu_percent': live_state.get('cpu_percent'),
+                    'detection_enable': live_state.get('detection_enable'),
+                })
+            devices.append(device)
+
+        registered_ids = {record['device_id'] for record in registered}
+        unregistered = [oid for oid in live if oid not in registered_ids]
+        return devices, reservations, unregistered
 
     def request_device_config(self, device_id, timeout=3.0):
         """Send get_config command and poll for the response in owls_state"""
@@ -1344,18 +1426,40 @@ DEMO_PUBLIC_PREFIXES = (
     '/demo', '/models', '/api/models',
     '/api/owls', '/api/actuation', '/api/snapshot/',
     '/shared/', '/static/',
+    # Fleet registration: driven by the phone app from the rig LAN. Exact
+    # path + trailing-slash prefix (not bare startswith) so an unrelated
+    # future /api/fleetfoo route doesn't silently inherit public access.
+    # Reserve/confirm are open like the anonymous broker; rename/DELETE
+    # additionally require the per-device token minted at reserve time
+    # (enforced in the routes themselves).
+    '/api/fleet/',
 )
+
+DEMO_PUBLIC_EXACT = ('/api/fleet',)
+
+
+def _effective_client_ip():
+    """Client IP for authorization decisions.
+
+    X-Real-IP is client-settable, so it is only trusted when the TCP peer
+    is localhost — i.e. the request came through the local nginx, which
+    overwrites the header with the real client address. A direct (non-
+    proxied) connection is identified by its peer address alone.
+    """
+    peer = request.remote_addr
+    if peer in ('127.0.0.1', '::1'):
+        return request.headers.get('X-Real-IP', peer)
+    return peer
+
 
 @app.before_request
 def demo_access_guard():
     if DASHBOARD_OPEN:
         return None
     path = request.path
-    if any(path.startswith(p) for p in DEMO_PUBLIC_PREFIXES):
+    if path in DEMO_PUBLIC_EXACT or any(path.startswith(p) for p in DEMO_PUBLIC_PREFIXES):
         return None
-    # X-Real-IP from nginx; falls back to remote_addr for direct connections
-    client_ip = request.headers.get('X-Real-IP', request.remote_addr)
-    if client_ip in ('127.0.0.1', '::1'):
+    if _effective_client_ip() in ('127.0.0.1', '::1'):
         return None
     return Response('Restricted — visit /demo', status=403, content_type='text/plain')
 
@@ -1372,6 +1476,32 @@ def index():
 
 @app.route("/api/owls")
 def api_owls():
+    owls = controller.get_recent_owls(ttl=8)  # Reduced TTL
+
+    # Fleet roster overlay (no-op when the roster is empty/absent):
+    # live entries gain registered/friendly_name; registered-but-offline
+    # units appear as stubs instead of vanishing from the dashboard.
+    roster = controller.fleet_roster
+    if roster is not None and not roster.is_empty():
+        try:
+            registered, _reservations = roster.snapshot()
+            for record in registered:
+                device_id = record['device_id']
+                if device_id in owls:
+                    owls[device_id]['registered'] = True
+                    owls[device_id]['friendly_name'] = record['name']
+                else:
+                    owls[device_id] = {
+                        'device_id': device_id,
+                        'connected': False,
+                        'registered': True,
+                        'friendly_name': record['name'],
+                        'assigned_ip': record['assigned_ip'],
+                        'last_seen': record.get('last_confirmed') or 0,
+                    }
+        except Exception as e:
+            logger.error(f"Fleet overlay failed: {e}")
+
     return jsonify({
         "mqtt_connected": controller.mqtt_connected,
         # Cloud (Noktura) link — fleet-level, independent of per-OWL online state
@@ -1379,8 +1509,135 @@ def api_owls():
         "cloud_connected": controller.cloud_connected,
         "cloud_device_id": controller.cloud_device_id,
         "cloud_portal_url": controller.cloud_portal_url,
-        "owls": controller.get_recent_owls(ttl=8),  # Reduced TTL
+        "owls": owls,
     })
+
+
+# ---------------------------------------------------------------------------
+# Fleet registration API — used by the phone app to add OWLs to this rig.
+# All state lives in FleetRoster (config/fleet.json); these routes are thin.
+# ---------------------------------------------------------------------------
+
+def _fleet_unavailable():
+    return jsonify({'success': False,
+                    'error': 'Fleet roster unavailable on this controller'}), 503
+
+
+def _fleet_mutation_authorized(device_id):
+    """Rename/remove need the bearer token minted at reserve time.
+
+    The kiosk (localhost) is always allowed — that's the farmer's recovery
+    path when the phone that reserved a device is gone.
+    """
+    if _effective_client_ip() in ('127.0.0.1', '::1'):
+        return True
+    record = controller.fleet_roster.get(device_id)
+    token = request.headers.get('X-Fleet-Token', '')
+    expected = (record or {}).get('token', '')
+    return bool(expected) and secrets.compare_digest(token, expected)
+
+
+@app.route('/api/fleet')
+def api_fleet():
+    if controller.fleet_roster is None:
+        return _fleet_unavailable()
+    devices, reservations, _unregistered = controller.get_fleet_view()
+    network_cfg = controller.config
+    return jsonify({
+        'success': True,
+        'controller': {
+            'device_id': CONTROLLER_DEVICE_ID,
+            'version': CONTROLLER_VERSION,
+            'contract_version': APP_CONTRACT_VERSION,
+            'controller_ip': controller.fleet_roster.controller_ip,
+            'gateway': controller.fleet_roster.gateway,
+            'broker_port': network_cfg.getint('MQTT', 'broker_port', fallback=1883),
+            'mqtt_connected': controller.mqtt_connected,
+        },
+        'devices': devices,
+        'reservations': reservations,
+    })
+
+
+@app.route('/api/fleet/reserve', methods=['POST'])
+def api_fleet_reserve():
+    if controller.fleet_roster is None:
+        return _fleet_unavailable()
+    data = request.get_json(silent=True) or {}
+    try:
+        _devices, _reservations, live_unregistered = controller.get_fleet_view()
+        record = controller.fleet_roster.reserve(
+            name=data.get('name'), live_ids=live_unregistered)
+    except FleetPersistenceError as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    except FleetRosterError as e:
+        return jsonify({'success': False, 'error': str(e)}), 409
+    roster = controller.fleet_roster
+    return jsonify({
+        'success': True,
+        'device_id': record['device_id'],
+        'number': record['number'],
+        'assigned_ip': record['assigned_ip'],
+        'gateway': roster.gateway,
+        'subnet_prefix': roster.subnet_prefix,
+        'broker_ip': roster.controller_ip,
+        'broker_port': controller.config.getint('MQTT', 'broker_port', fallback=1883),
+        'controller_ip': roster.controller_ip,
+        'expires_at': record['expires_at'],
+        'reservation_ttl_s': RESERVATION_TTL_S,
+        # Bearer token for rename/remove of this device from the phone;
+        # store it with the saved rig — it is never shown again
+        'fleet_token': record['token'],
+    }), 201
+
+
+@app.route('/api/fleet/confirm/<device_id>', methods=['POST'])
+def api_fleet_confirm(device_id):
+    if controller.fleet_roster is None:
+        return _fleet_unavailable()
+    data = request.get_json(silent=True) or {}
+    try:
+        record = controller.fleet_roster.confirm(
+            device_id, observed_ip=data.get('observed_ip'))
+    except FleetPersistenceError as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    except FleetRosterError as e:
+        return jsonify({'success': False, 'error': str(e)}), 404
+    return jsonify({'success': True, 'device': record})
+
+
+@app.route('/api/fleet/<device_id>', methods=['PATCH'])
+def api_fleet_rename(device_id):
+    if controller.fleet_roster is None:
+        return _fleet_unavailable()
+    if not _fleet_mutation_authorized(device_id):
+        return jsonify({'success': False,
+                        'error': 'Missing or invalid fleet token'}), 403
+    data = request.get_json(silent=True) or {}
+    try:
+        record = controller.fleet_roster.rename(device_id, data.get('name'))
+    except FleetPersistenceError as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    except FleetRosterError as e:
+        code = 404 if 'Unknown device' in str(e) else 400
+        return jsonify({'success': False, 'error': str(e)}), code
+    return jsonify({'success': True, 'device': record})
+
+
+@app.route('/api/fleet/<device_id>', methods=['DELETE'])
+def api_fleet_remove(device_id):
+    if controller.fleet_roster is None:
+        return _fleet_unavailable()
+    if not _fleet_mutation_authorized(device_id):
+        return jsonify({'success': False,
+                        'error': 'Missing or invalid fleet token'}), 403
+    try:
+        controller.fleet_roster.remove(device_id)
+    except FleetPersistenceError as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    except FleetRosterError as e:
+        return jsonify({'success': False, 'error': str(e)}), 404
+    return jsonify({'success': True})
 
 
 @app.route('/api/health')
@@ -1715,6 +1972,8 @@ def save_to_config_library():
         config.optionxform = str
 
         new_config = strip_geometry_keys(data['config'])
+        # Legacy px min-area key never round-trips into new files (percent is canonical)
+        new_config = strip_legacy_min_area(new_config)
         new_config.pop('Meta', None)  # never round-trip [Meta]; re-stamped below
         for section, options in new_config.items():
             if not config.has_section(section):
@@ -3280,15 +3539,14 @@ def set_config_param():
         if not param or value is None:
             return jsonify({'success': False, 'error': 'param and value required'}), 400
 
-        section = data.get('section', 'GreenOnBrown')
+        section = data.get('section', 'GreenOnBrown') or 'GreenOnBrown'
         typed_value = _coerce_value(value)
 
-        if not section or section == 'GreenOnBrown':
-            result = controller.send_command('all', 'set_config',
-                                              {'key': param, 'value': typed_value})
-        else:
-            result = controller.send_command('all', 'set_config_section',
-                                              {'section': section, 'params': {param: str(typed_value)}})
+        # Always dispatch set_config_section: unlike the single-key set_config
+        # action it auto-persists GreenOnBrown changes on the OWL (autosave),
+        # so widget slider changes survive a reboot.
+        result = controller.send_command('all', 'set_config_section',
+                                          {'section': section, 'params': {param: str(typed_value)}})
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error in config/param: {e}")

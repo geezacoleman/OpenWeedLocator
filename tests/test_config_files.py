@@ -742,10 +742,12 @@ class TestSaveFoldsSliderValues:
     NETWORKED_TAB = PROJECT_ROOT / 'controller' / 'networked' / 'static' / 'js' / 'modules' / '_config_tab.js'
     STANDALONE_CFG = PROJECT_ROOT / 'controller' / 'standalone' / 'static' / 'js' / 'modules' / '_config.js'
 
+    # min_detection_area_percent is the canonical min weed size key (the legacy
+    # px key is read-only: migrated at load, stripped on save — never applied/folded)
     GOB_SLIDER_KEYS = {
         'exg_min', 'exg_max', 'hue_min', 'hue_max',
         'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
-        'min_detection_area',
+        'min_detection_area_percent',
     }
 
     def test_networked_save_folds_sliders_before_library_post(self):

@@ -1,0 +1,132 @@
+# OWL first-boot setup
+
+Appliance-style first boot: a factory-fresh (or factory-reset) OWL broadcasts
+its `OWL-XXXX` hotspot with a fixed setup password, and the OWL phone app
+(private `owl-app` repo) walks the user from unboxing to a working unit.
+
+This directory is **not** the standalone controller — it is a small,
+self-terminating Flask API (`setup_app.py`, port 8088) that only exists while
+the first-boot flag is present.
+
+## Lifecycle
+
+```
+sudo bash install_firstboot.sh --arm          (image prep / factory reset)
+        ↓ reboot
+owl-firstboot.service starts (ConditionPathExists=/boot/firmware/owl-firstboot.flag)
+        ↓
+startup(): hotspot down → WiFi scan (cached) → hotspot up
+        ↓
+phone app joins OWL-XXXX (fixed password "owl-setup"), drives /setup/api/*
+        ↓
+either  finish(standalone): user sets a permanent hotspot password
+or      wifi/join → OWL switches to the customer's network (auto-reverts to
+        hotspot if the join fails) → finish(wifi)
+        ↓
+teardown: flag removed, avahi entry + ufw rule removed, service exits
+          and can never restart until re-armed
+```
+
+## API
+
+All endpoints are JSON under `/setup/api/`; errors are
+`{"success": false, "error": "..."}`. See the `API.md` contract in the
+owl-app repo for full request/response shapes.
+
+**Contract versioning:** `info` (and the fleet controller descriptor, and
+the standalone dashboard's `system_stats`) carry `contract_version`
+(`APP_CONTRACT_VERSION` in `version.py`). The phone app checks it on first
+contact and blocks with an update message on a mismatch instead of failing
+mysteriously mid-wizard. Bump it ONLY for breaking changes — additive
+fields don't bump; old servers without the field are treated as version 1.
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/setup/api/info` | GET | device id, version, `contract_version`, hotspot, camera check, owl.service state |
+| `/setup/api/camera/frame` | GET | single JPEG (proxy of owl.py :8001) |
+| `/setup/api/camera/stream` | GET | MJPEG stream proxy |
+| `/setup/api/wifi/scan` | GET | cached scan; `?rescan=true` cycles the AP (drops clients) |
+| `/setup/api/wifi/join` | POST | `{ssid, password?}` (password omitted for open networks) → 202, switch happens 5 s later |
+| `/setup/api/wifi/result` | GET | join outcome (persisted across reboots); includes `warning` for non-fatal problems (`owl_restart_failed`, `hotspot_unavailable`) |
+| `/setup/api/status` | GET | state machine + network mode (polled pre/post switch) |
+| `/setup/api/hotspot/restore` | POST | abandon client attempt, re-raise the AP |
+| `/setup/api/controller/join` | POST | join a rig: `{ssid, password, device_id, static_ip, gateway, subnet_prefix, broker_ip, broker_port, dns?}` (identity assigned by the controller's `/api/fleet/reserve`; IPs and int ranges validated) → 202, switch 5 s later |
+| `/setup/api/finish` | POST | `{mode: standalone\|wifi\|controller, new_password?}` → teardown |
+
+## Controller join (networked rigs)
+
+The join sequence: set hostname (`owl-N`) → rewrite `CONTROLLER.ini`
+(`[MQTT] broker_ip/device_id`, `[Network] mode/static_ip` — all other
+sections preserved) → join the rig WiFi with the assigned **static IP** →
+restart `owl.service` so it heartbeats to the controller (which
+auto-confirms the reservation; a failed restart is surfaced as
+`warning: owl_restart_failed` rather than silently claiming success). On a
+failed radio switch the OWL reverts to its hotspot, but hostname/config are
+**deliberately kept** — they describe the target state, the reservation is
+still held, and a retry re-runs only the switch. An **abandoned** join is
+different: `POST /setup/api/hotspot/restore` rolls the identity back
+(pre-join `CONTROLLER.ini` backup + hostname), so a cancelled wizard never
+leaves the OWL pointed at a rig it never joined.
+Verification polls `http://<static_ip>:8088/setup/api/wifi/result`.
+
+## Why the scan is cached
+
+The Pi's radio cannot scan while it is an access point. `startup()` scans once
+before raising the AP (no phone is connected yet, so nothing drops).
+`?rescan=true` knowingly cycles the AP; the app warns the user and reconnects.
+
+## Shipping / demo-image prep
+
+One command on a fresh image:
+
+```
+bash owl_setup.sh --ship
+```
+
+Non-interactive: base install, standalone setup with hotspot `OWL-XXXX`
+(suffix from the Pi serial) and the fixed setup password, then arms
+first-boot. Focus the camera, power off, box it.
+
+Manual route (existing installs): run `controller/shared/setup.sh` in
+**standalone** mode (keep the `OWL-` SSID prefix — the phone app's
+auto-connect matches `OWL-*` only) and answer yes to its arm prompt, or run
+`sudo bash controller/setup/install_firstboot.sh --arm` yourself. Arming
+refuses if no hotspot profile exists — that ordering is what guarantees a
+phone can always reach an armed unit.
+
+Bench verification: work through `BENCH_TEST.md` in this directory.
+
+## Factory reset / re-entering setup
+
+- From the standalone dashboard: Config tab → "Reset network setup", then reboot.
+- Over SSH: `sudo bash controller/setup/install_firstboot.sh --arm && sudo reboot`
+- From any PC with the SD card: create an empty file `owl-firstboot.flag` on
+  the boot (FAT) partition — arming survives because the systemd unit stays
+  installed after finish; only the flag is consumed.
+
+## During first boot
+
+`owl.py` still runs (it feeds the camera preview) but detection is **locked
+off for as long as the flag exists** — the state thread re-asserts it, so a
+flipped-on hardware detection switch or a dashboard toggle cannot click
+relays on the bench. Normal control returns within seconds of setup
+finishing (the flag is re-checked at a slow cadence off the hot path; when
+the flag was absent at boot, nothing is ever checked).
+
+## Security posture (deliberate, revisit before mass rollout)
+
+The setup API has no authentication: the only barrier is the hotspot PSK,
+which is fixed and public (`owl-setup`). That is acceptable for a
+setup-window-only surface on demo units — anyone in radio range during the
+minutes of setup could interfere, nothing more. Before this becomes the
+out-of-box experience for every shipped unit (or gains cloud/Noktura
+integration) it needs a real story: per-unit setup secrets (QR on the
+chassis) or a pairing confirmation on the device.
+
+## Tests
+
+`pytest tests/test_setup_app_routes.py tests/test_network_manager.py
+tests/integration/test_firstboot_integration.py -v` — the first two are
+unit-level (mocked nmcli, manual timers); the integration suite runs the
+real Flask app over a real socket with real timer handoffs against a
+stateful fake nmcli. All platform-independent.

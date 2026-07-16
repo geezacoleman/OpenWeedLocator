@@ -24,6 +24,53 @@ if [ "$CURRENT_USER" != "owl" ]; then
    echo -e "${ORANGE}[WARNING] Current user '$CURRENT_USER' differs from expected 'owl'. Some settings may not work correctly.${NC}"
 fi
 
+# ---------------------------------------------------------------------------
+# Non-interactive mode (factory provisioning — see owl_setup.sh --ship).
+# With no flags the script behaves exactly as before (interactive).
+# ---------------------------------------------------------------------------
+NONINTERACTIVE=0
+ARM_FIRSTBOOT=0
+ASSUME_YES=0
+CLI_MODE=""
+CLI_SSID=""
+CLI_PASSWORD=""
+CLI_OWL_ID=""
+
+usage() {
+    echo "Usage: sudo bash setup.sh [options]"
+    echo "  (no options)              interactive setup, unchanged"
+    echo "  --mode standalone         non-interactive standalone setup"
+    echo "  --owl-id N                OWL number (default 1)"
+    echo "  --ssid SSID               hotspot SSID (default OWL-<id>)"
+    echo "  --password PSK            hotspot password (min 8 chars)"
+    echo "  --arm-firstboot           arm phone-app first-boot setup at the end"
+    echo "  --yes                     skip confirmation + reboot prompts"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --mode) CLI_MODE="$2"; NONINTERACTIVE=1; shift 2 ;;
+        --ssid) CLI_SSID="$2"; shift 2 ;;
+        --password) CLI_PASSWORD="$2"; shift 2 ;;
+        --owl-id) CLI_OWL_ID="$2"; shift 2 ;;
+        --arm-firstboot) ARM_FIRSTBOOT=1; shift ;;
+        --yes) ASSUME_YES=1; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo -e "${RED}[ERROR] Unknown option: $1${NC}"; usage; exit 1 ;;
+    esac
+done
+
+if [[ "$NONINTERACTIVE" == "1" ]]; then
+    if [[ "$CLI_MODE" != "standalone" ]]; then
+        echo -e "${RED}[ERROR] Non-interactive setup supports --mode standalone only.${NC}"
+        exit 1
+    fi
+    if [[ ${#CLI_PASSWORD} -lt 8 ]]; then
+        echo -e "${RED}[ERROR] --password must be at least 8 characters.${NC}"
+        exit 1
+    fi
+fi
+
 # Initialize status tracking variables
 STATUS_PACKAGES=""
 STATUS_MQTT_BROKER=""
@@ -259,6 +306,20 @@ read_password_masked() {
 
 # Collect user input
 collect_user_input() {
+    if [[ "$NONINTERACTIVE" == "1" ]]; then
+        OWL_MODE="standalone"
+        OWL_ID="${CLI_OWL_ID:-1}"
+        HOSTNAME="owl-${OWL_ID}"
+        SSID="${CLI_SSID:-OWL-${OWL_ID}}"
+        WIFI_PASSWORD="${CLI_PASSWORD}"
+        echo -e "${GREEN}[INFO] Non-interactive standalone setup:${NC}"
+        echo -e "  Hostname: ${HOSTNAME}"
+        echo -e "  WiFi Hotspot SSID: ${SSID}"
+        echo -e "  Hotspot IP: 10.42.0.1/24"
+        echo -e "  MQTT Broker: localhost:1883 (local)"
+        return
+    fi
+
     echo -e "${GREEN}[INFO] OWL Setup Configuration${NC}"
     echo -e "${GREEN}=======================================${NC}"
     echo ""
@@ -607,10 +668,14 @@ else
     echo -e "${ORANGE}[WARNING] Reconnect under the details entered above. OWL Static IP: ${STATIC_IP} ${NC}"
 fi
 echo -e "${ORANGE}[WARNING] Make sure you have physical access to the Pi in case of issues${NC}"
-read -p "Do you want to continue? (y/n): " network_warning
-if [[ ! "$network_warning" =~ ^[Yy]$ ]]; then
-    echo -e "${RED}[ERROR] Setup cancelled by user.${NC}"
-    exit 1
+if [[ "$ASSUME_YES" == "1" || "$NONINTERACTIVE" == "1" ]]; then
+    echo -e "${GREEN}[INFO] --yes: continuing without confirmation${NC}"
+else
+    read -p "Do you want to continue? (y/n): " network_warning
+    if [[ ! "$network_warning" =~ ^[Yy]$ ]]; then
+        echo -e "${RED}[ERROR] Setup cancelled by user.${NC}"
+        exit 1
+    fi
 fi
 
 # Step 2: Install system packages
@@ -1242,6 +1307,31 @@ if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "
         echo -e "  • Dashboard will be available at https://${HOSTNAME}.local/"
         echo -e "  • MQTT broker will be running on port 1883"
         echo -e "  • owl.py and dashboard will launch if enabled"
+
+        # First-boot arming — for units shipped to an end user, the phone
+        # app takes over network/identity setup on their first boot.
+        FIRSTBOOT_SCRIPT="${SCRIPT_DIR}/../setup/install_firstboot.sh"
+        if [[ "$ARM_FIRSTBOOT" == "1" ]]; then
+            arm_choice="y"
+        elif [[ "$ASSUME_YES" == "1" || "$NONINTERACTIVE" == "1" ]]; then
+            arm_choice="n"
+        else
+            echo -e ""
+            read -p "Arm phone-app first-boot setup (for shipping to an end user)? (y/n): " arm_choice
+        fi
+        if [[ "$arm_choice" =~ ^[Yy]$ ]]; then
+            if bash "${FIRSTBOOT_SCRIPT}" --arm; then
+                echo -e "${TICK} First-boot setup armed — unit enters setup mode on next boot"
+            else
+                echo -e "${CROSS} First-boot arming failed — fix the issue and run:"
+                echo -e "        sudo bash ${FIRSTBOOT_SCRIPT} --arm"
+                # Factory provisioning must not report a ship-ready unit
+                # that isn't armed
+                if [[ "$ARM_FIRSTBOOT" == "1" ]]; then
+                    exit 1
+                fi
+            fi
+        fi
     else
         echo -e "After reboot:"
         if [[ "$NET_INTERFACE" == "wifi" ]]; then
@@ -1255,7 +1345,12 @@ if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "
     fi
 
     echo -e ""
-    read -p "Reboot now? (y/n): " reboot_choice
+    if [[ "$ASSUME_YES" == "1" || "$NONINTERACTIVE" == "1" ]]; then
+        reboot_choice="n"
+        echo -e "${GREEN}[INFO] Non-interactive: skipping reboot (the caller decides).${NC}"
+    else
+        read -p "Reboot now? (y/n): " reboot_choice
+    fi
 
     if [[ "$reboot_choice" =~ ^[Yy]$ ]]; then
         echo -e "${GREEN}[INFO] Rebooting system...${NC}"

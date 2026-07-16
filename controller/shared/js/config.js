@@ -53,8 +53,8 @@ const CONFIG_FIELD_DEFS = {
         'saturation_max': { type: 'number', min: 0, max: 255 },
         'brightness_min': { type: 'number', min: 0, max: 255 },
         'brightness_max': { type: 'number', min: 0, max: 255 },
-        'min_detection_area': { type: 'number', min: 1, max: 10000, help: 'Min weed size in px² (used when the percent key is 0)' },
-        'min_detection_area_percent': { type: 'number', step: 0.001, min: 0, max: 5, help: 'Min weed size as % of the detection frame (0 = use px value)' },
+        'min_detection_area': { type: 'number', min: 1, max: 10000, help: 'Legacy min weed size in px² — converted to the percent key at load and removed on save' },
+        'min_detection_area_percent': { type: 'number', step: 0.001, min: 0, max: 5, help: 'Min weed size as % of the detection frame (canonical key)' },
         'invert_hue': { type: 'boolean' },
         'lut_profile': { type: 'text', help: 'Active painted LUT profile (set via the weed painter)' },
         'lut_sensitivity': { type: 'number', min: 0, max: 100, help: 'LUT detection sensitivity (higher sprays more)' }

@@ -437,6 +437,40 @@
     padding: 0 0.5rem;
 }
 
+/* Min weed size reference box — centred orange dotted square shown on the
+   mini feed while the Min Weed Size slider is being adjusted */
+.minsize-overlay-box {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    border: 3px dotted #f59e0b;
+    border-radius: 2px;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+    z-index: 5;
+}
+
+.minsize-overlay-box.visible {
+    opacity: 1;
+}
+
+.minsize-overlay-label {
+    position: absolute;
+    top: -1.5rem;
+    left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #fff;
+    background: rgba(180, 83, 9, 0.9);
+    padding: 0.05rem 0.4rem;
+    border-radius: 3px;
+}
+
 .config-feed-rail select {
     width: 100%;
     padding: 0.4rem 0.55rem;

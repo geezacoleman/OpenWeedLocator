@@ -50,6 +50,94 @@ def strip_geometry_keys(config_dict):
     return out
 
 
+# config_unsaved_state cache: {(autosave_path, source_path): (a_mtime, s_mtime, result)}
+_UNSAVED_STATE_CACHE = {}
+
+
+def _config_signature(path):
+    """Normalized {(section, key): value} signature of an .ini for content
+    comparison. Excludes [Meta], geometry keys, and the legacy min_detection_area
+    px key; numeric values compare as floats ('0' == '0.0'), everything else
+    case-insensitively ('True' == 'true')."""
+    cp = ConfigParser()
+    cp.optionxform = str
+    cp.read(path)
+    sig = {}
+    for section in cp.sections():
+        if section == 'Meta':
+            continue
+        geom = GEOMETRY_SECTION_KEYS.get(section, set())
+        for key in cp.options(section):
+            if key in geom or key == 'min_detection_area':
+                continue
+            value = cp.get(section, key, raw=True).strip()
+            try:
+                norm = repr(float(value))
+            except ValueError:
+                norm = value.lower()
+            sig[(section, key.lower())] = norm
+    return sig
+
+
+def config_unsaved_state(active_path):
+    """Return (unsaved, source) for the active config file.
+
+    'Unsaved' means the autosave working file's content materially differs
+    from its [Meta] source profile — NOT merely "running from the autosave
+    file" (any live slider nudge repoints the active config at the autosave
+    file permanently, which used to make every boot read as unsaved).
+
+    - Named file active -> (False, '')
+    - Autosave with no/missing [Meta] source -> (True, source or '') (fail-noisy)
+    - Autosave matching its source -> (False, source)
+    - Autosave differing from its source -> (True, source)
+
+    Results are cached on both files' mtimes, so per-second state publishes
+    cost two os.stat calls, not two INI parses.
+    """
+    active_path = str(active_path)
+    if os.path.basename(active_path) != AUTOSAVE_CONFIG:
+        return False, ''
+
+    source = parse_config_meta(active_path).get('source', '')
+    if not source:
+        return True, ''
+    source_path = os.path.join(os.path.dirname(active_path), os.path.basename(source))
+    if not os.path.isfile(source_path):
+        return True, source
+
+    try:
+        key = (active_path, source_path)
+        mtimes = (os.stat(active_path).st_mtime_ns, os.stat(source_path).st_mtime_ns)
+        cached = _UNSAVED_STATE_CACHE.get(key)
+        if cached and cached[0] == mtimes:
+            return cached[1]
+        result = (_config_signature(active_path) != _config_signature(source_path),
+                  source)
+        _UNSAVED_STATE_CACHE[key] = (mtimes, result)
+        return result
+    except (OSError, ConfigParserError):
+        return True, source
+
+
+def strip_legacy_min_area(config_dict):
+    """Return a copy of a {section: {key: value}} config dict with the legacy
+    min_detection_area px key removed from any section whose canonical
+    min_detection_area_percent key carries a real value. Saved files are
+    percent-only; the px key stays accepted on read for legacy configs."""
+    out = {}
+    for section, opts in config_dict.items():
+        kept = dict(opts)
+        try:
+            pct = float(kept.get('min_detection_area_percent', 0) or 0)
+        except (TypeError, ValueError):
+            pct = 0.0
+        if pct > 0:
+            kept.pop('min_detection_area', None)
+        out[section] = kept
+    return out
+
+
 def build_config_filename(display_name, fallback_filename, timestamp):
     """Build a safe filename for a saved config.
 
@@ -233,11 +321,12 @@ class ConfigValidator:
         'GreenOnBrown': {
             'required_keys': {
                 'exg_min', 'exg_max', 'hue_min', 'hue_max',
-                'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
-                'min_detection_area'
+                'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max'
             },
+            # min_detection_area (px) is legacy — migrated to the canonical
+            # min_detection_area_percent at load and stripped on save
             'optional_keys': {'invert_hue', 'lut_profile', 'lut_sensitivity',
-                              'min_detection_area_percent'}
+                              'min_detection_area', 'min_detection_area_percent'}
         },
         'DataCollection': {
             'required_keys': {'image_sample_enable', 'sample_method', 'save_directory'},
@@ -350,11 +439,11 @@ class ConfigValidator:
     SENSITIVITY_SECTION_KEYS = {
         'exg_min', 'exg_max', 'hue_min', 'hue_max',
         'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
-        'min_detection_area',
     }
-    # Optional preset keys — legacy [Sensitivity_*] sections don't have them
+    # Optional preset keys — min_detection_area_percent is canonical (new
+    # sections), min_detection_area px is legacy (old sections, migrated on save)
     SENSITIVITY_SECTION_OPTIONAL_KEYS = {
-        'min_detection_area_percent',
+        'min_detection_area', 'min_detection_area_percent',
     }
 
     # Optional top-level sections (not in REQUIRED_CONFIG)

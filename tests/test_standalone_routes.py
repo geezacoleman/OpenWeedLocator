@@ -710,6 +710,8 @@ class TestSystemStats:
         assert 'memory_percent' in data
         assert 'owl_running' in data
         assert 'detection_enable' in data
+        # App checks this on dashboard connect — must never silently disappear
+        assert isinstance(data['contract_version'], int)
 
     def test_includes_mqtt_state(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client

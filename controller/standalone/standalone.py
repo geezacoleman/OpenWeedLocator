@@ -28,12 +28,17 @@ from utils.directory_manager import scan_sessions
 from utils.config_manager import (
     build_config_filename, parse_config_meta, strip_geometry_keys, GEOMETRY_FILE,
     stamp_config_meta, atomic_write_config, AUTOSAVE_CONFIG, seed_autosave,
+    strip_legacy_min_area, config_unsaved_state,
 )
 from utils.lut_manager import LUTProfileManager, LUTProfileError, MIN_CLASS_PIXELS
 from utils.painter_sessions import (
     PainterSessionStore, PainterError, validate_strokes,
     collect_class_pixels, preview_images, make_thumbnail_jpeg,
 )
+try:
+    from version import APP_CONTRACT_VERSION
+except Exception:
+    APP_CONTRACT_VERSION = 1
 
 try:
     from flask import Flask, Response, render_template, request, jsonify, send_from_directory, send_file
@@ -309,6 +314,36 @@ class OWLDashboard:
                 return jsonify({'success': True, 'message': message})
             else:
                 return jsonify({'success': False, 'error': message}), 500
+
+        @self.app.route('/api/network/reset-setup', methods=['POST'])
+        def reset_network_setup():
+            """Re-arm first-boot setup mode (controller/setup/).
+
+            Runs the root-owned helper that install_firstboot.sh placed in
+            /usr/local/sbin (sudoers points only at that immutable path —
+            never at repo files the dashboard user can edit). The helper
+            just touches the first-boot flag; the setup service restores
+            the rest itself at startup.
+            """
+            helper = '/usr/local/sbin/owl-firstboot-arm'
+            if not os.path.exists(helper):
+                return jsonify({'success': False,
+                                'error': 'First-boot setup is not installed '
+                                         'on this unit'}), 404
+            try:
+                result = subprocess.run(
+                    ['/usr/bin/sudo', '-n', helper],
+                    capture_output=True, text=True, timeout=15)
+            except Exception as e:
+                self.logger.error(f"Reset network setup failed: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+            if result.returncode != 0:
+                error = result.stderr.strip() or 'Re-arm helper failed'
+                self.logger.error(f"Reset network setup failed: {error}")
+                return jsonify({'success': False, 'error': error}), 500
+            return jsonify({'success': True,
+                            'message': 'Setup mode armed. Reboot the OWL to '
+                                       'enter first-boot setup.'})
 
         @self.app.route('/api/owl/stop', methods=['POST'])
         def stop_owl():
@@ -1473,14 +1508,16 @@ class OWLDashboard:
                 is_default = (active_config == DEFAULT_CONFIG)
 
                 basename = os.path.basename(config_path)
+                # Content diff, not "is it the autosave file" — the autosave
+                # pointer persists across reboots and would always read unsaved
+                unsaved, source = config_unsaved_state(config_path)
                 return jsonify({
                     'success': True,
                     'config': config_dict,
                     'config_path': config_path,
                     'config_name': basename,
-                    'config_unsaved': basename == AUTOSAVE_CONFIG,
-                    'config_source': (config_dict.get('Meta', {}).get('source', '')
-                                      if basename == AUTOSAVE_CONFIG else ''),
+                    'config_unsaved': unsaved,
+                    'config_source': source,
                     'active_config': active_config,
                     'is_default': is_default,
                     'available_configs': available_configs,
@@ -1531,6 +1568,8 @@ class OWLDashboard:
                 config.optionxform = str  # Preserve case
 
                 new_config = strip_geometry_keys(data['config'])
+                # Legacy px min-area key never round-trips into new files
+                new_config = strip_legacy_min_area(new_config)
                 new_config.pop('Meta', None)  # never round-trip [Meta]; re-stamped below
                 for section, options in new_config.items():
                     if not config.has_section(section):
@@ -2138,6 +2177,15 @@ class OWLDashboard:
                 config.add_section(section)
             config.set(section, key, str(value))
 
+            # Migration: once the canonical percent key carries a value, the
+            # legacy px key is dropped from the file
+            if key == 'min_detection_area_percent':
+                try:
+                    if float(value) > 0:
+                        config.remove_option(section, 'min_detection_area')
+                except (TypeError, ValueError):
+                    pass
+
             basename = os.path.basename(config_path)
 
             if basename != AUTOSAVE_CONFIG:
@@ -2188,7 +2236,8 @@ class OWLDashboard:
             if algorithm:
                 self.mqtt_client._send_command('set_algorithm', value=algorithm)
 
-            # Push GreenOnBrown params
+            # Push GreenOnBrown params (legacy px min-area first so the
+            # canonical percent key, pushed after, wins when both exist)
             gob_params = [
                 'exg_min', 'exg_max', 'hue_min', 'hue_max',
                 'saturation_min', 'saturation_max',
@@ -2202,6 +2251,14 @@ class OWLDashboard:
                         self.mqtt_client._send_command('set_config', key=param, value=int(val))
                     except (ValueError, TypeError):
                         pass
+
+            pct = config.get('GreenOnBrown', 'min_detection_area_percent', fallback=None)
+            if pct is not None:
+                try:
+                    self.mqtt_client._send_command(
+                        'set_config', key='min_detection_area_percent', value=float(pct))
+                except (ValueError, TypeError):
+                    pass
 
             # Push GreenOnGreen confidence
             confidence = config.get('GreenOnGreen', 'confidence', fallback=None)
@@ -2312,6 +2369,8 @@ class OWLDashboard:
 
         mqtt_state = self.mqtt_client.get_state() if self.mqtt_client else {}
         stats.update({
+            # Checked by the OWL phone app on first contact (see version.py)
+            'contract_version': APP_CONTRACT_VERSION,
             'detection_enable': mqtt_state.get('detection_enable', False),
             'image_sample_enable': mqtt_state.get('image_sample_enable', False),
             'sensitivity_level': mqtt_state.get('sensitivity_level', 'high'),

@@ -15,9 +15,39 @@ if [ "$SUDO_USER" ]; then
    exit 1
 fi
 
+# Factory provisioning: `bash owl_setup.sh --ship` runs the full install
+# non-interactively — GoG skipped, controller type none, standalone dashboard
+# with the fixed setup hotspot (OWL-XXXX from the Pi serial, PSK owl-setup) —
+# and arms phone-app first-boot setup at the end. One command, zero prompts;
+# the customer's phone app makes all network/identity decisions later.
+SHIP_MODE=0
+if [[ "$1" == "--ship" ]]; then
+    SHIP_MODE=1
+    echo -e "${GREEN}[INFO] Ship mode: non-interactive factory provisioning${NC}"
+elif [[ -n "$1" ]]; then
+    echo -e "${RED}[ERROR] Unknown option '$1' (only --ship is supported)${NC}"
+    exit 1
+fi
+
+ship_ssid_suffix() {
+  # Last 4 hex chars of the Pi serial (uppercase); random fallback.
+  # Gives every shipped unit a unique OWL-XXXX the phone app can find.
+  local serial
+  serial=$(awk '/^Serial/ {print $NF}' /proc/cpuinfo 2>/dev/null)
+  if [[ -n "$serial" ]]; then
+    echo "${serial: -4}" | tr '[:lower:]' '[:upper:]'
+  else
+    tr -dc 'A-F0-9' < /dev/urandom | head -c 4
+  fi
+}
+
 if systemctl is-active --quiet owl.service; then
     echo -e "${ORANGE}[WARNING] The owl.service is currently running.${NC}"
-    read -p "Do you want to stop the service to continue with the installation? (y/n): " stop_choice
+    if [[ "$SHIP_MODE" == "1" ]]; then
+        stop_choice="y"
+    else
+        read -p "Do you want to stop the service to continue with the installation? (y/n): " stop_choice
+    fi
     if [[ "$stop_choice" =~ ^[Yy]$ ]]; then
         echo -e "${GREEN}[INFO] Stopping owl.service...${NC}"
         sudo systemctl stop owl.service
@@ -421,7 +451,12 @@ check_status "Installing dependencies from requirements.txt" "OWL_DEPS"
 
 # Step 8b: Optional Green-on-Green (YOLO) support
 echo -e "${GREEN}[INFO] Green-on-Green (YOLO) support available...${NC}"
-read -p "Do you want to install Green-on-Green (YOLO) support? This requires ~2GB of additional packages. (y/n): " gog_choice
+if [[ "$SHIP_MODE" == "1" ]]; then
+    gog_choice="n"
+    echo -e "${GREEN}[INFO] Ship mode: skipping Green-on-Green${NC}"
+else
+    read -p "Do you want to install Green-on-Green (YOLO) support? This requires ~2GB of additional packages. (y/n): " gog_choice
+fi
 case "$gog_choice" in
   y|Y )
     echo -e "${GREEN}[INFO] Installing Green-on-Green dependencies...${NC}"
@@ -494,7 +529,12 @@ echo "    advanced - Multi-switch panel (recording, sensitivity, detection mode)
 echo "               Default pins: recording=BOARD38, sensitivity=BOARD40,"
 echo "               detection_up=BOARD36, detection_down=BOARD35"
 echo ""
-read -p "Enter controller type [none/ute/advanced] (default: none): " ctrl_choice
+if [[ "$SHIP_MODE" == "1" ]]; then
+    ctrl_choice="none"
+    echo -e "${GREEN}[INFO] Ship mode: controller_type = none${NC}"
+else
+    read -p "Enter controller type [none/ute/advanced] (default: none): " ctrl_choice
+fi
 ctrl_choice="${ctrl_choice,,}"  # lowercase
 ctrl_choice="${ctrl_choice:-none}"
 
@@ -528,7 +568,12 @@ esac
 
 # Step 13: Dashboard Setup
 echo -e "${GREEN}[INFO] Dashboard setup available...${NC}"
-read -p "Do you want to add a web dashboard for remote control? (y/n): " dashboard_choice
+if [[ "$SHIP_MODE" == "1" ]]; then
+    dashboard_choice="y"
+    echo -e "${GREEN}[INFO] Ship mode: standalone dashboard with setup hotspot${NC}"
+else
+    read -p "Do you want to add a web dashboard for remote control? (y/n): " dashboard_choice
+fi
 case "$dashboard_choice" in
   y|Y )
     echo -e "${GREEN}[INFO] Setting up OWL Dashboard...${NC}"
@@ -536,7 +581,15 @@ case "$dashboard_choice" in
       install_dashboard_dependencies
       chmod +x "${SCRIPT_DIR}/controller/shared/setup.sh"
       cd "$SCRIPT_DIR"  # Ensure we're in the right directory
-      sudo "${SCRIPT_DIR}/controller/shared/setup.sh"
+      if [[ "$SHIP_MODE" == "1" ]]; then
+        SHIP_SSID="OWL-$(ship_ssid_suffix)"
+        echo -e "${GREEN}[INFO] Ship hotspot: ${SHIP_SSID} (PSK: setup default)${NC}"
+        sudo "${SCRIPT_DIR}/controller/shared/setup.sh" --mode standalone \
+            --owl-id 1 --ssid "${SHIP_SSID}" --password owl-setup \
+            --arm-firstboot --yes
+      else
+        sudo "${SCRIPT_DIR}/controller/shared/setup.sh"
+      fi
       check_status "Dashboard setup" "DASHBOARD"
     else
       echo -e "${RED}[ERROR] setup.sh not found in ${SCRIPT_DIR}/controller/shared/${NC}"
@@ -597,10 +650,19 @@ EOF
 
 echo -e "${GREEN}[COMPLETE] OWL version installed: ${OWL_VERSION}${NC}"
 
-# Step 15: Start OWL focusing
-read -p "Start OWL focusing? (y/n): " choice
-case "$choice" in
-  y|Y ) echo -e "${GREEN}[INFO] Starting focusing...${NC}"; "$FOCUS_WRAPPER" &;;
-  n|N ) echo -e "${GREEN}[INFO] Focusing skipped. Double click the desktop icon to focus the OWL later.${NC}";;
-  * ) echo -e "${RED}[ERROR] Invalid input. Please enter y or n.${NC}";;
-esac
+# Step 15: Start OWL focusing (skipped in ship mode — the customer's phone
+# app runs the camera check on their first boot)
+if [[ "$SHIP_MODE" == "1" ]]; then
+    echo -e ""
+    echo -e "${GREEN}[SHIP-READY] Unit provisioned for shipping:${NC}"
+    echo -e "  • Hotspot: ${SHIP_SSID:-OWL-XXXX} (setup password)"
+    echo -e "  • First-boot setup armed — the phone app takes over on next boot"
+    echo -e "  • Focus the camera, power off, and box it."
+else
+    read -p "Start OWL focusing? (y/n): " choice
+    case "$choice" in
+      y|Y ) echo -e "${GREEN}[INFO] Starting focusing...${NC}"; "$FOCUS_WRAPPER" &;;
+      n|N ) echo -e "${GREEN}[INFO] Focusing skipped. Double click the desktop icon to focus the OWL later.${NC}";;
+      * ) echo -e "${RED}[ERROR] Invalid input. Please enter y or n.${NC}";;
+    esac
+fi

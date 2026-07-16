@@ -3,8 +3,8 @@ Sensitivity preset manager for OWL.
 
 Replaces the old three-file sensitivity system with embedded [Sensitivity_*]
 sections inside GENERAL_CONFIG.ini.  Hardware settings live once in the main
-sections and are NEVER touched by a preset switch — only the 9 GreenOnBrown
-detection thresholds change.
+sections and are NEVER touched by a preset switch — only the 8 GreenOnBrown
+detection thresholds + min weed size (% of frame) change.
 """
 
 import logging
@@ -29,24 +29,22 @@ class SensitivityManager:
         'hue_min', 'hue_max',
         'saturation_min', 'saturation_max',
         'brightness_min', 'brightness_max',
-        'min_detection_area',
     })
 
-    # Optional float key: min weed size as % of the detection frame. When a
-    # kiosk uses the percent key (> 0), owl.py ignores the px value — presets
-    # must carry both or their min-area component is dead. Legacy preset
-    # sections without this key still load (percent left untouched on apply).
+    # Canonical min weed size key: % of the detection frame (float).
     PERCENT_KEY = 'min_detection_area_percent'
+    # Legacy px key — accepted when loading old [Sensitivity_*] sections and
+    # converted to the percent key at apply time; never written to new presets.
+    LEGACY_PX_KEY = 'min_detection_area'
 
     # Hardcoded fallbacks — used when config has no [Sensitivity_*] sections.
-    # Percent values mirror the px values at the default 416x320 frame.
+    # Percent values mirror the historical px values at the default 416x320 frame.
     BUILTIN_PRESETS = {
         'low': {
             'exg_min': 25, 'exg_max': 200,
             'hue_min': 41, 'hue_max': 80,
             'saturation_min': 52, 'saturation_max': 218,
             'brightness_min': 62, 'brightness_max': 188,
-            'min_detection_area': 20,
             'min_detection_area_percent': 0.015,
         },
         'medium': {
@@ -54,7 +52,6 @@ class SensitivityManager:
             'hue_min': 39, 'hue_max': 83,
             'saturation_min': 50, 'saturation_max': 220,
             'brightness_min': 60, 'brightness_max': 190,
-            'min_detection_area': 10,
             'min_detection_area_percent': 0.0075,
         },
         'high': {
@@ -62,7 +59,6 @@ class SensitivityManager:
             'hue_min': 35, 'hue_max': 85,
             'saturation_min': 40, 'saturation_max': 225,
             'brightness_min': 50, 'brightness_max': 200,
-            'min_detection_area': 5,
             'min_detection_area_percent': 0.004,
         },
     }
@@ -105,7 +101,7 @@ class SensitivityManager:
         return result
 
     def get_preset_values(self, name):
-        """Return dict of 9 threshold values for *name*, or None."""
+        """Return dict of threshold values for *name*, or None."""
         name = name.lower()
         return dict(self._presets[name]) if name in self._presets else None
 
@@ -119,6 +115,17 @@ class SensitivityManager:
         if values is None:
             logger.error(f"Unknown sensitivity preset: {name}")
             return False
+
+        # Legacy preset sections carry only the px key — convert it so the
+        # min-area component still takes effect (owl.py uses the percent key)
+        if self.PERCENT_KEY not in values and self.LEGACY_PX_KEY in values:
+            try:
+                res = getattr(owl_instance, 'resolution', None) or (416, 320)
+                area = res[0] * res[1]
+                values[self.PERCENT_KEY] = max(0.0005, min(
+                    5.0, values[self.LEGACY_PX_KEY] / area * 100))
+            except (TypeError, IndexError, ZeroDivisionError):
+                pass
 
         for key, val in values.items():
             setattr(owl_instance, key, val)
@@ -149,7 +156,7 @@ class SensitivityManager:
         """Save current slider values as a custom preset.
 
         Either pass *values* (dict) directly, or pass *owl_instance* to
-        read the 9 keys from its attributes.
+        read the threshold keys from its attributes.
 
         Returns True on success.
         """
@@ -167,16 +174,25 @@ class SensitivityManager:
             logger.error("No values provided for preset save")
             return False
 
-        # Ensure all 9 keys present
+        # Ensure the 8 threshold keys are present
         missing = self.SENSITIVITY_KEYS - set(values.keys())
         if missing:
             logger.error(f"Missing keys for preset: {missing}")
             return False
 
-        # Store int values (+ optional float percent key)
+        # Store int thresholds + the canonical float percent key. A legacy px
+        # value is converted rather than written (new presets are percent-only).
         preset_values = {k: int(values[k]) for k in self.SENSITIVITY_KEYS}
         if self.PERCENT_KEY in values:
             preset_values[self.PERCENT_KEY] = float(values[self.PERCENT_KEY])
+        elif self.LEGACY_PX_KEY in values:
+            res = getattr(owl_instance, 'resolution', None) or (416, 320)
+            try:
+                area = res[0] * res[1]
+            except (TypeError, IndexError):
+                area = 416 * 320
+            preset_values[self.PERCENT_KEY] = max(0.0005, min(
+                5.0, float(values[self.LEGACY_PX_KEY]) / area * 100))
         self._presets[name] = preset_values
 
         # Write to config
@@ -292,10 +308,14 @@ class SensitivityManager:
                 values = {}
                 for key in self.SENSITIVITY_KEYS:
                     values[key] = self.config.getint(section, key)
-                # Optional percent key — legacy sections don't have it
+                # Canonical percent key; legacy sections carry the px key
+                # instead (converted to percent at apply time)
                 if self.config.has_option(section, self.PERCENT_KEY):
                     values[self.PERCENT_KEY] = self.config.getfloat(
                         section, self.PERCENT_KEY)
+                elif self.config.has_option(section, self.LEGACY_PX_KEY):
+                    values[self.LEGACY_PX_KEY] = self.config.getint(
+                        section, self.LEGACY_PX_KEY)
                 self._presets[name] = values
             except (configparser.NoOptionError, ValueError) as e:
                 logger.warning(f"Skipping malformed preset [{section}]: {e}")

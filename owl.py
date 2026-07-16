@@ -148,12 +148,23 @@ class Owl:
         self.saturation_max = self.config.getint('GreenOnBrown', 'saturation_max')
         self.brightness_min = self.config.getint('GreenOnBrown', 'brightness_min')
         self.brightness_max = self.config.getint('GreenOnBrown', 'brightness_max')
-        self.min_detection_area = self.config.getint('GreenOnBrown', 'min_detection_area')
-        # Resolution-independent alternative: min weed size as % of the
-        # detection (cropped) frame area. When > 0 it takes precedence over
-        # the px value above (which remains as legacy/preset fallback).
+        # Min weed size as % of the detection frame area — the canonical key.
+        # min_detection_area (px) is legacy: accepted on read, migrated to the
+        # percent key here, and stripped from configs on the next save.
+        self.min_detection_area = self.config.getint(
+            'GreenOnBrown', 'min_detection_area', fallback=10)
         self.min_detection_area_percent = self.config.getfloat(
             'GreenOnBrown', 'min_detection_area_percent', fallback=0.0)
+        if self.min_detection_area_percent <= 0:
+            frame_area = (self.config.getint('Camera', 'resolution_width', fallback=416)
+                          * self.config.getint('Camera', 'resolution_height', fallback=320))
+            migrated = max(0.0005, min(5.0, self.min_detection_area / frame_area * 100))
+            self.min_detection_area_percent = migrated
+            self.config.set('GreenOnBrown', 'min_detection_area_percent',
+                            f'{migrated:.4f}')
+            self.logger.log_line(
+                f'[CONFIG] migrated legacy min_detection_area '
+                f'{self.min_detection_area}px -> {migrated:.4f}% of frame')
         self.invert_hue = self.config.getboolean('GreenOnBrown', 'invert_hue')
 
         # Painted LUT detection profiles (algorithm = lut). Profiles are .npz
@@ -211,7 +222,21 @@ class Owl:
             raise
 
         ### Data collection only ###
-        self.detection_enable = Value('b', self.config.getboolean('DataCollection', 'detection_enable', fallback=False))
+        detection_enable_config = self.config.getboolean('DataCollection', 'detection_enable', fallback=False)
+        # First-boot setup mode: keep relays silent while the customer runs
+        # the camera check on the bench (see controller/setup/README.md).
+        # The flag is stat-ed once here; while it was present at boot, the
+        # update_state thread keeps detection forced off (and re-stats the
+        # flag at a slow cadence to notice teardown). With no flag at boot,
+        # nothing is ever re-checked — zero cost on normal operation.
+        first_boot_flag = Path(os.environ.get('OWL_FIRSTBOOT_FLAG', '/boot/firmware/owl-firstboot.flag'))
+        self._firstboot_flag_path = first_boot_flag
+        self._firstboot_active = first_boot_flag.exists()
+        self._firstboot_last_check = 0.0
+        if self._firstboot_active:
+            self.logger.info("First-boot flag present — detection locked off until setup finishes")
+            detection_enable_config = False
+        self.detection_enable = Value('b', detection_enable_config)
         self.image_sample_enable = Value('b', self.config.getboolean('DataCollection', 'image_sample_enable',
                                                                      fallback=False))
 
@@ -1578,6 +1603,21 @@ class Owl:
                     with self.sensitivity_level.get_lock():
                         sensitivity_int = self.sensitivity_level.value
                     self._sensitivity_level = Sensitivity(sensitivity_int).name.lower()
+
+            # First-boot setup mode: detection stays off no matter what the
+            # hardware switch or dashboard said above — a flipped-on Ute
+            # switch must not click relays on the bench. Runs only when the
+            # flag existed at boot; re-stats it at most every 5 s to notice
+            # setup finishing (teardown removes the flag).
+            if self._firstboot_active:
+                now = time.time()
+                if now - self._firstboot_last_check >= 5.0:
+                    self._firstboot_last_check = now
+                    if not self._firstboot_flag_path.exists():
+                        self._firstboot_active = False
+                        self.logger.info("First-boot flag cleared — detection control restored")
+                if self._firstboot_active:
+                    self._detection_enable = False
 
             # GPS: serial takes priority, then dashboard (browser geolocation)
             self.gps_data = self._get_best_gps_data()
