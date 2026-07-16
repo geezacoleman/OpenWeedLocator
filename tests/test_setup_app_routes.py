@@ -355,6 +355,126 @@ class TestOwlDetectionSuppression:
 
 
 @pytest.mark.unit
+class TestInstallScript:
+    """install_firstboot.sh writes systemd units via heredoc (the same
+    pattern as owl_setup.sh) — a template+sed step once shipped an
+    ExecStart with a doubled bin/bin python path (field bug 2026-07-16)."""
+
+    @pytest.fixture
+    def script(self):
+        from pathlib import Path
+        return (Path(__file__).parent.parent / 'controller' / 'setup'
+                / 'install_firstboot.sh').read_text(encoding='utf-8')
+
+    def test_execstart_uses_venv_bin_directly(self, script):
+        assert 'ExecStart=${VENV_BIN}/python' in script
+        assert 'bin/bin' not in script
+        # The template+sed pattern must not come back
+        assert '__VENV' not in script
+        assert 'sed -e' not in script
+
+    def test_venv_bin_ends_in_bin_exactly_once(self, script):
+        import re
+        match = re.search(r'^VENV_BIN="([^"]+)"', script, re.MULTILINE)
+        assert match, 'VENV_BIN definition missing'
+        assert match.group(1).endswith('/owl/bin')
+
+    def test_failure_responder_is_wired(self, script):
+        assert 'OnFailure=owl-firstboot-fallback.service' in script
+        assert 'StartLimitBurst' in script
+        assert '/usr/bin/python3' in script          # system python on purpose
+        assert 'fallback_server.py' in script
+        # Disarm must remove the fallback unit too
+        assert '"${UNIT_DEST}" "${FALLBACK_UNIT_DEST}"' in script
+
+    def test_unit_heredoc_lines_are_flush_left(self, script):
+        """systemd ignores indented directives — unit content inside the
+        heredocs must start at column 0."""
+        for block in script.split('<<EOF')[1:]:
+            body = block.split('\nEOF')[0]
+            for line in body.splitlines():
+                if line.strip().startswith(('[', 'ExecStart', 'Description',
+                                            'ConditionPathExists')):
+                    assert line == line.lstrip(), (
+                        f'indented unit line: {line!r}')
+
+
+@pytest.mark.unit
+class TestFallbackServer:
+    """The OnFailure error responder — stdlib only, must run without the
+    venv, and must satisfy the app's CORS preflight or the phone never
+    sees the payload."""
+
+    @pytest.fixture
+    def server(self):
+        import threading
+        from http.server import ThreadingHTTPServer
+        from controller.setup import fallback_server
+        httpd = ThreadingHTTPServer(('127.0.0.1', 0),
+                                    fallback_server.FallbackHandler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        yield f'http://127.0.0.1:{httpd.server_address[1]}'
+        httpd.shutdown()
+
+    def test_stdlib_only(self):
+        """Anything beyond the stdlib defeats the purpose (broken venv)."""
+        import ast
+        from pathlib import Path
+        source = (Path(__file__).parent.parent / 'controller' / 'setup'
+                  / 'fallback_server.py').read_text(encoding='utf-8')
+        imported = set()
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split('.')[0]
+                                for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.add(node.module.split('.')[0])
+        assert imported <= {'json', 'subprocess', 'http'}, imported
+
+    def test_get_returns_503_json_with_journal_detail(self, server):
+        import urllib.error
+        import urllib.request
+        request = urllib.request.Request(server + '/setup/api/info',
+                                         headers={'Origin': 'null'})
+        with pytest.raises(urllib.error.HTTPError) as raised:
+            urllib.request.urlopen(request)
+        response = raised.value
+        assert response.code == 503
+        assert response.headers['Access-Control-Allow-Origin'] == 'null'
+        payload = json.loads(response.read())
+        assert payload['success'] is False
+        assert payload['fallback'] is True
+        assert 'failed to start' in payload['error']
+        assert isinstance(payload['detail'], list)
+
+    def test_preflight_options_succeeds(self, server):
+        import urllib.request
+        request = urllib.request.Request(server + '/setup/api/info',
+                                         method='OPTIONS',
+                                         headers={'Origin': 'null'})
+        response = urllib.request.urlopen(request)
+        assert response.status == 204
+        assert response.headers['Access-Control-Allow-Origin'] == 'null'
+
+    def test_unknown_origin_gets_no_cors_grant(self, server):
+        import urllib.error
+        import urllib.request
+        request = urllib.request.Request(
+            server + '/setup/api/info',
+            headers={'Origin': 'http://evil.example'})
+        with pytest.raises(urllib.error.HTTPError) as raised:
+            urllib.request.urlopen(request)
+        assert raised.value.headers.get('Access-Control-Allow-Origin') is None
+
+    def test_journal_tail_survives_missing_journalctl(self):
+        from controller.setup import fallback_server
+        with patch('controller.setup.fallback_server.subprocess.run',
+                   side_effect=FileNotFoundError):
+            assert fallback_server.journal_tail() == []
+
+
+@pytest.mark.unit
 class TestStartup:
     def test_dev_mode_without_nmcli(self, nm, state):
         nm.is_supported.return_value = False

@@ -33,6 +33,7 @@ SETUP_PORT=8088
 SETUP_PSK="owl-setup"
 AVAHI_FILE="/etc/avahi/services/owl-setup.service"
 UNIT_DEST="/etc/systemd/system/owl-firstboot.service"
+FALLBACK_UNIT_DEST="/etc/systemd/system/owl-firstboot-fallback.service"
 SUDOERS_FILE="/etc/sudoers.d/96-owl-firstboot"
 REARM_HELPER="/usr/local/sbin/owl-firstboot-arm"
 
@@ -91,18 +92,64 @@ arm() {
     fi
     echo -e "${TICK} Hotspot '${HOTSPOT}' password reset to setup default"
 
-    # 3. systemd unit from template
-    if ! sed -e "s|__OWL_DIR__|${OWL_DIR}|g" -e "s|__VENV__|${VENV_BIN%/bin}/bin|g" \
-        "${SCRIPT_DIR}/owl-firstboot.service" > "${UNIT_DEST}"; then
+    # 3. systemd units — heredocs with expanded variables, same pattern as
+    # owl_setup.sh and controller/shared/setup.sh (a template+sed step here
+    # once shipped a doubled python path).
+    # OnFailure: if setup_app.py cannot start (broken venv, bad path), the
+    # fallback unit serves the journal tail on the same port so the phone
+    # app shows the real error instead of "Failed to fetch".
+    if ! cat > "${UNIT_DEST}" <<EOF
+[Unit]
+Description=OWL First-Boot Setup Service
+ConditionPathExists=${FLAG_PATH}
+After=NetworkManager.service network-online.target
+Wants=network-online.target
+OnFailure=owl-firstboot-fallback.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+# Root: nmcli hotspot control, ufw, avahi service file, flag removal
+User=root
+WorkingDirectory=${OWL_DIR}/controller/setup
+ExecStart=${VENV_BIN}/python ${OWL_DIR}/controller/setup/setup_app.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    then
         echo -e "${CROSS} Could not install the systemd unit. Nothing was armed."
         exit 1
     fi
+
+    # System python on purpose: the venv is one of the things that may be
+    # broken when this unit fires. Started only via OnFailure, never enabled.
+    if ! cat > "${FALLBACK_UNIT_DEST}" <<EOF
+[Unit]
+Description=OWL First-Boot Setup Fallback (error responder on :${SETUP_PORT})
+ConditionPathExists=${FLAG_PATH}
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 ${OWL_DIR}/controller/setup/fallback_server.py
+Restart=on-failure
+RestartSec=5
+EOF
+    then
+        echo -e "${CROSS} Could not install the fallback unit. Nothing was armed."
+        exit 1
+    fi
+
     systemctl daemon-reload
     if ! systemctl enable owl-firstboot.service; then
         echo -e "${CROSS} Could not enable owl-firstboot.service. Nothing was armed."
         exit 1
     fi
-    echo -e "${TICK} owl-firstboot.service installed and enabled"
+    echo -e "${TICK} owl-firstboot.service installed and enabled (+ failure responder)"
 
     # 4. Firewall: setup API reachable after a WiFi join too.
     # Best-effort from here down to the flag — the service's startup()
@@ -165,7 +212,8 @@ disarm() {
     rm -f "${FLAG_PATH}"
     systemctl disable owl-firstboot.service 2>/dev/null || true
     systemctl stop owl-firstboot.service 2>/dev/null || true
-    rm -f "${UNIT_DEST}"
+    systemctl stop owl-firstboot-fallback.service 2>/dev/null || true
+    rm -f "${UNIT_DEST}" "${FALLBACK_UNIT_DEST}"
     systemctl daemon-reload
     rm -f "${AVAHI_FILE}"
     systemctl reload avahi-daemon 2>/dev/null || true

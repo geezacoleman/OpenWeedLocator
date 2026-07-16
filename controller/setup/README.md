@@ -69,6 +69,16 @@ different: `POST /setup/api/hotspot/restore` rolls the identity back
 leaves the OWL pointed at a rig it never joined.
 Verification polls `http://<static_ip>:8088/setup/api/wifi/result`.
 
+## If the setup service can't start
+
+`owl-firstboot.service` carries `OnFailure=owl-firstboot-fallback.service`:
+after 3 failed starts inside 60 s, systemd launches `fallback_server.py`
+(system python, stdlib only — the venv may be the broken part) on the same
+port. It answers every request with 503 JSON containing the crashed unit's
+journal tail, so the phone app surfaces the real error instead of
+"Failed to fetch". The fallback is condition-gated on the flag like the
+main unit and is removed by `--disarm`.
+
 ## Why the scan is cached
 
 The Pi's radio cannot scan while it is an access point. `startup()` scans once
