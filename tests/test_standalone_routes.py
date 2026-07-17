@@ -712,6 +712,13 @@ class TestSystemStats:
         assert 'detection_enable' in data
         # App checks this on dashboard connect — must never silently disappear
         assert isinstance(data['contract_version'], int)
+        # The phone app dedupes saved OWLs on these — additive, but the app
+        # falls back to weaker password matching if they disappear.
+        # device_serial may be None off-hardware (no /proc/cpuinfo or
+        # /etc/machine-id), so assert presence, not value.
+        import socket
+        assert data['hostname'] == socket.gethostname()
+        assert 'device_serial' in data
 
     def test_includes_mqtt_state(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client

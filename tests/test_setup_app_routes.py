@@ -91,6 +91,9 @@ class TestInfo:
         assert data['camera']['ok'] is True
         assert data['owl_service'] == 'active'
         assert 'version' in data and 'device_id' in data
+        # Unique per-unit identity for the phone app's saved-device dedupe
+        # (None off-hardware, so assert presence, not value)
+        assert 'device_serial' in data
         # Contract version: the app blocks with an "update" message on a
         # mismatch — this field must never silently disappear
         from version import APP_CONTRACT_VERSION

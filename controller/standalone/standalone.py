@@ -12,6 +12,7 @@ import os
 import sys
 import glob
 import shutil
+import socket
 import threading
 import logging
 import subprocess
@@ -24,6 +25,7 @@ import urllib.error
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from utils.mqtt_manager import DashMQTTSubscriber
 from utils.input_manager import get_rpi_version
+from utils.device_identity import get_device_serial
 from utils.directory_manager import scan_sessions
 from utils.config_manager import (
     build_config_filename, parse_config_meta, strip_geometry_keys, GEOMETRY_FILE,
@@ -804,6 +806,12 @@ class OWLDashboard:
                 'cloud_connected': self.mqtt_client.get_cloud_connected() if self.mqtt_client else None,
                 'cloud_device_id': self.cloud_device_id,
                 'cloud_portal_url': self.cloud_portal_url,
+                # Device identity — the phone app dedupes saved OWLs on
+                # these (additive fields, no contract bump). The serial is
+                # the strong key; hostname defaults (owl-1) collide across
+                # self-installed units.
+                'hostname': socket.gethostname(),
+                'device_serial': get_device_serial(),
             })
 
             return jsonify(stats)

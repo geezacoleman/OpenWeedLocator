@@ -32,6 +32,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from utils.network_manager import NetworkManager, NetworkManagerError  # noqa: E402
+from utils.device_identity import get_device_serial  # noqa: E402
 from controller.setup.firstboot_state import FirstBootState, SETUP_PORT  # noqa: E402
 from version import VERSION, APP_CONTRACT_VERSION  # noqa: E402
 
@@ -116,6 +117,9 @@ def create_app(network_manager=None, state=None, flag_path=None, state_file=None
             'success': True,
             'device_id': hostname,
             'hostname': hostname,
+            # Unique per physical unit (hostnames like owl-1 are not) —
+            # the phone app's saved-device identity. Additive field.
+            'device_serial': get_device_serial(),
             'version': str(VERSION),
             'contract_version': APP_CONTRACT_VERSION,
             'hotspot': {'ssid': hotspot, 'ip': ip},
