@@ -253,18 +253,37 @@ class TestFinish:
         response = client.post('/setup/api/finish', json={'mode': 'standalone'})
         assert response.status_code == 400
 
-    def test_standalone_applies_password_and_tears_down(self, client, state, nm):
+    def test_standalone_defers_rekey_until_response_sent(self, client, state, nm):
         response = client.post('/setup/api/finish',
                                json={'mode': 'standalone',
                                      'new_password': 'paddock-relay-42'})
         assert response.get_json()['success'] is True
+        # The re-key restarts the AP and drops the phone — it must not run
+        # before the finish response has been sent (the field bug: the app
+        # always saw a dead request and reported failure)
+        nm.set_hotspot_password.assert_not_called()
+        assert state.flag_path.exists()
+        assert len(CapturingTimer.pending) == 1  # delayed re-key scheduled
+        CapturingTimer.fire_all()
         nm.set_hotspot_password.assert_called_once_with('paddock-relay-42')
         assert not state.flag_path.exists()
         state._system_runner.assert_called_once_with(
             ['ufw', 'delete', 'allow', '8088/tcp'])
-        assert len(CapturingTimer.pending) == 1  # delayed exit scheduled
-        CapturingTimer.fire_all()
         state._exit_fn.assert_called_once()
+
+    def test_standalone_rekey_failure_keeps_setup_armed(self, client, state, nm):
+        nm.set_hotspot_password.side_effect = Exception('nmcli died')
+        response = client.post('/setup/api/finish',
+                               json={'mode': 'standalone',
+                                     'new_password': 'paddock-relay-42'})
+        assert response.get_json()['success'] is True
+        with patch('controller.setup.firstboot_state.time.sleep'):
+            CapturingTimer.fire_all()
+        # Setup password still works and the wizard can retry finish —
+        # tearing down here would lock the user out
+        assert state.flag_path.exists()
+        state._exit_fn.assert_not_called()
+        assert state.state != 'done'
 
     def test_wifi_finish_requires_connected(self, client):
         response = client.post('/setup/api/finish', json={'mode': 'wifi'})
@@ -397,6 +416,44 @@ class TestInstallScript:
                                             'ConditionPathExists')):
                     assert line == line.lstrip(), (
                         f'indented unit line: {line!r}')
+
+
+@pytest.mark.unit
+class TestShipCleanup:
+    """--ship must strip dev residue (a dev phone-hotspot password shipped
+    on a bench unit, 2026-07-17) — dev/clean.sh wipes every WiFi profile
+    except the OWL hotspot, so it must run non-interactively and LAST."""
+
+    @pytest.fixture
+    def owl_setup(self):
+        from pathlib import Path
+        return (Path(__file__).parent.parent
+                / 'owl_setup.sh').read_text(encoding='utf-8')
+
+    @pytest.fixture
+    def clean(self):
+        from pathlib import Path
+        return (Path(__file__).parent.parent / 'dev'
+                / 'clean.sh').read_text(encoding='utf-8')
+
+    def test_clean_supports_non_interactive_yes(self, clean):
+        assert '"${1:-}" == "--yes"' in clean       # set -u safe
+        assert 'ASSUME_YES' in clean
+
+    def test_clean_restarts_both_services_it_stopped(self, clean):
+        assert 'systemctl start owl.service' in clean
+        assert 'systemctl start owl-dash.service' in clean
+
+    def test_ship_invokes_clean_detached_as_final_step(self, owl_setup):
+        assert "dev/clean.sh' --yes" in owl_setup
+        assert 'setsid' in owl_setup
+        # Detached + last: the cleanup drops an SSH session running over a
+        # personal WiFi profile, so nothing may depend on it afterwards
+        ship_tail = owl_setup.split('[SHIP-READY]')[1]
+        assert 'clean.sh' in ship_tail
+        # Log must not use a .log suffix — clean.sh truncates /var/log/*.log
+        assert '/var/log/owl-ship-clean.txt' in owl_setup
+        assert 'owl-ship-clean.log' not in owl_setup
 
 
 @pytest.mark.unit

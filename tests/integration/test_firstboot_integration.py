@@ -298,8 +298,11 @@ class TestFinish:
                                  json={'mode': 'standalone',
                                        'new_password': 'paddock99'}, timeout=5)
         assert response.status_code == 200
-        assert env.fake.profiles[HOTSPOT]['psk'] == 'paddock99'
-        assert not env.flag.exists()
+        # The re-key is deferred so this response could reach the phone
+        # before the AP restarted — at this instant the old PSK still holds
+        assert env.fake.profiles[HOTSPOT]['psk'] == SETUP_HOTSPOT_PSK
+        wait_until(lambda: env.fake.profiles[HOTSPOT]['psk'] == 'paddock99')
+        wait_until(lambda: not env.flag.exists())
         wait_until(lambda: env.exits)
 
     def test_wifi_finish_requires_connected(self, env):

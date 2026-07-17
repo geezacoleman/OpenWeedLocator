@@ -2,8 +2,17 @@
 
 # Safe OWL Cleaning Script - Preserves Dashboard Configuration
 # This script removes sensitive data while keeping OWL dashboard functionality
+#
+# Usage:
+#   sudo bash clean.sh          # interactive (asks before cleaning)
+#   sudo bash clean.sh --yes    # non-interactive (owl_setup.sh --ship uses this)
 
 set -euo pipefail  # Exit on error, undefined vars, pipe failures
+
+ASSUME_YES=0
+if [[ "${1:-}" == "--yes" || "${1:-}" == "-y" ]]; then
+    ASSUME_YES=1
+fi
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -46,14 +55,18 @@ echo "  • Clipboard data"
 echo "  • Recent file lists"
 echo
 
-read -p "Continue with cleaning? (y/N): " choice
-case "$choice" in
-  y|Y )
-    echo -e "${GREEN}[INFO] Starting safe cleaning process...${NC}";;
-  * )
-    echo -e "${RED}[INFO] Cleaning cancelled${NC}"
-    exit 0;;
-esac
+if [[ "$ASSUME_YES" == "1" ]]; then
+    echo -e "${GREEN}[INFO] --yes given: proceeding without prompt${NC}"
+else
+    read -p "Continue with cleaning? (y/N): " choice
+    case "$choice" in
+      y|Y )
+        echo -e "${GREEN}[INFO] Starting safe cleaning process...${NC}";;
+      * )
+        echo -e "${RED}[INFO] Cleaning cancelled${NC}"
+        exit 0;;
+    esac
+fi
 
 # Stop OWL services during cleaning to prevent log generation
 echo -e "${GREEN}[INFO] Stopping OWL services during cleaning${NC}"
@@ -207,8 +220,9 @@ echo -e "${GREEN}[INFO] Clearing current session history${NC}"
 history -c 2>/dev/null || true
 cat /dev/null > ~/.bash_history 2>/dev/null || true
 
-# Step 12: Restart OWL services
+# Step 12: Restart OWL services (both were stopped at the top)
 echo -e "${GREEN}[INFO] Restarting OWL services${NC}"
+systemctl start owl.service 2>/dev/null || true
 systemctl start owl-dash.service 2>/dev/null || true
 sleep 2
 

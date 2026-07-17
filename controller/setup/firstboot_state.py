@@ -545,8 +545,14 @@ class FirstBootState:
             if not new_password or len(new_password) < 8:
                 raise ValueError('A new hotspot password of at least 8 characters '
                                  'is required to finish standalone setup')
-            if self.nm.is_supported():
-                self.nm.set_hotspot_password(new_password)
+            # Re-keying the hotspot restarts the AP and drops the phone, so
+            # the finish response must reach it first — same delayed-switch
+            # trick as request_join. Teardown runs after the re-key.
+            timer = self._timer_factory(
+                SWITCH_DELAY_S, lambda: self._finish_standalone(new_password))
+            timer.daemon = True
+            timer.start()
+            return
         elif mode == 'wifi':
             if self.wifi_state != 'connected':
                 raise ValueError('Cannot finish: the OWL has not joined a WiFi '
@@ -558,6 +564,31 @@ class FirstBootState:
         else:
             raise ValueError(f"Unknown mode '{mode}'")
 
+        self.state = 'done'
+        self._persist()
+        self._teardown()
+
+    def _finish_standalone(self, new_password):
+        """Deferred tail of finish(standalone): re-key the hotspot, then
+        tear down. The phone rejoins with the new password."""
+        if self.nm.is_supported():
+            applied = False
+            for attempt in range(1, REVERT_HOTSPOT_ATTEMPTS + 1):
+                try:
+                    self.nm.set_hotspot_password(new_password)
+                    applied = True
+                    break
+                except Exception as e:
+                    logger.error("Hotspot re-key attempt %d/%d failed: %s",
+                                 attempt, REVERT_HOTSPOT_ATTEMPTS, e)
+                    if attempt < REVERT_HOTSPOT_ATTEMPTS:
+                        time.sleep(2 * attempt)
+            if not applied:
+                # Stay armed: the setup password still works and the phone
+                # can retry finish rather than being locked out.
+                logger.critical("Could not apply the permanent hotspot "
+                                "password — setup stays armed")
+                return
         self.state = 'done'
         self._persist()
         self._teardown()

@@ -9,8 +9,6 @@
 #   - installs + enables owl-firstboot.service (ConditionPathExists gated)
 #   - touches the flag on the FAT boot partition (re-armable from any PC,
 #     same idea as Raspberry Pi's `ssh` flag file)
-#   - resets the hotspot password to the fixed setup password the phone
-#     app knows ("owl-setup")
 #   - opens the setup API port in ufw and advertises _owl-setup._tcp via avahi
 #
 # The service tears most of this down itself when setup finishes; --disarm

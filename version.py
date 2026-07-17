@@ -11,7 +11,7 @@ from typing import Optional
 class Version:
     major: int = 3
     minor: int = 9
-    patch: int = 1
+    patch: int = 2
     tag: Optional[str] = None
 
     def __str__(self) -> str:

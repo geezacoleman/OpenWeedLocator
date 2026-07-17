@@ -151,8 +151,11 @@ def create_app(network_manager=None, state=None, flag_path=None, state_file=None
             except (urllib.error.URLError, OSError):
                 pass
 
+        # Boundary must match the upstream stream's (--FRAME, see
+        # utils/video_manager.py StreamingHandler) — the proxy passes the
+        # body through verbatim, and a mismatch renders as a blank image.
         return Response(generate(),
-                        mimetype='multipart/x-mixed-replace; boundary=frame')
+                        mimetype='multipart/x-mixed-replace; boundary=FRAME')
 
     # ------------------------------------------------------------------
     # WiFi

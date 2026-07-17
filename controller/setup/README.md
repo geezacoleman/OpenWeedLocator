@@ -95,7 +95,12 @@ bash owl_setup.sh --ship
 
 Non-interactive: base install, standalone setup with hotspot `OWL-XXXX`
 (suffix from the Pi serial) and the fixed setup password, then arms
-first-boot. Focus the camera, power off, box it.
+first-boot. As its final step it runs `dev/clean.sh --yes` detached, which
+strips dev residue — **every WiFi profile except the OWL hotspot** (a dev
+phone-hotspot password must never ship on a unit), shell history, SSH keys,
+logs, cached credentials. If you are SSH'd in over a personal network the
+session drops at that point by design; give it a minute
+(`/var/log/owl-ship-clean.txt`), then focus the camera, power off, box it.
 
 Manual route (existing installs): run `controller/shared/setup.sh` in
 **standalone** mode (keep the `OWL-` SSID prefix — the phone app's

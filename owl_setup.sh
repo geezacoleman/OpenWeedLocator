@@ -658,6 +658,23 @@ if [[ "$SHIP_MODE" == "1" ]]; then
     echo -e "  • Hotspot: ${SHIP_SSID:-OWL-XXXX} (setup password)"
     echo -e "  • First-boot setup armed — the phone app takes over on next boot"
     echo -e "  • Focus the camera, power off, and box it."
+
+    # Factory hygiene, deliberately the LAST step: dev/clean.sh --yes strips
+    # dev residue — every WiFi profile except the OWL hotspot (a dev phone
+    # hotspot password must never ship on a unit), shell history, SSH keys,
+    # logs, cached credentials. Deleting the active WiFi profile drops an
+    # SSH session over that network, so it runs detached (setsid) and
+    # finishes on its own; .txt log name so clean.sh's own /var/log/*.log
+    # truncation doesn't eat it.
+    echo -e ""
+    echo -e "${GREEN}[INFO] Removing dev residue (dev/clean.sh --yes, detached)...${NC}"
+    echo -e "${ORANGE}[WARN] If you are SSH'd in over a personal WiFi/hotspot, the"
+    echo -e "       connection will drop now — that is the cleanup removing the"
+    echo -e "       profile. Give it a minute to finish before powering off."
+    echo -e "       Log: /var/log/owl-ship-clean.txt${NC}"
+    sudo setsid bash -c \
+        "bash '${SCRIPT_DIR}/dev/clean.sh' --yes > /var/log/owl-ship-clean.txt 2>&1" \
+        < /dev/null &
 else
     read -p "Start OWL focusing? (y/n): " choice
     case "$choice" in
