@@ -64,6 +64,7 @@ fi
 
 # Initialize status tracking variables
 STATUS_UPGRADE=""
+STATUS_SYS_DEPS=""
 STATUS_CAMERA=""
 STATUS_CAMERA_TEST=""
 STATUS_FULL_UPGRADE=""
@@ -80,6 +81,7 @@ STATUS_GOG_DEPS=""
 STATUS_CONTROLLER=""
 
 ERROR_UPGRADE=""
+ERROR_SYS_DEPS=""
 ERROR_CAMERA=""
 ERROR_CAMERA_TEST=""
 ERROR_FULL_UPGRADE=""
@@ -141,9 +143,11 @@ install_dashboard_dependencies() {
 check_camera_connection() {
   echo -e "${GREEN}[INFO] Checking for connected cameras...${NC}"
 
-  # 1 — Detect Raspberry Pi CSI camera via libcamera
+  # 1 — Detect Raspberry Pi CSI camera via libcamera. Match an actual camera
+  # entry ("0 : imx296 [...]") rather than grep -qv on the no-camera message,
+  # which false-positives whenever the output has any extra lines.
   if command -v rpicam-hello >/dev/null 2>&1; then
-    if rpicam-hello --list-cameras 2>&1 | grep -qv "No cameras available"; then
+    if rpicam-hello --list-cameras 2>/dev/null | grep -qE '^[[:space:]]*[0-9]+[[:space:]]*:'; then
       echo -e "${GREEN}[INFO] Raspberry Pi CSI camera detected.${NC}"
       CAMERA_MODE="rpi"
       STATUS_CAMERA="${TICK}"
@@ -292,6 +296,27 @@ sudo apt update
 sudo apt full-upgrade -y
 check_status "System upgrade" "UPGRADE"
 
+# Step 1b: System packages OWL depends on. The Desktop image ships all of
+# these; OS Lite ships none of them, so install explicitly:
+#   git                 - owl_update.sh / cloning
+#   libgl1, libglib2.0-0 - runtime libs for the pip opencv-contrib-python wheel
+#                          (libGL.so.1 import error on Lite without them)
+#   python3-picamera2   - camera stack, reached through --system-site-packages
+#   python3-numpy       - system NumPy that picamera2 builds against
+#   v4l-utils           - USB camera detection/test (v4l2-ctl)
+#   i2c-tools           - camera/sensor debugging (i2cdetect)
+echo -e "${GREEN}[INFO] Installing system dependencies (git, OpenCV libs, picamera2)...${NC}"
+sudo apt-get install -y git libgl1 libglib2.0-0 python3-picamera2 python3-numpy v4l-utils i2c-tools
+check_status "Installing system dependencies" "SYS_DEPS"
+
+# rpicam-apps is preinstalled on Desktop; Lite images need the lite build
+# (falls back to the full package if the lite variant is unavailable).
+if ! command -v rpicam-hello >/dev/null 2>&1; then
+    echo -e "${GREEN}[INFO] rpicam-hello not found. Installing rpicam-apps...${NC}"
+    sudo apt-get install -y rpicam-apps-lite || sudo apt-get install -y rpicam-apps
+    check_status "Installing rpicam-apps" "SYS_DEPS"
+fi
+
 # Step 2: Ensure a camera is connected before proceeding
 check_camera_connection
 
@@ -438,10 +463,16 @@ pip install opencv-contrib-python
 check_status "Installing opencv-contrib-python" "OPENCV"
 
 # 4) Final runtime check with OpenCV present
-"$VIRTUAL_ENV/bin/python" - <<'PY' || { echo "[ERROR] Post-check import failed."; exit 1; }
+if ! "$VIRTUAL_ENV/bin/python" - <<'PY'
 import numpy as np, cv2
 print(f"[OK] Final check: NumPy {np.__version__}, OpenCV {cv2.__version__}")
 PY
+then
+  echo -e "${RED}[ERROR] Post-check import failed. If the error above mentions"
+  echo -e "        libGL.so.1 or libglib, run: sudo apt-get install -y libgl1 libglib2.0-0"
+  echo -e "        then re-run this script.${NC}"
+  exit 1
+fi
 
 # Step 8: Install OWL dependencies
 echo -e "${GREEN}[INFO] Installing the OWL Python dependencies...${NC}"
@@ -480,11 +511,16 @@ chmod a+x owl.py
 setup_owl_systemd_service
 check_status "Creating OWL systemd service" "OWL_SERVICE"
 
-# Step 10: Set desktop background - check for wayland or X11
-echo -e "${GREEN}[INFO] Setting desktop background...${NC}"
-pcmanfm --set-wallpaper $SCRIPT_DIR/images/owl-background.png
-check_status "Setting desktop background" "BOOT_SCRIPTS"
-sleep 2
+# Step 10: Set desktop background - check for wayland or X11 (skipped on
+# OS Lite, which has no desktop environment)
+if command -v pcmanfm >/dev/null 2>&1; then
+  echo -e "${GREEN}[INFO] Setting desktop background...${NC}"
+  pcmanfm --set-wallpaper $SCRIPT_DIR/images/owl-background.png
+  check_status "Setting desktop background" "BOOT_SCRIPTS"
+  sleep 2
+else
+  echo -e "${ORANGE}[INFO] No desktop environment detected (OS Lite). Skipping wallpaper.${NC}"
+fi
 
 # Step 11: creating desktop icon for focusing
 echo -e "${GREEN}[INFO] Creating OWL Focusing desktop icon...${NC}"
@@ -610,6 +646,7 @@ esac
 # Step 14: Final Summary
 echo -e "\n${GREEN}[INFO] Installation Summary:${NC}"
 echo -e "$STATUS_UPGRADE System Upgrade"
+echo -e "$STATUS_SYS_DEPS System Dependencies Installed"
 echo -e "$STATUS_CAMERA Camera Detected"
 echo -e "$STATUS_CAMERA_TEST Camera Test"
 
