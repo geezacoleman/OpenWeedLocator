@@ -184,6 +184,10 @@ class OWLMQTTPublisher:
             'device_id': device_id,
             'detection_enable': False,
             'image_sample_enable': False,
+            # False when no writable USB drive is present — recording is
+            # unavailable but detection runs normally (re-checked on every
+            # record toggle in owl.py).
+            'storage_available': True,
             'sensitivity_level': 'medium',
             'detection_mode': 1,  # 0=spot spray, 1=off, 2=blanket
             'owl_running': False,
@@ -2670,6 +2674,16 @@ class OWLMQTTPublisher:
         if was_recording and not bool(value):
             self._auto_save_session_metadata()
 
+        self._publish_state()
+
+    def set_storage_available(self, value):
+        """Flag whether a writable recording drive is present (set by owl.py
+        storage setup / the record-toggle re-scan)."""
+        with self.state_lock:
+            if self.state.get('storage_available') == bool(value):
+                return
+            self.state['storage_available'] = bool(value)
+            self.state['last_update'] = time.time()
         self._publish_state()
 
     def weed_detect_indicator(self):

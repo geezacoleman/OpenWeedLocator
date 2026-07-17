@@ -363,6 +363,9 @@ function _doStartRecording() {
             if (data.success) {
                 showNotification('Success', data.message || 'Recording started', 'success');
                 updateSystemStats();
+                // The OWL re-scans for a USB drive when recording starts and
+                // snaps the toggle back off if none is found — surface why.
+                setTimeout(checkStorageAfterRecordingStart, 3000);
             } else {
                 throw new Error(data.message || 'Failed to start recording');
             }
@@ -370,6 +373,19 @@ function _doStartRecording() {
         .catch(error => {
             showNotification('Error', error.message || 'Failed to start recording', 'error');
         });
+}
+
+function checkStorageAfterRecordingStart() {
+    apiRequest('/api/system_stats')
+        .then(response => response.json())
+        .then(stats => {
+            if (stats && stats.storage_available === false && !stats.image_sample_enable) {
+                showNotification('No USB drive',
+                    'No USB drive found — insert a drive and press Record again', 'error', 8000);
+                updateSystemStats();
+            }
+        })
+        .catch(() => {});
 }
 
 function stopRecording() {

@@ -159,8 +159,11 @@ class DirectorySetup:
             try:
                 return self._try_setup_directories()
             except (errors.USBMountError, errors.USBWriteError, errors.NoWritableUSBError) as e:
-                self.logger.info(f"[INFO] Attempt {attempt + 1} failed: {str(e)}. Retrying in {retry_delay} seconds...")
-                time.sleep(retry_delay)
+                if attempt < max_retries - 1:
+                    self.logger.info(f"[INFO] Attempt {attempt + 1} failed: {str(e)}. Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                else:
+                    self.logger.info(f"[INFO] Attempt {attempt + 1} failed: {str(e)}.")
 
         raise errors.NoWritableUSBError()
 

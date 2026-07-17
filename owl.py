@@ -402,19 +402,17 @@ class Owl:
 
             except (errors.NoWritableUSBError, errors.USBMountError, errors.USBWriteError,
                     errors.StorageSystemError) as e:
-                self.logger.critical(str(e))
-                # Flash both LEDs in sync to signal boot error — process stays alive
-                self.status_indicator.error(6)
-                if self.gps_status_led:
-                    self.gps_status_led.set_state(GPSLEDState.ERROR)
-                self.logger.critical("Both LEDs flashing — storage error. Fix USB drive and restart.")
-                # Block here so LEDs keep flashing (systemd will not restart while process is alive)
-                try:
-                    while True:
-                        time.sleep(5)
-                except KeyboardInterrupt:
-                    self.stop()
-                    raise
+                # A missing USB drive must not stop the OWL: detection runs
+                # normally and recording stays unavailable until a drive
+                # appears. Every record toggle re-scans for one — see
+                # _retry_storage_setup().
+                self.logger.warning(f"No writable recording drive found: {e}")
+                self.logger.warning("Detection will run; recording is disabled until a USB drive is inserted.")
+                self.save_directory = None
+                self.save_subdirectory = None
+                self.image_recorder = None
+                if self.dash:
+                    self.dash.set_storage_available(False)
 
         ############################
 
@@ -629,6 +627,29 @@ class Owl:
         self.logger.info(f'[INFO] Crop edges L{left} R{right} T{top} B{bottom} '
                          f'-> {self.cropped_width}x{self.cropped_height}px')
 
+    def _retry_storage_setup(self):
+        """One-shot re-scan for a writable USB drive, run when recording is
+        requested while no drive was found at boot (or it was removed).
+
+        Returns True when a drive was found and the ImageRecorder is ready.
+        """
+        try:
+            self.directory_manager = DirectorySetup(
+                save_directory=self.config.get('DataCollection', 'save_directory'))
+            self.save_directory, self.save_subdirectory = self.directory_manager.setup_directories(max_retries=1)
+            self.image_recorder = ImageRecorder(save_directory=self.save_subdirectory, mode=self.sample_method)
+            self.status_indicator.save_directory = self.save_directory
+            if self.dash:
+                self.dash.set_storage_available(True)
+            self.logger.info(f"Recording drive found: {self.save_directory}")
+            return True
+        except (errors.NoWritableUSBError, errors.USBMountError, errors.USBWriteError,
+                errors.StorageSystemError) as e:
+            self.logger.warning(f"Recording requested but no writable USB drive found: {e}")
+            if self.dash:
+                self.dash.set_storage_available(False)
+            return False
+
     def hoot(self):
         # Signal successful boot with LED blink
         if hasattr(self, 'status_indicator') and hasattr(self.status_indicator, 'setup_success'):
@@ -767,7 +788,12 @@ class Owl:
 
                 # Create new session directory when recording starts
                 if self._image_sample_enable and not prev_recording_enable:
-                    if hasattr(self, 'save_directory') and self.save_directory:
+                    # No drive at boot (or since removed) — re-scan now so
+                    # plugging a USB in mid-session just works.
+                    if not getattr(self, 'save_directory', None):
+                        self._retry_storage_setup()
+
+                    if getattr(self, 'save_directory', None):
                         session_name = f"session_{datetime.now().strftime('%H%M%S')}"
                         date_dir = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
                         session_dir = os.path.join(date_dir, session_name)
@@ -779,6 +805,15 @@ class Owl:
                         self.image_recorder = ImageRecorder(
                             save_directory=session_dir, mode=self.sample_method)
                         self.logger.info(f"New recording session: {session_dir}")
+                    else:
+                        # Still no drive — refuse to record and snap the
+                        # toggle back off everywhere so state stays honest.
+                        if self.dash:
+                            self.dash.set_image_sample_enable(False)
+                        if hasattr(self, 'image_sample_enable'):
+                            with self.image_sample_enable.get_lock():
+                                self.image_sample_enable.value = False
+                        self._image_sample_enable = False
                 prev_recording_enable = self._image_sample_enable
 
                 # Drain queued trackbar updates from MQTT thread (thread-safe)

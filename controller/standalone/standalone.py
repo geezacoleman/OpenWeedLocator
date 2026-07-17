@@ -2381,6 +2381,7 @@ class OWLDashboard:
             'contract_version': APP_CONTRACT_VERSION,
             'detection_enable': mqtt_state.get('detection_enable', False),
             'image_sample_enable': mqtt_state.get('image_sample_enable', False),
+            'storage_available': mqtt_state.get('storage_available', True),
             'sensitivity_level': mqtt_state.get('sensitivity_level', 'high'),
             'stream_active': mqtt_state.get('stream_active', False),
             'weed_detect_indicator': self.mqtt_client.get_weed_detect_indicator() if self.mqtt_client else False,
