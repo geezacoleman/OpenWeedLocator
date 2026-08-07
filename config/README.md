@@ -119,7 +119,7 @@ Used when `algorithm = gog` or `algorithm = gog-hybrid`. Green-on-Green detectio
 | `model_path` | `models` | Directory or file path | Path to YOLO model. Can be an NCNN directory, `.pt` file, or parent directory containing models |
 | `confidence` | `0.5` | 0.0--1.0 (float) | Minimum detection confidence. Lower = more detections (more false positives), higher = fewer but more certain |
 | `detect_classes` | *(empty)* | Comma-separated class names | Filter detections to specific classes. Empty = detect all classes the model knows |
-| `actuation_mode` | `centre` | `centre`, `zone` | How detections trigger relays (see below) |
+| `actuation_mode` | `centre` | `centre`, `edge`, `zone` | How detections trigger relays (see below) |
 | `min_detection_pixels` | `50` | 1+ (integer) | Minimum weed pixels in a relay lane to trigger actuation. Only used in `zone` mode |
 | `inference_resolution` | `320` | 160--1280 (integer) | YOLO input resolution for `gog-hybrid` mode. Lower = faster inference, higher = better crop detection. Only used in hybrid mode |
 | `crop_buffer_px` | `20` | 0--50 (integer) | Dilation buffer in pixels around detected crop regions in `gog-hybrid` mode. Larger buffer = more area masked as crop (fewer false positives on crop edges). Only used in hybrid mode |
@@ -127,6 +127,8 @@ Used when `algorithm = gog` or `algorithm = gog-hybrid`. Green-on-Green detectio
 **Actuation modes:**
 
 - **`centre`** (default) -- Uses the centre point of each detection bounding box to determine which relay lane the weed falls in. Works with both detection and segmentation models. Simple and reliable.
+
+- **`edge`** -- Uses the left edge, centre, and right edge of each detection bounding box. A large weed spanning multiple lanes can therefore trigger more than one relay. Works with both detection and segmentation models while avoiding the extra mask processing required by `zone` mode. The centre Y coordinate still determines when the detection enters the actuation zone.
 
 - **`zone`** -- Uses the segmentation mask to count weed pixels in each relay lane. A relay fires only if the pixel count exceeds `min_detection_pixels`. **Requires a segmentation model** (detection-only models have no mask data). More precise for large or irregularly shaped weeds.
 

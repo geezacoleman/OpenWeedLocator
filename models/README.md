@@ -36,8 +36,8 @@ You can also specify an exact path in config: `model_path = models/my_model_ncnn
 
 YOLO supports two task types, both work with the OWL:
 
-- **Detection models** (`yolo11n.pt`) — output bounding boxes only. Use with `actuation_mode = centre`.
-- **Segmentation models** (`yolo11n-seg.pt`) — output bounding boxes + pixel masks. Use with `actuation_mode = centre` or `actuation_mode = zone`.
+- **Detection models** (`yolo11n.pt`) — output bounding boxes only. Use with `actuation_mode = centre` or `actuation_mode = edge`.
+- **Segmentation models** (`yolo11n-seg.pt`) — output bounding boxes + pixel masks. All three actuation modes are supported.
 
 Both model types also work with `gog-hybrid` mode. Segmentation models provide precise crop boundaries; detection models use filled bounding boxes as crop exclusion zones (coarser but functional). The buffer dilation smooths the edges either way.
 
@@ -83,7 +83,7 @@ Set these parameters in your config INI file under `[GreenOnGreen]`:
 model_path = models                  # Path to model or directory
 confidence = 0.5                     # Detection threshold (0.0-1.0)
 detect_classes =                     # Comma-separated class names (empty = all)
-actuation_mode = centre              # 'centre' or 'zone'
+actuation_mode = centre              # 'centre', 'edge', or 'zone'
 min_detection_pixels = 50            # Min pixels per lane for zone mode
 inference_resolution = 320           # YOLO input resolution for hybrid mode (160-1280)
 crop_buffer_px = 20                  # Buffer around crop regions in hybrid mode (0-50)
@@ -94,6 +94,7 @@ Then set `algorithm = gog` (pure AI detection) or `algorithm = gog-hybrid` (AI c
 ## Actuation Modes
 
 - **`centre`** (default) — The centre X coordinate of each detection box determines which relay fires. Works with both detection and segmentation models.
+- **`edge`** — The left edge, centre, and right edge of each detection box determine which relays fire. This improves coverage for large weeds with either detection or segmentation models.
 - **`zone`** (segmentation models only) — The frame is divided into lanes (one per relay). If the number of weed pixels in a lane exceeds `min_detection_pixels`, that relay fires. A large weed spanning multiple lanes triggers multiple relays simultaneously.
 
 ## Tracking (ByteTrack)
