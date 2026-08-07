@@ -618,7 +618,7 @@ class TestConfigIntegration:
         config.read(config_dir / ini_name)
 
         mode = config.get('GreenOnGreen', 'actuation_mode')
-        assert mode in ('centre', 'zone'), f'{ini_name} has invalid actuation_mode: {mode}'
+        assert mode in ('centre', 'edge', 'zone'), f'{ini_name} has invalid actuation_mode: {mode}'
 
     def test_tracking_section_exists(self):
         """GENERAL_CONFIG.ini has [Tracking] section with required keys."""
