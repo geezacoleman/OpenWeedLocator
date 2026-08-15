@@ -309,11 +309,11 @@ class ConfigValidator:
         },
         'Camera': {
             'required_keys': {'resolution_width', 'resolution_height'},
-            # awb_mode is a string key (enum-validated) — optional_keys only
+            # awb_mode / rotation are string keys (enum-validated) — optional_keys only
             'optional_keys': {'exp_compensation', 'crop_factor_horizontal', 'crop_factor_vertical', 'camera_type',
                               'allow_high_resolution',
                               'crop_left', 'crop_right', 'crop_top', 'crop_bottom',
-                              'awb_mode', 'awb_red_gain', 'awb_blue_gain'}
+                              'awb_mode', 'awb_red_gain', 'awb_blue_gain', 'rotation'}
         },
         'GreenOnGreen': {
             'required_keys': {'model_path', 'confidence'},
@@ -433,6 +433,7 @@ class ConfigValidator:
     VALID_ACTUATION_MODES = {'centre', 'zone'}
     VALID_CAMERA_TYPES = {'rpi', 'usb', 'auto'}
     VALID_AWB_MODES = {'auto', 'daylight', 'cloudy', 'tungsten', 'fluorescent', 'indoor', 'manual'}
+    VALID_ROTATIONS = {'auto', '0', '180'}
     VALID_SAMPLE_METHODS = {'bbox', 'square', 'whole'}
     VALID_STORAGE_LOCATIONS = {'usb', 'internal', 'auto'}
     VALID_BOOLEANS = {'true', 'false', '1', '0', 'yes', 'no', 'on', 'off'}
@@ -710,6 +711,21 @@ class ConfigValidator:
         return True, {}
 
     @classmethod
+    def validate_rotation(cls, config: ConfigParser) -> Tuple[bool, Dict[str, Dict[str, str]]]:
+        """Validate camera rotation selection."""
+        if not config.has_option('Camera', 'rotation'):
+            return True, {}  # Optional field, skip if not present
+
+        rotation = config.get('Camera', 'rotation', fallback='').strip().lower()
+
+        if rotation not in cls.VALID_ROTATIONS:
+            return False, {'Camera': {
+                'rotation': f'Invalid rotation. Must be one of: {", ".join(sorted(cls.VALID_ROTATIONS))}'
+            }}
+
+        return True, {}
+
+    @classmethod
     def validate_sample_method(cls, config: ConfigParser) -> Tuple[bool, Dict[str, Dict[str, str]]]:
         """Validate sample method selection."""
         if not config.has_option('DataCollection', 'sample_method'):
@@ -927,6 +943,11 @@ class ConfigValidator:
         is_valid, awb_errors = cls.validate_awb_mode(config)
         if not is_valid:
             validation_errors.update(awb_errors)
+
+        # Validate camera rotation
+        is_valid, rotation_errors = cls.validate_rotation(config)
+        if not is_valid:
+            validation_errors.update(rotation_errors)
 
         # Validate sample method
         is_valid, sample_errors = cls.validate_sample_method(config)

@@ -154,6 +154,11 @@ class StreamingHandler(BaseHTTPRequestHandler):
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     """Handle requests in a separate thread and hold a reference to the Owl instance."""
 
+    # MJPEG client threads sit in a while-True send loop; as non-daemon
+    # threads they block interpreter exit until systemd SIGKILLs the
+    # process, which slows every service restart.
+    daemon_threads = True
+
     def __init__(self, server_address, RequestHandlerClass, owl_instance):
         self.owl_instance = owl_instance
         super().__init__(server_address, RequestHandlerClass)
@@ -244,7 +249,8 @@ class WebcamStream:
 
 class PiCamera2Stream:
     def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2,
-                 awb_mode='daylight', awb_red_gain=2.0, awb_blue_gain=2.0, **kwargs):
+                 awb_mode='daylight', awb_red_gain=2.0, awb_blue_gain=2.0,
+                 rotation='auto', **kwargs):
         self.logger = LogManager.get_logger(__name__)
         self.name = 'Picamera2Stream'
         self.logger.info(f'Camera type: {self.name}')
@@ -313,9 +319,12 @@ class PiCamera2Stream:
         else:
             self.logger.info('[INFO] Unrecognised camera module, continuing with default settings.')
 
+        self.rotation = self._resolve_rotation(rotation, self.camera_model)
+        flip = (self.rotation == 180)
+
         try:
             self.config = self.camera.create_preview_configuration(main=self.configurations,
-                                                                   transform=Transform(hflip=True, vflip=True),
+                                                                   transform=Transform(hflip=flip, vflip=flip),
                                                                    queue=False,
                                                                    controls=self.controls)
             self.camera.configure(self.config)
@@ -336,6 +345,25 @@ class PiCamera2Stream:
             message = (f"The actual frame size ({self.frame_width}x{self.frame_height}) "
                        f"differs from the expected resolution ({resolution[0]}x{resolution[1]}).")
             self.logger.warning(message)
+
+    def _resolve_rotation(self, rotation, camera_model):
+        """Sensor mounting differs between OWL builds: the classic enclosure
+        mounts the HQ (imx477) / CM3 (imx708) modules upside down — the
+        long-standing hardcoded 180 — while GS (imx296) OWL 3.0 units mount
+        upright. 'auto' picks by sensor; an explicit [Camera] rotation of
+        0 or 180 always wins."""
+        value = str(rotation).strip().lower()
+        if value in ('0', '180'):
+            resolved = int(value)
+            self.logger.info(f'[INFO] Camera rotation: {resolved} deg (from config)')
+            return resolved
+        if value != 'auto':
+            self.logger.warning(
+                f"Invalid rotation '{rotation}' (use auto, 0 or 180) - using auto")
+        resolved = 0 if camera_model == 'imx296' else 180
+        self.logger.info(
+            f'[INFO] Camera rotation: {resolved} deg (auto for {camera_model})')
+        return resolved
 
     def start(self):
         # Start the thread to update frames
@@ -459,7 +487,8 @@ LEGACY_AWB_MODES = {
 
 class PiCameraStream:
     def __init__(self, resolution=(416, 320), exp_compensation=-2,
-                 awb_mode='daylight', awb_red_gain=2.0, awb_blue_gain=2.0, **kwargs):
+                 awb_mode='daylight', awb_red_gain=2.0, awb_blue_gain=2.0,
+                 rotation='auto', **kwargs):
         self.logger = LogManager.get_logger(__name__)
         self.name = 'PicameraStream'
         self.logger.info(f'Camera type: {self.name}')
@@ -483,6 +512,10 @@ class PiCameraStream:
                 self.camera.awb_mode = LEGACY_AWB_MODES[awb_mode]
             self.camera.sensor_mode = 0
             self.camera.exposure_compensation = exp_compensation
+            # Legacy stack never flipped; 'auto' keeps that. Explicit
+            # [Camera] rotation = 0|180 is applied directly.
+            if str(rotation).strip().lower() in ('0', '180'):
+                self.camera.rotation = int(str(rotation).strip())
 
             self.frame_width = self.camera.resolution[0]
             self.frame_height = self.camera.resolution[1]

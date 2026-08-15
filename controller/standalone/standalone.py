@@ -209,8 +209,17 @@ class OWLDashboard:
 
         controller_ini = Path(__file__).parent.parent.parent / 'config' / 'CONTROLLER.ini'
         if controller_ini.exists():
-            self.config.read(controller_ini)
-            self.logger.info(f"Config loaded from {controller_ini}")
+            # configparser silently skips unreadable files — a root-owned
+            # CONTROLLER.ini (past provisioning bug) would quietly drop the
+            # broker/token/network settings, so check what was actually read.
+            read_ok = self.config.read(controller_ini)
+            if read_ok:
+                self.logger.info(f"Config loaded from {controller_ini}")
+            else:
+                self.logger.error(
+                    f"CONTROLLER.ini exists but could not be read (check "
+                    f"ownership/permissions: ls -l {controller_ini}) - broker, "
+                    f"token and network settings will use defaults")
         else:
             self.logger.warning(f"CONTROLLER.ini not found at {controller_ini}")
 
@@ -390,94 +399,100 @@ class OWLDashboard:
         @self.app.route('/api/owl/restart', methods=['POST'])
         def restart_owl():
             """Restart owl.service (token-guarded; used by the app after a
-            restart-required config change like resolution)."""
+            restart-required config change like resolution).
+
+            Fire-and-forget: `systemctl restart` blocks until the unit is
+            down and back up, which outlives the 5 s command timeout and
+            produced false 500s for restarts that were actually proceeding.
+            """
             denied = self._check_device_token()
             if denied is not None:
                 return denied
+            systemctl = shutil.which('systemctl') or '/usr/bin/systemctl'
             try:
-                result = self._run_systemctl_command(['restart', 'owl.service'],
-                                                     needs_sudo=True)
+                subprocess.Popen(['sudo', systemctl, 'restart', 'owl.service'],
+                                 stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
             except Exception as e:
-                self.logger.error(f"owl.service restart failed: {e}")
+                self.logger.error(f"owl.service restart failed to launch: {e}")
                 return jsonify({'success': False, 'error': str(e)}), 500
-            if result.returncode != 0:
-                error = result.stderr.strip() or 'Failed to restart owl.service'
-                self.logger.error(f"owl.service restart failed: {error}")
-                return jsonify({'success': False, 'error': error}), 500
+            self.logger.info("owl.service restart requested")
             return jsonify({'success': True,
                             'message': 'OWL service restarting.'})
+
+        def _hardware_locked_response(feature):
+            reason = (f'{self._get_controller_type().upper()} controller '
+                      f'active - use physical switches')
+            # 'error' is what api clients (phone app) surface; 'message'
+            # kept for older kiosk JS that reads it.
+            return jsonify({'success': False, 'error': reason,
+                            'message': reason}), 423
+
+        def _command_response(result, success_log):
+            """_send_command reports failure by RETURNING {'success': False}
+            — it never raises — so an unchecked jsonify(result) sent HTTP
+            200 for commands that were never delivered."""
+            if isinstance(result, dict) and not result.get('success', True):
+                self.logger.error(
+                    f"{success_log} FAILED: {result.get('error', 'unknown')}")
+                return jsonify(result), 503
+            self.logger.info(success_log)
+            return jsonify(result)
 
         @self.app.route('/api/detection/start', methods=['POST'])
         def start_detection():
             if self._is_hardware_locked('detection'):
-                return jsonify({
-                    'success': False,
-                    'message': f'{self._get_controller_type().upper()} controller active - use physical switches'
-                }), 423
+                return _hardware_locked_response('detection')
 
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             result = self.mqtt_client.set_detection_enable(True)
-            self.logger.info("Detection enabled via dashboard")
-            return jsonify(result)
+            return _command_response(result, "Detection enabled via dashboard")
 
         @self.app.route('/api/detection/stop', methods=['POST'])
         def stop_detection():
             if self._is_hardware_locked('detection'):
-                return jsonify({
-                    'success': False,
-                    'message': f'{self._get_controller_type().upper()} controller active - use physical switches'
-                }), 423
+                return _hardware_locked_response('detection')
 
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             result = self.mqtt_client.set_detection_enable(False)
-            self.logger.info("Detection disabled via dashboard")
-            return jsonify(result)
+            return _command_response(result, "Detection disabled via dashboard")
 
         @self.app.route('/api/recording/start', methods=['POST'])
         def start_recording():
             if self._is_hardware_locked('recording'):
-                return jsonify({
-                    'success': False,
-                    'message': f'{self._get_controller_type().upper()} controller active - use physical switches'
-                }), 423
+                return _hardware_locked_response('recording')
 
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             result = self.mqtt_client.set_image_sample_enable(True)
-            self.logger.info("Recording enabled via dashboard")
-            return jsonify(result)
+            return _command_response(result, "Recording enabled via dashboard")
 
         @self.app.route('/api/recording/stop', methods=['POST'])
         def stop_recording():
             if self._is_hardware_locked('recording'):
-                return jsonify({
-                    'success': False,
-                    'message': f'{self._get_controller_type().upper()} controller active - use physical switches'
-                }), 423
+                return _hardware_locked_response('recording')
 
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             result = self.mqtt_client.set_image_sample_enable(False)
-            self.logger.info("Recording disabled via dashboard")
-            return jsonify(result)
+            return _command_response(result, "Recording disabled via dashboard")
 
         @self.app.route('/api/nozzles/all-on', methods=['POST'])
         def nozzles_all_on():
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             result = self.mqtt_client.set_detection_mode(2)
-            self.logger.info("All nozzles ON via dashboard (blanket mode)")
-            return jsonify(result)
+            return _command_response(
+                result, "All nozzles ON via dashboard (blanket mode)")
 
         @self.app.route('/api/nozzles/all-off', methods=['POST'])
         def nozzles_all_off():
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             result = self.mqtt_client.set_detection_mode(1)
-            self.logger.info("All nozzles OFF via dashboard")
-            return jsonify(result)
+            return _command_response(result, "All nozzles OFF via dashboard")
 
         @self.app.route('/api/tracking/set', methods=['POST'])
         def set_tracking():
@@ -1561,7 +1576,13 @@ class OWLDashboard:
                 config_path = self._resolve_config_path(active_config)
 
                 if not config_path or not os.path.exists(config_path):
-                    return jsonify({'success': False, 'error': 'Config file not found'}), 404
+                    # Self-heal instead of a dead 'Config file not found'
+                    # loop (e.g. a hand-deleted autosave with the pointer
+                    # still targeting it).
+                    config_path = self._heal_missing_active_config()
+                    if not config_path or not os.path.exists(config_path):
+                        return jsonify({'success': False, 'error': 'Config file not found'}), 404
+                    active_config = self._get_active_config_path()
 
                 config.read(config_path)
                 # Merge device-resident mount geometry last so it wins, mirroring
@@ -2184,6 +2205,29 @@ class OWLDashboard:
 
         return os.path.normpath(possible_dirs[0])
 
+    def _heal_missing_active_config(self):
+        """The active pointer targets a file that no longer exists (e.g. a
+        hand-deleted autosave). Re-seed the working copy from
+        GENERAL_CONFIG.ini and repoint the active config at it, so the
+        dashboard never sits in a dead 'Config file not found' loop.
+        Returns the healed config path (or None if healing failed)."""
+        try:
+            config_dir = self._get_config_dir()
+            missing = os.path.basename(self._get_active_config_path())
+            seeded = seed_autosave(
+                config_dir, os.path.join(config_dir, 'GENERAL_CONFIG.ini'))
+            if not os.path.exists(seeded):
+                return None
+            self._set_active_config(
+                f'config/{os.path.basename(seeded)}', seed=False)
+            self.logger.warning(
+                f"Active config '{missing}' was missing - re-seeded "
+                f"{os.path.basename(seeded)} from GENERAL_CONFIG.ini")
+            return seeded
+        except Exception as e:
+            self.logger.error(f"Could not heal missing active config: {e}")
+            return None
+
     def _set_active_config(self, config_path, seed=True):
         """Set the active config by writing to pointer file.
 
@@ -2254,8 +2298,10 @@ class OWLDashboard:
             config_path = self._resolve_config_path(active_config)
 
             if not os.path.exists(config_path):
-                self.logger.warning(f"Config file not found for persistence: {config_path}")
-                return
+                config_path = self._heal_missing_active_config()
+                if not config_path:
+                    self.logger.warning("Config file not found for persistence and healing failed")
+                    return
 
             config = configparser.ConfigParser()
             config.optionxform = str
@@ -2490,6 +2536,10 @@ class OWLDashboard:
             'storage_free_mb': mqtt_state.get('storage_free_mb'),
             'storage_warning': mqtt_state.get('storage_warning', 'ok'),
             'image_quota_gb': mqtt_state.get('image_quota_gb', 12),
+            # Where recording lands / why it was refused — additive fields
+            'recording_location': mqtt_state.get('recording_location'),
+            'storage_fallback': mqtt_state.get('storage_fallback', False),
+            'recording_blocked_reason': mqtt_state.get('recording_blocked_reason'),
             'sensitivity_level': mqtt_state.get('sensitivity_level', 'high'),
             'stream_active': mqtt_state.get('stream_active', False),
             'weed_detect_indicator': self.mqtt_client.get_weed_detect_indicator() if self.mqtt_client else False,

@@ -715,7 +715,11 @@ offset_cm = 30
 speed_avg_window = 5.0
 EOF
 
+    # The owl/owl-dash services run as ${CURRENT_USER} and configparser
+    # silently skips unreadable files - a root-owned CONTROLLER.ini disables
+    # MQTT and the token guard on the whole device.
     chown "${CURRENT_USER}:${CURRENT_USER}" "$CTRL_INI"
+    chmod 0640 "$CTRL_INI"
 
     echo -e "${TICK} CONTROLLER.ini written"
     echo -e "${GREEN}[INFO]   MQTT: enable=True, broker=${BROKER_IP}:1883, device_id=${DEVICE_ID}${NC}"

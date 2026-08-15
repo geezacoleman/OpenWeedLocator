@@ -24,6 +24,7 @@ import shutil
 import socket
 import subprocess
 import threading
+import time
 
 from flask import Blueprint, jsonify, request
 
@@ -34,9 +35,15 @@ PASSWORD_HELPER = '/usr/local/sbin/owl-set-user-password'
 MIN_PASSWORD_LENGTH = 8
 HOTSPOT_APPLY_DELAY_S = 5   # lets the 202 reach the phone before the AP re-keys
 POWER_DELAY_S = 3           # lets the response flush before shutdown/reboot
+POWER_BACKSTOP_DELAY_S = 10  # direct sudo backstop after a successful MQTT send
 
 PERMISSIONS_MISSING_ERROR = ('Device settings permissions not installed. '
                              'Re-run controller/shared/setup.sh on the OWL.')
+
+# Token recovery brute-force guard: after this many wrong hotspot passwords,
+# the route locks for TOKEN_RECOVERY_LOCK_S.
+TOKEN_RECOVERY_MAX_FAILURES = 5
+TOKEN_RECOVERY_LOCK_S = 300
 
 
 def make_token_reader(controller_ini_path):
@@ -56,7 +63,15 @@ def make_token_reader(controller_ini_path):
             return None
         if mtime != cache['mtime']:
             config = configparser.ConfigParser()
-            config.read(controller_ini_path)
+            read_ok = config.read(controller_ini_path)
+            if not read_ok:
+                # configparser silently skips unreadable files — that would
+                # quietly disable the token guard (legacy-allow) on a device
+                # that HAS a token, so shout once per mtime change.
+                logging.getLogger(__name__).error(
+                    "CONTROLLER.ini exists but could not be read (check "
+                    "ownership/permissions: ls -l %s) - device token guard "
+                    "is disabled", controller_ini_path)
             cache['token'] = config.get('Security', 'device_token',
                                         fallback=None) or None
             cache['mtime'] = mtime
@@ -273,30 +288,51 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
     def _power_action(action):
         """MQTT-first (owl.py runs the sudo command with clean shutdown of
         detection); direct delayed sudo fallback when owl.py isn't there
-        to hear the command."""
-        mqtt = mqtt_getter() if mqtt_getter else None
-        owl_active = bool(owl_active_getter()) if owl_active_getter else False
-        if mqtt and owl_active:
-            try:
-                mqtt._send_command(action)
-                return jsonify({'success': True, 'via': 'mqtt'})
-            except Exception as e:
-                log.error(f"MQTT {action} failed, using direct path: {e}")
+        to hear the command.
 
+        _send_command reports failure by RETURNING {'success': False} —
+        it never raises — so the result dict must be inspected. Even on a
+        successful send the direct path is armed as a delayed backstop:
+        if the box is already going down it's a no-op, and it covers the
+        case where owl.py received the command but its sudo failed
+        silently."""
         binary = shutil.which(action) or f'/usr/sbin/{action}'
         argv = ['/usr/bin/sudo', '-n', binary]
         if action == 'shutdown':
             argv.append('now')
 
-        def _delayed():
-            try:
-                runner(argv, capture_output=True, text=True, timeout=15)
-            except Exception as e:
-                log.error(f"Direct {action} failed: {e}")
+        def _arm_direct(delay_s):
+            def _delayed():
+                try:
+                    result = runner(argv, capture_output=True, text=True,
+                                    timeout=15)
+                    if result.returncode != 0:
+                        log.error(
+                            f"Direct {action} failed "
+                            f"(rc={result.returncode}): "
+                            f"{(result.stderr or '').strip()}")
+                except Exception as e:
+                    log.error(f"Direct {action} failed: {e}")
+            timer = timer_factory(delay_s, _delayed)
+            timer.daemon = True
+            timer.start()
 
-        timer = timer_factory(POWER_DELAY_S, _delayed)
-        timer.daemon = True
-        timer.start()
+        mqtt = mqtt_getter() if mqtt_getter else None
+        owl_active = bool(owl_active_getter()) if owl_active_getter else False
+        if mqtt and owl_active:
+            try:
+                result = mqtt._send_command(action)
+            except Exception as e:
+                result = {'success': False, 'error': str(e)}
+            if isinstance(result, dict) and result.get('success'):
+                _arm_direct(POWER_BACKSTOP_DELAY_S)
+                return jsonify({'success': True, 'via': 'mqtt',
+                                'backstop_delay_s': POWER_BACKSTOP_DELAY_S})
+            error = (result.get('error', 'unknown error')
+                     if isinstance(result, dict) else result)
+            log.error(f"MQTT {action} failed, using direct path: {error}")
+
+        _arm_direct(POWER_DELAY_S)
         return jsonify({'success': True, 'via': 'direct',
                         'delay_s': POWER_DELAY_S})
 
@@ -309,5 +345,52 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
     @guard
     def system_reboot():
         return _power_action('reboot')
+
+    # ------------------------------------------------------------------
+    # Token recovery
+    # ------------------------------------------------------------------
+    # An app that lost its stored token (OWL deleted/re-added in the app,
+    # phone replaced, token rotated by re-provisioning) can re-earn it by
+    # proving it knows the hotspot password — the same trust level the
+    # token was originally granted under. Deliberately NOT token-guarded.
+    recovery_lock = {'failures': 0, 'lock_until': 0.0}
+
+    @bp.route('/api/settings/token', methods=['POST'])
+    def recover_token():
+        now = time.time()
+        if now < recovery_lock['lock_until']:
+            wait_s = int(recovery_lock['lock_until'] - now) + 1
+            return jsonify({'success': False,
+                            'error': f'Too many attempts. Try again in {wait_s} s'}), 429
+
+        data = request.get_json(silent=True) or {}
+        provided = str(data.get('hotspot_password') or '')
+        if not provided:
+            return jsonify({'success': False,
+                            'error': 'hotspot_password is required'}), 400
+
+        try:
+            actual = manager.nm.get_hotspot_password()
+        except Exception as e:
+            log.error(f"Token recovery: could not read hotspot PSK: {e}")
+            actual = None
+        if not actual:
+            return jsonify({'success': False,
+                            'error': 'Could not verify the hotspot password '
+                                     'on this OWL'}), 503
+
+        if not secrets.compare_digest(provided, actual):
+            recovery_lock['failures'] += 1
+            if recovery_lock['failures'] >= TOKEN_RECOVERY_MAX_FAILURES:
+                recovery_lock['failures'] = 0
+                recovery_lock['lock_until'] = now + TOKEN_RECOVERY_LOCK_S
+            log.warning("Token recovery: wrong hotspot password")
+            return jsonify({'success': False,
+                            'error': 'Wrong hotspot password'}), 403
+
+        recovery_lock['failures'] = 0
+        token = token_reader() if token_reader else None
+        log.info("Device token re-issued via hotspot-password verification")
+        return jsonify({'success': True, 'device_token': token})
 
     return bp

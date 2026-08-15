@@ -287,3 +287,40 @@ class TestStorageStatusState:
         publisher = self._publisher()
         publisher.set_storage_status('usb', None, 'ok', 12)
         assert publisher.state['storage_free_mb'] is None
+
+
+@pytest.mark.unit
+class TestRecordingStorageState:
+    """v3.11.1: where recording lands + why it was refused are published so
+    the app can explain a snap-back instead of silently reverting."""
+
+    def _publisher(self):
+        from utils.mqtt_manager import OWLMQTTPublisher
+        publisher = OWLMQTTPublisher(broker_host='localhost', broker_port=1883,
+                                     client_id='test_recstore', device_id='test-owl')
+        publisher.client = MagicMock()
+        publisher.connected = True
+        publisher._publish_state = MagicMock()
+        return publisher
+
+    def test_state_seeds_fields(self):
+        publisher = self._publisher()
+        assert publisher.state['recording_location'] is None
+        assert publisher.state['storage_fallback'] is False
+        assert publisher.state['recording_blocked_reason'] is None
+
+    def test_set_recording_storage_clears_blocked_reason(self):
+        publisher = self._publisher()
+        publisher.set_recording_blocked('no_drive')
+        publisher.set_recording_storage('internal', fallback=True)
+        assert publisher.state['recording_location'] == 'internal'
+        assert publisher.state['storage_fallback'] is True
+        assert publisher.state['recording_blocked_reason'] is None
+        assert publisher._publish_state.call_count == 2
+
+    def test_set_recording_blocked_clears_location(self):
+        publisher = self._publisher()
+        publisher.set_recording_storage('usb', fallback=False)
+        publisher.set_recording_blocked('storage_full')
+        assert publisher.state['recording_blocked_reason'] == 'storage_full'
+        assert publisher.state['recording_location'] is None

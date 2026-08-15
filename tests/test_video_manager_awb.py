@@ -183,3 +183,34 @@ class TestAwbModeValidator:
         with pytest.raises(Exception) as excinfo:
             ConfigValidator.load_and_validate_config(bad)
         assert 'awb_mode' in str(excinfo.value)
+
+
+@pytest.mark.unit
+class TestRotationResolution:
+    """Camera rotation (v3.11.1): the historical hardcoded 180 flip belongs
+    to the classic enclosure (HQ/CM3 mounted upside down); GS (imx296)
+    OWL 3.0 mounts are upright. [Camera] rotation = 0|180 always wins."""
+
+    def _resolve(self, rotation, model):
+        stub = MagicMock()
+        return PiCamera2Stream._resolve_rotation(stub, rotation, model)
+
+    def test_auto_is_upright_for_imx296(self):
+        assert self._resolve('auto', 'imx296') == 0
+
+    @pytest.mark.parametrize('model', ['imx477', 'imx708', 'imx219', None])
+    def test_auto_keeps_legacy_flip_for_other_sensors(self, model):
+        assert self._resolve('auto', model) == 180
+
+    def test_explicit_zero_wins_over_model(self):
+        assert self._resolve('0', 'imx477') == 0
+
+    def test_explicit_180_wins_over_model(self):
+        assert self._resolve('180', 'imx296') == 180
+
+    def test_int_input_accepted(self):
+        assert self._resolve(180, 'imx296') == 180
+
+    def test_invalid_value_falls_back_to_auto(self):
+        assert self._resolve('90', 'imx296') == 0
+        assert self._resolve('sideways', 'imx477') == 180

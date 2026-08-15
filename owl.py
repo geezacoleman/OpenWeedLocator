@@ -125,7 +125,17 @@ class Owl:
             raise
 
         self.config.read(self._config_path)
-        self.config.read(Path(__file__).parent / 'config' / 'CONTROLLER.ini')
+        # configparser silently skips unreadable files. CONTROLLER.ini holds
+        # [MQTT]/[Network]/[Security]; losing it (e.g. a root-owned file from
+        # a provisioning bug) disables MQTT and the token guard with no error,
+        # so an existing-but-unread file must be loud.
+        controller_ini = Path(__file__).parent / 'config' / 'CONTROLLER.ini'
+        read_ok = self.config.read(controller_ini)
+        if controller_ini.exists() and not read_ok:
+            self.logger.error(
+                f"CONTROLLER.ini exists but could not be read (check ownership/"
+                f"permissions: ls -l {controller_ini}) - MQTT, network and "
+                f"security settings will be missing")
         # GEOMETRY.ini holds per-unit mount geometry (crop edges + actuation band)
         # and is read LAST so it always wins over legacy crop_*/actuation_* values
         # in the active detection config.
@@ -209,6 +219,10 @@ class Owl:
         self.awb_mode = self.config.get('Camera', 'awb_mode', fallback='daylight').lower()
         self.awb_red_gain = self.config.getfloat('Camera', 'awb_red_gain', fallback=2.0)
         self.awb_blue_gain = self.config.getfloat('Camera', 'awb_blue_gain', fallback=2.0)
+        # auto: upright for GS (imx296) OWL 3.0 mounts, 180 for the classic
+        # enclosure (HQ/CM3 mounted upside down); 0|180 overrides per unit
+        self.camera_rotation = self.config.get('Camera', 'rotation',
+                                               fallback='auto').strip().lower()
 
         # Relay Dict maps the reference relay number to a boardpin on the embedded device
         self.relay_dict = {}
@@ -396,10 +410,12 @@ class Owl:
             self.save_directory = self.config.get('DataCollection', 'save_directory')
             self.camera_name = self.config.get('DataCollection', 'camera_name')
 
-            # Internal (eMMC) recording mode for sealed OWL 3.0 units; USB
-            # remains the default for self-installed Pis. See directory_manager.
+            # usb: recording requires a /media mount; internal: eMMC/SD path
+            # (sealed OWL 3.0 units); auto (default): USB when present, else
+            # internal so recording "just works" — the min_free_gb floor
+            # watchdog ring-fences the system disk. See directory_manager.
             self.storage_location = self.config.get(
-                'DataCollection', 'storage_location', fallback='usb').strip().lower()
+                'DataCollection', 'storage_location', fallback='auto').strip().lower()
             self.internal_save_directory = self.config.get(
                 'DataCollection', 'internal_save_directory', fallback='/home/owl/owl_images').strip()
             self.min_free_gb = self.config.getint('DataCollection', 'min_free_gb', fallback=4)
@@ -423,6 +439,10 @@ class Owl:
                 self.status_indicator.save_directory = self.save_directory
                 # auto mode resolves to usb or internal at runtime
                 self.status_indicator.storage_location = self.directory_manager.resolved_location
+                if self.dash:
+                    self.dash.set_recording_storage(
+                        self.directory_manager.resolved_location,
+                        fallback=self._is_storage_fallback())
 
             except (errors.NoWritableUSBError, errors.USBMountError, errors.USBWriteError,
                     errors.StorageSystemError) as e:
@@ -438,6 +458,8 @@ class Owl:
                 self.image_recorder = None
                 if self.dash:
                     self.dash.set_storage_available(False)
+                    self.dash.set_recording_blocked(
+                        self._classify_storage_error(e))
 
         ############################
 
@@ -652,16 +674,36 @@ class Owl:
         self.logger.info(f'[INFO] Crop edges L{left} R{right} T{top} B{bottom} '
                          f'-> {self.cropped_width}x{self.cropped_height}px')
 
-    def _retry_storage_setup(self):
-        """One-shot re-scan for a writable USB drive, run when recording is
-        requested while no drive was found at boot (or it was removed).
+    def _is_storage_fallback(self):
+        """True when recording landed on internal storage only because no
+        USB drive was present (configured usb/auto, resolved internal)."""
+        resolved = getattr(getattr(self, 'directory_manager', None),
+                           'resolved_location', None)
+        return (resolved == 'internal'
+                and getattr(self, 'storage_location', 'auto') != 'internal')
 
-        Returns True when a drive was found and the ImageRecorder is ready.
+    @staticmethod
+    def _classify_storage_error(e):
+        """Map a storage setup exception to a recording_blocked_reason the
+        dashboards/app can explain: no_drive | storage_full | storage_error."""
+        if isinstance(e, (errors.NoWritableUSBError, errors.USBMountError,
+                          errors.USBWriteError)):
+            return 'no_drive'
+        if 'free-space floor' in str(e):
+            return 'storage_full'
+        return 'storage_error'
+
+    def _retry_storage_setup(self):
+        """One-shot re-scan for a writable recording location, run when
+        recording is requested while none was found at boot (or the drive
+        was removed).
+
+        Returns True when storage was found and the ImageRecorder is ready.
         """
         try:
             self.directory_manager = DirectorySetup(
                 save_directory=self.config.get('DataCollection', 'save_directory'),
-                storage_location=getattr(self, 'storage_location', 'usb'),
+                storage_location=getattr(self, 'storage_location', 'auto'),
                 internal_save_directory=getattr(self, 'internal_save_directory', None),
                 min_free_gb=getattr(self, 'min_free_gb', 0))
             self.save_directory, self.save_subdirectory = self.directory_manager.setup_directories(max_retries=1)
@@ -672,7 +714,11 @@ class Owl:
             self._no_drive_warned = False
             if self.dash:
                 self.dash.set_storage_available(True)
-            self.logger.info(f"Recording drive found: {self.save_directory}")
+                self.dash.set_recording_storage(
+                    self.directory_manager.resolved_location,
+                    fallback=self._is_storage_fallback())
+            self.logger.info(f"Recording storage ready: {self.save_directory} "
+                             f"({self.directory_manager.resolved_location})")
             return True
         except (errors.NoWritableUSBError, errors.USBMountError, errors.USBWriteError,
                 errors.StorageSystemError) as e:
@@ -680,11 +726,12 @@ class Owl:
             # cycle, so repeat attempts without a drive change log at DEBUG.
             if not getattr(self, '_no_drive_warned', False):
                 self._no_drive_warned = True
-                self.logger.warning(f"Recording requested but no writable USB drive found: {e}")
+                self.logger.warning(f"Recording requested but no writable storage found: {e}")
             else:
-                self.logger.debug(f"Recording requested but no writable USB drive found: {e}")
+                self.logger.debug(f"Recording requested but no writable storage found: {e}")
             if self.dash:
                 self.dash.set_storage_available(False)
+                self.dash.set_recording_blocked(self._classify_storage_error(e))
             return False
 
     def hoot(self):
@@ -842,6 +889,15 @@ class Owl:
                         self.image_recorder = ImageRecorder(
                             save_directory=session_dir, mode=self.sample_method)
                         self.logger.info(f"New recording session: {session_dir}")
+                        if self.dash:
+                            # Metadata arrives before recording starts and is
+                            # buffered in state — write it into the fresh
+                            # session dir now, and (re)publish where recording
+                            # is landing so the app can warn on fallback.
+                            self.dash.save_session_metadata()
+                            self.dash.set_recording_storage(
+                                self.directory_manager.resolved_location,
+                                fallback=self._is_storage_fallback())
                     else:
                         # Still no drive — refuse to record and snap the
                         # toggle back off everywhere so state stays honest.
@@ -1215,6 +1271,7 @@ class Owl:
                         if self.status_indicator.DRIVE_FULL:
                             if self.dash:
                                 self.dash.set_image_sample_enable(False)
+                                self.dash.set_recording_blocked('storage_full')
                                 self.dash.drive_full_indicator()
                                 self.logger.info("Drive full: Image sampling disabled via MQTT")
                             else:
@@ -1465,7 +1522,8 @@ class Owl:
                                        camera_type=camera_type,
                                        awb_mode=self.awb_mode,
                                        awb_red_gain=self.awb_red_gain,
-                                       awb_blue_gain=self.awb_blue_gain)
+                                       awb_blue_gain=self.awb_blue_gain,
+                                       rotation=self.camera_rotation)
             media_source.start()
 
             self.frame_width = media_source.frame_width

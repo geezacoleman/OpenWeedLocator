@@ -286,6 +286,26 @@ class NetworkManager:
             self._run(['con', 'up', name], timeout=60)
         logger.info("Hotspot '%s' password updated", name)
 
+    def get_hotspot_password(self, name=None):
+        """Read the hotspot PSK from the connection profile (secrets need
+        --show-secrets). Used by the token-recovery route to verify the
+        caller knows the hotspot password. Returns None when unavailable."""
+        name = name or self.get_hotspot_connection()
+        if not name:
+            return None
+        result = self._run(['--show-secrets', '-t', '-f',
+                            '802-11-wireless-security.psk', 'con', 'show', name],
+                           check=False)
+        if result.returncode != 0:
+            logger.warning("Could not read hotspot PSK: %s",
+                           (result.stderr or '').strip())
+            return None
+        for line in (result.stdout or '').splitlines():
+            if line.startswith('802-11-wireless-security.psk:'):
+                psk = line.split(':', 1)[1].strip()
+                return psk or None
+        return None
+
     # ------------------------------------------------------------------
     # Hostname (used by first-boot controller-join only)
     # ------------------------------------------------------------------

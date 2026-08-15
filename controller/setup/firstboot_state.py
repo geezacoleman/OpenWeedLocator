@@ -502,13 +502,32 @@ class FirstBootState:
                     params['device_id'], params['broker_ip'])
 
     def _atomic_write_ini(self, config):
-        """Write CONTROLLER.ini atomically (tempfile + os.replace)."""
+        """Write CONTROLLER.ini atomically (tempfile + os.replace).
+
+        This service runs as root, but CONTROLLER.ini is read by the owl
+        and owl-dash services running as the install user. mkstemp creates
+        the file 0600 root:root, and configparser silently skips files it
+        cannot open — which disables MQTT and the token guard on the whole
+        device. Always hand the file back to the install user.
+        """
         self.controller_ini.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_path = tempfile.mkstemp(dir=str(self.controller_ini.parent),
                                         prefix='.controller-', suffix='.ini')
         with os.fdopen(fd, 'w') as handle:
             config.write(handle)
         os.replace(tmp_path, self.controller_ini)
+        self._fix_ini_permissions()
+
+    def _fix_ini_permissions(self):
+        """chown CONTROLLER.ini to the install user (= config dir owner), 0640."""
+        try:
+            parent = os.stat(self.controller_ini.parent)
+            if hasattr(os, 'chown'):
+                os.chown(self.controller_ini, parent.st_uid, parent.st_gid)
+            os.chmod(self.controller_ini, 0o640)
+        except OSError as e:
+            logger.warning(
+                "Could not set CONTROLLER.ini ownership/permissions: %s", e)
 
     def _mint_device_token(self):
         """Mint the per-device token the app presents (X-Device-Token) on
@@ -597,6 +616,7 @@ class FirstBootState:
         if backup.exists():
             try:
                 os.replace(backup, self.controller_ini)
+                self._fix_ini_permissions()
                 logger.info("CONTROLLER.ini restored from pre-join backup")
             except OSError as e:
                 logger.warning("Could not restore CONTROLLER.ini: %s", e)

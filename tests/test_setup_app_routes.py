@@ -959,3 +959,43 @@ class TestDeviceTokenControllerMode:
         assert config.get('Security', 'device_token') == data['device_token']
         # Networked-mode identity keys survive the mint untouched
         assert config.get('WebDashboard', 'port') == '8000'
+
+
+@pytest.mark.unit
+class TestControllerIniOwnership:
+    """v3.11.1: the firstboot service runs as root; mkstemp creates
+    root:root 0600 files and configparser silently skips unreadable files,
+    which disabled MQTT + the token guard on the whole device (2026-08-15
+    bench). Every CONTROLLER.ini write must hand the file back."""
+
+    def test_atomic_write_fixes_permissions(self, state):
+        import configparser
+        from unittest.mock import patch
+        config = configparser.ConfigParser()
+        config.add_section('MQTT')
+        config.set('MQTT', 'enable', 'True')
+        with patch.object(state, '_fix_ini_permissions') as fix:
+            state._atomic_write_ini(config)
+        fix.assert_called_once()
+        assert state.controller_ini.exists()
+
+    def test_mint_token_fixes_permissions(self, state):
+        from unittest.mock import patch
+        with patch.object(state, '_fix_ini_permissions') as fix:
+            state._mint_device_token()
+        fix.assert_called_once()
+
+    def test_fix_ini_permissions_sets_mode(self, state, tmp_path):
+        import os
+        import stat as stat_mod
+        state.controller_ini.write_text('[MQTT]\nenable = True\n')
+        state._fix_ini_permissions()
+        if hasattr(os, 'chown'):
+            mode = stat_mod.S_IMODE(os.stat(state.controller_ini).st_mode)
+            assert mode == 0o640
+        # On Windows chmod is advisory — reaching here without raising is the test
+
+    def test_fix_ini_permissions_survives_missing_file(self, state):
+        # Never raises even when the file vanished (best-effort)
+        assert not state.controller_ini.exists()
+        state._fix_ini_permissions()

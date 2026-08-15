@@ -348,11 +348,47 @@ class TestHotspotPassword:
 class TestPower:
     def test_shutdown_via_mqtt_when_owl_active(self, mgr, tmp_path):
         mqtt = MagicMock()
+        mqtt._send_command.return_value = {'success': True}
         client = build_client(mgr, tmp_path, mqtt=mqtt, owl_active=True)
         response = client.post('/api/system/shutdown', json={})
         assert response.status_code == 200
         assert response.get_json()['via'] == 'mqtt'
         mqtt._send_command.assert_called_once_with('shutdown')
+
+    def test_mqtt_success_still_arms_direct_backstop(self, mgr, tmp_path):
+        """Even a delivered MQTT command gets the delayed sudo backstop —
+        owl.py's own sudo may fail silently; a second shutdown/reboot on a
+        box already going down is a no-op."""
+        runner = MagicMock(return_value=MagicMock(returncode=0, stdout='',
+                                                  stderr=''))
+        mqtt = MagicMock()
+        mqtt._send_command.return_value = {'success': True}
+        client = build_client(mgr, tmp_path, mqtt=mqtt, owl_active=True,
+                              runner=runner)
+        response = client.post('/api/system/reboot', json={})
+        assert response.get_json()['via'] == 'mqtt'
+        assert CapturingTimer.pending          # backstop armed
+        runner.assert_not_called()
+        CapturingTimer.fire_all()
+        argv = runner.call_args.args[0]
+        assert argv[:2] == ['/usr/bin/sudo', '-n']
+        assert 'reboot' in argv[2]
+
+    def test_mqtt_returned_failure_falls_back_to_direct(self, mgr, tmp_path):
+        """_send_command reports failure by RETURNING a success:false dict
+        (it never raises) — the old code took that as delivered and the
+        device never rebooted."""
+        runner = MagicMock(return_value=MagicMock(returncode=0, stdout='',
+                                                  stderr=''))
+        mqtt = MagicMock()
+        mqtt._send_command.return_value = {
+            'success': False, 'error': 'Not connected to MQTT broker'}
+        client = build_client(mgr, tmp_path, mqtt=mqtt, owl_active=True,
+                              runner=runner)
+        response = client.post('/api/system/reboot', json={})
+        assert response.get_json()['via'] == 'direct'
+        CapturingTimer.fire_all()
+        assert 'reboot' in runner.call_args.args[0][2]
 
     def test_shutdown_direct_when_owl_inactive(self, mgr, tmp_path):
         runner = MagicMock(return_value=MagicMock(returncode=0, stdout='',
@@ -402,6 +438,73 @@ class TestPower:
 
 
 @pytest.mark.unit
+class TestTokenRecovery:
+    """POST /api/settings/token: re-earn the device token by proving the
+    hotspot password (the app's 403 self-heal after a delete/re-add or a
+    token rotation). Deliberately not token-guarded."""
+
+    PSK = 'paddock-psk-99'
+
+    def _client(self, mgr, tmp_path, token=TOKEN, psk=PSK):
+        mgr.nm.get_hotspot_password.return_value = psk
+        return build_client(mgr, tmp_path, token=token)
+
+    def test_correct_password_returns_token(self, mgr, tmp_path):
+        client = self._client(mgr, tmp_path)
+        response = client.post('/api/settings/token',
+                               json={'hotspot_password': self.PSK})
+        assert response.status_code == 200
+        assert response.get_json()['device_token'] == TOKEN
+
+    def test_wrong_password_403(self, mgr, tmp_path):
+        client = self._client(mgr, tmp_path)
+        response = client.post('/api/settings/token',
+                               json={'hotspot_password': 'nope-nope-1'})
+        assert response.status_code == 403
+
+    def test_missing_password_400(self, mgr, tmp_path):
+        client = self._client(mgr, tmp_path)
+        response = client.post('/api/settings/token', json={})
+        assert response.status_code == 400
+
+    def test_psk_unreadable_503(self, mgr, tmp_path):
+        client = self._client(mgr, tmp_path, psk=None)
+        response = client.post('/api/settings/token',
+                               json={'hotspot_password': self.PSK})
+        assert response.status_code == 503
+
+    def test_legacy_device_returns_null_token(self, mgr, tmp_path):
+        client = self._client(mgr, tmp_path, token=None)
+        response = client.post('/api/settings/token',
+                               json={'hotspot_password': self.PSK})
+        assert response.status_code == 200
+        assert response.get_json()['device_token'] is None
+
+    def test_lockout_after_repeated_failures(self, mgr, tmp_path):
+        client = self._client(mgr, tmp_path)
+        for _ in range(5):
+            response = client.post('/api/settings/token',
+                                   json={'hotspot_password': 'wrong-000'})
+            assert response.status_code == 403
+        response = client.post('/api/settings/token',
+                               json={'hotspot_password': self.PSK})
+        assert response.status_code == 429
+
+    def test_success_resets_failure_count(self, mgr, tmp_path):
+        client = self._client(mgr, tmp_path)
+        for _ in range(4):
+            client.post('/api/settings/token',
+                        json={'hotspot_password': 'wrong-000'})
+        assert client.post('/api/settings/token',
+                           json={'hotspot_password': self.PSK}).status_code == 200
+        # counter reset — four more wrong guesses don't lock
+        for _ in range(4):
+            response = client.post('/api/settings/token',
+                                   json={'hotspot_password': 'wrong-000'})
+            assert response.status_code == 403
+
+
+@pytest.mark.unit
 class TestStandaloneTokenGuards:
     """The two guards living in standalone.py itself (not the blueprint):
     /api/owl/restart and the R3 token retrofit on downloads DELETE."""
@@ -413,21 +516,22 @@ class TestStandaloneTokenGuards:
         assert response.status_code == 403
 
     def test_restart_route_runs_systemctl_with_token(self, standalone_test_client):
+        """Fire-and-forget Popen: `systemctl restart` blocks until the unit
+        is back up, so waiting on it produced false 500s mid-restart."""
         client, dashboard, tmp_dir = standalone_test_client
         dashboard.token_reader = lambda: TOKEN
-        dashboard._run_systemctl_command = MagicMock(
-            return_value=MagicMock(returncode=0, stdout='', stderr=''))
-        response = client.post('/api/owl/restart', headers=HEADERS)
+        with patch('subprocess.Popen') as mock_popen, \
+             patch('shutil.which', return_value='/usr/bin/systemctl'):
+            response = client.post('/api/owl/restart', headers=HEADERS)
         assert response.status_code == 200
-        dashboard._run_systemctl_command.assert_called_once_with(
-            ['restart', 'owl.service'], needs_sudo=True)
+        argv = mock_popen.call_args[0][0]
+        assert argv == ['sudo', '/usr/bin/systemctl', 'restart', 'owl.service']
 
     def test_restart_route_legacy_headerless(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
         dashboard.token_reader = lambda: None
-        dashboard._run_systemctl_command = MagicMock(
-            return_value=MagicMock(returncode=0, stdout='', stderr=''))
-        response = client.post('/api/owl/restart')
+        with patch('subprocess.Popen'):
+            response = client.post('/api/owl/restart')
         assert response.status_code == 200
 
     def test_downloads_delete_403_without_token(self, standalone_test_client):

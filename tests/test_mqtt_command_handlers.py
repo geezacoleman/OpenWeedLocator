@@ -877,25 +877,39 @@ class TestReboot:
 class TestShutdown:
     """Tests for shutdown command handler."""
 
-    def test_shutdown_calls_popen(self, mqtt_publisher, mock_owl):
-        with patch('subprocess.Popen') as mock_popen:
+    def test_shutdown_runs_sudo_n_shutdown_now(self, mqtt_publisher, mock_owl):
+        with patch('subprocess.run') as mock_run, \
+             patch('shutil.which', return_value='/usr/sbin/shutdown'):
+            mock_run.return_value = MagicMock(returncode=0, stdout='', stderr='')
             mqtt_publisher._handle_command({'action': 'shutdown'})
-            mock_popen.assert_called_once()
-            args = mock_popen.call_args[0][0]
-            assert args[0] == 'sudo'
-            assert 'shutdown' in args[1]  # full path may vary by OS
-            assert args[2] == 'now'
+        mock_run.assert_called_once()
+        argv = mock_run.call_args[0][0]
+        # -n matters: without it a sudoers miss hangs on a password prompt
+        assert argv == ['sudo', '-n', '/usr/sbin/shutdown', 'now']
 
     def test_shutdown_publishes_state(self, mqtt_publisher, mock_owl):
         mqtt_publisher.client.publish.reset_mock()
-        with patch('subprocess.Popen'):
+        with patch('subprocess.run',
+                   return_value=MagicMock(returncode=0, stdout='', stderr='')):
             mqtt_publisher._handle_command({'action': 'shutdown'})
         assert mqtt_publisher.client.publish.called
 
-    def test_shutdown_handles_popen_failure(self, mqtt_publisher, mock_owl):
-        with patch('subprocess.Popen', side_effect=OSError('not found')):
+    def test_shutdown_handles_run_failure(self, mqtt_publisher, mock_owl):
+        with patch('subprocess.run', side_effect=OSError('not found')):
             # Should not raise — error is caught and logged
             mqtt_publisher._handle_command({'action': 'shutdown'})
+
+    def test_shutdown_logs_nonzero_returncode(self, mqtt_publisher, mock_owl,
+                                              caplog):
+        """A sudoers miss must be LOUD — Popen with DEVNULL used to swallow
+        it and the box just never went down."""
+        import logging
+        result = MagicMock(returncode=1, stdout='',
+                           stderr='sudo: a password is required')
+        with patch('subprocess.run', return_value=result), \
+             caplog.at_level(logging.ERROR):
+            mqtt_publisher._handle_command({'action': 'shutdown'})
+        assert any('password is required' in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -1004,18 +1018,29 @@ class TestUpdateSoftware:
 class TestRebootCommand:
     """Tests for the reboot command handler."""
 
-    def test_reboot_calls_popen(self, mqtt_publisher, mock_owl):
-        with patch('subprocess.Popen') as mock_popen, \
+    def test_reboot_runs_sudo_n(self, mqtt_publisher, mock_owl):
+        with patch('subprocess.run') as mock_run, \
              patch('shutil.which', return_value='/usr/sbin/reboot'):
+            mock_run.return_value = MagicMock(returncode=0, stdout='', stderr='')
             mqtt_publisher._handle_command({'action': 'reboot'})
-        mock_popen.assert_called_once()
-        argv = mock_popen.call_args[0][0]
+        mock_run.assert_called_once()
+        argv = mock_run.call_args[0][0]
         assert argv == ['sudo', '-n', '/usr/sbin/reboot']
 
-    def test_reboot_handles_popen_failure(self, mqtt_publisher, mock_owl):
-        with patch('subprocess.Popen', side_effect=OSError('denied')):
+    def test_reboot_handles_run_failure(self, mqtt_publisher, mock_owl):
+        with patch('subprocess.run', side_effect=OSError('denied')):
             # Should not raise — error is caught and logged
             mqtt_publisher._handle_command({'action': 'reboot'})
+
+    def test_reboot_logs_nonzero_returncode(self, mqtt_publisher, mock_owl,
+                                            caplog):
+        import logging
+        result = MagicMock(returncode=1, stdout='',
+                           stderr='sudo: a password is required')
+        with patch('subprocess.run', return_value=result), \
+             caplog.at_level(logging.ERROR):
+            mqtt_publisher._handle_command({'action': 'reboot'})
+        assert any('password is required' in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

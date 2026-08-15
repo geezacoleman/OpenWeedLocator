@@ -38,6 +38,7 @@ const CONFIG_FIELD_DEFS = {
         'awb_mode': { type: 'select', options: ['auto', 'daylight', 'cloudy', 'tungsten', 'fluorescent', 'indoor', 'manual'], help: 'White balance. daylight = fixed outdoor WB (default). manual uses the red/blue gains below.' },
         'awb_red_gain': { type: 'number', step: 0.05, min: 0.1, max: 8.0, help: 'Manual WB red gain. Ignored for presets.' },
         'awb_blue_gain': { type: 'number', step: 0.05, min: 0.1, max: 8.0, help: 'Manual WB blue gain. Ignored for presets.' },
+        'rotation': { type: 'select', options: ['auto', '0', '180'], help: 'Image rotation. auto = upright for the Global Shutter camera, 180 for the classic enclosure (HQ/CM3 mount upside down). Restart to apply.' },
         'crop_factor_horizontal': { type: 'number', step: 0.01, min: 0, max: 0.5, help: 'Legacy symmetric horizontal crop. Use crop_left/crop_right instead.' },
         'crop_factor_vertical': { type: 'number', step: 0.01, min: 0, max: 0.5, help: 'Legacy symmetric vertical crop. Use crop_top/crop_bottom instead.' },
         'crop_left': { type: 'number', step: 0.01, min: 0, max: 0.49, help: 'Crop inset from left edge (fraction)' },

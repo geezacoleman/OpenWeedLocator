@@ -201,6 +201,13 @@ class OWLMQTTPublisher:
             'storage_free_mb': None,
             'storage_warning': 'ok',   # ok | low | full
             'image_quota_gb': 12,
+            # Where recording actually lands ('usb'|'internal', None until
+            # storage resolves), whether that was a fallback from a missing
+            # USB drive, and why recording was refused (None when it wasn't):
+            # no_drive | storage_full | storage_error. Additive fields.
+            'recording_location': None,
+            'storage_fallback': False,
+            'recording_blocked_reason': None,
             'sensitivity_level': 'medium',
             'detection_mode': 1,  # 0=spot spray, 1=off, 2=blanket
             'owl_running': False,
@@ -1006,8 +1013,17 @@ class OWLMQTTPublisher:
                     'vehicle': str(command.get('vehicle', '')).strip(),
                 }
                 self.state['session_metadata'] = metadata
-                self._write_session_metadata(metadata)
-                self.logger.info(f"Session metadata saved: {metadata}")
+                # The app sends metadata BEFORE it enables recording, so no
+                # session directory exists yet — the copy held in state is
+                # written into the session dir when recording starts (owl.py)
+                # and again on stop (_auto_save_session_metadata).
+                if self._session_dir_available():
+                    self._write_session_metadata(metadata)
+                    self.logger.info(f"Session metadata saved: {metadata}")
+                else:
+                    self.logger.info(
+                        f"Session metadata buffered until recording starts: "
+                        f"{metadata}")
 
             elif action == 'list_data_sessions':
                 threading.Thread(
@@ -1515,24 +1531,36 @@ class OWLMQTTPublisher:
         except Exception as e:
             self.logger.error(f"Error restarting service: {e}")
 
+    def _run_power_command(self, action, argv):
+        """Run a sudo power command and LOG failures.
+
+        Popen with DEVNULL made a sudoers miss completely invisible — the
+        command 'succeeded' and the box just never went down. Blocking here
+        is fine: the system is about to go down anyway, and the caller is
+        the MQTT callback thread.
+        """
+        import subprocess
+        try:
+            result = subprocess.run(argv, capture_output=True, text=True,
+                                    timeout=15)
+            if result.returncode != 0:
+                self.logger.error(
+                    f"{action} command failed (rc={result.returncode}): "
+                    f"{(result.stderr or '').strip()}")
+        except Exception as e:
+            self.logger.error(f"Error running {action}: {e}")
+
     def _handle_shutdown(self):
         """Shut down the system (called via MQTT from central controller).
 
         Resolves shutdown binary path to match the sudoers entry created
         by controller/shared/setup.sh (command -v shutdown).
         """
-        try:
-            import shutil
-            import subprocess
-            shutdown_bin = shutil.which('shutdown') or '/usr/sbin/shutdown'
-            self.logger.warning("Shutting down system...")
-            subprocess.Popen(
-                ['sudo', shutdown_bin, 'now'],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-        except Exception as e:
-            self.logger.error(f"Error shutting down: {e}")
+        import shutil
+        shutdown_bin = shutil.which('shutdown') or '/usr/sbin/shutdown'
+        self.logger.warning("Shutting down system...")
+        self._run_power_command('shutdown',
+                                ['sudo', '-n', shutdown_bin, 'now'])
 
     def _handle_reboot(self):
         """Reboot the system (called via MQTT).
@@ -1540,18 +1568,10 @@ class OWLMQTTPublisher:
         Resolves the reboot binary path to match the sudoers entry created
         by the setup/provisioning scripts (command -v reboot).
         """
-        try:
-            import shutil
-            import subprocess
-            reboot_bin = shutil.which('reboot') or '/usr/sbin/reboot'
-            self.logger.warning("Rebooting system...")
-            subprocess.Popen(
-                ['sudo', '-n', reboot_bin],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-        except Exception as e:
-            self.logger.error(f"Error rebooting: {e}")
+        import shutil
+        reboot_bin = shutil.which('reboot') or '/usr/sbin/reboot'
+        self.logger.warning("Rebooting system...")
+        self._run_power_command('reboot', ['sudo', '-n', reboot_bin])
 
     # Software update — ref allowlist shared with owl_update.sh preflight
     UPDATE_REF_PATTERN = r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$'
@@ -1953,6 +1973,21 @@ class OWLMQTTPublisher:
                 self.state['lut_download'] = {
                     'status': 'error', 'profile': filename, 'error': str(e)}
             self._publish_state()
+
+    def _session_dir_available(self):
+        """True only when an ACTIVE recorder session directory exists.
+
+        The most-recent-date-dir fallback inside _write_session_metadata is
+        for the recording-stop path; using it for a pre-start metadata write
+        would stamp the metadata into the previous session.
+        """
+        if not self.owl_instance:
+            return False
+        recorder = getattr(self.owl_instance, 'image_recorder', None)
+        if not recorder:
+            return False
+        rec_dir = getattr(recorder, 'save_directory', None)
+        return bool(rec_dir and os.path.isdir(rec_dir))
 
     def _write_session_metadata(self, metadata):
         """Write session_metadata.json to the active session directory.
@@ -2747,6 +2782,32 @@ class OWLMQTTPublisher:
             self.state['storage_available'] = bool(value)
             self.state['last_update'] = time.time()
         self._publish_state()
+
+    def set_recording_storage(self, location, fallback):
+        """Recording storage resolved: where images will land ('usb' or
+        'internal') and whether that was a fallback from a missing USB drive
+        (storage_location usb/auto). Clears any blocked reason."""
+        with self.state_lock:
+            self.state['recording_location'] = location
+            self.state['storage_fallback'] = bool(fallback)
+            self.state['recording_blocked_reason'] = None
+            self.state['last_update'] = time.time()
+        self._publish_state()
+
+    def set_recording_blocked(self, reason):
+        """Recording was refused: publish why so dashboards/app can say so
+        instead of silently snapping the toggle back.
+        reason: no_drive | storage_full | storage_error."""
+        with self.state_lock:
+            self.state['recording_blocked_reason'] = reason
+            self.state['recording_location'] = None
+            self.state['last_update'] = time.time()
+        self._publish_state()
+
+    def save_session_metadata(self):
+        """Write any buffered session metadata into the active session dir
+        (called by owl.py right after the session directory is created)."""
+        self._auto_save_session_metadata()
 
     def set_storage_status(self, location, free_mb, warning, quota_gb):
         """Push storage watchdog readings into state (additive, contract 1).

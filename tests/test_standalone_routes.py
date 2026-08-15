@@ -71,19 +71,23 @@ class TestGetConfig:
         # Other keys from the active config must survive the merge
         assert 'exg_min' in data['config']['GreenOnBrown']
 
-    def test_returns_404_when_config_missing(self, standalone_test_client):
+    def test_missing_config_self_heals(self, standalone_test_client):
+        """A dangling active pointer (e.g. a hand-deleted autosave) must
+        re-seed the working copy from GENERAL_CONFIG.ini instead of sitting
+        in a dead 'Config file not found' loop (2026-08-15 bench bug)."""
         client, dashboard, tmp_dir = standalone_test_client
 
         # Point to a nonexistent file
         dashboard._get_active_config_path = lambda: 'config/NONEXISTENT.ini'
-        dashboard._resolve_config_path = lambda p: os.path.join(
-            str(tmp_dir), 'NONEXISTENT.ini')
 
         resp = client.get('/api/config')
         data = resp.get_json()
 
-        assert resp.status_code == 404
-        assert data['success'] is False
+        assert resp.status_code == 200
+        assert data['success'] is True
+        assert 'GreenOnBrown' in data['config']
+        assert os.path.exists(os.path.join(str(tmp_dir),
+                                           'config_autosave.ini'))
 
 
 @pytest.mark.unit
@@ -765,6 +769,26 @@ class TestSystemStats:
         # The response should include MQTT-sourced keys
         assert 'detection_enable' in data
         assert 'owl_running' in data
+
+    def test_passes_through_recording_storage_fields(self, standalone_test_client):
+        """v3.11.1: the app explains recording snap-backs and internal
+        fallback from these — they must survive the stats merge."""
+        client, dashboard, tmp_dir = standalone_test_client
+        from unittest.mock import MagicMock as _MM
+        dashboard.mqtt_client = _MM()
+        dashboard.mqtt_client.get_state.return_value = {
+            'recording_location': 'internal',
+            'storage_fallback': True,
+            'recording_blocked_reason': None,
+        }
+        dashboard.mqtt_client.get_weed_detect_indicator.return_value = False
+        dashboard.mqtt_client.get_image_write_indicator.return_value = False
+        dashboard.mqtt_client.get_cloud_connected.return_value = None
+        resp = client.get('/api/system_stats')
+        data = resp.get_json()
+        assert data['recording_location'] == 'internal'
+        assert data['storage_fallback'] is True
+        assert data['recording_blocked_reason'] is None
 
     def test_includes_resolution(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client

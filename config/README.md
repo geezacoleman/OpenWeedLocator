@@ -87,6 +87,7 @@ All algorithms except `gog`, `gog-hybrid`, and `hsv` use the `[GreenOnBrown]` th
 | `awb_mode` | `daylight` | `auto`, `daylight`, `cloudy`, `tungsten`, `fluorescent`, `indoor`, `manual` | White balance. `daylight` preserves the historical fixed outdoor WB. `manual` disables auto white balance and applies the gains below. Applied live (no restart) on picamera2 |
 | `awb_red_gain` | `2.0` | 0.1 to 8.0 (float) | Red colour gain, used only when `awb_mode = manual`. Higher = redder |
 | `awb_blue_gain` | `2.0` | 0.1 to 8.0 (float) | Blue colour gain, used only when `awb_mode = manual` |
+| `rotation` | `auto` | `auto`, `0`, `180` | Image rotation. `auto` is upright for the Global Shutter camera (imx296, OWL 3.0 mount) and `180` for the classic enclosure (HQ/CM3 mount upside down). Restart to apply |
 | `crop_left` | `0.02` | 0.0 to 0.49 (float) | Fraction of image width cropped from the left edge |
 | `crop_right` | `0.02` | 0.0 to 0.49 (float) | Fraction of image width cropped from the right edge |
 | `crop_top` | `0.02` | 0.0 to 0.49 (float) | Fraction of image height cropped from the top edge |
