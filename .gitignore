@@ -206,3 +206,7 @@ tmpclaude-*
 .idea
 /tests/e2e/screenshots/
 
+/benchmarks/
+/widgets/
+/controller/networked/tracks/
+/tracks/
