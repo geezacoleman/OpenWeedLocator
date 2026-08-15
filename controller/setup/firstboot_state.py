@@ -48,6 +48,10 @@ REVERT_HOTSPOT_ATTEMPTS = 3  # hotspot_up tries before a failed join gives up
 # Replaced by a user-chosen password at finish(standalone).
 SETUP_HOTSPOT_PSK = 'owl-setup'
 
+# Production camera sensor — must match CAMERA_OVERLAY in
+# install_firstboot.sh (the dtoverlay it writes to config.txt on CM5).
+CAMERA_SENSOR = 'imx296'
+
 AVAHI_SERVICE_XML = """<?xml version="1.0" standalone='no'?>
 <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 <service-group>
@@ -58,6 +62,70 @@ AVAHI_SERVICE_XML = """<?xml version="1.0" standalone='no'?>
   </service>
 </service-group>
 """
+
+
+def camera_diagnostics(system_runner=None):
+    """Sensor-level camera triage for CM5 carriers (field debugging).
+
+    setup_app's check_camera() answers "is owl.py serving frames"; this
+    answers WHY not, distinguishing the two failure modes that look
+    identical from the app ("no camera"):
+
+      overlay_missing  the kernel never mentioned the sensor — the
+                       dtoverlay is not in config.txt (or not under a
+                       section matching the hardware). Fix config.txt,
+                       don't debug hardware.
+      probe_failed     the overlay loaded but the sensor probe failed;
+                       error -121 (EREMOTEIO) means an I2C NACK — sensor
+                       unpowered, wrong CSI port, or a hardware fault.
+
+    Returns {'sensor', 'detected', 'status', 'detail'}.
+    """
+    runner = system_runner or FirstBootState._default_system_runner
+    diag = {'sensor': CAMERA_SENSOR, 'detected': False,
+            'status': 'unknown', 'detail': ''}
+
+    try:
+        result = runner(['rpicam-hello', '--list-cameras'], timeout=10)
+        listing = f"{result.stdout or ''}\n{result.stderr or ''}"
+        if CAMERA_SENSOR in listing:
+            diag.update(detected=True, status='ok',
+                        detail=f'{CAMERA_SENSOR} listed by rpicam-hello')
+            return diag
+    except FileNotFoundError:
+        diag.update(status='no_rpicam',
+                    detail='rpicam-hello not installed — camera stack missing')
+        return diag
+    except (OSError, subprocess.TimeoutExpired) as e:
+        logger.warning("rpicam-hello failed: %s", e)
+        # fall through — dmesg can still say whether the overlay loaded
+
+    try:
+        result = runner(['dmesg'], timeout=10)
+        kernel_lines = [line for line in (result.stdout or '').splitlines()
+                        if CAMERA_SENSOR in line.lower()]
+    except (OSError, subprocess.TimeoutExpired) as e:
+        diag.update(status='error', detail=f'dmesg unavailable ({e})')
+        return diag
+
+    if not kernel_lines:
+        diag.update(
+            status='overlay_missing',
+            detail=f'no {CAMERA_SENSOR} kernel messages — the dtoverlay did '
+                   f'not load; check /boot/firmware/config.txt (run '
+                   f'install_firstboot.sh --camera-config)')
+    elif any('-121' in line for line in kernel_lines):
+        diag.update(
+            status='probe_failed',
+            detail=f'{CAMERA_SENSOR} probe error -121 (I2C NACK): overlay '
+                   f'loaded but the sensor did not answer — unpowered, wrong '
+                   f'CSI port, or hardware fault. Debug: pinctrl set 34/35 '
+                   f'op dh, then i2cdetect -y 0 (expect 0x1a)')
+    else:
+        diag.update(status='probe_failed',
+                    detail='kernel saw the sensor but rpicam-hello does not '
+                           'list it: ' + kernel_lines[-1].strip())
+    return diag
 
 
 class FirstBootState:
@@ -530,6 +598,11 @@ class FirstBootState:
                 result['device_id'] = self.join_device_id
                 result['static_ip'] = self.join_static_ip
             return result
+
+    def camera_diagnostics(self):
+        """Module-level camera_diagnostics with this instance's runner
+        (tests inject a fake system_runner)."""
+        return camera_diagnostics(self._system_runner)
 
     # ------------------------------------------------------------------
     # Finish + teardown

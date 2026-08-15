@@ -2,8 +2,11 @@
 # OWL first-boot setup — arm / disarm script
 #
 # Usage (run with sudo on the OWL):
-#   sudo bash install_firstboot.sh --arm      # default: enter setup mode on next boot
-#   sudo bash install_firstboot.sh --disarm   # remove all first-boot surface
+#   sudo bash install_firstboot.sh --arm            # default: enter setup mode on next boot
+#   sudo bash install_firstboot.sh --disarm         # remove all first-boot surface
+#   sudo bash install_firstboot.sh --camera-config  # only write the CM camera
+#                                                   # overlay to config.txt
+#                                                   # (exit 2 = changed, reboot needed)
 #
 # Arming:
 #   - installs + enables owl-firstboot.service (ConditionPathExists gated)
@@ -28,6 +31,15 @@ CROSS="${RED}[FAIL]${NC}"
 
 FLAG_PATH="/boot/firmware/owl-firstboot.flag"
 SETUP_PORT=8088
+
+# Production camera sensor (Arducam IMX296 global shutter). Compute Modules
+# have NO camera autodetection — the stock camera_auto_detect=1 silently does
+# nothing on CM5, so the sensor overlay must be loaded explicitly in
+# config.txt or a fresh flash never finds the camera (no error, no I2C bus).
+# If the shipped sensor ever changes, update this AND CAMERA_SENSOR in
+# firstboot_state.py to match.
+CAMERA_OVERLAY="imx296"
+BOOT_CONFIG="/boot/firmware/config.txt"
 SETUP_PSK="owl-setup"
 AVAHI_FILE="/etc/avahi/services/owl-setup.service"
 UNIT_DEST="/etc/systemd/system/owl-firstboot.service"
@@ -48,6 +60,95 @@ CURRENT_USER="${SUDO_USER:-$(logname 2>/dev/null || echo owl)}"
 VENV_BIN="/home/${CURRENT_USER}/.virtualenvs/owl/bin"
 
 MODE="${1:---arm}"
+
+configure_camera() {
+    # Write the CM camera overlay config to config.txt. Idempotent — re-runs
+    # never stack lines. Returns:
+    #   0  nothing to do (already configured, or board has autodetect)
+    #   1  error (conflicting overlay / config.txt unwritable) — do not ship
+    #   2  config.txt changed — camera appears after the next reboot
+    #
+    # Hardened against non-CM boards: on a Pi 4/5 camera_auto_detect works
+    # and forcing overlay lines can fight it, so anything that is not a
+    # Compute Module is skipped with a warning.
+    local model=""
+    if [[ -r /proc/device-tree/model ]]; then
+        model=$(tr -d '\0' < /proc/device-tree/model)
+    fi
+    if [[ "$model" != *"Compute Module"* ]]; then
+        echo -e "${ORANGE}[WARN] '${model:-unknown board}' is not a Compute Module —"
+        echo -e "       skipping camera overlay config (autodetect handles the"
+        echo -e "       camera on this board; forced overlays are CM-only).${NC}"
+        return 0
+    fi
+    if [[ ! -f "$BOOT_CONFIG" ]]; then
+        echo -e "${CROSS} ${BOOT_CONFIG} not found — cannot configure the CM camera."
+        return 1
+    fi
+
+    # Never stack a second sensor overlay: IMX296 and IMX477 both sit at I2C
+    # 0x1a and their device-tree nodes collide when loaded on the same port.
+    local other
+    other=$(grep -E '^dtoverlay=(imx[0-9]+|ov[0-9]+|arducam)' "$BOOT_CONFIG" \
+            | grep -v "^dtoverlay=${CAMERA_OVERLAY}\b" || true)
+    if [[ -n "$other" ]]; then
+        echo -e "${CROSS} ${BOOT_CONFIG} already loads a different camera overlay:"
+        echo "$other" | sed 's/^/        /'
+        echo -e "        Two sensor overlays on one CSI port collide at I2C 0x1a."
+        echo -e "        Remove the old overlay, then re-run."
+        return 1
+    fi
+
+    local changed=0
+
+    # Flip the stock autodetect line IN PLACE (never append a duplicate) —
+    # on CMs it does nothing except mislead whoever reads the file next.
+    if grep -qE '^camera_auto_detect=' "$BOOT_CONFIG"; then
+        if ! grep -qE '^camera_auto_detect=0$' "$BOOT_CONFIG"; then
+            if ! sed -i 's/^camera_auto_detect=.*/camera_auto_detect=0/' "$BOOT_CONFIG"; then
+                echo -e "${CROSS} Could not edit ${BOOT_CONFIG}."
+                return 1
+            fi
+            changed=1
+        fi
+    fi
+
+    # Appended once, marked so re-runs skip it. The trailing [all] header
+    # guarantees the lines are active regardless of which section the file
+    # happens to end in (anything under e.g. [pi4] is silently ignored).
+    local marker="# OWL camera (${CAMERA_OVERLAY}) — added by install_firstboot.sh"
+    if ! grep -qF "$marker" "$BOOT_CONFIG"; then
+        {
+            echo ""
+            echo "[all]"
+            echo "$marker"
+            # Only if the file had no autodetect line at all to flip above
+            grep -qE '^camera_auto_detect=' "$BOOT_CONFIG" || echo "camera_auto_detect=0"
+            # Both ports on purpose: the unused one fails silently, so the
+            # camera works whichever CSI connector it is plugged into. Only
+            # safe because both lines load the SAME sensor.
+            echo "dtoverlay=${CAMERA_OVERLAY}"
+            echo "dtoverlay=${CAMERA_OVERLAY},cam0"
+            # Expose the camera I2C buses as /dev/i2c-* for field debugging
+            # with i2cdetect (sensor should ACK at 0x1a)
+            echo "dtparam=i2c_csi_dsi=on"
+            echo "dtparam=i2c_csi_dsi0=on"
+        } >> "$BOOT_CONFIG"
+        if [[ $? -ne 0 ]]; then
+            echo -e "${CROSS} Could not append to ${BOOT_CONFIG}."
+            return 1
+        fi
+        changed=1
+    fi
+
+    if [[ "$changed" == "1" ]]; then
+        echo -e "${TICK} CM camera config written to ${BOOT_CONFIG} (${CAMERA_OVERLAY}, both ports)"
+        echo -e "${ORANGE}[WARN] The camera cannot appear until the next reboot.${NC}"
+        return 2
+    fi
+    echo -e "${TICK} CM camera config already present in ${BOOT_CONFIG}"
+    return 0
+}
 
 find_hotspot_connection() {
     # First wifi connection profile in AP mode
@@ -81,7 +182,17 @@ arm() {
         echo -e "       The phone app only finds OWL-* hotspots.${NC}"
     fi
 
-    # 2. Reset the hotspot password to the fixed setup password — BEFORE the
+    # 2. CM camera overlay — a shipped CM5 without it never finds its camera
+    # (autodetect silently no-ops on Compute Modules), so a conflict or write
+    # failure is a ship blocker. exit 2 just means a reboot is needed, which
+    # arming requires anyway.
+    configure_camera
+    if [[ $? -eq 1 ]]; then
+        echo -e "${CROSS} Camera boot config failed. Nothing was armed."
+        exit 1
+    fi
+
+    # 3. Reset the hotspot password to the fixed setup password — BEFORE the
     # flag is touched, so an aborted arm never leaves a unit that boots into
     # setup mode with a password the phone app can't match.
     if ! nmcli con modify "$HOTSPOT" wifi-sec.psk "${SETUP_PSK}"; then
@@ -90,7 +201,7 @@ arm() {
     fi
     echo -e "${TICK} Hotspot '${HOTSPOT}' password reset to setup default"
 
-    # 3. systemd units — heredocs with expanded variables, same pattern as
+    # 4. systemd units — heredocs with expanded variables, same pattern as
     # owl_setup.sh and controller/shared/setup.sh (a template+sed step here
     # once shipped a doubled python path).
     # OnFailure: if setup_app.py cannot start (broken venv, bad path), the
@@ -149,14 +260,14 @@ EOF
     fi
     echo -e "${TICK} owl-firstboot.service installed and enabled (+ failure responder)"
 
-    # 4. Firewall: setup API reachable after a WiFi join too.
+    # 5. Firewall: setup API reachable after a WiFi join too.
     # Best-effort from here down to the flag — the service's startup()
     # re-creates the ufw rule and avahi advert itself.
     ufw allow ${SETUP_PORT}/tcp >/dev/null 2>&1 || \
         echo -e "${ORANGE}[WARN] ufw rule not added (startup() re-adds it)${NC}"
     echo -e "${TICK} ufw allows ${SETUP_PORT}/tcp"
 
-    # 5. Avahi: the phone rediscovers the OWL on the home network via this
+    # 6. Avahi: the phone rediscovers the OWL on the home network via this
     cat > "${AVAHI_FILE}" <<EOF
 <?xml version="1.0" standalone='no'?>
 <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
@@ -171,7 +282,7 @@ EOF
     systemctl reload avahi-daemon 2>/dev/null || true
     echo -e "${TICK} avahi advertises _owl-setup._tcp:${SETUP_PORT}"
 
-    # 6. Dashboard re-arm path. Security: sudoers must never point at a
+    # 7. Dashboard re-arm path. Security: sudoers must never point at a
     # user-writable file (the repo belongs to ${CURRENT_USER}), so install
     # a self-contained root-owned helper and allow only that. Touching the
     # flag is a complete re-arm — the service's startup() re-applies the
@@ -193,7 +304,7 @@ EOF
     chmod 440 "${SUDOERS_FILE}"
     echo -e "${TICK} root-owned re-arm helper (${REARM_HELPER}) + sudoers entry"
 
-    # 7. State dir + flag — the actual arm, LAST so a failure anywhere above
+    # 8. State dir + flag — the actual arm, LAST so a failure anywhere above
     # leaves the unit un-armed rather than half-armed.
     mkdir -p /var/lib/owl
     if ! touch "${FLAG_PATH}"; then
@@ -224,5 +335,10 @@ disarm() {
 case "$MODE" in
     --arm) arm ;;
     --disarm) disarm ;;
-    *) echo -e "${CROSS} Unknown option '$MODE' (use --arm or --disarm)"; exit 1 ;;
+    # Standalone entry for owl_setup.sh (and field debugging): only the
+    # camera overlay config, propagating its exit code (2 = reboot needed).
+    # Deliberately untouched by --disarm — the overlay is hardware truth,
+    # not setup surface.
+    --camera-config) configure_camera; exit $? ;;
+    *) echo -e "${CROSS} Unknown option '$MODE' (use --arm, --disarm or --camera-config)"; exit 1 ;;
 esac

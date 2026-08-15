@@ -140,6 +140,26 @@ install_dashboard_dependencies() {
   fi
 }
 
+verify_venv_runtime() {
+  # Import-check everything the dashboard/first-boot stack needs. 'import
+  # flask' pulls werkzeug/click/itsdangerous — this catches half-installed
+  # dependency sets, which pip leaves behind if killed mid-install (pip is
+  # not transactional; a dropped SSH session mid-run is enough).
+  "$HOME/.virtualenvs/owl/bin/python" - <<'PY'
+import importlib, sys
+missing = []
+for m in ("flask", "werkzeug", "gunicorn", "paho.mqtt.client", "numpy", "cv2"):
+    try:
+        importlib.import_module(m)
+    except Exception as e:
+        missing.append(f"{m}: {e}")
+if missing:
+    print("Venv verification FAILED:\n  " + "\n  ".join(missing))
+    sys.exit(1)
+print("Venv runtime verified (flask/werkzeug/gunicorn/paho/numpy/cv2).")
+PY
+}
+
 check_camera_connection() {
   echo -e "${GREEN}[INFO] Checking for connected cameras...${NC}"
 
@@ -317,11 +337,34 @@ if ! command -v rpicam-hello >/dev/null 2>&1; then
     check_status "Installing rpicam-apps" "SYS_DEPS"
 fi
 
+# Step 1b: CM camera overlay — Compute Modules have no camera autodetection
+# (camera_auto_detect=1 silently no-ops on CM5), so a fresh flash never loads
+# the sensor overlay and the checks below can't succeed. Single source of
+# truth lives in install_firstboot.sh; it is a no-op on Pi 4/5 (autodetect
+# works there) and idempotent on re-runs. Exit 2 = config.txt was changed.
+CAMERA_CONFIG_CHANGED=0
+sudo bash "${SCRIPT_DIR}/controller/setup/install_firstboot.sh" --camera-config
+CAMERA_CONFIG_RC=$?
+if [ "$CAMERA_CONFIG_RC" -eq 2 ]; then
+    CAMERA_CONFIG_CHANGED=1
+    echo -e "${ORANGE}[WARN] config.txt was just updated for the CM camera — the sensor"
+    echo -e "       overlay only loads at boot, so the camera checks below WILL fail."
+    echo -e "       Reboot when this script finishes, then re-run it (re-runs are safe).${NC}"
+elif [ "$CAMERA_CONFIG_RC" -eq 1 ]; then
+    echo -e "${RED}[WARNING] Camera boot config failed (see above) — fix config.txt"
+    echo -e "          before expecting the camera to work on this Compute Module.${NC}"
+fi
+
 # Step 2: Ensure a camera is connected before proceeding
 check_camera_connection
 
 # Step 3: Test camera functionality
 test_camera_functionality "$CAMERA_MODE"
+
+if [[ "$CAMERA_CONFIG_CHANGED" == "1" && "$CAMERA_MODE" == "none" ]]; then
+    echo -e "${ORANGE}[INFO] No camera found, as expected right after the config.txt"
+    echo -e "       camera update — reboot and re-run to verify the camera.${NC}"
+fi
 
 # Step 4: Free up space
 echo -e "${GREEN}[INFO] Freeing up space by removing unnecessary packages...${NC}"
@@ -618,6 +661,19 @@ case "$dashboard_choice" in
       chmod +x "${SCRIPT_DIR}/controller/shared/setup.sh"
       cd "$SCRIPT_DIR"  # Ensure we're in the right directory
       if [[ "$SHIP_MODE" == "1" ]]; then
+        # Ship gate: arming first-boot on a broken venv ships a brick. Verify
+        # the full import chain; one repair attempt, then hard abort — armed
+        # units must never leave the bench with missing Python deps.
+        echo -e "${GREEN}[INFO] Ship gate: verifying venv runtime before arming first-boot...${NC}"
+        if ! verify_venv_runtime; then
+            echo -e "${ORANGE}[WARN] Venv incomplete — retrying requirements install once...${NC}"
+            pip install -r "${SCRIPT_DIR}/requirements.txt"
+            if ! verify_venv_runtime; then
+                echo -e "${RED}[ERROR] NOT SHIP-READY: venv still broken after retry.${NC}"
+                echo -e "${RED}        First-boot NOT armed, dev cleanup skipped — unit stays reachable for repair.${NC}"
+                exit 1
+            fi
+        fi
         SHIP_SSID="OWL-$(ship_ssid_suffix)"
         echo -e "${GREEN}[INFO] Ship hotspot: ${SHIP_SSID} (PSK: setup default)${NC}"
         sudo "${SCRIPT_DIR}/controller/shared/setup.sh" --mode standalone \
@@ -690,6 +746,23 @@ echo -e "${GREEN}[COMPLETE] OWL version installed: ${OWL_VERSION}${NC}"
 # Step 15: Start OWL focusing (skipped in ship mode — the customer's phone
 # app runs the camera check on their first boot)
 if [[ "$SHIP_MODE" == "1" ]]; then
+    # Final ship gate: any critical failure above means this unit must not be
+    # cleaned or boxed. Dev cleanup is deliberately skipped so the unit stays
+    # reachable (WiFi profiles intact) for repair. owl.service is NOT gated
+    # here — it needs a camera, which the customer's first boot verifies.
+    SHIP_BLOCKERS=""
+    [ -n "$ERROR_OPENCV" ] && SHIP_BLOCKERS+="OpenCV install; "
+    [ -n "$ERROR_OWL_DEPS" ] && SHIP_BLOCKERS+="OWL dependencies; "
+    [ -n "$ERROR_DASHBOARD_DEPS" ] && SHIP_BLOCKERS+="dashboard dependencies; "
+    [ -n "$ERROR_DASHBOARD" ] && SHIP_BLOCKERS+="dashboard/first-boot setup; "
+    if [ -n "$SHIP_BLOCKERS" ]; then
+        echo -e ""
+        echo -e "${RED}[NOT SHIP-READY] Critical failures: ${SHIP_BLOCKERS%??}${NC}"
+        echo -e "${RED}Fix the above and re-run 'bash owl_setup.sh --ship'. Dev cleanup was"
+        echo -e "skipped so the unit remains reachable over your current network.${NC}"
+        exit 1
+    fi
+
     echo -e ""
     echo -e "${GREEN}[SHIP-READY] Unit provisioned for shipping:${NC}"
     echo -e "  • Hotspot: ${SHIP_SSID:-OWL-XXXX} (setup password)"

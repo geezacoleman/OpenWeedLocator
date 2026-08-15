@@ -45,6 +45,7 @@ fields don't bump; old servers without the field are treated as version 1.
 | `/setup/api/info` | GET | device id, version, `contract_version`, hotspot, camera check, owl.service state |
 | `/setup/api/camera/frame` | GET | single JPEG (proxy of owl.py :8001) |
 | `/setup/api/camera/stream` | GET | MJPEG stream proxy |
+| `/setup/api/camera/diagnostics` | GET | sensor-level triage when no frames arrive: `status` is `ok` \| `overlay_missing` (dtoverlay not in config.txt) \| `probe_failed` (kernel saw the sensor but it didn't come up; `-121` in `detail` = I2C NACK) \| `no_rpicam` |
 | `/setup/api/wifi/scan` | GET | cached scan; `?rescan=true` cycles the AP (drops clients) |
 | `/setup/api/wifi/join` | POST | `{ssid, password?}` (password omitted for open networks) → 202, switch happens 5 s later |
 | `/setup/api/wifi/result` | GET | join outcome (persisted across reboots); includes `warning` for non-fatal problems (`owl_restart_failed`, `hotspot_unavailable`) |
@@ -95,7 +96,22 @@ bash owl_setup.sh --ship
 
 Non-interactive: base install, standalone setup with hotspot `OWL-XXXX`
 (suffix from the Pi serial) and the fixed setup password, then arms
-first-boot. As its final step it runs `dev/clean.sh --yes` detached, which
+first-boot.
+
+**CM5 camera:** Compute Modules have **no camera autodetection** — the stock
+`camera_auto_detect=1` silently does nothing, so a fresh flash never loads
+the sensor overlay (no error, no I2C bus, no camera). Both `owl_setup.sh`
+(before its camera checks) and `install_firstboot.sh --arm` write the fix to
+`/boot/firmware/config.txt` under `[all]`: `camera_auto_detect=0`,
+`dtoverlay=imx296` on **both** CSI ports (same sensor on both is safe; two
+*different* sensors collide at I2C 0x1a), and the `i2c_csi_dsi` dtparams so
+`i2cdetect` works in the field. Idempotent; skipped with a warning on
+non-CM boards (Pi 4/5 autodetect works and must not be fought). Standalone
+entry: `sudo bash install_firstboot.sh --camera-config` (exit 2 = changed,
+reboot needed). The sensor name is `CAMERA_OVERLAY` at the top of
+`install_firstboot.sh` — a sensor swap must also update `CAMERA_SENSOR` in
+`firstboot_state.py` (a unit test cross-checks them). Rule of thumb: after
+any re-flash, verify config.txt state before debugging hardware. As its final step it runs `dev/clean.sh --yes` detached, which
 strips dev residue — **every WiFi profile except the OWL hotspot** (a dev
 phone-hotspot password must never ship on a unit), shell history, SSH keys,
 logs, cached credentials. If you are SSH'd in over a personal network the

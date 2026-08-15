@@ -142,6 +142,17 @@ def create_app(network_manager=None, state=None, flag_path=None, state_file=None
                             'error': 'Failed to retrieve frame from OWL. '
                                      'Is it running?'}), 503
 
+    @app.route('/setup/api/camera/diagnostics')
+    def camera_diagnostics():
+        # Sensor-level triage for when check_camera() fails: distinguishes
+        # "overlay missing from config.txt" from an I2C probe failure
+        # (see firstboot_state.camera_diagnostics). Also curl-able on the
+        # bench, which is the point — after any re-flash, verify config.txt
+        # state before debugging hardware.
+        diag = fb.camera_diagnostics()
+        diag['success'] = True
+        return jsonify(diag)
+
     @app.route('/setup/api/camera/stream')
     def camera_stream():
         def generate():

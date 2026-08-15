@@ -422,6 +422,130 @@ class TestInstallScript:
 
 
 @pytest.mark.unit
+class TestCameraBootConfig:
+    """CM5 has no camera autodetection — install_firstboot.sh must write the
+    sensor overlay to config.txt explicitly (a fresh flash otherwise never
+    finds the camera: no error, no I2C bus — field bug 2026-08)."""
+
+    @pytest.fixture
+    def script(self):
+        from pathlib import Path
+        return (Path(__file__).parent.parent / 'controller' / 'setup'
+                / 'install_firstboot.sh').read_text(encoding='utf-8')
+
+    def test_overlay_variable_matches_python_sensor(self, script):
+        """The dtoverlay written by the shell and the sensor the diagnostics
+        look for must be the same sensor (a swap must change both)."""
+        import re
+        from controller.setup.firstboot_state import CAMERA_SENSOR
+        match = re.search(r'^CAMERA_OVERLAY="([^"]+)"', script, re.MULTILINE)
+        assert match, 'CAMERA_OVERLAY definition missing'
+        assert match.group(1) == CAMERA_SENSOR
+
+    def test_config_block_covers_both_ports_and_i2c(self, script):
+        # Both ports on purpose (same sensor, unused port fails silently);
+        # dtparams expose the camera I2C buses for i2cdetect debugging
+        assert 'dtoverlay=${CAMERA_OVERLAY}"' in script
+        assert 'dtoverlay=${CAMERA_OVERLAY},cam0' in script
+        assert 'dtparam=i2c_csi_dsi=on' in script
+        assert 'dtparam=i2c_csi_dsi0=on' in script
+        # Lines must land under [all] — other sections are silently ignored
+        assert '"[all]"' in script
+
+    def test_autodetect_flipped_in_place_not_appended(self, script):
+        assert "sed -i 's/^camera_auto_detect=.*/camera_auto_detect=0/'" in script
+
+    def test_non_cm_boards_are_skipped(self, script):
+        """Hardening: never force overlay lines on a Pi 4/5, where
+        autodetect works and forced overlays can fight it."""
+        assert '/proc/device-tree/model' in script
+        assert 'Compute Module' in script
+
+    def test_conflicting_sensor_overlay_refused(self, script):
+        # IMX296 and IMX477 both sit at I2C 0x1a — never stack two sensors
+        assert 'dtoverlay=(imx[0-9]+|ov[0-9]+' in script
+
+    def test_arm_aborts_on_camera_config_error(self, script):
+        assert 'Camera boot config failed. Nothing was armed.' in script
+
+    def test_camera_config_mode_exists(self, script):
+        # owl_setup.sh calls this standalone entry before its camera checks
+        assert '--camera-config) configure_camera' in script
+
+    def test_owl_setup_invokes_camera_config(self):
+        from pathlib import Path
+        owl_setup = (Path(__file__).parent.parent
+                     / 'owl_setup.sh').read_text(encoding='utf-8')
+        assert 'install_firstboot.sh" --camera-config' in owl_setup
+
+
+@pytest.mark.unit
+class TestCameraDiagnostics:
+    """Triage for 'camera not found': overlay missing from config.txt vs
+    sensor NACK (-121) — the two look identical from the phone app."""
+
+    @staticmethod
+    def _runner(responses):
+        """argv[0] -> result namespace or exception to raise."""
+        def run(argv, timeout=15):
+            resp = responses[argv[0]]
+            if isinstance(resp, Exception):
+                raise resp
+            return resp
+        return run
+
+    @staticmethod
+    def _result(stdout='', stderr=''):
+        from types import SimpleNamespace
+        return SimpleNamespace(stdout=stdout, stderr=stderr, returncode=0)
+
+    def test_sensor_listed_is_ok(self):
+        from controller.setup.firstboot_state import camera_diagnostics
+        runner = self._runner({'rpicam-hello': self._result(
+            stdout='Available cameras\n0 : imx296 [1456x1088] (/base/axi...)')})
+        diag = camera_diagnostics(runner)
+        assert diag['detected'] is True
+        assert diag['status'] == 'ok'
+
+    def test_no_kernel_messages_means_overlay_missing(self):
+        from controller.setup.firstboot_state import camera_diagnostics
+        runner = self._runner({
+            'rpicam-hello': self._result(stderr='No cameras available!'),
+            'dmesg': self._result(stdout='usb 1-1: new device\neth0: link up'),
+        })
+        diag = camera_diagnostics(runner)
+        assert diag['detected'] is False
+        assert diag['status'] == 'overlay_missing'
+        assert 'config.txt' in diag['detail']
+
+    def test_probe_nack_121_identified(self):
+        from controller.setup.firstboot_state import camera_diagnostics
+        runner = self._runner({
+            'rpicam-hello': self._result(stderr='No cameras available!'),
+            'dmesg': self._result(
+                stdout='imx296 10-001a: failed to read chip id 296, '
+                       'with error -121'),
+        })
+        diag = camera_diagnostics(runner)
+        assert diag['status'] == 'probe_failed'
+        assert '-121' in diag['detail'] or 'NACK' in diag['detail']
+
+    def test_missing_rpicam_reported(self):
+        from controller.setup.firstboot_state import camera_diagnostics
+        runner = self._runner({'rpicam-hello': FileNotFoundError('rpicam-hello')})
+        diag = camera_diagnostics(runner)
+        assert diag['status'] == 'no_rpicam'
+
+    def test_route_serves_diagnostics(self, client, state):
+        state._system_runner = self._runner({'rpicam-hello': self._result(
+            stdout='0 : imx296 [1456x1088]')})
+        data = client.get('/setup/api/camera/diagnostics').get_json()
+        assert data['success'] is True
+        assert data['status'] == 'ok'
+        assert data['sensor'] == 'imx296'
+
+
+@pytest.mark.unit
 class TestShipCleanup:
     """--ship must strip dev residue (a dev phone-hotspot password shipped
     on a bench unit, 2026-07-17) — dev/clean.sh wipes every WiFi profile

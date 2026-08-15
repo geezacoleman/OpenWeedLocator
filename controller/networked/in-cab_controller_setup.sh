@@ -859,7 +859,7 @@ EOF
 
 # Step 12b: Rotate the Raspberry Pi Touch Display 2 (DSI panel) for labwc/Wayland.
 #
-# IMPORTANT: on Raspberry Pi OS Bookworm the labwc/wlroots compositor IGNORES the
+# IMPORTANT: on Raspberry Pi OS (Trixie and Bookworm) the labwc/wlroots compositor IGNORES the
 # config.txt panel rotation (dtoverlay rotation= / display_rotate) for the
 # DESKTOP — that only rotates the boot logo/console, so the kiosk stays portrait
 # even with rotation=90. The desktop is rotated instead with `wlr-randr

@@ -59,7 +59,7 @@ OWL is a camera-based weed detection system based on the Raspberry Pi that uses 
 ## Quick Start
 
 ```bash
-# Clone and install on Raspberry Pi (Bookworm or Trixie OS)
+# Clone and install on Raspberry Pi (Trixie or Bookworm OS)
 git clone https://github.com/geezacoleman/OpenWeedLocator owl
 bash owl/owl_setup.sh
 ```
