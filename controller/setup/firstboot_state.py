@@ -22,6 +22,7 @@ import configparser
 import json
 import logging
 import os
+import secrets
 import shutil
 import socket
 import subprocess
@@ -164,6 +165,7 @@ class FirstBootState:
         self.prior_hostname = None    # controller mode: hostname before the join
         self._pending_password = None
         self._pending_join = None     # controller mode: full join params
+        self.device_token = None      # minted at finish(), any mode
         self._load_persisted()
 
     @property
@@ -495,14 +497,34 @@ class FirstBootState:
         config.set('Network', 'static_ip', params['static_ip'])
         config.set('Network', 'controller_ip', params['broker_ip'])
 
+        self._atomic_write_ini(config)
+        logger.info("CONTROLLER.ini updated for %s -> broker %s",
+                    params['device_id'], params['broker_ip'])
+
+    def _atomic_write_ini(self, config):
+        """Write CONTROLLER.ini atomically (tempfile + os.replace)."""
         self.controller_ini.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_path = tempfile.mkstemp(dir=str(self.controller_ini.parent),
                                         prefix='.controller-', suffix='.ini')
         with os.fdopen(fd, 'w') as handle:
             config.write(handle)
         os.replace(tmp_path, self.controller_ini)
-        logger.info("CONTROLLER.ini updated for %s -> broker %s",
-                    params['device_id'], params['broker_ip'])
+
+    def _mint_device_token(self):
+        """Mint the per-device token the app presents (X-Device-Token) on
+        mutating dashboard routes. Written to CONTROLLER.ini [Security].
+        Re-running setup deliberately rotates any existing token.
+        """
+        token = secrets.token_urlsafe(32)
+        config = configparser.ConfigParser()
+        config.read(self.controller_ini)
+        if not config.has_section('Security'):
+            config.add_section('Security')
+        config.set('Security', 'device_token', token)
+        self._atomic_write_ini(config)
+        self.device_token = token
+        logger.info("Device token minted into CONTROLLER.ini [Security]")
+        return token
 
     def _revert_to_hotspot(self, ssid, error, delete_profile=True):
         """Failure tail shared by both switch paths: the hotspot must come
@@ -613,11 +635,17 @@ class FirstBootState:
         standalone: apply the user's permanent hotspot password.
         wifi:       only valid once the join actually succeeded.
         controller: like wifi, but requires a controller-mode join.
+
+        Returns the freshly minted device token (all modes) so the finish
+        response can hand it to the app — the only time it is shown.
         """
         if mode == 'standalone':
             if not new_password or len(new_password) < 8:
                 raise ValueError('A new hotspot password of at least 8 characters '
                                  'is required to finish standalone setup')
+            # Mint before the delayed re-key so the token rides the finish
+            # response (the AP restart drops the phone moments later).
+            token = self._mint_device_token()
             # Re-keying the hotspot restarts the AP and drops the phone, so
             # the finish response must reach it first — same delayed-switch
             # trick as request_join. Teardown runs after the re-key.
@@ -625,7 +653,7 @@ class FirstBootState:
                 SWITCH_DELAY_S, lambda: self._finish_standalone(new_password))
             timer.daemon = True
             timer.start()
-            return
+            return token
         elif mode == 'wifi':
             if self.wifi_state != 'connected':
                 raise ValueError('Cannot finish: the OWL has not joined a WiFi '
@@ -637,9 +665,11 @@ class FirstBootState:
         else:
             raise ValueError(f"Unknown mode '{mode}'")
 
+        token = self._mint_device_token()
         self.state = 'done'
         self._persist()
         self._teardown()
+        return token
 
     def _finish_standalone(self, new_password):
         """Deferred tail of finish(standalone): re-key the hotspot, then

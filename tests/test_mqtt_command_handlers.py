@@ -1245,3 +1245,79 @@ class TestUploadPreviewsDispatch:
                 'upload_urls': ['https://s3/p1'],
             })
         assert not mock_thread.called
+
+
+# ---------------------------------------------------------------------------
+# set_config_section - live camera controls (white balance + exposure)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestCameraLiveControls:
+    """CAMERA_LIVE_KEYS hot-apply branch in _handle_set_config_section.
+
+    The branch must run BEFORE the generic setattr fallback: that ordering
+    is what makes exp_compensation live (previously a silent no-op until
+    restart)."""
+
+    def _camera_cmd(self, mqtt_publisher, params):
+        mqtt_publisher._handle_command({
+            'action': 'set_config_section',
+            'section': 'Camera',
+            'params': params,
+        })
+
+    def test_manual_mode_applies_coerced_types(self, mqtt_publisher, mock_owl):
+        self._camera_cmd(mqtt_publisher, {
+            'awb_mode': 'Manual', 'awb_red_gain': '1.5', 'awb_blue_gain': 3})
+        mock_owl.cam.set_camera_controls.assert_called_once_with(
+            {'awb_mode': 'manual', 'awb_red_gain': 1.5, 'awb_blue_gain': 3.0})
+        assert mock_owl.awb_mode == 'manual'
+        assert mock_owl.awb_red_gain == 1.5
+        assert mock_owl.config.get('Camera', 'awb_mode') == 'manual'
+        assert mock_owl.config.get('Camera', 'awb_red_gain') == '1.5'
+        # Live keys never raise the restart-required notice
+        assert not mqtt_publisher.state.get('restart_required')
+
+    def test_exp_compensation_applies_live(self, mqtt_publisher, mock_owl):
+        """Regression: exp_compensation used to fall into the generic
+        setattr branch and silently do nothing until restart."""
+        self._camera_cmd(mqtt_publisher, {'exp_compensation': '3'})
+        mock_owl.cam.set_camera_controls.assert_called_once_with(
+            {'exp_compensation': 3})
+
+    def test_invalid_awb_mode_rejected_not_persisted(self, mqtt_publisher, mock_owl):
+        self._camera_cmd(mqtt_publisher, {'awb_mode': 'sunset'})
+        mock_owl.cam.set_camera_controls.assert_not_called()
+        # A value that fails validation must never reach the config object -
+        # it would crash the next boot's load_and_validate_config.
+        assert not mock_owl.config.has_option('Camera', 'awb_mode') or \
+            mock_owl.config.get('Camera', 'awb_mode') != 'sunset'
+
+    def test_gains_clamped_to_valid_range(self, mqtt_publisher, mock_owl):
+        self._camera_cmd(mqtt_publisher, {'awb_red_gain': '99', 'awb_blue_gain': '0'})
+        mock_owl.cam.set_camera_controls.assert_called_once_with(
+            {'awb_red_gain': 8.0, 'awb_blue_gain': 0.1})
+        # The CLAMPED values persist, so the file stays loadable next boot
+        assert mock_owl.config.get('Camera', 'awb_red_gain') == '8.0'
+        assert mock_owl.config.get('Camera', 'awb_blue_gain') == '0.1'
+
+    def test_cam_without_live_support_no_exception(self, mqtt_publisher, mock_owl):
+        del mock_owl.cam.set_camera_controls  # MagicMock: removes the attr
+        self._camera_cmd(mqtt_publisher, {'awb_mode': 'auto'})
+        # No exception; value still set on the instance + config
+        assert mock_owl.awb_mode == 'auto'
+        assert mock_owl.config.get('Camera', 'awb_mode') == 'auto'
+
+    def test_set_controls_error_never_kills_handler(self, mqtt_publisher, mock_owl):
+        mock_owl.cam.set_camera_controls.side_effect = RuntimeError('camera gone')
+        self._camera_cmd(mqtt_publisher, {'awb_mode': 'auto'})
+        assert mock_owl.config.get('Camera', 'awb_mode') == 'auto'
+
+    def test_gains_while_preset_persist_and_apply(self, mqtt_publisher, mock_owl):
+        """Gains sent while a preset is active are persisted and forwarded;
+        build_awb_controls ignores them until awb_mode = manual."""
+        self._camera_cmd(mqtt_publisher, {'awb_mode': 'daylight',
+                                          'awb_red_gain': '2.5'})
+        mock_owl.cam.set_camera_controls.assert_called_once_with(
+            {'awb_mode': 'daylight', 'awb_red_gain': 2.5})
+        assert mock_owl.config.get('Camera', 'awb_red_gain') == '2.5'

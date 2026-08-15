@@ -10,7 +10,7 @@ from typing import Optional
 @dataclass
 class Version:
     major: int = 3
-    minor: int = 10
+    minor: int = 11
     patch: int = 0
     tag: Optional[str] = None
 
@@ -25,7 +25,7 @@ VERSION = Version()
 # removed, or changes meaning; a status code the app branches on changes.
 # Purely additive fields do NOT bump it. A missing field on old servers is
 # treated by the app as version 1.
-APP_CONTRACT_VERSION = 1
+APP_CONTRACT_VERSION = 2
 
 class SystemInfo:
     logger = logging.getLogger("SystemInfo")

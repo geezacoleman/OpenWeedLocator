@@ -29,6 +29,7 @@ try:
 
 except Exception as e:
     PICAMERA_VERSION = None
+    libcamera = None
 
 
 def is_raspberry_pi() -> bool:
@@ -48,6 +49,46 @@ def get_platform_info() -> dict:
         'is_rpi': is_raspberry_pi(),
         'picamera_version': PICAMERA_VERSION
     }
+
+
+# Preset names -> libcamera AwbModeEnum attribute names
+AWB_PRESET_ENUMS = {
+    'auto': 'Auto',
+    'daylight': 'Daylight',
+    'cloudy': 'Cloudy',
+    'tungsten': 'Tungsten',
+    'fluorescent': 'Fluorescent',
+    'indoor': 'Indoor',
+}
+
+
+def build_awb_controls(awb_mode='daylight', awb_red_gain=2.0, awb_blue_gain=2.0,
+                       exp_compensation=None) -> dict:
+    """Translate [Camera] white-balance config into libcamera controls.
+
+    Single source of truth used at stream init and by live updates.
+    AwbEnable is sent explicitly every time so switching back from manual
+    re-enables auto white balance. Returns {} when libcamera is unavailable.
+    """
+    if libcamera is None:
+        return {}
+
+    mode = str(awb_mode).strip().lower()
+    controls = {}
+    if mode == 'manual':
+        controls['AwbEnable'] = False
+        controls['ColourGains'] = (float(awb_red_gain), float(awb_blue_gain))
+    else:
+        if mode not in AWB_PRESET_ENUMS:
+            LogManager.get_logger(__name__).warning(
+                f"Unknown awb_mode '{awb_mode}', falling back to daylight")
+            mode = 'daylight'
+        controls['AwbEnable'] = True
+        controls['AwbMode'] = getattr(libcamera.controls.AwbModeEnum,
+                                      AWB_PRESET_ENUMS[mode])
+    if exp_compensation is not None:
+        controls['ExposureValue'] = int(exp_compensation)
+    return controls
 
 
 class StreamingHandler(BaseHTTPRequestHandler):
@@ -202,7 +243,8 @@ class WebcamStream:
 
 
 class PiCamera2Stream:
-    def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2, **kwargs):
+    def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2,
+                 awb_mode='daylight', awb_red_gain=2.0, awb_blue_gain=2.0, **kwargs):
         self.logger = LogManager.get_logger(__name__)
         self.name = 'Picamera2Stream'
         self.logger.info(f'Camera type: {self.name}')
@@ -226,11 +268,17 @@ class PiCamera2Stream:
             "size": self.size
         }
 
-        self.controls = {
-            "AeExposureMode": 1,
-            "AwbMode": libcamera.controls.AwbModeEnum.Daylight,
-            "ExposureValue": exp_compensation
+        # Current WB/exposure state, merged by set_camera_controls so partial
+        # live updates (e.g. red gain only) keep the other current values.
+        self._awb_state = {
+            'awb_mode': awb_mode,
+            'awb_red_gain': awb_red_gain,
+            'awb_blue_gain': awb_blue_gain,
+            'exp_compensation': exp_compensation,
         }
+
+        self.controls = {"AeExposureMode": 1}
+        self.controls.update(build_awb_controls(**self._awb_state))
         # Or if you prefer split logs for different aspects:
         self.logger.info("Setting camera format", extra=dict(
             format='RGB888',
@@ -239,7 +287,9 @@ class PiCamera2Stream:
 
         self.logger.info("Setting camera controls", extra=dict(
             exposure_mode=1,
-            awb_mode='Daylight',
+            awb_mode=awb_mode,
+            awb_red_gain=awb_red_gain,
+            awb_blue_gain=awb_blue_gain,
             exposure_value=exp_compensation))
 
         # Update config with any additional/overridden parameters
@@ -371,6 +421,24 @@ class PiCamera2Stream:
                 self.frame_available = False
                 return self.frame, self.frame_metadata
 
+    def set_camera_controls(self, params: dict) -> bool:
+        """Live-apply any subset of {awb_mode, awb_red_gain, awb_blue_gain,
+        exp_compensation} against the running camera.
+
+        Partial updates merge into the stream-held current state so e.g. a
+        red-gain-only change keeps the current mode. picamera2 queues
+        set_controls internally, so calling from the MQTT thread needs no lock.
+        """
+        for key in ('awb_mode', 'awb_red_gain', 'awb_blue_gain', 'exp_compensation'):
+            if key in params:
+                self._awb_state[key] = params[key]
+        controls = build_awb_controls(**self._awb_state)
+        if not controls:
+            return False
+        self.camera.set_controls(controls)
+        self.logger.info("Live camera controls applied", extra=dict(**self._awb_state))
+        return True
+
     def stop(self):
         self.stopped.set()
         self.thread.join()
@@ -378,20 +446,41 @@ class PiCamera2Stream:
         time.sleep(2)  # Allow time for the camera to be released properly
 
 
+# Preset names -> legacy picamera awb_mode strings (differ from libcamera)
+LEGACY_AWB_MODES = {
+    'auto': 'auto',
+    'daylight': 'sunlight',
+    'cloudy': 'cloudy',
+    'tungsten': 'tungsten',
+    'fluorescent': 'fluorescent',
+    'indoor': 'incandescent',
+}
+
+
 class PiCameraStream:
-    def __init__(self, resolution=(416, 320), exp_compensation=-2, **kwargs):
+    def __init__(self, resolution=(416, 320), exp_compensation=-2,
+                 awb_mode='daylight', awb_red_gain=2.0, awb_blue_gain=2.0, **kwargs):
         self.logger = LogManager.get_logger(__name__)
         self.name = 'PicameraStream'
         self.logger.info(f'Camera type: {self.name}')
         self.frame_width = None
         self.frame_height = None
 
+        awb_mode = str(awb_mode).strip().lower()
         try:
             self.camera = PiCamera()
 
             self.camera.resolution = resolution
             self.camera.exposure_mode = 'beach'
-            self.camera.awb_mode = 'auto'
+            if awb_mode == 'manual':
+                self.camera.awb_mode = 'off'
+                self.camera.awb_gains = (float(awb_red_gain), float(awb_blue_gain))
+            else:
+                if awb_mode not in LEGACY_AWB_MODES:
+                    self.logger.warning(
+                        f"Unknown awb_mode '{awb_mode}', falling back to daylight")
+                    awb_mode = 'daylight'
+                self.camera.awb_mode = LEGACY_AWB_MODES[awb_mode]
             self.camera.sensor_mode = 0
             self.camera.exposure_compensation = exp_compensation
 
@@ -451,6 +540,11 @@ class PiCameraStream:
         # legacy picamera exposes no per-frame capture metadata
         return self.frame, None
 
+    def set_camera_controls(self, params: dict) -> bool:
+        self.logger.warning("Live camera control updates are not supported on "
+                            "legacy picamera; restart required to apply changes")
+        return False
+
     def stop(self):
         # Signal the thread to stop
         self.stopped.set()
@@ -474,7 +568,8 @@ class VideoStream:
     of camera_type setting.
     """
 
-    def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2, camera_type='auto', **kwargs):
+    def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2, camera_type='auto',
+                 awb_mode='daylight', awb_red_gain=2.0, awb_blue_gain=2.0, **kwargs):
         self.logger = LogManager.get_logger(__name__)
         self.platform_info = get_platform_info()
         self.frame_height = None
@@ -493,7 +588,11 @@ class VideoStream:
         init_error = None
 
         if effective_camera_type == 'rpi':
-            init_error = self._init_rpi_camera(src, resolution, exp_compensation, **kwargs)
+            init_error = self._init_rpi_camera(src, resolution, exp_compensation,
+                                               awb_mode=awb_mode,
+                                               awb_red_gain=awb_red_gain,
+                                               awb_blue_gain=awb_blue_gain,
+                                               **kwargs)
 
         elif effective_camera_type == 'usb':
             init_error = self._init_usb_camera(src, resolution)
@@ -612,6 +711,15 @@ class VideoStream:
     def read_with_metadata(self):
         """Return (frame, capture_metadata); metadata is None on backends without it."""
         return self.stream.read_with_metadata()
+
+    def set_camera_controls(self, params: dict) -> bool:
+        """Live-apply white balance / exposure controls where the backend
+        supports it (PiCamera2 only). Returns False otherwise."""
+        if self.stream is None or not hasattr(self.stream, 'set_camera_controls'):
+            self.logger.warning("Live camera control updates are not supported "
+                                "on this camera backend")
+            return False
+        return self.stream.set_camera_controls(params)
 
     def stop(self):
         """Stop the thread and release any resources."""

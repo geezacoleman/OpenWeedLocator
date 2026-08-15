@@ -820,3 +820,74 @@ class TestSaveFoldsSliderValues:
             assert key_list == self.GOB_SLIDER_KEYS, (
                 f"standalone gobKeys drifted: {sorted(key_list ^ self.GOB_SLIDER_KEYS)}"
             )
+
+
+@pytest.mark.unit
+class TestCameraWhiteBalance:
+    """[Camera] awb_mode / awb_red_gain / awb_blue_gain (R3, v3.11.0).
+
+    Live-tunable white balance for the red-rendering Arducam IMX296.
+    Guards the contract between GENERAL_CONFIG.ini, the validator, owl.py,
+    and the shared CONFIG_FIELD_DEFS (sync test enforces the JS side)."""
+
+    def test_general_config_has_awb_keys_with_defaults(self):
+        cfg = configparser.ConfigParser()
+        cfg.read(PROJECT_ROOT / 'config' / 'GENERAL_CONFIG.ini')
+        assert cfg.get('Camera', 'awb_mode') == 'daylight', (
+            "Default awb_mode must be daylight — zero behavior change on "
+            "existing rigs (the historical hardcoded outdoor WB)."
+        )
+        assert cfg.getfloat('Camera', 'awb_red_gain') == 2.0
+        assert cfg.getfloat('Camera', 'awb_blue_gain') == 2.0
+
+    def test_validator_lists_awb_keys_as_optional(self):
+        from utils.config_manager import ConfigValidator
+        camera = ConfigValidator.REQUIRED_CONFIG['Camera']
+        for key in ('awb_mode', 'awb_red_gain', 'awb_blue_gain'):
+            assert key in camera['optional_keys'], (
+                f"{key} missing from Camera optional_keys — ConfigValidator "
+                f"will warn at startup."
+            )
+
+    def test_gains_in_value_validators_mode_not(self):
+        """Gains are float-range validated; awb_mode is a string enum key and
+        must NOT be in VALUE_VALIDATORS (int/float/pin 3-tuples only)."""
+        from utils.config_manager import ConfigValidator
+        assert ConfigValidator.VALUE_VALIDATORS['awb_red_gain'] == ('float', 0.1, 8.0)
+        assert ConfigValidator.VALUE_VALIDATORS['awb_blue_gain'] == ('float', 0.1, 8.0)
+        assert 'awb_mode' not in ConfigValidator.VALUE_VALIDATORS
+
+    def test_gain_minimum_is_not_zero(self):
+        """Min gain 0.1, never 0.0 — libcamera treats ColourGains=(0,0) as
+        'let AWB choose', silently defeating manual mode."""
+        from utils.config_manager import ConfigValidator
+        assert ConfigValidator.VALUE_VALIDATORS['awb_red_gain'][1] > 0
+        assert ConfigValidator.VALUE_VALIDATORS['awb_blue_gain'][1] > 0
+
+    def test_owl_reads_all_three_keys(self):
+        """owl.py must read the keys and pass them to VideoStream (source
+        inspection — owl.py cannot import on Windows)."""
+        owl_source = (PROJECT_ROOT / 'owl.py').read_text()
+        for attr in ('self.awb_mode', 'self.awb_red_gain', 'self.awb_blue_gain'):
+            assert attr in owl_source, (
+                f"owl.py must capture {attr} from [Camera] config."
+            )
+        assert 'awb_mode=self.awb_mode' in owl_source, (
+            "owl.py must pass awb_mode into VideoStream()."
+        )
+
+    def test_valid_awb_modes_set(self):
+        from utils.config_manager import ConfigValidator
+        assert ConfigValidator.VALID_AWB_MODES == {
+            'auto', 'daylight', 'cloudy', 'tungsten', 'fluorescent',
+            'indoor', 'manual'}
+
+    def test_mqtt_manager_hot_applies_camera_keys(self):
+        """CAMERA_LIVE_KEYS branch must exist and include exp_compensation
+        (the pre-existing silent no-op this feature fixes)."""
+        mqtt_source = (PROJECT_ROOT / 'utils' / 'mqtt_manager.py').read_text()
+        assert 'CAMERA_LIVE_KEYS' in mqtt_source
+        assert 'set_camera_controls' in mqtt_source
+        from utils.mqtt_manager import CAMERA_LIVE_KEYS
+        assert CAMERA_LIVE_KEYS == {'awb_mode', 'awb_red_gain',
+                                    'awb_blue_gain', 'exp_compensation'}

@@ -64,11 +64,14 @@ def nm():
 def state(nm, tmp_path):
     flag = tmp_path / 'owl-firstboot.flag'
     flag.touch()
+    # controller_ini MUST stay in tmp_path: finish() mints the device token
+    # into it, and the default path is the real repo config/CONTROLLER.ini.
     return FirstBootState(nm, flag_path=flag,
                           state_file=tmp_path / 'state.json',
                           timer_factory=CapturingTimer,
                           system_runner=MagicMock(),
-                          exit_fn=MagicMock())
+                          exit_fn=MagicMock(),
+                          controller_ini=tmp_path / 'CONTROLLER.ini')
 
 
 @pytest.fixture
@@ -879,3 +882,80 @@ class TestControllerFinish:
                                     json={'mode': 'controller'})
         assert response.get_json()['success'] is True
         assert not ctrl_state.flag_path.exists()
+
+
+@pytest.mark.unit
+class TestDeviceToken:
+    """finish() mints the per-device token (R3, contract 2): all three
+    modes, returned in the finish response, written to CONTROLLER.ini
+    [Security], rotated by a re-run."""
+
+    def _read_token(self, state):
+        import configparser
+        config = configparser.ConfigParser()
+        config.read(state.controller_ini)
+        return config.get('Security', 'device_token', fallback=None)
+
+    def test_standalone_finish_returns_and_persists_token(self, client, state):
+        response = client.post('/setup/api/finish',
+                               json={'mode': 'standalone',
+                                     'new_password': 'paddock-relay-42'})
+        data = response.get_json()
+        token = data['device_token']
+        assert token and len(token) > 30
+        # Minted BEFORE the deferred re-key: the AP restart drops the phone
+        # moments after this response, so the token must ride it.
+        assert self._read_token(state) == token
+
+    def test_wifi_finish_returns_and_persists_token(self, client, state):
+        state.wifi_state = 'connected'
+        data = client.post('/setup/api/finish',
+                           json={'mode': 'wifi'}).get_json()
+        assert data['device_token']
+        assert self._read_token(state) == data['device_token']
+
+    def test_refinish_rotates_token(self, client, state):
+        first = client.post('/setup/api/finish',
+                            json={'mode': 'standalone',
+                                  'new_password': 'paddock-relay-42'}
+                            ).get_json()['device_token']
+        second = client.post('/setup/api/finish',
+                             json={'mode': 'standalone',
+                                   'new_password': 'paddock-relay-42'}
+                             ).get_json()['device_token']
+        assert first != second
+        assert self._read_token(state) == second
+
+    def test_mint_preserves_other_sections(self, client, state):
+        state.controller_ini.write_text(
+            '[MQTT]\nenable = True\nbroker_ip = localhost\n'
+            '[GPS]\nenable = False\n')
+        state.wifi_state = 'connected'
+        client.post('/setup/api/finish', json={'mode': 'wifi'})
+        import configparser
+        config = configparser.ConfigParser()
+        config.read(state.controller_ini)
+        assert config.get('MQTT', 'broker_ip') == 'localhost'
+        assert config.get('GPS', 'enable') == 'False'
+        assert config.get('Security', 'device_token')
+
+    def test_failed_finish_mints_nothing(self, client, state):
+        client.post('/setup/api/finish', json={'mode': 'wifi'})  # 409
+        assert self._read_token(state) is None
+
+
+@pytest.mark.unit
+class TestDeviceTokenControllerMode:
+    def test_controller_finish_returns_and_persists_token(self, ctrl_client,
+                                                          ctrl_state):
+        ctrl_state.wifi_state = 'connected'
+        ctrl_state.wifi_mode = 'controller'
+        data = ctrl_client.post('/setup/api/finish',
+                                json={'mode': 'controller'}).get_json()
+        assert data['device_token']
+        import configparser
+        config = configparser.ConfigParser()
+        config.read(ctrl_state.controller_ini)
+        assert config.get('Security', 'device_token') == data['device_token']
+        # Networked-mode identity keys survive the mint untouched
+        assert config.get('WebDashboard', 'port') == '8000'

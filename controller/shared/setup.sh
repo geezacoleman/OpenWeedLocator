@@ -82,6 +82,7 @@ STATUS_AVAHI_CONFIG=""
 STATUS_SERVICES=""
 STATUS_FAN_PERMISSIONS=""
 STATUS_SERVICE_PERMISSIONS=""
+STATUS_DEVICE_SETTINGS_PERMISSIONS=""
 STATUS_OWL_CONFIG=""
 STATUS_HOSTNAME=""
 
@@ -95,6 +96,7 @@ ERROR_AVAHI_CONFIG=""
 ERROR_SERVICES=""
 ERROR_FAN_PERMISSIONS=""
 ERROR_SERVICE_PERMISSIONS=""
+ERROR_DEVICE_SETTINGS_PERMISSIONS=""
 ERROR_OWL_CONFIG=""
 ERROR_HOSTNAME=""
 
@@ -580,17 +582,19 @@ setup_service_control_permissions() {
     echo -e "${GREEN}[INFO] Configuring sudo permissions for OWL service control...${NC}"
 
     local SUDOERS_FILE="/etc/sudoers.d/97-owl-service-control"
-    local SYSTEMCTL_BIN SHUTDOWN_BIN
+    local SYSTEMCTL_BIN SHUTDOWN_BIN REBOOT_BIN
     SYSTEMCTL_BIN="$(command -v systemctl 2>/dev/null || echo /usr/bin/systemctl)"
     SHUTDOWN_BIN="$(command -v shutdown 2>/dev/null || echo /usr/sbin/shutdown)"
+    REBOOT_BIN="$(command -v reboot 2>/dev/null || echo /usr/sbin/reboot)"
 
     sudo tee "$SUDOERS_FILE" > /dev/null <<EOF
 # This file is managed by the OWL setup script.
 # It allows the 'owl' user to manage the main owl.service
 # without a password, which is required for the web dashboard power button.
-# Also allows shutdown (triggered by central controller MQTT command).
+# Also allows shutdown and reboot (triggered by MQTT commands and the
+# token-guarded /api/system/shutdown and /api/system/reboot routes).
 
-Cmnd_Alias OWL_SERVICE_CMDS = ${SYSTEMCTL_BIN} start owl.service, ${SYSTEMCTL_BIN} stop owl.service, ${SYSTEMCTL_BIN} restart owl.service, ${SYSTEMCTL_BIN} is-active owl.service, ${SYSTEMCTL_BIN} reset-failed owl.service, ${SHUTDOWN_BIN} now
+Cmnd_Alias OWL_SERVICE_CMDS = ${SYSTEMCTL_BIN} start owl.service, ${SYSTEMCTL_BIN} stop owl.service, ${SYSTEMCTL_BIN} restart owl.service, ${SYSTEMCTL_BIN} is-active owl.service, ${SYSTEMCTL_BIN} reset-failed owl.service, ${SHUTDOWN_BIN} now, ${REBOOT_BIN}
 
 # Grant the user permission to run ONLY the commands in the alias.
 ${CURRENT_USER} ALL=(ALL) NOPASSWD: OWL_SERVICE_CMDS
@@ -600,6 +604,49 @@ EOF
     sudo chmod 0440 "$SUDOERS_FILE"
 
     check_status "Service control sudo permissions" "SERVICE_PERMISSIONS"
+}
+
+setup_device_settings_permissions() {
+    echo -e "${GREEN}[INFO] Configuring device settings permissions (network, passwords)...${NC}"
+
+    local PASSWORD_HELPER="/usr/local/sbin/owl-set-user-password"
+    local SUDOERS_FILE="/etc/sudoers.d/95-owl-device-settings"
+    local NMCLI_BIN CHPASSWD_BIN
+    NMCLI_BIN="$(command -v nmcli 2>/dev/null || echo /usr/bin/nmcli)"
+    CHPASSWD_BIN="$(command -v chpasswd 2>/dev/null || echo /usr/sbin/chpasswd)"
+
+    # Root-owned helper: sudoers must never reference a user-writable file,
+    # so the password change lives in /usr/local/sbin with the username
+    # baked in at install time. The password arrives on stdin (never argv,
+    # which is visible in ps).
+    sudo tee "$PASSWORD_HELPER" > /dev/null <<EOF
+#!/bin/sh
+# Managed by OWL controller/shared/setup.sh - sets the OWL user password.
+# Reads the new password from stdin so it never appears in argv or logs.
+set -eu
+IFS= read -r password || exit 1
+if [ "\${#password}" -lt 8 ]; then
+    echo "Password must be at least 8 characters" >&2
+    exit 1
+fi
+printf '%s:%s\n' '${CURRENT_USER}' "\$password" | ${CHPASSWD_BIN}
+EOF
+    sudo chown root:root "$PASSWORD_HELPER"
+    sudo chmod 0755 "$PASSWORD_HELPER"
+
+    sudo tee "$SUDOERS_FILE" > /dev/null <<EOF
+# Managed by OWL controller/shared/setup.sh
+# Device-settings capability for the dashboard/app: full nmcli for Wi-Fi
+# reconfiguration (matches the pinctrl sudo precedent) plus the root-owned
+# password helper. Dashboard settings routes return 503 when this is absent.
+
+Cmnd_Alias OWL_SETTINGS_CMDS = ${NMCLI_BIN}, ${PASSWORD_HELPER}
+
+${CURRENT_USER} ALL=(root) NOPASSWD: OWL_SETTINGS_CMDS
+EOF
+    sudo chmod 0440 "$SUDOERS_FILE"
+
+    check_status "Device settings permissions" "DEVICE_SETTINGS_PERMISSIONS"
 }
 
 update_owl_configs() {
@@ -889,6 +936,7 @@ check_status "Setting hostname and local resolution" "HOSTNAME"
 # Set the permissions for each service
 setup_fan_permissions
 setup_service_control_permissions
+setup_device_settings_permissions
 
 # Step 7: Generate SSL certificates
 echo -e "${GREEN}[INFO] Generating SSL certificates...${NC}"
@@ -1250,6 +1298,7 @@ echo -e "$STATUS_HOSTNAME Hostname Configuration"
 echo -e "$STATUS_UFW_CONFIG UFW Firewall Configuration"
 echo -e "$STATUS_FAN_PERMISSIONS Fan Control Permissions"
 echo -e "$STATUS_SERVICE_PERMISSIONS Service Control Permissions"
+echo -e "$STATUS_DEVICE_SETTINGS_PERMISSIONS Device Settings Permissions"
 echo -e "$STATUS_NGINX_CONFIG Nginx Configuration"
 echo -e "$STATUS_SSL_CERT SSL Certificate Generation"
 echo -e "$STATUS_AVAHI_CONFIG Avahi Service Configuration"
@@ -1313,7 +1362,7 @@ else
     fi
 fi
 
-if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "$STATUS_WIFI_CONFIG" == "${TICK}" && "$STATUS_HOSTNAME" == "${TICK}" && "$STATUS_UFW_CONFIG" == "${TICK}" && "$STATUS_NGINX_CONFIG" == "${TICK}" && "$STATUS_SSL_CERT" == "${TICK}" && "$STATUS_AVAHI_CONFIG" == "${TICK}" && "$STATUS_SERVICES" == "${TICK}" && "$STATUS_FAN_PERMISSIONS" == "${TICK}" && "$STATUS_SERVICE_PERMISSIONS" == "${TICK}" && "$STATUS_OWL_CONFIG" == "${TICK}" ]]; then
+if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "$STATUS_WIFI_CONFIG" == "${TICK}" && "$STATUS_HOSTNAME" == "${TICK}" && "$STATUS_UFW_CONFIG" == "${TICK}" && "$STATUS_NGINX_CONFIG" == "${TICK}" && "$STATUS_SSL_CERT" == "${TICK}" && "$STATUS_AVAHI_CONFIG" == "${TICK}" && "$STATUS_SERVICES" == "${TICK}" && "$STATUS_FAN_PERMISSIONS" == "${TICK}" && "$STATUS_SERVICE_PERMISSIONS" == "${TICK}" && "$STATUS_DEVICE_SETTINGS_PERMISSIONS" == "${TICK}" && "$STATUS_OWL_CONFIG" == "${TICK}" ]]; then
     echo -e "\n${GREEN}[COMPLETE] OWL setup completed successfully!${NC}"
 
     echo -e "\n${GREEN}[INFO] Setup Complete - Reboot Recommended${NC}"
@@ -1391,6 +1440,7 @@ else
     if [[ -n "$ERROR_UFW_CONFIG" ]]; then echo -e "${RED}[ERROR] UFW Config: $ERROR_UFW_CONFIG${NC}"; fi
     if [[ -n "$ERROR_FAN_PERMISSIONS" ]]; then echo -e "${RED}[ERROR] Fan Permissions: $ERROR_FAN_PERMISSIONS${NC}"; fi
     if [[ -n "$ERROR_SERVICE_PERMISSIONS" ]]; then echo -e "${RED}[ERROR] OWL Service Permissions: $ERROR_SERVICE_PERMISSIONS${NC}"; fi
+    if [[ -n "$ERROR_DEVICE_SETTINGS_PERMISSIONS" ]]; then echo -e "${RED}[ERROR] Device Settings Permissions: $ERROR_DEVICE_SETTINGS_PERMISSIONS${NC}"; fi
     if [[ -n "$ERROR_NGINX_CONFIG" ]]; then echo -e "${RED}[ERROR] Nginx Config: $ERROR_NGINX_CONFIG${NC}"; fi
     if [[ -n "$ERROR_SSL_CERT" ]]; then echo -e "${RED}[ERROR] SSL Cert: $ERROR_SSL_CERT${NC}"; fi
     if [[ -n "$ERROR_AVAHI_CONFIG" ]]; then echo -e "${RED}[ERROR] Avahi Config: $ERROR_AVAHI_CONFIG${NC}"; fi

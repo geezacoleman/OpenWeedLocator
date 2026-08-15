@@ -204,6 +204,11 @@ class Owl:
                            self.config.getint('Camera', 'resolution_height'))
         self.exp_compensation = self.config.getint('Camera', 'exp_compensation')
         self.camera_type = self.config.get('Camera', 'camera_type', fallback='auto')
+        # White balance - live-tunable via MQTT set_config_section (see
+        # mqtt_manager CAMERA_LIVE_KEYS); attrs kept current for dashboard state
+        self.awb_mode = self.config.get('Camera', 'awb_mode', fallback='daylight').lower()
+        self.awb_red_gain = self.config.getfloat('Camera', 'awb_red_gain', fallback=2.0)
+        self.awb_blue_gain = self.config.getfloat('Camera', 'awb_blue_gain', fallback=2.0)
 
         # Relay Dict maps the reference relay number to a boardpin on the embedded device
         self.relay_dict = {}
@@ -1457,7 +1462,10 @@ class Owl:
         try:
             media_source = VideoStream(resolution=self.resolution,
                                        exp_compensation=self.exp_compensation,
-                                       camera_type=camera_type)
+                                       camera_type=camera_type,
+                                       awb_mode=self.awb_mode,
+                                       awb_red_gain=self.awb_red_gain,
+                                       awb_blue_gain=self.awb_blue_gain)
             media_source.start()
 
             self.frame_width = media_source.frame_width

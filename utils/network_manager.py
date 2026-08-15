@@ -267,8 +267,13 @@ class NetworkManager:
     def delete_connection(self, name):
         self._run(['con', 'delete', name], check=False)
 
-    def set_hotspot_password(self, password, name=None):
-        """Change the hotspot PSK and re-apply it (used at setup finish)."""
+    def set_hotspot_password(self, password, name=None, reapply=True):
+        """Change the hotspot PSK and re-apply it (used at setup finish).
+
+        reapply=False only modifies the profile — required when the radio
+        is on a client network (con up would steal it for the AP); the new
+        PSK takes effect the next time the hotspot comes up.
+        """
         if not password or len(password) < MIN_PSK_LENGTH:
             raise NetworkManagerError(
                 f'Hotspot password must be at least {MIN_PSK_LENGTH} characters')
@@ -277,7 +282,8 @@ class NetworkManager:
             raise NetworkManagerError('No hotspot connection profile found',
                                       kind='not_found')
         self._run(['con', 'modify', name, 'wifi-sec.psk', password])
-        self._run(['con', 'up', name], timeout=60)
+        if reapply:
+            self._run(['con', 'up', name], timeout=60)
         logger.info("Hotspot '%s' password updated", name)
 
     # ------------------------------------------------------------------

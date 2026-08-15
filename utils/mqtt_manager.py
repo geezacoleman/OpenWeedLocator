@@ -20,6 +20,7 @@ from utils.config_manager import (
     GREENONBROWN_PARAMS, GEOMETRY_KEYS as MOUNT_GEOMETRY_KEYS,
     GEOMETRY_SECTION_KEYS, GEOMETRY_FILE, atomic_write_config,
     AUTOSAVE_CONFIG, seed_autosave, parse_config_meta, config_unsaved_state,
+    ConfigValidator,
 )
 from utils.directory_manager import scan_sessions, collect_session_files, select_preview_images
 
@@ -35,6 +36,12 @@ GEOMETRY_KEYS = set(MOUNT_GEOMETRY_KEYS) | {
 RESTART_REQUIRED_KEYS = {
     'resolution_width', 'resolution_height', 'relay_num',
 }
+
+# [Camera] keys hot-applied to the running camera via set_camera_controls
+# (picamera2 backend). Must be checked BEFORE the generic setattr fallback in
+# _handle_set_config_section — exp_compensation used to hit that fallback and
+# silently do nothing until restart.
+CAMERA_LIVE_KEYS = {'awb_mode', 'awb_red_gain', 'awb_blue_gain', 'exp_compensation'}
 
 try:
     import paho.mqtt.client as mqtt
@@ -1141,6 +1148,8 @@ class OWLMQTTPublisher:
             gob_changed = False
             geometry_changed = False
             restart_keys = set()
+            camera_live_params = {}
+            rejected_keys = set()
             for key, value in params.items():
                 if key in GEOMETRY_KEYS:
                     geometry_changed = True
@@ -1169,6 +1178,29 @@ class OWLMQTTPublisher:
                     if current is None or str(current).strip() != str(value).strip():
                         restart_keys.add(key)
                         self.logger.info(f"{section}.{key} change needs a restart to take effect")
+                elif key in CAMERA_LIVE_KEYS:
+                    # Coerce and validate here — a value that fails validation
+                    # must be neither applied nor persisted (it would crash the
+                    # next boot's config load).
+                    try:
+                        if key == 'awb_mode':
+                            typed = str(value).strip().lower()
+                            if typed not in ConfigValidator.VALID_AWB_MODES:
+                                self.logger.warning(
+                                    f"Rejected invalid awb_mode '{value}' (valid: "
+                                    f"{', '.join(sorted(ConfigValidator.VALID_AWB_MODES))})")
+                                rejected_keys.add(key)
+                                continue
+                        elif key in ('awb_red_gain', 'awb_blue_gain'):
+                            typed = min(max(float(value), 0.1), 8.0)
+                        else:  # exp_compensation
+                            typed = min(max(int(float(value)), -10), 10)
+                    except (ValueError, TypeError) as e:
+                        self.logger.warning(f"Rejected {section}.{key}={value}: {e}")
+                        rejected_keys.add(key)
+                        continue
+                    setattr(self.owl_instance, key, typed)
+                    camera_live_params[key] = typed
                 elif hasattr(self.owl_instance, key):
                     # Type-convert to match existing attribute type (INI values are strings)
                     current = getattr(self.owl_instance, key)
@@ -1187,13 +1219,17 @@ class OWLMQTTPublisher:
                         self.logger.warning(f"Cannot convert {section}.{key}={value}: {e}")
 
                 # Also update the config object for persistence (non-GoB keys only;
-                # _update_greenonbrown_param handles GoB config internally)
+                # _update_greenonbrown_param handles GoB config internally).
+                # Camera live keys persist their coerced/clamped value so the
+                # file always passes validation on the next boot.
                 if key not in GREENONBROWN_PARAMS:
+                    persist_value = camera_live_params.get(key, value) \
+                        if key in CAMERA_LIVE_KEYS else value
                     with self.config_lock:
                         if hasattr(self.owl_instance, 'config'):
                             if not self.owl_instance.config.has_section(section):
                                 self.owl_instance.config.add_section(section)
-                            self.owl_instance.config.set(section, key, str(value))
+                            self.owl_instance.config.set(section, key, str(persist_value))
 
             self.logger.info(f"Applied {len(params)} params to [{section}]")
 
@@ -1224,6 +1260,19 @@ class OWLMQTTPublisher:
                     if gog:
                         gog.detection_persist_frames = getattr(
                             self.owl_instance, 'detection_persist_frames', 0)
+
+            # Hot-apply WB/exposure to the running camera (picamera2 queues
+            # control updates internally — safe from this MQTT thread).
+            if camera_live_params:
+                cam = getattr(self.owl_instance, 'cam', None)
+                if cam is not None and hasattr(cam, 'set_camera_controls'):
+                    try:
+                        cam.set_camera_controls(camera_live_params)
+                    except Exception as e:
+                        self.logger.error(f"Error applying live camera controls: {e}")
+                else:
+                    self.logger.info("Camera backend does not support live control "
+                                     "updates; values persisted for next start")
 
             # Re-derive crop slice / lane coords / actuation band on the live
             # instance — event-driven, once per change, never per-frame.

@@ -84,6 +84,9 @@ All algorithms except `gog`, `gog-hybrid`, and `hsv` use the `[GreenOnBrown]` th
 | `resolution_width` | `1456` | 1+ (integer) | Camera capture width in pixels |
 | `resolution_height` | `1088` | 1+ (integer) | Camera capture height in pixels |
 | `exp_compensation` | `-2` | -10 to 10 (integer) | Exposure compensation. Negative = darker (reduces sky/soil glare) |
+| `awb_mode` | `daylight` | `auto`, `daylight`, `cloudy`, `tungsten`, `fluorescent`, `indoor`, `manual` | White balance. `daylight` preserves the historical fixed outdoor WB. `manual` disables auto white balance and applies the gains below. Applied live (no restart) on picamera2 |
+| `awb_red_gain` | `2.0` | 0.1 to 8.0 (float) | Red colour gain, used only when `awb_mode = manual`. Higher = redder |
+| `awb_blue_gain` | `2.0` | 0.1 to 8.0 (float) | Blue colour gain, used only when `awb_mode = manual` |
 | `crop_left` | `0.02` | 0.0 to 0.49 (float) | Fraction of image width cropped from the left edge |
 | `crop_right` | `0.02` | 0.0 to 0.49 (float) | Fraction of image width cropped from the right edge |
 | `crop_top` | `0.02` | 0.0 to 0.49 (float) | Fraction of image height cropped from the top edge |

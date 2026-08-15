@@ -309,9 +309,11 @@ class ConfigValidator:
         },
         'Camera': {
             'required_keys': {'resolution_width', 'resolution_height'},
+            # awb_mode is a string key (enum-validated) — optional_keys only
             'optional_keys': {'exp_compensation', 'crop_factor_horizontal', 'crop_factor_vertical', 'camera_type',
                               'allow_high_resolution',
-                              'crop_left', 'crop_right', 'crop_top', 'crop_bottom'}
+                              'crop_left', 'crop_right', 'crop_top', 'crop_bottom',
+                              'awb_mode', 'awb_red_gain', 'awb_blue_gain'}
         },
         'GreenOnGreen': {
             'required_keys': {'model_path', 'confidence'},
@@ -360,6 +362,10 @@ class ConfigValidator:
         'resolution_height': ('int', 1, None),
         # Camera settings
         'exp_compensation': ('int', -10, 10),
+        # Manual white-balance gains (used when awb_mode = manual).
+        # Min 0.1, not 0.0 — libcamera treats ColourGains=(0,0) as "let AWB choose".
+        'awb_red_gain': ('float', 0.1, 8.0),
+        'awb_blue_gain': ('float', 0.1, 8.0),
         # Detection confidence
         'confidence': ('float', 0, 1),
         # GreenOnGreen
@@ -426,6 +432,7 @@ class ConfigValidator:
     VALID_SWITCH_PURPOSES = {'recording', 'detection'}
     VALID_ACTUATION_MODES = {'centre', 'zone'}
     VALID_CAMERA_TYPES = {'rpi', 'usb', 'auto'}
+    VALID_AWB_MODES = {'auto', 'daylight', 'cloudy', 'tungsten', 'fluorescent', 'indoor', 'manual'}
     VALID_SAMPLE_METHODS = {'bbox', 'square', 'whole'}
     VALID_STORAGE_LOCATIONS = {'usb', 'internal', 'auto'}
     VALID_BOOLEANS = {'true', 'false', '1', '0', 'yes', 'no', 'on', 'off'}
@@ -688,6 +695,21 @@ class ConfigValidator:
         return True, {}
 
     @classmethod
+    def validate_awb_mode(cls, config: ConfigParser) -> Tuple[bool, Dict[str, Dict[str, str]]]:
+        """Validate white balance mode selection."""
+        if not config.has_option('Camera', 'awb_mode'):
+            return True, {}  # Optional field, skip if not present
+
+        awb_mode = config.get('Camera', 'awb_mode', fallback='').lower()
+
+        if awb_mode not in cls.VALID_AWB_MODES:
+            return False, {'Camera': {
+                'awb_mode': f'Invalid white balance mode. Must be one of: {", ".join(sorted(cls.VALID_AWB_MODES))}'
+            }}
+
+        return True, {}
+
+    @classmethod
     def validate_sample_method(cls, config: ConfigParser) -> Tuple[bool, Dict[str, Dict[str, str]]]:
         """Validate sample method selection."""
         if not config.has_option('DataCollection', 'sample_method'):
@@ -900,6 +922,11 @@ class ConfigValidator:
         is_valid, camera_errors = cls.validate_camera_type(config)
         if not is_valid:
             validation_errors.update(camera_errors)
+
+        # Validate white balance mode
+        is_valid, awb_errors = cls.validate_awb_mode(config)
+        if not is_valid:
+            validation_errors.update(awb_errors)
 
         # Validate sample method
         is_valid, sample_errors = cls.validate_sample_method(config)

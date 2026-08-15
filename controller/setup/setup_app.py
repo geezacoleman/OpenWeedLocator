@@ -313,13 +313,14 @@ def create_app(network_manager=None, state=None, flag_path=None, state_file=None
         data = request.get_json(silent=True) or {}
         mode = data.get('mode')
         try:
-            fb.finish(mode, new_password=data.get('new_password'))
+            device_token = fb.finish(mode, new_password=data.get('new_password'))
         except ValueError as e:
             code = 409 if mode in ('wifi', 'controller') else 400
             return jsonify({'success': False, 'error': str(e)}), code
         except NetworkManagerError as e:
             return jsonify({'success': False, 'error': str(e)}), 500
-        return jsonify({'success': True, 'mode': mode})
+        return jsonify({'success': True, 'mode': mode,
+                        'device_token': device_token})
 
     return app
 

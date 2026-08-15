@@ -959,3 +959,45 @@ class TestConfigDirectories:
         assert data['success'] is True
         assert 'directories' in data
         assert isinstance(data['directories'], list)
+
+
+@pytest.mark.unit
+class TestApplyConfigPushesCameraSection:
+    """_apply_config_to_owl must forward [Camera] WB/exposure keys as one
+    set_config_section command so a kiosk config switch/save hot-applies
+    through mqtt_manager's CAMERA_LIVE_KEYS branch."""
+
+    def _camera_call(self, dashboard):
+        calls = [c for c in dashboard.mqtt_client._send_command.call_args_list
+                 if c.args and c.args[0] == 'set_config_section'
+                 and c.kwargs.get('section') == 'Camera']
+        return calls[0] if calls else None
+
+    def test_exp_compensation_pushed_from_active_config(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        dashboard.mqtt_client = MagicMock()
+        dashboard._apply_config_to_owl()
+        cam = self._camera_call(dashboard)
+        assert cam is not None, "no Camera set_config_section command sent"
+        assert cam.kwargs['params']['exp_compensation'] == -2
+
+    def test_awb_keys_pushed_when_present(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        # Add WB keys to the active config file
+        active = tmp_dir / 'GENERAL_CONFIG.ini'
+        cfg = configparser.ConfigParser()
+        cfg.read(active)
+        cfg.set('Camera', 'awb_mode', 'manual')
+        cfg.set('Camera', 'awb_red_gain', '1.4')
+        cfg.set('Camera', 'awb_blue_gain', '3.2')
+        with open(active, 'w') as handle:
+            cfg.write(handle)
+
+        dashboard.mqtt_client = MagicMock()
+        dashboard._apply_config_to_owl()
+        cam = self._camera_call(dashboard)
+        assert cam is not None
+        params = cam.kwargs['params']
+        assert params['awb_mode'] == 'manual'
+        assert params['awb_red_gain'] == 1.4
+        assert params['awb_blue_gain'] == 3.2

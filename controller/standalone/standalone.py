@@ -37,6 +37,11 @@ from utils.painter_sessions import (
     PainterSessionStore, PainterError, validate_strokes,
     collect_class_pixels, preview_images, make_thumbnail_jpeg,
 )
+from utils.network_manager import NetworkManager
+from controller.standalone.network_settings import NetworkSettingsManager
+from controller.standalone.settings_routes import (
+    make_token_reader, check_device_token, create_settings_blueprint,
+)
 try:
     from version import APP_CONTRACT_VERSION
 except Exception:
@@ -110,6 +115,17 @@ class OWLDashboard:
         self.lut_profile_manager = LUTProfileManager(
             os.path.abspath(os.path.join(repo_root, 'config', 'lut_profiles')))
         self.lut_profile_manager.ensure_builtin_profiles()
+
+        # Device settings (R3): in-place network reconfig, passwords, power.
+        # Mutating routes are guarded by CONTROLLER.ini [Security]
+        # device_token (minted at provisioning; absent on legacy units =
+        # headerless allow). nmcli runs through sudo -n, permitted by the
+        # 95-owl-device-settings sudoers file from controller/shared/setup.sh.
+        self.controller_ini_path = str(
+            Path(__file__).parent.parent.parent / 'config' / 'CONTROLLER.ini')
+        self.token_reader = make_token_reader(self.controller_ini_path)
+        self.network_settings = NetworkSettingsManager(
+            NetworkManager(runner=self._sudo_runner))
 
         self.setup_routes()
 
@@ -370,6 +386,26 @@ class OWLDashboard:
                 return jsonify({'success': True, 'message': message})
             else:
                 return jsonify({'success': False, 'error': message}), 500
+
+        @self.app.route('/api/owl/restart', methods=['POST'])
+        def restart_owl():
+            """Restart owl.service (token-guarded; used by the app after a
+            restart-required config change like resolution)."""
+            denied = self._check_device_token()
+            if denied is not None:
+                return denied
+            try:
+                result = self._run_systemctl_command(['restart', 'owl.service'],
+                                                     needs_sudo=True)
+            except Exception as e:
+                self.logger.error(f"owl.service restart failed: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+            if result.returncode != 0:
+                error = result.stderr.strip() or 'Failed to restart owl.service'
+                self.logger.error(f"owl.service restart failed: {error}")
+                return jsonify({'success': False, 'error': error}), 500
+            return jsonify({'success': True,
+                            'message': 'OWL service restarting.'})
 
         @self.app.route('/api/detection/start', methods=['POST'])
         def start_detection():
@@ -1184,7 +1220,12 @@ class OWLDashboard:
 
         @self.app.route('/api/downloads/session/<path:session_id>', methods=['DELETE'])
         def api_downloads_delete_session(session_id):
-            """Delete a recording session directory."""
+            """Delete a recording session directory (token-guarded since R3;
+            legacy no-token devices still accept headerless deletes)."""
+            denied = self._check_device_token()
+            if denied is not None:
+                return denied
+
             session_path, err = _validate_session_path(session_id)
             if err:
                 return err
@@ -1982,6 +2023,19 @@ class OWLDashboard:
                 return jsonify({'status': 'deleted'})
             return jsonify({'error': 'Session not found'}), 404
 
+        # Device-settings blueprint (R3): network reconfig, passwords, power.
+        # getattr-guarded: some test fixtures build the dashboard via
+        # __new__ + setup_routes() without running __init__.
+        if getattr(self, 'network_settings', None) is not None:
+            self.app.register_blueprint(create_settings_blueprint(
+                manager=self.network_settings,
+                token_reader=self.token_reader,
+                mqtt_getter=lambda: self.mqtt_client,
+                logger=self.logger,
+                controller_ini_path=self.controller_ini_path,
+                owl_active_getter=lambda: self.get_owl_service_state().get('active', False),
+            ))
+
     def _get_active_config_path(self):
         """Get the active config path from pointer file, or default."""
         # Try to find config directory relative to this file
@@ -2303,6 +2357,29 @@ class OWLDashboard:
                 except (ValueError, TypeError):
                     pass
 
+            # Push live camera controls (WB + exposure) as one Camera section
+            # command — hot-applied by mqtt_manager's CAMERA_LIVE_KEYS branch.
+            cam_params = {}
+            awb_mode = config.get('Camera', 'awb_mode', fallback=None)
+            if awb_mode is not None:
+                cam_params['awb_mode'] = awb_mode.strip().lower()
+            for key in ('awb_red_gain', 'awb_blue_gain'):
+                val = config.get('Camera', key, fallback=None)
+                if val is not None:
+                    try:
+                        cam_params[key] = float(val)
+                    except (ValueError, TypeError):
+                        pass
+            exp = config.get('Camera', 'exp_compensation', fallback=None)
+            if exp is not None:
+                try:
+                    cam_params['exp_compensation'] = int(float(exp))
+                except (ValueError, TypeError):
+                    pass
+            if cam_params:
+                self.mqtt_client._send_command(
+                    'set_config_section', section='Camera', params=cam_params)
+
             self.logger.info(f"Applied config to OWL: {os.path.basename(config_path)}")
 
         except Exception as e:
@@ -2420,6 +2497,19 @@ class OWLDashboard:
         })
 
         return stats
+
+    @staticmethod
+    def _sudo_runner(argv, timeout=30):
+        """subprocess.run-compatible runner prefixing sudo -n, injected into
+        NetworkManager (the dashboard runs as a non-root gunicorn worker)."""
+        return subprocess.run(['/usr/bin/sudo', '-n'] + list(argv),
+                              capture_output=True, text=True, timeout=timeout)
+
+    def _check_device_token(self):
+        """Return a 403 response when a device token exists and the request
+        lacks it; None when the request may proceed. Lazily tolerates test
+        fixtures built via __new__ without __init__ (no reader = legacy allow)."""
+        return check_device_token(getattr(self, 'token_reader', None))
 
     def _run_pinctrl(self, *args):
         cmd = ['/usr/bin/sudo', '-n', '/usr/bin/pinctrl', *args]
