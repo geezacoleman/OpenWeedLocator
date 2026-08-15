@@ -6,6 +6,7 @@ from enum import Enum
 from collections import deque
 from typing import Optional
 
+import os
 import subprocess
 import shutil
 import time
@@ -77,6 +78,16 @@ class TestLED:
 
 
 class BaseStatusIndicator:
+    GB = 1024 ** 3
+    LED_PATHS = {
+        "ACT": "/sys/class/leds/ACT/brightness",
+        "PWR": "/sys/class/leds/PWR/brightness"
+    }
+    LED_TRIGGER_PATHS = {
+        "ACT": "/sys/class/leds/ACT/trigger",
+        "PWR": "/sys/class/leds/PWR/trigger"
+    }
+
     def __init__(self, save_directory, no_save=False):
         self.logger = LogManager.get_logger(__name__)
 
@@ -85,6 +96,13 @@ class BaseStatusIndicator:
         self.testing = True if testing else False
         self.storage_used = None
         self.storage_total = None
+        self.storage_free = None
+        # usb: percent rule (full at >=90%). internal: absolute free-space
+        # floor (min_free_gb) — a 90% rule on a 16 GB eMMC would allow free
+        # space below the floor. owl.py assigns these after config load.
+        self.storage_location = 'usb'
+        self.min_free_gb = 4
+        self.storage_warning = 'ok'   # ok | low | full
         self.update_event = Event()
         self.running = True
         self.thread = None
@@ -92,8 +110,34 @@ class BaseStatusIndicator:
 
         self.error_code = None
         self.flashing_thread = None
+        self.flash_event = Event()
+        self._update_failed = False
+        self.leds_enabled = self._probe_led_control()
         self._set_led_trigger("ACT", "none")
         self._set_led_trigger("PWR", "none")
+
+    def _probe_led_control(self):
+        """One-time capability probe for board LED control (sysfs + passwordless sudo).
+
+        Units without either — sealed CM5 enclosures, desktops, Pis without a
+        sudoers entry — run with LED signalling disabled as a healthy state:
+        errors still reach the dashboard/app via MQTT state, and exactly one
+        warning is logged instead of a failing subprocess per blink.
+        """
+        if self.testing:
+            return False
+        if not all(os.path.exists(path) for path in self.LED_PATHS.values()):
+            self.logger.warning("LED signalling disabled: status LED sysfs paths not found.")
+            return False
+        try:
+            result = subprocess.run(['sudo', '-n', 'true'], capture_output=True)
+        except OSError:
+            self.logger.warning("LED signalling disabled: sudo not available.")
+            return False
+        if result.returncode != 0:
+            self.logger.warning("LED signalling disabled: passwordless sudo unavailable.")
+            return False
+        return True
 
     def start_storage_indicator(self):
         self.thread = Thread(target=self.run_update)
@@ -101,15 +145,35 @@ class BaseStatusIndicator:
 
     def run_update(self):
         while self.running:
-            self.update()
+            try:
+                self.update()
+                if self._update_failed:
+                    self._update_failed = False
+                    self.logger.info("Storage monitoring recovered.")
+            except OSError as e:
+                # A yanked drive must never kill this thread — it is the
+                # storage watchdog. Log once per failure transition only.
+                if not self._update_failed:
+                    self._update_failed = True
+                    self.logger.warning(f"Storage monitoring error (drive removed?): {e}")
             self.update_event.wait(10.5)
             self.update_event.clear()
 
     def update(self):
         if self.save_directory is not None:
-            self.storage_total, self.storage_used, _ = shutil.disk_usage(self.save_directory)
-            percent_full = (self.storage_used / self.storage_total)
-            self._update_storage_indicator(percent_full)
+            self.storage_total, self.storage_used, self.storage_free = \
+                shutil.disk_usage(self.save_directory)
+            if self.storage_location == 'internal':
+                self._update_internal_storage(self.storage_free)
+            else:
+                percent_full = (self.storage_used / self.storage_total)
+                self._update_storage_indicator(percent_full)
+                self._set_storage_warning(
+                    'full' if self.DRIVE_FULL else
+                    'low' if percent_full >= 0.85 else 'ok')
+            if self.error_code == 6:
+                # a writable drive is back — the no-drive error no longer applies
+                self.clear_error()
 
         elif self.no_save:
             pass
@@ -117,18 +181,60 @@ class BaseStatusIndicator:
         else:
             self.error(6)
 
+    def _update_internal_storage(self, free_bytes):
+        """Internal (eMMC) mode: absolute free-space floor, not a percent.
+        Breach latches DRIVE_FULL — the main loop's snap-off machinery does
+        the rest. Recovery (sessions deleted) clears via clear_error()."""
+        floor = self.min_free_gb * self.GB
+        if free_bytes < floor:
+            self.DRIVE_FULL = True
+            self._set_storage_warning('full')
+        else:
+            if self.DRIVE_FULL:
+                self.clear_error()
+            self._set_storage_warning(
+                'low' if free_bytes < floor + 2 * self.GB else 'ok')
+
+    def _set_storage_warning(self, level):
+        """Edge-triggered: one log line per state transition only."""
+        if level == self.storage_warning:
+            return
+        previous = self.storage_warning
+        self.storage_warning = level
+        free_gb = (self.storage_free or 0) / self.GB
+        if level == 'full':
+            self.logger.warning(
+                f"Storage full ({free_gb:.1f} GB free): recording unavailable "
+                f"until space is freed.")
+        elif level == 'low':
+            self.logger.warning(f"Storage low: {free_gb:.1f} GB free.")
+        elif previous != 'ok':
+            self.logger.info(f"Storage recovered: {free_gb:.1f} GB free.")
+
     def error(self, error_code):
         self.error_code = error_code
+        if not self.leds_enabled:
+            return
+        self.flash_event.clear()
         if self.flashing_thread is None or not self.flashing_thread.is_alive():
             self.flashing_thread = Thread(target=self._flash_error_code)
             self.flashing_thread.start()
 
+    def clear_error(self):
+        """Stop error flashing and unlatch DRIVE_FULL once the condition recovers."""
+        self.error_code = None
+        self.DRIVE_FULL = False
+        self.flash_event.set()
+
     def _flash_error_code(self):
-        while self.running:
-            for _ in range(self.error_code):
+        while self.running and self.error_code is not None:
+            code = self.error_code
+            for _ in range(code):
+                if not self.running or self.error_code is None:
+                    return
                 self._blink_leds()
-                time.sleep(0.2)  # Interval between flashes
-            time.sleep(2)  # Pause after each sequence
+                self.flash_event.wait(0.2)  # Interval between flashes
+            self.flash_event.wait(2)  # Pause after each sequence
 
     def _blink_leds(self):
         self._set_led_state("ACT", 1)
@@ -138,34 +244,28 @@ class BaseStatusIndicator:
         self._set_led_state("PWR", 0)
 
     def _set_led_state(self, led, state):
-        if not self.testing:
-            LED_PATHS = {
-                "ACT": "/sys/class/leds/ACT/brightness",
-                "PWR": "/sys/class/leds/PWR/brightness"
-            }
-            try:
-                subprocess.run(
-                    ['sudo', 'sh', '-c', f'echo {1 if state else 0} > {LED_PATHS[led]}'],
-                    check=True
-                )
-            except subprocess.CalledProcessError as e:
-                self.logger.error(msg=f"Error: Could not set {led} LED. {e}", exc_info=True)
+        if self.testing or not self.leds_enabled:
+            return
+        try:
+            subprocess.run(
+                ['sudo', 'sh', '-c', f'echo {1 if state else 0} > {self.LED_PATHS[led]}'],
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            self.logger.error(msg=f"Error: Could not set {led} LED. {e}", exc_info=True)
 
     # Method to set LED trigger to 'none' to ensure manual control.
     # Based on: https://howtoraspberrypi.com/controler-led-verte-raspberry-pi-2/
     def _set_led_trigger(self, led, trigger):
-        if not self.testing:
-            LED_TRIGGER_PATHS = {
-                "ACT": "/sys/class/leds/ACT/trigger",
-                "PWR": "/sys/class/leds/PWR/trigger"
-            }
-            try:
-                subprocess.run(
-                    ['sudo', 'sh', '-c', f'echo {trigger} > {LED_TRIGGER_PATHS[led]}'],
-                    check=True
-                )
-            except subprocess.CalledProcessError as e:
-                self.logger.error(f"Error: Could not set {led} trigger to {trigger}.", exc_info=True)
+        if self.testing or not self.leds_enabled:
+            return
+        try:
+            subprocess.run(
+                ['sudo', 'sh', '-c', f'echo {trigger} > {self.LED_TRIGGER_PATHS[led]}'],
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Error: Could not set {led} trigger to {trigger}.", exc_info=True)
 
     def _update_storage_indicator(self, percent_full):
         self.logger.warning("Called _update_storage_indicator() but it's not implemented.")
@@ -175,6 +275,7 @@ class BaseStatusIndicator:
         """Stop all threads and ensure resources are cleaned up."""
         self.running = False
         self.update_event.set()  # Wake up storage indicator thread
+        self.flash_event.set()  # Wake up flashing thread so it exits promptly
 
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=1)  # Ensure thread stops
@@ -201,6 +302,9 @@ class HeadlessStatusIndicator(BaseStatusIndicator):
     def _update_storage_indicator(self, percent_full):
         if percent_full >= 0.90:
             self.DRIVE_FULL = True
+        elif self.DRIVE_FULL:
+            # space was freed (e.g. sessions deleted) — recording may resume
+            self.clear_error()
 
 
 # UteStatusIndicator is defined after AdvancedStatusIndicator (below)
@@ -236,6 +340,9 @@ class AdvancedStatusIndicator(BaseStatusIndicator):
         if percent_full >= 0.90:
             self.DRIVE_FULL = True
             self.error(1)  # Use error code 1 for drive full
+        elif self.DRIVE_FULL:
+            # space was freed (e.g. sessions deleted) — recording may resume
+            self.clear_error()
 
     def setup_success(self):
         self.led.blink(on_time=0.1, off_time=0.1, n=2)
@@ -316,17 +423,30 @@ class AdvancedStatusIndicator(BaseStatusIndicator):
         self.error_code = error_code
         with self.state_lock:
             self.state = AdvancedIndicatorState.ERROR
+        if not self.leds_enabled:
+            return
+        self.flash_event.clear()
         if self.flashing_thread is None or not self.flashing_thread.is_alive():
             self.flashing_thread = Thread(target=self._flash_error_code)
             self.flashing_thread.start()
 
+    def clear_error(self):
+        super().clear_error()
+        with self.state_lock:
+            if self.state == AdvancedIndicatorState.ERROR:
+                self.state = AdvancedIndicatorState.IDLE
+                self._update_state()
+
     def _flash_error_code(self):
         try:
-            while self.running:
-                for _ in range(self.error_code):
+            while self.running and self.error_code is not None:
+                code = self.error_code
+                for _ in range(code):
+                    if not self.running or self.error_code is None:
+                        return
                     self._blink_leds()
-                    time.sleep(0.2)
-                time.sleep(2)
+                    self.flash_event.wait(0.2)
+                self.flash_event.wait(2)
         except KeyboardInterrupt:
             logger.info("[INFO] KeyboardInterrupt received in _flash_error_code. Exiting.")
         except Exception as e:
@@ -337,7 +457,7 @@ class AdvancedStatusIndicator(BaseStatusIndicator):
     def stop(self):
         super().stop()
         if self.flashing_thread and self.flashing_thread.is_alive():
-            self.flashing_thread.join()
+            self.flashing_thread.join(timeout=3)
         self.led.off()
 
 
@@ -419,7 +539,7 @@ class RelayControl:
             # Skip buzzer if BOARD7 (GPIO4) is needed by a relay
             buzzer_pin_used = 7 in self.relay_dict.values()
             if buzzer_pin_used:
-                logger.warning("Buzzer pin (BOARD7/GPIO4) allocated to relay — buzzer disabled")
+                logger.warning("Buzzer pin (BOARD7/GPIO4) allocated to relay; buzzer disabled")
                 self.buzzer = TestBuzzer()
             else:
                 try:

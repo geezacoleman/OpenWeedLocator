@@ -65,7 +65,7 @@ class WidgetManager:
 
             manifest = entry / 'widget.json'
             if not manifest.exists():
-                logger.warning("Widget directory %s has no widget.json — skipped", entry.name)
+                logger.warning("Widget directory %s has no widget.json; skipped", entry.name)
                 continue
 
             try:
@@ -125,7 +125,7 @@ class WidgetManager:
             errors.append('missing or invalid "id"')
         elif not _SAFE_ID_RE.match(widget_id):
             errors.append(
-                f'id "{widget_id}" contains unsafe characters — '
+                f'id "{widget_id}" contains unsafe characters; '
                 'use lowercase alphanumeric, hyphens and underscores only'
             )
 
@@ -134,11 +134,11 @@ class WidgetManager:
 
         wtype = spec.get('type')
         if not wtype or wtype not in self.VALID_TYPES:
-            errors.append(f'invalid type "{wtype}" — must be one of {sorted(self.VALID_TYPES)}')
+            errors.append(f'invalid type "{wtype}"; must be one of {sorted(self.VALID_TYPES)}')
 
         slot = spec.get('slot')
         if not slot or slot not in self.VALID_SLOTS:
-            errors.append(f'invalid slot "{slot}" — must be one of {sorted(self.VALID_SLOTS)}')
+            errors.append(f'invalid slot "{slot}"; must be one of {sorted(self.VALID_SLOTS)}')
 
         return (len(errors) == 0), errors
 

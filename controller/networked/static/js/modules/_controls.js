@@ -66,7 +66,7 @@ function toggleMainRecording() {
                     Promise.all(pending).then(function() {
                         showToast(
                             'High-resolution override saved on ' + ids.join(', ') +
-                            ' — restarting. Start recording when back online.',
+                            '. Restarting. Start recording when back online.',
                             'info'
                         );
                     });
@@ -92,7 +92,7 @@ function toggleMainRecording() {
                                 restartOWL(id);
                             }
                         }
-                        showToast('Resolution changed — restarting all OWLs. Start recording when they are back online.', 'info');
+                        showToast('Resolution changed. Restarting all OWLs. Start recording when they are back online.', 'info');
                     });
                 },
                 function onContinue() {
@@ -253,7 +253,7 @@ function toggleAllNozzles() {
             detBtn.textContent = 'Start Detection';
         }
         globalDetectionEnabled = false;
-        showToast('All nozzles ON — detection disabled', 'warning');
+        showToast('All nozzles ON, detection disabled', 'warning');
     }
 }
 
@@ -366,7 +366,7 @@ function setPipelineMode(mode) {
         // Painted mode activates via profile apply (a profile must exist);
         // with none saved, reveal the panel so Paint weeds is reachable.
         if (btn.classList.contains('no-profiles')) {
-            showToast('No painted profiles yet — use Paint weeds to create one', 'info');
+            showToast('No painted profiles yet. Use Paint weeds to create one', 'info');
         }
         if (typeof activateLutMode === 'function') activateLutMode();
         return;
@@ -574,6 +574,6 @@ function updateModeAvailability(modelAvailable) {
 function updatePaintedChipHint(hasProfiles) {
     document.querySelectorAll('.mode-btn[data-mode="lut"]').forEach(function(btn) {
         btn.classList.toggle('no-profiles', !hasProfiles);
-        btn.title = hasProfiles ? '' : 'No painted profiles yet — opens the paint panel';
+        btn.title = hasProfiles ? '' : 'No painted profiles yet. Opens the paint panel';
     });
 }

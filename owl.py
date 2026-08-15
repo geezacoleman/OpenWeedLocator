@@ -234,7 +234,7 @@ class Owl:
         self._firstboot_active = first_boot_flag.exists()
         self._firstboot_last_check = 0.0
         if self._firstboot_active:
-            self.logger.info("First-boot flag present — detection locked off until setup finishes")
+            self.logger.info("First-boot flag present: detection locked off until setup finishes")
             detection_enable_config = False
         self.detection_enable = Value('b', detection_enable_config)
         self.image_sample_enable = Value('b', self.config.getboolean('DataCollection', 'image_sample_enable',
@@ -319,7 +319,7 @@ class Owl:
             self.gps_baudrate = self.config.getint('GPS', 'baudrate', fallback=115200)
 
             if serial is None:
-                self.logger.error("pyserial not installed — serial GPS disabled. Install with: pip install pyserial")
+                self.logger.error("pyserial not installed; serial GPS disabled. Install with: pip install pyserial")
                 # Fall back to dashboard (browser geolocation) if available, otherwise disable
                 if self.dash:
                     self.gps_source = 'dashboard'
@@ -391,14 +391,33 @@ class Owl:
             self.save_directory = self.config.get('DataCollection', 'save_directory')
             self.camera_name = self.config.get('DataCollection', 'camera_name')
 
+            # Internal (eMMC) recording mode for sealed OWL 3.0 units; USB
+            # remains the default for self-installed Pis. See directory_manager.
+            self.storage_location = self.config.get(
+                'DataCollection', 'storage_location', fallback='usb').strip().lower()
+            self.internal_save_directory = self.config.get(
+                'DataCollection', 'internal_save_directory', fallback='/home/owl/owl_images').strip()
+            self.min_free_gb = self.config.getint('DataCollection', 'min_free_gb', fallback=4)
+            self.image_quota_gb = self.config.getint('DataCollection', 'image_quota_gb', fallback=12)
+
+            # The storage watchdog enforces the internal free-space floor
+            self.status_indicator.storage_location = self.storage_location
+            self.status_indicator.min_free_gb = self.min_free_gb
+
             try:
-                self.directory_manager = DirectorySetup(save_directory=self.save_directory)
+                self.directory_manager = DirectorySetup(
+                    save_directory=self.save_directory,
+                    storage_location=self.storage_location,
+                    internal_save_directory=self.internal_save_directory,
+                    min_free_gb=self.min_free_gb)
                 self.save_directory, self.save_subdirectory = self.directory_manager.setup_directories()
 
                 self.image_recorder = ImageRecorder(save_directory=self.save_subdirectory, mode=self.sample_method)
 
                 # Update status indicator with the resolved save_directory for storage monitoring
                 self.status_indicator.save_directory = self.save_directory
+                # auto mode resolves to usb or internal at runtime
+                self.status_indicator.storage_location = self.directory_manager.resolved_location
 
             except (errors.NoWritableUSBError, errors.USBMountError, errors.USBWriteError,
                     errors.StorageSystemError) as e:
@@ -408,6 +427,7 @@ class Owl:
                 # _retry_storage_setup().
                 self.logger.warning(f"No writable recording drive found: {e}")
                 self.logger.warning("Detection will run; recording is disabled until a USB drive is inserted.")
+                self._no_drive_warned = True  # already warned at boot; retries log at DEBUG
                 self.save_directory = None
                 self.save_subdirectory = None
                 self.image_recorder = None
@@ -635,17 +655,29 @@ class Owl:
         """
         try:
             self.directory_manager = DirectorySetup(
-                save_directory=self.config.get('DataCollection', 'save_directory'))
+                save_directory=self.config.get('DataCollection', 'save_directory'),
+                storage_location=getattr(self, 'storage_location', 'usb'),
+                internal_save_directory=getattr(self, 'internal_save_directory', None),
+                min_free_gb=getattr(self, 'min_free_gb', 0))
             self.save_directory, self.save_subdirectory = self.directory_manager.setup_directories(max_retries=1)
             self.image_recorder = ImageRecorder(save_directory=self.save_subdirectory, mode=self.sample_method)
             self.status_indicator.save_directory = self.save_directory
+            self.status_indicator.storage_location = self.directory_manager.resolved_location
+            self.status_indicator.clear_error()
+            self._no_drive_warned = False
             if self.dash:
                 self.dash.set_storage_available(True)
             self.logger.info(f"Recording drive found: {self.save_directory}")
             return True
         except (errors.NoWritableUSBError, errors.USBMountError, errors.USBWriteError,
                 errors.StorageSystemError) as e:
-            self.logger.warning(f"Recording requested but no writable USB drive found: {e}")
+            # Edge-triggered: switch-fitted units re-assert recording every
+            # cycle, so repeat attempts without a drive change log at DEBUG.
+            if not getattr(self, '_no_drive_warned', False):
+                self._no_drive_warned = True
+                self.logger.warning(f"Recording requested but no writable USB drive found: {e}")
+            else:
+                self.logger.debug(f"Recording requested but no writable USB drive found: {e}")
             if self.dash:
                 self.dash.set_storage_available(False)
             return False
@@ -721,8 +753,8 @@ class Owl:
             elif algo == 'lut':
                 if not self.lut_profile:
                     raise ValueError(
-                        'LUT algorithm selected but no lut_profile is set — '
-                        'paint one via the dashboard weed painter')
+                        'LUT algorithm selected but no lut_profile is set. '
+                        'Paint one via the dashboard weed painter')
                 lut_table = self.lut_manager.load_and_bake(
                     self.lut_profile, self.lut_sensitivity)
                 return GreenOnBrown(algorithm='lut', lut_table=lut_table)
@@ -953,7 +985,7 @@ class Owl:
                         if (self.tracking_enabled and actuation_mode == 'zone'
                                 and not _zone_tracking_warned):
                             self.logger.warning(
-                                'Zone actuation disabled while tracking is enabled — '
+                                'Zone actuation disabled while tracking is enabled; '
                                 'using centre-based actuation instead')
                             _zone_tracking_warned = True
 
@@ -1189,7 +1221,7 @@ class Owl:
 
                             self.image_recorder.stop()
                             self.status_indicator.error(5)
-                            self.logger.info("Drive full: Image sampling disabled permanently due to storage full")
+                            self.logger.info("Drive full: image sampling disabled until space is freed")
 
                 frame_count += 1
 
@@ -1520,11 +1552,7 @@ class Owl:
         }
 
         try:
-            # Get RPI version
-            from utils.input_manager import get_rpi_version
-            rpi_version = get_rpi_version()
-
-            if rpi_version == 'rpi-5':
+            if self.RPI_VERSION == 'rpi-5':
                 stats['fan_status']['is_rpi5'] = True
                 stats['fan_status']['mode'] = 'auto'  # or self.fan_state if you track it
 
@@ -1650,12 +1678,24 @@ class Owl:
                     self._firstboot_last_check = now
                     if not self._firstboot_flag_path.exists():
                         self._firstboot_active = False
-                        self.logger.info("First-boot flag cleared — detection control restored")
+                        self.logger.info("First-boot flag cleared: detection control restored")
                 if self._firstboot_active:
                     self._detection_enable = False
 
             # GPS: serial takes priority, then dashboard (browser geolocation)
             self.gps_data = self._get_best_gps_data()
+
+            # Storage watchdog readings → dashboard/app (change-guarded in
+            # the setter, so this is cheap every cycle)
+            if self.dash and hasattr(self, 'status_indicator'):
+                indicator = self.status_indicator
+                free_mb = (int(indicator.storage_free / (1024 * 1024))
+                           if indicator.storage_free is not None else None)
+                self.dash.set_storage_status(
+                    location=indicator.storage_location,
+                    free_mb=free_mb,
+                    warning=indicator.storage_warning,
+                    quota_gb=getattr(self, 'image_quota_gb', 12))
 
             time.sleep(self._STATE_CHECK_INTERVAL)
 

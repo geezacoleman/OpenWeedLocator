@@ -600,7 +600,7 @@ class CentralController:
                 if current_time - lwt_time > 5:
                     self._push_desired_state(device_id)
                 else:
-                    logger.debug(f"Suppressed reconnect push for {device_id} — LWT grace period")
+                    logger.debug(f"Suppressed reconnect push for {device_id}: LWT grace period")
 
             logger.debug(f"Updated {device_id} ({topic_type})")
 
@@ -1293,7 +1293,7 @@ class CentralController:
                         remaining = list(self.fleet_update['queue'])
                         for d in remaining:
                             self.fleet_update['results'][d] = 'aborted'
-                        self.fleet_update['error'] = f'{device_id}: {result} — remaining devices skipped'
+                        self.fleet_update['error'] = f'{device_id}: {result}; remaining devices skipped'
                     aborted = True
                     break
 
@@ -1368,7 +1368,7 @@ class CentralController:
                 '--request-id', str(uuid.uuid4()),
                 '--status-file', str(repo_dir / '.update_status.json'),
             ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            logger.warning(f"Controller self-update launched (ref={ref}) — service will restart")
+            logger.warning(f"Controller self-update launched (ref={ref}); service will restart")
             with self.fleet_update_lock:
                 self.fleet_update['results']['controller'] = 'launched'
         except Exception as e:
@@ -1461,7 +1461,7 @@ def demo_access_guard():
         return None
     if _effective_client_ip() in ('127.0.0.1', '::1'):
         return None
-    return Response('Restricted — visit /demo', status=403, content_type='text/plain')
+    return Response('Restricted. Visit /demo', status=403, content_type='text/plain')
 
 
 @app.route('/shared/<path:filename>')
@@ -2718,7 +2718,7 @@ def painter_save():
         if apply_now:
             if not controller.mqtt_connected or not controller.mqtt_client:
                 return jsonify({'success': False,
-                                'error': 'Saved, but MQTT not connected — '
+                                'error': 'Saved, but MQTT not connected; '
                                          'deploy failed'}), 503
             sent_to = _deploy_lut_profile(name, sensitivity)
         return jsonify({'success': True, 'meta': meta, 'applied': apply_now,

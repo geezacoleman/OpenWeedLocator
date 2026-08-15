@@ -140,7 +140,7 @@ def build_exif_bytes(gps_data=None, camera_metadata=None, context=None, capture_
             if len(desc) <= _MAX_EXIF_JSON:
                 zeroth[piexif.ImageIFD.ImageDescription] = desc
             else:
-                logger.warning(f"EXIF ImageDescription too large ({len(desc)} bytes) — omitted")
+                logger.warning(f"EXIF ImageDescription too large ({len(desc)} bytes); omitted")
 
         if camera_metadata:
             exposure_us = camera_metadata.get('ExposureTime')
@@ -159,7 +159,7 @@ def build_exif_bytes(gps_data=None, camera_metadata=None, context=None, capture_
             if len(meta_json) <= _MAX_EXIF_JSON:
                 exif_ifd[piexif.ExifIFD.UserComment] = piexif.helper.UserComment.dump(meta_json)
             else:
-                logger.warning(f"EXIF UserComment too large ({len(meta_json)} bytes) — omitted")
+                logger.warning(f"EXIF UserComment too large ({len(meta_json)} bytes); omitted")
 
         if gps_data and gps_data.get('latitude') is not None and gps_data.get('longitude') is not None:
             lat = float(gps_data['latitude'])

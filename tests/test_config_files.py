@@ -767,7 +767,7 @@ class TestSaveFoldsSliderValues:
         the Advanced editor loads, so saving straight from the sliders silently
         skipped the library file — no new profile in the list — and the OWLs
         diverted the null-filename save to their autosave working file
-        ('<old profile> — unsaved changes'). confirmSaveToAll must fetch the
+        ('<old profile> - unsaved changes'). confirmSaveToAll must fetch the
         running config from an OWL when deviceConfig is empty, and abort loudly
         rather than fire a null-filename device save."""
         src = self.NETWORKED_TAB.read_text(encoding='utf-8')

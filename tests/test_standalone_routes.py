@@ -655,6 +655,43 @@ class TestConfigParamRoutes:
         data = resp.get_json()
         assert resp.status_code == 400
 
+    def test_float_param_survives_round_trip(self, standalone_test_client):
+        """min_detection_area_percent is a small float (e.g. 0.0005); the
+        route used int(value), truncating it to 0 live AND persisting "0"
+        (field bug, R1 Phase 2). Both the MQTT command and the persisted
+        string must carry the float."""
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        sent = {}
+        persisted = {}
+        dashboard.mqtt_client._send_command = (
+            lambda action, **kw: (sent.update({'action': action}, **kw) or {'success': True}))
+        dashboard._persist_config_change = (
+            lambda section, key, value: persisted.update({section: (key, value)}))
+
+        resp = client.post('/api/config/param',
+                           json={'param': 'min_detection_area_percent', 'value': 0.0005})
+
+        assert resp.status_code == 200
+        assert sent['value'] == pytest.approx(0.0005)
+        assert isinstance(sent['value'], float)
+        assert persisted['GreenOnBrown'] == ('min_detection_area_percent', '0.0005')
+
+    def test_int_param_stays_int(self, standalone_test_client):
+        """The 0-255 threshold keys keep integer parsing."""
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        sent = {}
+        dashboard.mqtt_client._send_command = (
+            lambda action, **kw: (sent.update({'action': action}, **kw) or {'success': True}))
+        dashboard._persist_config_change = lambda section, key, value: None
+
+        resp = client.post('/api/config/param', json={'param': 'exg_min', 'value': 42})
+
+        assert resp.status_code == 200
+        assert sent['value'] == 42
+        assert isinstance(sent['value'], int)
+
     def test_set_crop_buffer(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
         _stabilize_mqtt(dashboard)

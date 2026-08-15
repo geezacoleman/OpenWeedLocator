@@ -50,7 +50,7 @@ function updateLibraryCaption() {
     const parts = [];
     if (cfg.display_name) parts.push(cfg.display_name);
     if (cfg.created) parts.push('saved ' + cfg.created.slice(0, 10));
-    if (cfg.notes) parts.push('— ' + cfg.notes);
+    if (cfg.notes) parts.push('- ' + cfg.notes);
     cap.textContent = parts.join('  ');
 }
 
@@ -141,7 +141,7 @@ async function loadDeviceConfig(deviceId) {
         // marker appears only when its content actually differs from that source
         const activeName = data.config_source || data.config_name || 'Unknown';
         updateActiveBadge(data.config_unsaved
-            ? activeName + ' — unsaved changes'
+            ? activeName + ' - unsaved changes'
             : activeName);
         renderDeviceConfigSections();
         updateConfigEditorChangeState();

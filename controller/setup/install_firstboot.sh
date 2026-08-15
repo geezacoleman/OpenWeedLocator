@@ -164,6 +164,22 @@ find_hotspot_connection() {
     return 1
 }
 
+# Serial-derived hotspot name, matching controller/shared/setup.sh
+# default_ssid() and the device_serial the firmware reports to the app.
+serial_ssid() {
+    local serial suffix
+    serial=$(awk -F': ' '/^Serial/ {print $2}' /proc/cpuinfo 2>/dev/null | tr -d ' \t')
+    if [[ -z "$serial" || "$serial" =~ ^0+$ ]]; then
+        serial=$(cat /etc/machine-id 2>/dev/null)
+    fi
+    suffix=$(printf '%s' "$serial" | tail -c 4 | tr '[:lower:]' '[:upper:]')
+    if [[ -n "$suffix" && ${#suffix} -eq 4 ]]; then
+        echo "OWL-${suffix}"
+        return 0
+    fi
+    return 1
+}
+
 arm() {
     echo -e "${GREEN}[INFO] Arming first-boot setup mode...${NC}"
 
@@ -200,6 +216,23 @@ arm() {
         exit 1
     fi
     echo -e "${TICK} Hotspot '${HOTSPOT}' password reset to setup default"
+
+    # 3b. Colliding install-default SSID (OWL-1, OWL-2, ...): rename to the
+    # serial-derived name before shipping. Two units broadcasting the same
+    # SSID cannot be told apart by the phone. Arm-time only — deployed
+    # units are never renamed silently (farmers' phones look for the
+    # stored name); custom SSIDs are left alone.
+    CURRENT_SSID=$(nmcli -t -f 802-11-wireless.ssid con show "$HOTSPOT" 2>/dev/null | cut -d: -f2)
+    if [[ "$CURRENT_SSID" =~ ^OWL-[0-9]+$ ]]; then
+        NEW_SSID=$(serial_ssid || true)
+        if [[ -n "$NEW_SSID" && "$NEW_SSID" != "$CURRENT_SSID" ]]; then
+            if nmcli con modify "$HOTSPOT" 802-11-wireless.ssid "$NEW_SSID"; then
+                echo -e "${TICK} Hotspot SSID '${CURRENT_SSID}' is an install default: renamed to '${NEW_SSID}'"
+            else
+                echo -e "${ORANGE}[WARN] Could not rename colliding SSID '${CURRENT_SSID}'; shipping as-is.${NC}"
+            fi
+        fi
+    fi
 
     # 4. systemd units — heredocs with expanded variables, same pattern as
     # owl_setup.sh and controller/shared/setup.sh (a template+sed step here

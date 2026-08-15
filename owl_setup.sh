@@ -325,8 +325,9 @@ check_status "System upgrade" "UPGRADE"
 #   python3-numpy       - system NumPy that picamera2 builds against
 #   v4l-utils           - USB camera detection/test (v4l2-ctl)
 #   i2c-tools           - camera/sensor debugging (i2cdetect)
+#   usbutils            - lsusb, used by the dashboard USB device listing
 echo -e "${GREEN}[INFO] Installing system dependencies (git, OpenCV libs, picamera2)...${NC}"
-sudo apt-get install -y git libgl1 libglib2.0-0 python3-picamera2 python3-numpy v4l-utils i2c-tools
+sudo apt-get install -y git libgl1 libglib2.0-0 python3-picamera2 python3-numpy v4l-utils i2c-tools usbutils
 check_status "Installing system dependencies" "SYS_DEPS"
 
 # rpicam-apps is preinstalled on Desktop; Lite images need the lite build

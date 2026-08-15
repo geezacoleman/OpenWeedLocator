@@ -44,6 +44,14 @@ class OWLError(Exception):
             bold: Whether to make the text bold
             underline: Whether to underline the text
         """
+        # ANSI escapes are for interactive terminals only; journald and log
+        # files capture stdout, and escape codes there are pure noise.
+        try:
+            if not sys.stdout.isatty():
+                return text
+        except (AttributeError, ValueError):
+            return text
+
         formatting = ""
         if bold:
             formatting += cls.COLORS['BOLD']

@@ -2,11 +2,15 @@ from datetime import datetime
 import utils.error_manager as errors
 import platform
 import re
+import shutil
 import time
 import os
+import zipfile
 
 from utils.log_manager import LogManager
 
+
+GB = 1024 ** 3
 
 # Shared constants for session scanning
 IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png')
@@ -148,11 +152,69 @@ def select_preview_images(save_dir, session_id, count):
     return [paths[i] for i in indices]
 
 
+class _ZipStreamBuffer:
+    """Write-only sink for zipfile that a generator drains in chunks.
+
+    Deliberately has NO tell()/seek(): zipfile then treats the output as
+    unseekable and writes data-descriptor members instead of seeking back
+    to patch headers (impossible on drained bytes). Peak memory is one
+    archive member, never the whole ZIP — multi-GB session ZIPs must not
+    touch /tmp (tmpfs on Trixie) or RAM in full.
+    """
+
+    def __init__(self):
+        self._chunks = []
+
+    def write(self, data):
+        self._chunks.append(bytes(data))
+        return len(data)
+
+    def flush(self):
+        pass
+
+    def drain(self):
+        chunks, self._chunks = self._chunks, []
+        return b''.join(chunks)
+
+
+def stream_zip(file_pairs):
+    """Yield the bytes of a ZIP_STORED archive of (arcname, path) pairs.
+
+    Stored, not deflated: the payload is JPEGs (already compressed), so this
+    stays pure I/O and the client can estimate progress from the raw sizes.
+    Files that vanish mid-stream (unlikely — deleting the recording session
+    is refused) are skipped rather than corrupting the archive.
+    """
+    buffer = _ZipStreamBuffer()
+    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_STORED, allowZip64=True) as archive:
+        for arcname, path in file_pairs:
+            try:
+                archive.write(path, arcname)
+            except OSError:
+                continue
+            data = buffer.drain()
+            if data:
+                yield data
+    tail = buffer.drain()
+    if tail:
+        yield tail
+
+
 class DirectorySetup:
-    def __init__(self, save_directory):
+    def __init__(self, save_directory, storage_location='usb',
+                 internal_save_directory=None, min_free_gb=0):
         self.logger = LogManager.get_logger(__name__)
         self.save_directory = save_directory
         self.save_subdirectory = None
+        # usb: /media mount required (legacy behaviour, the default)
+        # internal: eMMC/SD path, no mount gate (sealed OWL 3.0 units)
+        # auto: USB when one is mounted, else internal
+        self.storage_location = (storage_location or 'usb').lower()
+        self.internal_save_directory = internal_save_directory
+        self.min_free_gb = min_free_gb
+        # What setup actually landed on ('usb' or 'internal') — auto mode
+        # resolves at runtime; the storage watchdog keys its rule off this.
+        self.resolved_location = 'usb'
 
     def setup_directories(self, max_retries=5, retry_delay=2):
         for attempt in range(max_retries):
@@ -168,6 +230,18 @@ class DirectorySetup:
         raise errors.NoWritableUSBError()
 
     def _try_setup_directories(self):
+        if self.storage_location == 'internal':
+            return self._setup_internal()
+
+        try:
+            return self._try_setup_usb()
+        except (errors.USBMountError, errors.USBWriteError, errors.NoWritableUSBError):
+            if self.storage_location == 'auto' and self.internal_save_directory:
+                self.logger.info("No writable USB drive; using internal storage (storage_location=auto)")
+                return self._setup_internal()
+            raise
+
+    def _try_setup_usb(self):
         self.save_subdirectory = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
         if not os.path.ismount(self.save_directory):
             return self._handle_mount_error()
@@ -177,6 +251,41 @@ class DirectorySetup:
             raise errors.USBWriteError("Failed to write test file")
 
         self.logger.info(f"[SUCCESS] Directory setup complete: {self.save_subdirectory}")
+        return self.save_directory, self.save_subdirectory
+
+    def _setup_internal(self):
+        """Internal (eMMC/SD) recording path: no mount gate, just create and
+        write-test the configured directory. Recording is refused below the
+        free-space floor here; the status indicator watchdog enforces the
+        same floor while a session runs."""
+        if not self.internal_save_directory:
+            raise errors.StorageSystemError(
+                message="storage_location is internal but internal_save_directory is not set")
+
+        self.resolved_location = 'internal'
+        self.save_directory = self.internal_save_directory
+        self.save_subdirectory = os.path.join(
+            self.save_directory, datetime.now().strftime('%Y%m%d'))
+
+        try:
+            os.makedirs(self.save_subdirectory, exist_ok=True)
+        except OSError as e:
+            raise errors.StorageSystemError(
+                message=f"Cannot create internal storage directory {self.save_subdirectory}: {e}") from e
+
+        if not self.test_file_write():
+            raise errors.StorageSystemError(
+                message=f"Internal storage directory {self.save_subdirectory} is not writable")
+
+        if self.min_free_gb:
+            free = shutil.disk_usage(self.save_directory).free
+            if free < self.min_free_gb * GB:
+                raise errors.StorageSystemError(
+                    message=(f"Internal storage below the free-space floor: "
+                             f"{free / GB:.1f} GB free, floor is {self.min_free_gb} GB. "
+                             f"Delete or download sessions to record."))
+
+        self.logger.info(f"[SUCCESS] Internal storage ready: {self.save_subdirectory}")
         return self.save_directory, self.save_subdirectory
 
     def _handle_mount_error(self):

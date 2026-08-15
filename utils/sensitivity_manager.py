@@ -253,7 +253,7 @@ class SensitivityManager:
                 new_name = AUTOSAVE_CONFIG
                 target_path = os.path.join(config_dir, new_name)
                 logger.info(
-                    f"Unsaved change to {basename} — writing to {new_name}"
+                    f"Unsaved change to {basename}; writing to {new_name}"
                 )
 
                 # Record which file the working copy derives from

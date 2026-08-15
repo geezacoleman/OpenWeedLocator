@@ -309,7 +309,7 @@ function startRecording() {
                         setTimeout(function() {
                             startOwl();
                             showNotification('Info',
-                                'High-resolution override saved — OWL restarting. Start recording when it is back online.',
+                                'High-resolution override saved. OWL restarting. Start recording when it is back online.',
                                 'info', 8000);
                         }, 1000);
                     })
@@ -335,7 +335,7 @@ function startRecording() {
                             startOwl();
                             showNotification('Info',
                                 'Resolution changed to ' + OWL_MAX_RES_WIDTH + 'x' + OWL_MAX_RES_HEIGHT +
-                                ' — OWL restarting. Start recording when it is back online.', 'info', 8000);
+                                '. OWL restarting. Start recording when it is back online.', 'info', 8000);
                         }, 1000);
                     })
                     .catch(function(err) {
@@ -380,8 +380,13 @@ function checkStorageAfterRecordingStart() {
         .then(response => response.json())
         .then(stats => {
             if (stats && stats.storage_available === false && !stats.image_sample_enable) {
-                showNotification('No USB drive',
-                    'No USB drive found — insert a drive and press Record again', 'error', 8000);
+                if (stats.storage_location === 'internal') {
+                    showNotification('Storage full',
+                        'Internal storage is full. Download or delete sessions, then press Record again', 'error', 8000);
+                } else {
+                    showNotification('No USB drive',
+                        'No USB drive found. Insert a drive and press Record again', 'error', 8000);
+                }
                 updateSystemStats();
             }
         })
@@ -514,7 +519,7 @@ function startAllNozzles() {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                showNotification('Warning', 'All nozzles ON — detection disabled', 'warning');
+                showNotification('Warning', 'All nozzles ON, detection disabled', 'warning');
                 updateSystemStats();
             } else {
                 throw new Error(data.message || 'Failed to turn on nozzles');
@@ -981,7 +986,7 @@ function setPipelineMode(mode) {
         // Painted mode activates via profile apply (a profile must exist);
         // with none saved, reveal the panel so Paint weeds is reachable.
         if (btn.classList.contains('no-profiles')) {
-            showNotification('Info', 'No painted profiles yet — use Paint weeds to create one', 'info', 4000);
+            showNotification('Info', 'No painted profiles yet. Use Paint weeds to create one', 'info', 4000);
         }
         if (typeof activateLutMode === 'function') activateLutMode();
         return;
@@ -1073,7 +1078,7 @@ function updateModeAvailability(modelAvailable) {
 function updatePaintedChipHint(hasProfiles) {
     document.querySelectorAll('.mode-btn[data-mode="lut"]').forEach(function(btn) {
         btn.classList.toggle('no-profiles', !hasProfiles);
-        btn.title = hasProfiles ? '' : 'No painted profiles yet — opens the paint panel';
+        btn.title = hasProfiles ? '' : 'No painted profiles yet. Opens the paint panel';
     });
 }
 

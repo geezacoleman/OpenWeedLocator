@@ -94,7 +94,7 @@ def camera_diagnostics(system_runner=None):
             return diag
     except FileNotFoundError:
         diag.update(status='no_rpicam',
-                    detail='rpicam-hello not installed — camera stack missing')
+                    detail='rpicam-hello not installed; camera stack missing')
         return diag
     except (OSError, subprocess.TimeoutExpired) as e:
         logger.warning("rpicam-hello failed: %s", e)
@@ -111,14 +111,14 @@ def camera_diagnostics(system_runner=None):
     if not kernel_lines:
         diag.update(
             status='overlay_missing',
-            detail=f'no {CAMERA_SENSOR} kernel messages — the dtoverlay did '
+            detail=f'no {CAMERA_SENSOR} kernel messages; the dtoverlay did '
                    f'not load; check /boot/firmware/config.txt (run '
                    f'install_firstboot.sh --camera-config)')
     elif any('-121' in line for line in kernel_lines):
         diag.update(
             status='probe_failed',
             detail=f'{CAMERA_SENSOR} probe error -121 (I2C NACK): overlay '
-                   f'loaded but the sensor did not answer — unpowered, wrong '
+                   f'loaded but the sensor did not answer: unpowered, wrong '
                    f'CSI port, or hardware fault. Debug: pinctrl set 34/35 '
                    f'op dh, then i2cdetect -y 0 (expect 0x1a)')
     else:
@@ -221,7 +221,7 @@ class FirstBootState:
         any phone can be connected, so nobody gets dropped.
         """
         if not self.nm.is_supported():
-            logger.warning("nmcli unavailable — running in dev mode (no radio control)")
+            logger.warning("nmcli unavailable; running in dev mode (no radio control)")
             self.state = 'in_setup'
             return
 
@@ -235,7 +235,7 @@ class FirstBootState:
             logger.error("Could not read network status at startup: %s", e)
             status = {'mode': 'unknown', 'ssid': None, 'ip': None}
         if status['mode'] == 'client':
-            logger.info("Booted onto client network '%s' — resuming setup",
+            logger.info("Booted onto client network '%s'; resuming setup",
                         status['ssid'])
             self.wifi_state = 'connected'
             self.wifi_ssid = status['ssid']
@@ -247,7 +247,7 @@ class FirstBootState:
         try:
             self.refresh_scan_cache()
         except Exception as e:
-            logger.error("Startup WiFi scan failed (%s) — continuing with an "
+            logger.error("Startup WiFi scan failed (%s); continuing with an "
                          "empty scan cache", e)
 
         if not self._raise_setup_hotspot():
@@ -438,7 +438,7 @@ class FirstBootState:
                     logger.warning("Could not restart owl.service: %s", e)
                     warning = 'owl_restart_failed'
                 if warning:
-                    logger.warning("owl.service did not restart — the rig "
+                    logger.warning("owl.service did not restart; the rig "
                                    "will not see a heartbeat until reboot")
                 with self._lock:
                     self.wifi_state = 'connected'
@@ -535,7 +535,7 @@ class FirstBootState:
                            ssid, error)
         else:
             logger.critical("Join to '%s' failed (%s) AND the hotspot did "
-                            "not come back — retrying in background",
+                            "not come back; retrying in background",
                             ssid, error)
             self._schedule_hotspot_retry()
 
@@ -660,7 +660,7 @@ class FirstBootState:
                 # Stay armed: the setup password still works and the phone
                 # can retry finish rather than being locked out.
                 logger.critical("Could not apply the permanent hotspot "
-                                "password — setup stays armed")
+                                "password; setup stays armed")
                 return
         self.state = 'done'
         self._persist()
@@ -692,7 +692,7 @@ class FirstBootState:
         except Exception as e:
             logger.warning("Could not remove ufw rule: %s", e)
 
-        logger.info("First-boot setup complete — exiting")
+        logger.info("First-boot setup complete; exiting")
         timer = self._timer_factory(EXIT_DELAY_S, self._exit_fn)
         timer.daemon = True
         timer.start()

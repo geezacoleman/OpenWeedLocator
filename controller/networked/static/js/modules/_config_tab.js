@@ -385,7 +385,7 @@ function sendAllToDevice() {
         if (typeof updateConfigEditorChangeState === 'function') updateConfigEditorChangeState();
     }
 
-    showToast('Applied to all OWLs — not saved', 'info');
+    showToast('Applied to all OWLs, not saved', 'info');
 }
 
 // Which library profile the current settings derive from — set by an explicit
@@ -554,7 +554,7 @@ async function confirmSaveToAll() {
             }
         }
         if (typeof deviceConfig === 'undefined' || !Object.keys(deviceConfig).length) {
-            showToast('Cannot save profile — no OWL connected to read the config from', 'error');
+            showToast('Cannot save profile: no OWL connected to read the config from', 'error');
             return;
         }
 

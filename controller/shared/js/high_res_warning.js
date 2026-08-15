@@ -114,7 +114,7 @@ function showHighResWarningModal(rpiVersion, requestedWidth, requestedHeight, ac
     detail.appendChild(actualStrong);
     detail.appendChild(document.createTextNode(
         ' because the Pi 3/4 safety clamp is active. Override to apply your configured ' +
-        'resolution — the OWL will restart.'
+        'resolution. The OWL will restart.'
     ));
     modal.appendChild(detail);
 

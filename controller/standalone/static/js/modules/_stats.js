@@ -12,6 +12,32 @@ function startUpdateInterval() {
     updateInterval = setInterval(updateSystemStats, SYSTEM_UPDATE_INTERVAL);
 }
 
+// Last seen storage warning level; notifications fire on transitions only
+let lastStorageWarning = null;
+
+function watchStorageWarning(data) {
+    const warning = data.storage_warning || 'ok';
+    if (warning === lastStorageWarning) return;
+    const previous = lastStorageWarning;
+    lastStorageWarning = warning;
+    if (previous === null) return;   // first poll: no transition to report
+
+    const freeGb = (typeof data.storage_free_mb === 'number')
+        ? (data.storage_free_mb / 1024).toFixed(1) : null;
+    const freeText = freeGb ? ` (${freeGb} GB free)` : '';
+    if (warning === 'full') {
+        showNotification('Storage full',
+            `Recording unavailable${freeText}. Download or delete sessions to continue`,
+            'error', 10000);
+    } else if (warning === 'low') {
+        showNotification('Storage low',
+            `Space is running out${freeText}. Download or delete sessions soon`,
+            'warning', 8000);
+    } else if (previous === 'full' || previous === 'low') {
+        showNotification('Storage recovered', `Recording available again${freeText}`, 'success');
+    }
+}
+
 /**
  * Update system stats from API
  */
@@ -45,7 +71,7 @@ function updateSystemStats() {
                 const rawName = data.config_source || data.config_name || '';
                 let cfgName = rawName.replace(/\.ini$/, '');
                 cfgName = cfgName.replace(/_\d{8}_\d{6}$/, '').replace(/[-_]+/g, ' ').trim();
-                if (cfgName && data.config_unsaved) cfgName += ' — unsaved changes';
+                if (cfgName && data.config_unsaved) cfgName += ' - unsaved changes';
                 if (cfgName) {
                     setText('activeConfigName', cfgName);
                     cfgLine.classList.remove('hidden');
@@ -107,8 +133,12 @@ function updateSystemStats() {
             const rpmEl = document.getElementById('fanRpmReadout');
             if (rpmEl) {
                 const rpm = data?.fan_status?.rpm;
-                rpmEl.textContent = (typeof rpm === 'number') ? `${rpm} rpm` : '—';
+                rpmEl.textContent = (typeof rpm === 'number') ? `${rpm} rpm` : '--';
             }
+
+            // Storage warning transitions (internal/eMMC mode): notify once
+            // per state change, never per poll
+            watchStorageWarning(data);
 
             // Header online/offline
             const statusDot = document.getElementById('statusDot');

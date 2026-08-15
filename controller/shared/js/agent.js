@@ -374,7 +374,7 @@ async function agentLoadSessions() {
             var meta = document.createElement('div');
             meta.className = 'agent-session-meta';
             var date = new Date(s.updated * 1000);
-            meta.textContent = date.toLocaleDateString() + ' — ' +
+            meta.textContent = date.toLocaleDateString() + ' - ' +
                 s.message_count + ' messages';
 
             var deleteBtn = document.createElement('button');

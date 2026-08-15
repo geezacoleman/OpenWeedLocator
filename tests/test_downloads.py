@@ -1040,6 +1040,120 @@ class TestStandaloneDeleteSession:
 
 
 # ---------------------------------------------------------------------------
+# R2 Phase 7: streamed session ZIPs (no temp files) + delete-while-recording
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestStreamedZip:
+    """Both ZIP routes must stream: /tmp is tmpfs on Trixie, so a multi-GB
+    session ZIP written there is RAM exhaustion next to the detection loop
+    — and the old NamedTemporaryFile(delete=False) leaked every request."""
+
+    def test_zip_never_touches_a_temp_file(self, standalone_dl_client, monkeypatch):
+        import tempfile as tempfile_module
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError('session ZIP must stream, not spool to a temp file')
+
+        monkeypatch.setattr(tempfile_module, 'NamedTemporaryFile', forbidden)
+        client, _ = standalone_dl_client
+        resp = client.get('/api/downloads/session/20260315')
+        assert resp.status_code == 200
+        archive = zipfile.ZipFile(io.BytesIO(resp.data))
+        assert archive.testzip() is None
+        assert set(archive.namelist()) == {'img_001.jpg', 'img_002.jpg'}
+
+    def test_x_total_bytes_matches_payload(self, standalone_dl_client):
+        client, save_dir = standalone_dl_client
+        resp = client.get('/api/downloads/session/20260315')
+        expected = sum(f.stat().st_size
+                       for f in (save_dir / '20260315').iterdir() if f.is_file())
+        assert int(resp.headers['X-Total-Bytes']) == expected
+
+    def test_response_is_streamed(self, standalone_dl_client):
+        client, _ = standalone_dl_client
+        resp = client.get('/api/downloads/session/20260315')
+        assert resp.is_streamed
+
+    def test_no_named_temporary_file_left_in_source(self):
+        """Regression guard: neither download route may reintroduce the
+        temp-file pattern."""
+        src = (Path(__file__).parent.parent / 'controller' / 'standalone'
+               / 'standalone.py').read_text(encoding='utf-8')
+        assert 'NamedTemporaryFile' not in src
+
+    def test_subdir_session_zip_valid(self, standalone_dl_client_subdirs):
+        client, _ = standalone_dl_client_subdirs
+        resp = client.get('/api/downloads/session/20260331/session_143015')
+        assert resp.status_code == 200
+        archive = zipfile.ZipFile(io.BytesIO(resp.data))
+        assert archive.testzip() is None
+        assert set(archive.namelist()) == {'img1.jpg', 'img2.jpg'}
+
+
+@pytest.fixture
+def standalone_dl_client_recording(tmp_path):
+    """Subdir-structure client with recording ON (MQTT state mocked)."""
+    from controller.standalone.standalone import OWLDashboard
+
+    save_dir = tmp_path / 'save'
+    s1 = save_dir / '20260331' / 'session_143015'
+    s2 = save_dir / '20260331' / 'session_160000'
+    s1.mkdir(parents=True)
+    s2.mkdir(parents=True)
+    (s1 / 'img1.jpg').write_bytes(b'\xff\xd8' + b'\x00' * 1000)
+    (s2 / 'img1.jpg').write_bytes(b'\xff\xd8' + b'\x00' * 500)
+
+    dashboard = OWLDashboard.__new__(OWLDashboard)
+    dashboard.logger = MagicMock()
+    dashboard.config = MagicMock()
+    dashboard.mqtt_client = MagicMock()
+    dashboard.mqtt_client.get_state.return_value = {'image_sample_enable': True}
+    dashboard._get_save_directory = MagicMock(return_value=str(save_dir))
+
+    from flask import Flask
+    app = Flask(__name__,
+                template_folder=str(Path(__file__).parent.parent / 'controller' / 'standalone' / 'templates'),
+                static_folder=str(Path(__file__).parent.parent / 'controller' / 'standalone' / 'static'))
+    dashboard.app = app
+    dashboard.setup_routes()
+    return app.test_client(), save_dir, dashboard
+
+
+@pytest.mark.unit
+class TestDeleteWhileRecording:
+    """Deleting the session being written would ENOENT-storm the recorder
+    workers — the newest session is off-limits while recording is on."""
+
+    def test_active_session_delete_refused(self, standalone_dl_client_recording):
+        client, save_dir, _ = standalone_dl_client_recording
+        resp = client.delete('/api/downloads/session/20260331/session_160000')
+        assert resp.status_code == 409
+        assert 'recording' in resp.get_json()['error'].lower()
+        assert (save_dir / '20260331' / 'session_160000').exists()
+
+    def test_active_date_delete_refused(self, standalone_dl_client_recording):
+        """Date-level delete containing the active session is also refused."""
+        client, save_dir, _ = standalone_dl_client_recording
+        resp = client.delete('/api/downloads/session/20260331')
+        assert resp.status_code == 409
+        assert (save_dir / '20260331').exists()
+
+    def test_older_session_delete_allowed(self, standalone_dl_client_recording):
+        client, save_dir, _ = standalone_dl_client_recording
+        resp = client.delete('/api/downloads/session/20260331/session_143015')
+        assert resp.status_code == 200
+        assert not (save_dir / '20260331' / 'session_143015').exists()
+
+    def test_delete_allowed_when_idle(self, standalone_dl_client_recording):
+        client, save_dir, dashboard = standalone_dl_client_recording
+        dashboard.mqtt_client.get_state.return_value = {'image_sample_enable': False}
+        resp = client.delete('/api/downloads/session/20260331/session_160000')
+        assert resp.status_code == 200
+        assert not (save_dir / '20260331' / 'session_160000').exists()
+
+
+# ---------------------------------------------------------------------------
 # _upload_session method=PUT (presigned URLs) vs POST (controller endpoint)
 # ---------------------------------------------------------------------------
 

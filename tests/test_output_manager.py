@@ -354,3 +354,218 @@ class TestHeadlessStatusIndicator:
         from utils.output_manager import HeadlessStatusIndicator
         indicator = HeadlessStatusIndicator(save_directory=None, no_save=True)
         indicator.stop()
+
+    def test_drive_full_clears_when_space_freed(self, tmp_path):
+        """Deleting sessions below 90% must unlatch DRIVE_FULL so recording
+        can resume without a restart (R2 eMMC recovery path)."""
+        from utils.output_manager import HeadlessStatusIndicator
+        indicator = HeadlessStatusIndicator(save_directory=str(tmp_path))
+        indicator._update_storage_indicator(0.91)
+        assert indicator.DRIVE_FULL is True
+        indicator._update_storage_indicator(0.5)
+        assert indicator.DRIVE_FULL is False
+        indicator.stop()
+
+
+# ---------------------------------------------------------------------------
+# LED capability probe (R1 journal quiet)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestLEDCapabilityProbe:
+    """LED signalling degrades to a single warning on units without
+    passwordless sudo or LED sysfs paths (sealed CM5, desktops)."""
+
+    def _no_save_indicator(self):
+        from utils.output_manager import HeadlessStatusIndicator
+        return HeadlessStatusIndicator(save_directory=None, no_save=True)
+
+    def test_disabled_in_test_mode(self):
+        indicator = self._no_save_indicator()
+        assert indicator.leds_enabled is False
+        indicator.stop()
+
+    def test_missing_sysfs_warns_once(self, caplog):
+        import logging
+        indicator = self._no_save_indicator()
+        indicator.testing = False
+        with patch('utils.output_manager.os.path.exists', return_value=False), \
+                caplog.at_level(logging.WARNING, logger='utils.output_manager'):
+            assert indicator._probe_led_control() is False
+        warnings = [r for r in caplog.records if 'LED signalling disabled' in r.message]
+        assert len(warnings) == 1
+        indicator.stop()
+
+    def test_no_passwordless_sudo_disables(self, caplog):
+        import logging
+        indicator = self._no_save_indicator()
+        indicator.testing = False
+        failed = MagicMock(returncode=1)
+        with patch('utils.output_manager.os.path.exists', return_value=True), \
+                patch('utils.output_manager.subprocess.run', return_value=failed), \
+                caplog.at_level(logging.WARNING, logger='utils.output_manager'):
+            assert indicator._probe_led_control() is False
+        warnings = [r for r in caplog.records if 'LED signalling disabled' in r.message]
+        assert len(warnings) == 1
+        indicator.stop()
+
+    def test_sudo_missing_disables(self):
+        indicator = self._no_save_indicator()
+        indicator.testing = False
+        with patch('utils.output_manager.os.path.exists', return_value=True), \
+                patch('utils.output_manager.subprocess.run', side_effect=OSError('no sudo')):
+            assert indicator._probe_led_control() is False
+        indicator.stop()
+
+    def test_probe_success_enables(self):
+        indicator = self._no_save_indicator()
+        indicator.testing = False
+        ok = MagicMock(returncode=0)
+        with patch('utils.output_manager.os.path.exists', return_value=True), \
+                patch('utils.output_manager.subprocess.run', return_value=ok):
+            assert indicator._probe_led_control() is True
+        indicator.stop()
+
+    def test_set_led_state_noop_when_disabled(self):
+        indicator = self._no_save_indicator()
+        indicator.testing = False
+        indicator.leds_enabled = False
+        with patch('utils.output_manager.subprocess.run') as run:
+            indicator._set_led_state('ACT', 1)
+            indicator._set_led_trigger('ACT', 'none')
+        run.assert_not_called()
+        indicator.stop()
+
+
+# ---------------------------------------------------------------------------
+# Error flash lifecycle: bounded loop + clear_error() (R1 journal quiet)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestErrorFlashLifecycle:
+
+    def _led_indicator(self):
+        """Indicator with LED signalling forced on. testing=True still
+        short-circuits _set_led_state, so no subprocess is ever run."""
+        from utils.output_manager import HeadlessStatusIndicator
+        indicator = HeadlessStatusIndicator(save_directory=None, no_save=True)
+        indicator.leds_enabled = True
+        return indicator
+
+    def test_error_starts_flash_thread(self):
+        indicator = self._led_indicator()
+        indicator.error(3)
+        assert indicator.flashing_thread is not None
+        assert indicator.flashing_thread.is_alive()
+        indicator.stop()
+
+    def test_clear_error_stops_flash_thread(self):
+        indicator = self._led_indicator()
+        indicator.error(3)
+        indicator.clear_error()
+        indicator.flashing_thread.join(timeout=3)
+        assert not indicator.flashing_thread.is_alive()
+        assert indicator.error_code is None
+        indicator.stop()
+
+    def test_error_without_leds_starts_no_thread(self):
+        """Sealed units: error code still latches for the dashboard/app, but
+        no flash thread (and so no sudo subprocess loop) ever starts."""
+        indicator = self._led_indicator()
+        indicator.leds_enabled = False
+        indicator.error(4)
+        assert indicator.flashing_thread is None
+        assert indicator.error_code == 4
+        indicator.stop()
+
+    def test_update_clears_no_drive_error_when_directory_returns(self, tmp_path):
+        from utils.output_manager import HeadlessStatusIndicator
+        indicator = HeadlessStatusIndicator(save_directory=None)
+        indicator.update()
+        assert indicator.error_code == 6
+        indicator.save_directory = str(tmp_path)
+        indicator.update()
+        assert indicator.error_code is None
+        indicator.stop()
+
+    def test_stop_ends_flash_thread_promptly(self):
+        indicator = self._led_indicator()
+        indicator.error(6)
+        indicator.stop()
+        indicator.flashing_thread.join(timeout=3)
+        assert not indicator.flashing_thread.is_alive()
+
+
+@pytest.mark.unit
+class TestAdvancedIndicatorErrorRecovery:
+
+    def _advanced(self):
+        from utils.output_manager import AdvancedStatusIndicator
+        return AdvancedStatusIndicator(save_directory=None, status_led_pin=None)
+
+    def test_clear_error_leaves_error_state(self):
+        from utils.output_manager import AdvancedIndicatorState
+        indicator = self._advanced()
+        indicator.error(2)
+        assert indicator.state == AdvancedIndicatorState.ERROR
+        indicator.clear_error()
+        assert indicator.state == AdvancedIndicatorState.IDLE
+        assert indicator.error_code is None
+        indicator.stop()
+
+    def test_clear_error_restores_activity_state(self):
+        from utils.output_manager import AdvancedIndicatorState
+        indicator = self._advanced()
+        indicator.enable_weed_detection()
+        indicator.error(1)
+        indicator.clear_error()
+        assert indicator.state == AdvancedIndicatorState.DETECTING
+        indicator.stop()
+
+    def test_drive_full_recovery(self):
+        indicator = self._advanced()
+        indicator._update_storage_indicator(0.95)
+        assert indicator.DRIVE_FULL is True
+        indicator._update_storage_indicator(0.5)
+        assert indicator.DRIVE_FULL is False
+        assert indicator.error_code is None
+        indicator.stop()
+
+
+# ---------------------------------------------------------------------------
+# Storage watchdog thread survives disk_usage failures (R1; R2 prerequisite)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestStorageWatchdogResilience:
+
+    def test_thread_survives_oserror_and_logs_once(self, tmp_path, caplog):
+        """A yanked USB drive raises OSError from disk_usage; the watchdog
+        thread must survive and log once per failure transition, then log
+        recovery once when the drive is back."""
+        import logging
+        from utils.output_manager import HeadlessStatusIndicator
+        indicator = HeadlessStatusIndicator(save_directory=str(tmp_path))
+
+        with caplog.at_level(logging.INFO, logger='utils.output_manager'):
+            with patch('utils.output_manager.shutil.disk_usage',
+                       side_effect=OSError('drive yanked')):
+                indicator.start_storage_indicator()
+                time.sleep(0.2)
+                assert indicator.thread.is_alive()
+                # second watchdog cycle, still failing
+                indicator.update_event.set()
+                time.sleep(0.2)
+                assert indicator.thread.is_alive()
+                assert indicator._update_failed is True
+
+            # drive is back: next cycle recovers
+            indicator.update_event.set()
+            time.sleep(0.2)
+            assert indicator._update_failed is False
+
+        failures = [r for r in caplog.records if 'Storage monitoring error' in r.message]
+        recoveries = [r for r in caplog.records if 'Storage monitoring recovered' in r.message]
+        assert len(failures) == 1
+        assert len(recoveries) == 1
+        indicator.stop()

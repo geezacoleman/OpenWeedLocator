@@ -37,7 +37,7 @@ async function loadConfig() {
         // marker appears only when its content actually differs from that source
         document.getElementById('configFilePath').textContent =
             (data.config_source || data.config_name || '')
-            + (data.config_unsaved ? ' — unsaved changes' : '');
+            + (data.config_unsaved ? ' - unsaved changes' : '');
         updateActiveConfigBadge();
         renderConfigSections();
         renderConfigSelector();
@@ -193,7 +193,7 @@ function updateConfigCaption() {
     const parts = [];
     if (cfg.display_name) parts.push(cfg.display_name);
     if (cfg.created) parts.push('saved ' + cfg.created.slice(0, 10));
-    if (cfg.notes) parts.push('— ' + cfg.notes);
+    if (cfg.notes) parts.push('- ' + cfg.notes);
     cap.textContent = parts.join('  ');
 }
 
@@ -338,7 +338,7 @@ async function toggleStandaloneGeometry() {
             relayNum = parseInt(sys.relay_num, 10) || 4;
         }
     } catch (e) {
-        showNotification('Info', 'Using defaults — could not read geometry', 'info');
+        showNotification('Info', 'Using defaults: could not read geometry', 'info');
     }
 
     var btn = document.getElementById('geometryBtn');

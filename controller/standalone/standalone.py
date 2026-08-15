@@ -26,7 +26,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from utils.mqtt_manager import DashMQTTSubscriber
 from utils.input_manager import get_rpi_version
 from utils.device_identity import get_device_serial
-from utils.directory_manager import scan_sessions
+from utils.directory_manager import scan_sessions, stream_zip
 from utils.config_manager import (
     build_config_filename, parse_config_meta, strip_geometry_keys, GEOMETRY_FILE,
     stamp_config_meta, atomic_write_config, AUTOSAVE_CONFIG, seed_autosave,
@@ -41,6 +41,10 @@ try:
     from version import APP_CONTRACT_VERSION
 except Exception:
     APP_CONTRACT_VERSION = 1
+
+# GreenOnBrown keys carrying float values; every other key on the
+# /api/config/param route is an integer threshold.
+FLOAT_CONFIG_PARAMS = {'min_detection_area_percent'}
 
 try:
     from flask import Flask, Response, render_template, request, jsonify, send_from_directory, send_file
@@ -69,6 +73,17 @@ class OWLDashboard:
         self.logger = logging.getLogger(__name__)
         self.load_config()
         self.setup_logging()
+
+        # Probe-once tool paths. The stats endpoint polls every 2 s, so a
+        # missing binary (OS Lite ships without usbutils) must warn once at
+        # startup, never per poll.
+        self.lsusb_path = shutil.which('lsusb')
+        if self.lsusb_path is None:
+            self.logger.warning("lsusb not found; USB device listing disabled (install usbutils)")
+        self.vcgencmd_path = shutil.which('vcgencmd')
+        if self.vcgencmd_path is None:
+            self.logger.warning("vcgencmd not found; CPU temperature unavailable")
+        self.rpi_version = get_rpi_version()
 
         self.app = Flask(__name__,
                          static_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static'),
@@ -1008,32 +1023,23 @@ class OWLDashboard:
 
         @self.app.route('/api/download_logs')
         def download_logs():
+            # Streamed, never via a temp file: /tmp is tmpfs on Trixie and
+            # the old temp-file version leaked one zip per request.
             try:
-                import zipfile
-                import tempfile
-
-                # Create a temporary zip file
-                temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
-
-                with zipfile.ZipFile(temp_zip.name, 'w') as zip_file:
-                    log_dir = Path('../../logs')
-                    if log_dir.exists():
-                        for log_file in log_dir.glob('*.log*'):
+                log_dir = Path('../../logs')
+                pairs = []
+                if log_dir.exists():
+                    for pattern in ('*.log*', '*.jsonl'):
+                        for log_file in log_dir.glob(pattern):
                             if log_file.is_file():
-                                zip_file.write(log_file, log_file.name)
-
-                        for jsonl_file in log_dir.glob('*.jsonl'):
-                            if jsonl_file.is_file():
-                                zip_file.write(jsonl_file, jsonl_file.name)
+                                pairs.append((log_file.name, str(log_file)))
 
                 filename = f'owl_logs_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'
-
-                return send_file(
-                    temp_zip.name,
-                    as_attachment=True,
-                    download_name=filename,
-                    mimetype='application/zip'
-                )
+                total_bytes = sum(os.path.getsize(p) for _, p in pairs)
+                response = Response(stream_zip(pairs), mimetype='application/zip')
+                response.headers['Content-Disposition'] = f'attachment; filename={filename}'
+                response.headers['X-Total-Bytes'] = str(total_bytes)
+                return response
 
             except Exception as e:
                 self.logger.error(f"Error creating log archive: {e}")
@@ -1103,30 +1109,32 @@ class OWLDashboard:
 
         @self.app.route('/api/downloads/session/<path:session_id>')
         def api_downloads_session_zip(session_id):
-            """Serve a recording session as a ZIP file (created on-demand)."""
-            import zipfile
-            import tempfile
+            """Serve a recording session as a streamed ZIP.
 
+            ZIP_STORED (JPEGs don't compress) streamed straight from disk:
+            a multi-GB session must never hit /tmp (tmpfs on Trixie, next
+            to the detection loop's RAM) — the old temp file was also
+            leaked on every request. X-Total-Bytes carries the raw payload
+            size for client progress.
+            """
             session_path, err = _validate_session_path(session_id)
             if err:
                 return err
 
             try:
-                temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
-                with zipfile.ZipFile(temp_zip.name, 'w', zipfile.ZIP_STORED) as zf:
-                    for f in sorted(os.listdir(session_path)):
-                        fpath = os.path.join(session_path, f)
-                        if os.path.isfile(fpath):
-                            zf.write(fpath, f)
+                pairs = []
+                for f in sorted(os.listdir(session_path)):
+                    fpath = os.path.join(session_path, f)
+                    if os.path.isfile(fpath):
+                        pairs.append((f, fpath))
 
                 safe_name = session_id.replace('/', '_')
                 filename = f'owl_{safe_name}.zip'
-                return send_file(
-                    temp_zip.name,
-                    as_attachment=True,
-                    download_name=filename,
-                    mimetype='application/zip'
-                )
+                total_bytes = sum(os.path.getsize(p) for _, p in pairs)
+                response = Response(stream_zip(pairs), mimetype='application/zip')
+                response.headers['Content-Disposition'] = f'attachment; filename={filename}'
+                response.headers['X-Total-Bytes'] = str(total_bytes)
+                return response
             except Exception as e:
                 self.logger.error(f"Error creating session ZIP: {e}")
                 return jsonify({'error': str(e)}), 500
@@ -1180,6 +1188,18 @@ class OWLDashboard:
             session_path, err = _validate_session_path(session_id)
             if err:
                 return err
+
+            # Never delete the session being written: the ImageRecorder
+            # workers ENOENT-storm and the recording silently dies. The
+            # active session is the newest one while recording is on.
+            mqtt_state = self.mqtt_client.get_state() if self.mqtt_client else {}
+            if mqtt_state.get('image_sample_enable'):
+                sessions = scan_sessions(self._get_save_directory())
+                if sessions:
+                    newest = sessions[0]['session_id']
+                    if newest == session_id or newest.startswith(session_id + '/'):
+                        return jsonify({'error': 'This session is recording now. '
+                                                 'Stop recording first.'}), 409
 
             try:
                 shutil.rmtree(session_path)
@@ -1290,7 +1310,7 @@ class OWLDashboard:
         @self.app.route('/api/fan/set', methods=['POST'])
         def set_fan_mode():
             """Toggle fan between auto and 100% modes"""
-            if get_rpi_version() != 'rpi-5':
+            if self.rpi_version != 'rpi-5':
                 return jsonify({'success': False, 'error': 'Not a Raspberry Pi 5'}), 403
 
             try:
@@ -1372,8 +1392,14 @@ class OWLDashboard:
                 value = data.get('value')
                 if not param or value is None:
                     return jsonify({'success': False, 'error': 'param and value required'}), 400
-                result = self.mqtt_client._send_command('set_config', key=param, value=int(value))
-                self._persist_config_change('GreenOnBrown', param, str(int(value)))
+                # min_detection_area_percent is a small float (e.g. 0.0005);
+                # int() would truncate it to 0 live AND persist "0".
+                if param in FLOAT_CONFIG_PARAMS:
+                    typed_value = float(value)
+                else:
+                    typed_value = int(value)
+                result = self.mqtt_client._send_command('set_config', key=param, value=typed_value)
+                self._persist_config_change('GreenOnBrown', param, str(typed_value))
                 return jsonify(result)
             except Exception as e:
                 self.logger.error(f"Error setting config param: {e}")
@@ -2212,7 +2238,7 @@ class OWLDashboard:
 
                 self._set_active_config(f'config/{AUTOSAVE_CONFIG}', seed=False)
                 self.logger.info(
-                    f"Unsaved change to {basename} — written to {AUTOSAVE_CONFIG}")
+                    f"Unsaved change to {basename}; written to {AUTOSAVE_CONFIG}")
             else:
                 atomic_write_config(config_path, config.write)
                 self.logger.info(f"Config updated: {basename} [{section}] {key}={value}")
@@ -2233,7 +2259,7 @@ class OWLDashboard:
             active_config = self._get_active_config_path()
             config_path = self._resolve_config_path(active_config)
             if not os.path.exists(config_path):
-                self.logger.warning(f"Cannot apply config — file not found: {config_path}")
+                self.logger.warning(f"Cannot apply config; file not found: {config_path}")
                 return
 
             config = configparser.ConfigParser()
@@ -2314,8 +2340,7 @@ class OWLDashboard:
             service_state = self.get_owl_service_state()
             stats['owl_running'] = service_state['active']
 
-            rpi_version = get_rpi_version()
-            if rpi_version == 'rpi-5':
+            if self.rpi_version == 'rpi-5':
                 stats['fan_status']['is_rpi5'] = True
                 stats['fan_status']['mode'] = self.fan_state
 
@@ -2349,27 +2374,28 @@ class OWLDashboard:
                 'disk_total': round(disk.total / (1024 ** 3), 1),
             })
 
-            try:
-                result = subprocess.run(['/usr/bin/vcgencmd', 'measure_temp'], capture_output=True, text=True)
-                if result.returncode == 0:
-                    stats['cpu_temp'] = round(float(result.stdout.replace('temp=', '').replace("'C\n", '')), 1)
+            if self.vcgencmd_path:
+                try:
+                    result = subprocess.run([self.vcgencmd_path, 'measure_temp'], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        stats['cpu_temp'] = round(float(result.stdout.replace('temp=', '').replace("'C\n", '')), 1)
 
-            except Exception as e:
-                self.logger.warning(f"Temp. retrieval error: {e}")
-                pass
+                except Exception as e:
+                    self.logger.debug(f"Temp. retrieval error: {e}")
 
-            # USB devices
+            # USB devices (skipped silently when lsusb is absent — warned once at startup)
             usb_devices = []
-            try:
-                result = subprocess.run(['/usr/bin/lsusb'], capture_output=True, text=True)
-                if result.returncode == 0:
-                    for line in result.stdout.split('\n'):
-                        if 'Camera' in line or 'Webcam' in line:
-                            usb_devices.append(line.strip())
+            if self.lsusb_path:
+                try:
+                    result = subprocess.run([self.lsusb_path], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        for line in result.stdout.split('\n'):
+                            if 'Camera' in line or 'Webcam' in line:
+                                usb_devices.append(line.strip())
 
-            except Exception as e:
-                self.logger.warning(f"USB devices retrieval error: {e}")
-                pass
+                except Exception as e:
+                    self.logger.debug(f"USB devices retrieval error: {e}")
+            stats['usb_devices'] = usb_devices
 
         except Exception as e:
             self.logger.error(f"A critical error occurred while getting system stats: {e}")
@@ -2382,6 +2408,11 @@ class OWLDashboard:
             'detection_enable': mqtt_state.get('detection_enable', False),
             'image_sample_enable': mqtt_state.get('image_sample_enable', False),
             'storage_available': mqtt_state.get('storage_available', True),
+            # Internal (eMMC) storage fields — additive, contract 1
+            'storage_location': mqtt_state.get('storage_location', 'usb'),
+            'storage_free_mb': mqtt_state.get('storage_free_mb'),
+            'storage_warning': mqtt_state.get('storage_warning', 'ok'),
+            'image_quota_gb': mqtt_state.get('image_quota_gb', 12),
             'sensitivity_level': mqtt_state.get('sensitivity_level', 'high'),
             'stream_active': mqtt_state.get('stream_active', False),
             'weed_detect_indicator': self.mqtt_client.get_weed_detect_indicator() if self.mqtt_client else False,

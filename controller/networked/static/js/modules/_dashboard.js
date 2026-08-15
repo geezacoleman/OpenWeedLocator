@@ -366,7 +366,7 @@ function buildOWLCard(deviceId, owl) {
     const disAttr = isOnline ? '' : 'disabled';
     const ctrlType = owl.controller_type || 'none';
     const hwWarning = (ctrlType !== 'none')
-        ? '<div class="device-warning-badge">Hardware controller (' + ctrlType + ') — use standalone dashboard</div>'
+        ? '<div class="device-warning-badge">Hardware controller (' + ctrlType + '). Use standalone dashboard</div>'
         : '';
 
     // Active config "Running: <name>" (prefer the friendly [Meta] name).
@@ -374,7 +374,7 @@ function buildOWLCard(deviceId, owl) {
     // marker appears only when its content actually differs from that source.
     let cfgName = owl.config_source || owl.config_name || '';
     if (cfgName && typeof prettyConfigName === 'function') cfgName = prettyConfigName(cfgName);
-    if (cfgName && owl.config_unsaved) cfgName += ' — unsaved changes';
+    if (cfgName && owl.config_unsaved) cfgName += ' - unsaved changes';
     const esc = (typeof escapeConfigLabel === 'function') ? escapeConfigLabel : (s) => s;
     const cfgLine = (isOnline && cfgName)
         ? '<div class="owl-compact-config" title="Config loaded on this OWL">Running: ' + esc(cfgName) + '</div>'
@@ -385,7 +385,7 @@ function buildOWLCard(deviceId, owl) {
     // just as untrusted.
     const displayName = esc(owl.friendly_name || deviceId);
     const nameTitle = owl.assigned_ip
-        ? ` title="${esc(deviceId)} — ${esc(owl.assigned_ip)}"` : '';
+        ? ` title="${esc(deviceId)} - ${esc(owl.assigned_ip)}"` : '';
 
     return `
         <div class="owl-card-compact ${onlineClass}">

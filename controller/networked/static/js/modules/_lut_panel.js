@@ -51,7 +51,7 @@ function activateLutMode() {
             if (!data.success) showToast(data.error || 'Apply failed', 'error');
         }).catch(function () { });
     } else {
-        showToast('No painted profiles yet — press Paint weeds to create one', 'info');
+        showToast('No painted profiles yet. Press Paint weeds to create one', 'info');
     }
 }
 

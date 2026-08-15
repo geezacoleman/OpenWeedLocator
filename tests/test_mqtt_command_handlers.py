@@ -399,7 +399,7 @@ class TestSaveConfigCommand:
     def test_save_config_with_filename_sets_active(self, mqtt_publisher, mock_owl, tmp_config_dir):
         """A NAMED save must become the active config — otherwise the OWL keeps
         running the autosave working file and the dashboard keeps showing
-        '<old profile> — unsaved changes' right after a successful save
+        '<old profile> - unsaved changes' right after a successful save
         (2026-07-10 field bug)."""
         from unittest.mock import patch
         with patch.object(mqtt_publisher, '_handle_set_active_config') as mock_set_active, \

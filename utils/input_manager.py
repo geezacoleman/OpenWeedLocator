@@ -3,8 +3,6 @@ import platform
 import cv2
 import logging
 
-import utils.error_manager as errors
-
 from utils.shared_types import Sensitivity
 
 logger = logging.getLogger(__name__)
@@ -353,10 +351,13 @@ def get_rpi_version():
             _rpi_version_cache = 'rpi-other'
 
     except FileNotFoundError:
-        logging.warning(errors.RPVersionError(original_error="The model file '/proc/device-tree/model' was not found."))
+        # Normal on non-Pi platforms; one concise line, not the multi-line
+        # colorized RPVersionError block (which flooded journald pre-cache).
+        logger.warning("Could not read /proc/device-tree/model; assuming non-Raspberry Pi platform. "
+                       "Hardware-specific features (e.g. Pi 5 fan control) are disabled.")
         _rpi_version_cache = 'non-rpi'
     except Exception as e:
-        logging.error(errors.RPVersionError(original_error=str(e)))
+        logger.error(f"Could not determine Raspberry Pi model ({e}); assuming non-Raspberry Pi platform.")
         _rpi_version_cache = 'non-rpi'
 
     return _rpi_version_cache

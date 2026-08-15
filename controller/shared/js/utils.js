@@ -378,7 +378,7 @@ function updateCloudManageBlock(data) {
         } else if (cls === 'disconnected') {
             statusEl.textContent = 'Configured, but the cloud link is currently down (cellular or broker).';
         } else {
-            statusEl.textContent = 'Configured — connecting to Noktura…';
+            statusEl.textContent = 'Configured. Connecting to Noktura…';
         }
     }
 

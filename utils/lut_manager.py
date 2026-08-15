@@ -459,7 +459,7 @@ class LUTProfileManager:
     def profile_path(self, name):
         if not NAME_PATTERN.match(name or ''):
             raise LUTProfileError(
-                f'Invalid profile name {name!r} — must match [a-z][a-z0-9_]{{0,30}}')
+                f'Invalid profile name {name!r}; must match [a-z][a-z0-9_]{{0,30}}')
         return os.path.join(self.profile_dir, name + PROFILE_SUFFIX)
 
     def exists(self, name):

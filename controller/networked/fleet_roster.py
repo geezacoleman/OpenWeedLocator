@@ -112,7 +112,7 @@ class FleetRoster:
             self._devices = {}
             return
         except (OSError, ValueError) as e:
-            logger.error("Fleet roster unreadable (%s) — starting empty; "
+            logger.error("Fleet roster unreadable (%s): starting empty; "
                          "the corrupt file is left in place", e)
             self._devices = {}
             return
@@ -194,7 +194,7 @@ class FleetRoster:
             if device_id in taken_ids or ip in taken_ips:
                 continue
             if self._ip_probe is not None and self._safe_probe(ip):
-                logger.warning("Skipping %s for %s — something already "
+                logger.warning("Skipping %s for %s: something already "
                                "answers on that address", ip, device_id)
                 taken_ips.add(ip)
                 continue
@@ -205,7 +205,7 @@ class FleetRoster:
         try:
             return bool(self._ip_probe(ip))
         except Exception as e:
-            logger.warning("IP probe for %s failed (%s) — assuming free", ip, e)
+            logger.warning("IP probe for %s failed (%s); assuming free", ip, e)
             return False
 
     # ------------------------------------------------------------------

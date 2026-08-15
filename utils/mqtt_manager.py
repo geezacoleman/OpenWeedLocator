@@ -188,6 +188,12 @@ class OWLMQTTPublisher:
             # unavailable but detection runs normally (re-checked on every
             # record toggle in owl.py).
             'storage_available': True,
+            # eMMC/internal recording (OWL 3.0): additive fields, contract 1.
+            # storage_free_mb is None until the storage watchdog samples.
+            'storage_location': 'usb',
+            'storage_free_mb': None,
+            'storage_warning': 'ok',   # ok | low | full
+            'image_quota_gb': 12,
             'sensitivity_level': 'medium',
             'detection_mode': 1,  # 0=spot spray, 1=off, 2=blanket
             'owl_running': False,
@@ -532,10 +538,10 @@ class OWLMQTTPublisher:
         except Exception as e:
             if self.networked_mode:
                 self.logger.warning(f"Could not connect to network broker at {self.broker_host}:{self.broker_port}: {e}")
-                self.logger.warning("OWL will continue to operate locally — reconnecting in background")
+                self.logger.warning("OWL will continue to operate locally; reconnecting in background")
             else:
                 self.logger.warning(f"Could not connect to local MQTT broker: {e}")
-                self.logger.warning("Dashboard features disabled — reconnecting in background")
+                self.logger.warning("Dashboard features disabled; reconnecting in background")
 
             # Start background reconnect instead of giving up
             self._reconnect_thread = threading.Thread(target=self._background_reconnect, daemon=True)
@@ -652,11 +658,18 @@ class OWLMQTTPublisher:
             self.logger.error(f"Error processing MQTT message on topic {msg.topic}: {e}", exc_info=True)
             print(f"[OWL MQTT ERROR] {msg.topic}: {e}", file=sys.stderr)
 
+    # Commands broadcast on a ~1 Hz cadence (e.g. the controller's speed-adaptive
+    # actuation loop) log at DEBUG; their handlers log real changes at INFO.
+    HIGH_FREQUENCY_COMMANDS = {'set_actuation_params'}
+
     def _handle_command(self, command):
         """Handle control commands from dashboard or central controller"""
         action = command.get('action')
 
-        self.logger.info(f"Received command: {action}")
+        if action in self.HIGH_FREQUENCY_COMMANDS:
+            self.logger.debug(f"Received command: {action}")
+        else:
+            self.logger.info(f"Received command: {action}")
 
         with self.state_lock:
             if action == 'set_detection_enable':
@@ -911,7 +924,7 @@ class OWLMQTTPublisher:
                         self.logger.info(f"Deleted LUT profile: {name}")
                         if self.state.get('lut_profile') == name:
                             self.logger.warning(
-                                f"Deleted the active LUT profile '{name}' — "
+                                f"Deleted the active LUT profile '{name}'; "
                                 "detection keeps the in-memory table until a "
                                 "new profile is applied")
                         self._sync_parameters_to_state()
@@ -1067,7 +1080,7 @@ class OWLMQTTPublisher:
 
             else:
                 # Silent no-op handlers are invisible failures — always warn.
-                self.logger.warning(f"Unknown MQTT command action: {action!r} — no handler registered (command ignored)")
+                self.logger.warning(f"Unknown MQTT command action: {action!r}; no handler registered (command ignored)")
 
             # Update timestamp and publish new state
             self.state['last_update'] = time.time()
@@ -1304,7 +1317,7 @@ class OWLMQTTPublisher:
                 if basename != AUTOSAVE_CONFIG:
                     save_path = os.path.join(config_dir, AUTOSAVE_CONFIG)
                     self.logger.info(
-                        f"Unsaved change to {basename} — writing to {AUTOSAVE_CONFIG}")
+                        f"Unsaved change to {basename}; writing to {AUTOSAVE_CONFIG}")
 
                     # Record which file the working copy derives from
                     cfg = self.owl_instance.config
@@ -1326,7 +1339,7 @@ class OWLMQTTPublisher:
             if filename:
                 # The named file IS the running config now — point the active
                 # pointer at it (re-seeding the working copy to mirror it) so
-                # the dashboard stops showing "<old profile> — unsaved changes"
+                # the dashboard stops showing "<old profile> - unsaved changes"
                 # and a reboot comes back with exactly what was saved.
                 self._handle_set_active_config(f'config/{os.path.basename(save_path)}')
                 self._sync_parameters_to_state()
@@ -2167,7 +2180,7 @@ class OWLMQTTPublisher:
         if len(parts) * part_size < zip_size:
             raise Exception(
                 f"Parts cover only {len(parts) * part_size} of {zip_size} "
-                f"zip bytes — request more parts")
+                f"zip bytes; request more parts")
 
         with open(tmp_path, 'rb') as f:
             bytes_done = 0
@@ -2683,6 +2696,27 @@ class OWLMQTTPublisher:
             if self.state.get('storage_available') == bool(value):
                 return
             self.state['storage_available'] = bool(value)
+            self.state['last_update'] = time.time()
+        self._publish_state()
+
+    def set_storage_status(self, location, free_mb, warning, quota_gb):
+        """Push storage watchdog readings into state (additive, contract 1).
+
+        free_mb is quantized to 50 MB so the 10.5 s disk sample doesn't
+        trigger a state publish every cycle; warning transitions always do.
+        """
+        quantized = None if free_mb is None else int(free_mb // 50 * 50)
+        with self.state_lock:
+            changed = (self.state.get('storage_location') != location
+                       or self.state.get('storage_free_mb') != quantized
+                       or self.state.get('storage_warning') != warning
+                       or self.state.get('image_quota_gb') != quota_gb)
+            if not changed:
+                return
+            self.state['storage_location'] = location
+            self.state['storage_free_mb'] = quantized
+            self.state['storage_warning'] = warning
+            self.state['image_quota_gb'] = quota_gb
             self.state['last_update'] = time.time()
         self._publish_state()
 

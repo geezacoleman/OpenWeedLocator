@@ -723,7 +723,7 @@ class SerialNMEASource(NMEASource):
 
     def _run(self):
         if serial is None:
-            logger.error("pyserial not installed — serial GPS disabled. Install with: pip install pyserial")
+            logger.error("pyserial not installed; serial GPS disabled. Install with: pip install pyserial")
             self._running = False
             return
 

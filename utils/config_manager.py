@@ -330,7 +330,13 @@ class ConfigValidator:
         },
         'DataCollection': {
             'required_keys': {'image_sample_enable', 'sample_method', 'save_directory'},
-            'optional_keys': {'sample_frequency', 'detection_enable', 'log_fps', 'camera_name'}
+            # storage_location: usb | internal | auto (auto: USB if mounted,
+            # else internal). internal_save_directory + min_free_gb drive the
+            # eMMC recording mode on sealed OWL 3.0 units; image_quota_gb is
+            # the display allowance shown in the UI, not enforced.
+            'optional_keys': {'sample_frequency', 'detection_enable', 'log_fps', 'camera_name',
+                              'storage_location', 'internal_save_directory',
+                              'min_free_gb', 'image_quota_gb'}
         },
         'Relays': {
             'required_keys': set(),
@@ -363,6 +369,10 @@ class ConfigValidator:
         'actuation_zone': ('int', 1, 100),
         # Painted LUT detection (lut_profile is a string key — optional_keys only)
         'lut_sensitivity': ('int', 0, 100),
+        # Internal (eMMC) storage mode: hard free-space floor + display quota
+        # (storage_location/internal_save_directory are string keys — optional_keys only)
+        'min_free_gb': ('int', 1, None),
+        'image_quota_gb': ('int', 1, None),
         # Min weed size as % of the detection (cropped) frame area.
         # 0 disables it (legacy min_detection_area px value applies instead).
         'min_detection_area_percent': ('float', 0, 5),
@@ -417,6 +427,7 @@ class ConfigValidator:
     VALID_ACTUATION_MODES = {'centre', 'zone'}
     VALID_CAMERA_TYPES = {'rpi', 'usb', 'auto'}
     VALID_SAMPLE_METHODS = {'bbox', 'square', 'whole'}
+    VALID_STORAGE_LOCATIONS = {'usb', 'internal', 'auto'}
     VALID_BOOLEANS = {'true', 'false', '1', '0', 'yes', 'no', 'on', 'off'}
 
     # Valid Raspberry Pi GPIO pins (BOARD numbering)
@@ -692,6 +703,21 @@ class ConfigValidator:
         return True, {}
 
     @classmethod
+    def validate_storage_location(cls, config: ConfigParser) -> Tuple[bool, Dict[str, Dict[str, str]]]:
+        """Validate storage location selection (usb | internal | auto)."""
+        if not config.has_option('DataCollection', 'storage_location'):
+            return True, {}  # Optional key; absent means usb (legacy behaviour)
+
+        storage_location = config.get('DataCollection', 'storage_location', fallback='').lower()
+
+        if storage_location not in cls.VALID_STORAGE_LOCATIONS:
+            return False, {'DataCollection': {
+                'storage_location': f'Invalid storage location. Must be one of: {", ".join(sorted(cls.VALID_STORAGE_LOCATIONS))}'
+            }}
+
+        return True, {}
+
+    @classmethod
     def validate_relay_pin_conflicts(cls, config: ConfigParser, used_pins: Set[int]) -> Tuple[bool, Dict[str, Dict[str, str]]]:
         """Check relay pins don't conflict with controller pins and are valid GPIO pins."""
         if not config.has_section('Relays'):
@@ -879,6 +905,11 @@ class ConfigValidator:
         is_valid, sample_errors = cls.validate_sample_method(config)
         if not is_valid:
             validation_errors.update(sample_errors)
+
+        # Validate storage location
+        is_valid, storage_errors = cls.validate_storage_location(config)
+        if not is_valid:
+            validation_errors.update(storage_errors)
 
         # Validate actuation_mode if present
         if config.has_option('GreenOnGreen', 'actuation_mode'):

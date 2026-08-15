@@ -420,7 +420,7 @@ const Painter = (function () {
             _saveDraft();
         }).catch(function (err) {
             _setHint('Could not grab a frame: ' + err.message, true);
-            if (isFirst) _setHint('Could not grab a frame — is the OWL service running?', true);
+            if (isFirst) _setHint('Could not grab a frame. Is the OWL service running?', true);
         });
     }
 
@@ -492,7 +492,7 @@ const Painter = (function () {
         } else if (counts.weed < counts.required) {
             _setHint('Paint more weeds (need ' + counts.required.toLocaleString() + ' px of each).');
         } else if (counts.background < counts.required) {
-            _setHint('Now paint background — soil, stubble, shadows.');
+            _setHint('Now paint background: soil, stubble, shadows.');
         } else {
             _setHint('Orange shows what would be sprayed. Adjust sensitivity or keep painting.');
         }
@@ -549,7 +549,7 @@ const Painter = (function () {
         var input = overlay.querySelector('.painter-name-input');
         var name = (input ? input.value : _suggestName()).trim().toLowerCase();
         if (!/^[a-z][a-z0-9_]{0,30}$/.test(name)) {
-            _setHint('Invalid name — use lowercase letters, numbers, underscores.', true);
+            _setHint('Invalid name. Use lowercase letters, numbers, underscores.', true);
             return;
         }
         fetch(opts.api.save, {

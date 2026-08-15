@@ -53,7 +53,7 @@ const CONFIG_FIELD_DEFS = {
         'saturation_max': { type: 'number', min: 0, max: 255 },
         'brightness_min': { type: 'number', min: 0, max: 255 },
         'brightness_max': { type: 'number', min: 0, max: 255 },
-        'min_detection_area': { type: 'number', min: 1, max: 10000, help: 'Legacy min weed size in px² — converted to the percent key at load and removed on save' },
+        'min_detection_area': { type: 'number', min: 1, max: 10000, help: 'Legacy min weed size in px², converted to the percent key at load and removed on save' },
         'min_detection_area_percent': { type: 'number', step: 0.001, min: 0, max: 5, help: 'Min weed size as % of the detection frame (canonical key)' },
         'invert_hue': { type: 'boolean' },
         'lut_profile': { type: 'text', help: 'Active painted LUT profile (set via the weed painter)' },
@@ -75,7 +75,11 @@ const CONFIG_FIELD_DEFS = {
         'save_directory': { type: 'text', help: 'Save directory path' },
         'detection_enable': { type: 'boolean' },
         'log_fps': { type: 'boolean', help: 'Log FPS to console' },
-        'camera_name': { type: 'text', help: 'Camera identifier for saved images' }
+        'camera_name': { type: 'text', help: 'Camera identifier for saved images' },
+        'storage_location': { type: 'select', options: ['usb', 'internal', 'auto'], help: 'Where recordings go: usb (drive in /media), internal (eMMC/SD, sealed units), auto (USB if present, else internal)' },
+        'internal_save_directory': { type: 'text', help: 'Recording path for internal storage mode' },
+        'min_free_gb': { type: 'number', min: 1, max: 100, help: 'Internal mode: recording stops when free disk space falls below this (GB)' },
+        'image_quota_gb': { type: 'number', min: 1, max: 1000, help: 'Image allowance shown on the storage bar (GB, display only)' }
     },
     'Controller': {
         'controller_type': { type: 'select', options: ['none', 'ute', 'advanced', 'networked'] },
@@ -123,7 +127,7 @@ const CONFIG_FIELD_DEFS = {
         'username': { type: 'text', help: 'Cloud bridge username (managed by owl_cloud_provision.sh)' },
         'ca_cert': { type: 'text', help: 'CA certificate path for the cloud broker' },
         'password_file': { type: 'text', help: 'Path to bridge password file (mode 600)' },
-        'portal_url': { type: 'text', help: 'Noktura web portal base URL (optional) — enables a manage link + QR to <portal_url>/d/<device_id>' }
+        'portal_url': { type: 'text', help: 'Noktura web portal base URL (optional). Enables a manage link + QR to <portal_url>/d/<device_id>' }
     },
     'Tracking': {
         'tracking_enabled': { type: 'boolean', help: 'Enable weed tracking (class smoothing + crop mask persistence)' },
@@ -327,7 +331,7 @@ function createConfigField(section, key, value, fieldDef) {
         }
         const note = document.createElement('span');
         note.className = 'field-help';
-        note.textContent = 'Locked — disabling MQTT will disconnect this device';
+        note.textContent = 'Locked: disabling MQTT will disconnect this device';
         field.appendChild(note);
     }
 

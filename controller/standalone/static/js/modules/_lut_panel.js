@@ -56,7 +56,7 @@ function activateLutMode() {
         var configTab = document.querySelector('.nav-tab[data-tab="config"]');
         if (configTab && !configTab.classList.contains('active')) configTab.click();
         showNotification('Painted detection',
-            'No painted profiles yet — press Paint weeds to create one', 'info', 4000);
+            'No painted profiles yet. Press Paint weeds to create one', 'info', 4000);
     }
 }
 

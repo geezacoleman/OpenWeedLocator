@@ -304,13 +304,32 @@ read_password_masked() {
     REPLY="$password"
 }
 
+# Serial-derived hotspot name. Units left on a shared default (OWL-1)
+# broadcast identical SSIDs and phones cannot tell them apart in the
+# field. Last 4 of the Pi SoC serial, matching the device_serial the
+# firmware reports to the app (utils/device_identity.py); machine-id
+# fallback for non-Pi installs.
+default_ssid() {
+    local serial suffix
+    serial=$(awk -F': ' '/^Serial/ {print $2}' /proc/cpuinfo 2>/dev/null | tr -d ' \t')
+    if [[ -z "$serial" || "$serial" =~ ^0+$ ]]; then
+        serial=$(cat /etc/machine-id 2>/dev/null)
+    fi
+    suffix=$(printf '%s' "$serial" | tail -c 4 | tr '[:lower:]' '[:upper:]')
+    if [[ -n "$suffix" && ${#suffix} -eq 4 ]]; then
+        echo "OWL-${suffix}"
+    else
+        echo "OWL-${OWL_ID}"
+    fi
+}
+
 # Collect user input
 collect_user_input() {
     if [[ "$NONINTERACTIVE" == "1" ]]; then
         OWL_MODE="standalone"
         OWL_ID="${CLI_OWL_ID:-1}"
         HOSTNAME="owl-${OWL_ID}"
-        SSID="${CLI_SSID:-OWL-${OWL_ID}}"
+        SSID="${CLI_SSID:-$(default_ssid)}"
         WIFI_PASSWORD="${CLI_PASSWORD}"
         echo -e "${GREEN}[INFO] Non-interactive standalone setup:${NC}"
         echo -e "  Hostname: ${HOSTNAME}"
@@ -356,9 +375,10 @@ collect_user_input() {
         # STANDALONE MODE - WiFi Hotspot Configuration
         echo -e "${GREEN}[INFO] Configuring WiFi Hotspot (Standalone Mode)${NC}"
 
-        # Get hotspot SSID
-        read -p "Enter WiFi hotspot name/SSID (default: OWL-${OWL_ID}): " SSID
-        SSID=${SSID:-OWL-${OWL_ID}}
+        # Get hotspot SSID (serial-derived default: unique per unit)
+        DEFAULT_SSID="$(default_ssid)"
+        read -p "Enter WiFi hotspot name/SSID (default: ${DEFAULT_SSID}): " SSID
+        SSID=${SSID:-$DEFAULT_SSID}
 
         # Get hotspot password with validation
         while true; do

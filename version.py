@@ -10,8 +10,8 @@ from typing import Optional
 @dataclass
 class Version:
     major: int = 3
-    minor: int = 9
-    patch: int = 4
+    minor: int = 10
+    patch: int = 0
     tag: Optional[str] = None
 
     def __str__(self) -> str:
