@@ -324,8 +324,10 @@ EOF
 #!/bin/sh
 # Created by install_firstboot.sh — re-arms OWL first-boot setup mode.
 # Deliberately minimal: the owl-firstboot service restores everything
-# else it needs at startup.
+# else it needs at startup. sync: the flag lives on FAT32 and must
+# survive an immediate power-off.
 touch "${FLAG_PATH}"
+sync
 EOF
     chown root:root "${REARM_HELPER}"
     chmod 755 "${REARM_HELPER}"
@@ -344,7 +346,11 @@ EOF
         echo -e "${CROSS} Could not write the flag file (${FLAG_PATH}). Not armed."
         exit 1
     fi
-    echo -e "${TICK} First-boot flag set (${FLAG_PATH})"
+    # /boot/firmware is FAT32: an unsynced flag write silently vanishes on
+    # a bench power-cut ("power off and box it") and the unit ships un-armed
+    # (2026-08-15 bench: flag confirmed written, gone after power-off).
+    sync
+    echo -e "${TICK} First-boot flag set (${FLAG_PATH}, synced to disk)"
 
     echo -e "${GREEN}[DONE] Reboot to enter first-boot setup mode.${NC}"
 }

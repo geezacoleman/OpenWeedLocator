@@ -414,10 +414,14 @@ class Owl:
             # (sealed OWL 3.0 units); auto (default): USB when present, else
             # internal so recording "just works" — the min_free_gb floor
             # watchdog ring-fences the system disk. See directory_manager.
-            self.storage_location = self.config.get(
-                'DataCollection', 'storage_location', fallback='auto').strip().lower()
-            self.internal_save_directory = self.config.get(
-                'DataCollection', 'internal_save_directory', fallback='/home/owl/owl_images').strip()
+            # Empty values fall back exactly like missing keys — a blank
+            # `storage_location =` line must not degrade auto to usb-only,
+            # and a blank internal path must not disable the auto fallback.
+            self.storage_location = (self.config.get(
+                'DataCollection', 'storage_location', fallback='').strip().lower() or 'auto')
+            self.internal_save_directory = (self.config.get(
+                'DataCollection', 'internal_save_directory', fallback='').strip()
+                or '/home/owl/owl_images')
             self.min_free_gb = self.config.getint('DataCollection', 'min_free_gb', fallback=4)
             self.image_quota_gb = self.config.getint('DataCollection', 'image_quota_gb', fallback=12)
 
@@ -450,8 +454,12 @@ class Owl:
                 # normally and recording stays unavailable until a drive
                 # appears. Every record toggle re-scans for one — see
                 # _retry_storage_setup().
-                self.logger.warning(f"No writable recording drive found: {e}")
-                self.logger.warning("Detection will run; recording is disabled until a USB drive is inserted.")
+                self.logger.warning(f"No writable recording storage found: {e}")
+                if self.storage_location == 'usb':
+                    self.logger.warning("Detection will run; recording is disabled until a USB drive is inserted.")
+                else:
+                    self.logger.warning("Detection will run; recording is disabled until storage is available "
+                                        "(see the error above for whether to insert a drive, free space, or fix permissions).")
                 self._no_drive_warned = True  # already warned at boot; retries log at DEBUG
                 self.save_directory = None
                 self.save_subdirectory = None
@@ -685,11 +693,17 @@ class Owl:
     @staticmethod
     def _classify_storage_error(e):
         """Map a storage setup exception to a recording_blocked_reason the
-        dashboards/app can explain: no_drive | storage_full | storage_error."""
+        dashboards/app can explain:
+        no_drive | storage_full | floor_unreachable | storage_error."""
         if isinstance(e, (errors.NoWritableUSBError, errors.USBMountError,
                           errors.USBWriteError)):
             return 'no_drive'
-        if 'free-space floor' in str(e):
+        msg = str(e)
+        if 'floor unreachable' in msg:
+            # min_free_gb can never be met on this disk — deleting sessions
+            # won't help; the floor itself must be lowered.
+            return 'floor_unreachable'
+        if 'free-space floor' in msg:
             return 'storage_full'
         return 'storage_error'
 

@@ -1025,3 +1025,99 @@ class TestApplyConfigPushesCameraSection:
         assert params['awb_mode'] == 'manual'
         assert params['awb_red_gain'] == 1.4
         assert params['awb_blue_gain'] == 3.2
+
+
+@pytest.mark.unit
+class TestTimeSync:
+    """POST /api/time/sync - phone-sourced clock correction for RTC-less units."""
+
+    def _post(self, client, payload):
+        return client.post('/api/time/sync', json=payload)
+
+    def test_missing_epoch_rejected(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        resp = self._post(client, {})
+        assert resp.status_code == 400
+
+    def test_implausible_epoch_rejected(self, standalone_test_client):
+        """A garbage timestamp must never be allowed to hurl the clock."""
+        client, dashboard, tmp_dir = standalone_test_client
+        resp = self._post(client, {'epoch_ms': 123456})
+        assert resp.status_code == 400
+
+    def test_small_drift_is_noop(self, standalone_test_client):
+        import time as _time
+        client, dashboard, tmp_dir = standalone_test_client
+        with patch.object(dashboard, '_ntp_synchronized', return_value=False), \
+                patch('controller.standalone.standalone.subprocess.run') as run:
+            resp = self._post(client, {'epoch_ms': _time.time() * 1000})
+        data = resp.get_json()
+        assert resp.status_code == 200
+        assert data['success'] is True
+        assert data['adjusted'] is False
+        run.assert_not_called()
+
+    def test_ntp_synced_never_touches_clock(self, standalone_test_client):
+        """A live NTP sync is authoritative - phone drift is reported only."""
+        import time as _time
+        client, dashboard, tmp_dir = standalone_test_client
+        with patch.object(dashboard, '_ntp_synchronized', return_value=True), \
+                patch('controller.standalone.standalone.subprocess.run') as run:
+            resp = self._post(client, {'epoch_ms': (_time.time() + 3600) * 1000})
+        data = resp.get_json()
+        assert data['adjusted'] is False
+        assert data['ntp_synced'] is True
+        run.assert_not_called()
+
+    def test_large_drift_steps_clock(self, standalone_test_client):
+        import time as _time
+        client, dashboard, tmp_dir = standalone_test_client
+        ok = MagicMock(returncode=0, stderr='')
+        with patch.object(dashboard, '_ntp_synchronized', return_value=False), \
+                patch('controller.standalone.standalone.subprocess.run',
+                      return_value=ok) as run:
+            resp = self._post(client, {'epoch_ms': (_time.time() + 3600) * 1000})
+        data = resp.get_json()
+        assert resp.status_code == 200
+        assert data['adjusted'] is True
+        cmd = run.call_args[0][0]
+        assert cmd[0] == 'sudo' and '-u' in cmd and '-s' in cmd
+
+    def test_sudo_denied_returns_503_with_hint(self, standalone_test_client):
+        """Old installs without the date sudo rule must say so, not 500."""
+        import time as _time
+        client, dashboard, tmp_dir = standalone_test_client
+        denied = MagicMock(returncode=1, stderr='sudo: a password is required')
+        with patch.object(dashboard, '_ntp_synchronized', return_value=False), \
+                patch('controller.standalone.standalone.subprocess.run',
+                      return_value=denied):
+            resp = self._post(client, {'epoch_ms': (_time.time() + 3600) * 1000})
+        assert resp.status_code == 503
+        assert 'setup.sh' in resp.get_json()['error']
+
+    def test_timezone_set_when_valid_and_different(self, standalone_test_client):
+        import time as _time
+        client, dashboard, tmp_dir = standalone_test_client
+        ok = MagicMock(returncode=0, stderr='')
+        with patch.object(dashboard, '_ntp_synchronized', return_value=True), \
+                patch.object(dashboard, '_current_timezone', return_value='Etc/UTC'), \
+                patch('controller.standalone.standalone.os.path.isfile',
+                      return_value=True), \
+                patch('controller.standalone.standalone.subprocess.run',
+                      return_value=ok) as run:
+            resp = self._post(client, {'epoch_ms': _time.time() * 1000,
+                                       'timezone': 'Australia/Perth'})
+        data = resp.get_json()
+        assert data['timezone_set'] is True
+        cmd = run.call_args[0][0]
+        assert 'set-timezone' in cmd and 'Australia/Perth' in cmd
+
+    def test_traversal_timezone_ignored(self, standalone_test_client):
+        import time as _time
+        client, dashboard, tmp_dir = standalone_test_client
+        with patch.object(dashboard, '_ntp_synchronized', return_value=True), \
+                patch('controller.standalone.standalone.subprocess.run') as run:
+            resp = self._post(client, {'epoch_ms': _time.time() * 1000,
+                                       'timezone': '../../etc/passwd'})
+        assert resp.get_json()['timezone_set'] is False
+        run.assert_not_called()

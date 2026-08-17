@@ -14,6 +14,7 @@ import glob
 import shutil
 import socket
 import threading
+import time
 import logging
 import subprocess
 import configparser
@@ -419,6 +420,79 @@ class OWLDashboard:
             self.logger.info("owl.service restart requested")
             return jsonify({'success': True,
                             'message': 'OWL service restarting.'})
+
+        @self.app.route('/api/time/sync', methods=['POST'])
+        def sync_time():
+            """Set the OWL clock from the phone (token-guarded).
+
+            CM5/Pi units have no RTC: powered off, the clock freezes and comes
+            back stale, corrupting session names, log timestamps and EXIF
+            capture times whenever there is no internet for NTP. The app posts
+            its epoch on connect; drift beyond 10 s steps the clock via the
+            passwordless-sudo date rule from setup.sh. A live NTP sync is more
+            accurate than phone time and always wins.
+            """
+            denied = self._check_device_token()
+            if denied is not None:
+                return denied
+            data = request.get_json(silent=True) or {}
+            try:
+                phone_epoch = float(data.get('epoch_ms')) / 1000.0
+            except (TypeError, ValueError):
+                return jsonify({'success': False,
+                                'error': 'epoch_ms (unix ms, number) required'}), 400
+            # Sanity window (2025..2100): a garbage value must never hurl the
+            # clock decades away.
+            if not 1735689600 < phone_epoch < 4102444800:
+                return jsonify({'success': False,
+                                'error': 'epoch_ms out of plausible range'}), 400
+
+            drift = phone_epoch - time.time()
+            result = {'success': True, 'drift_seconds': round(drift, 1),
+                      'adjusted': False, 'timezone_set': False,
+                      'ntp_synced': False}
+
+            if self._ntp_synchronized():
+                # NTP is live — the system clock is already right; report the
+                # (phone's) drift but leave the clock alone.
+                result['ntp_synced'] = True
+            elif abs(drift) >= 10:
+                date_bin = shutil.which('date') or '/usr/bin/date'
+                try:
+                    proc = subprocess.run(
+                        ['sudo', '-n', date_bin, '-u', '-s', f'@{phone_epoch:.3f}'],
+                        capture_output=True, text=True, timeout=10)
+                except Exception as e:
+                    return jsonify({'success': False, 'error': str(e)}), 500
+                if proc.returncode != 0:
+                    self.logger.warning(
+                        f"Time sync refused: {proc.stderr.strip() or 'sudo denied'}")
+                    return jsonify({
+                        'success': False,
+                        'error': 'Clock set not permitted on this unit '
+                                 '(re-run setup.sh to install the sudo rule)'}), 503
+                result['adjusted'] = True
+                self.logger.info(f"Clock set from app: drift was {drift:+.1f} s")
+
+            # Timezone (optional): affects local timestamps + EXIF OffsetTime.
+            # Validated against the system zoneinfo database, never shell-interpolated.
+            tz = (data.get('timezone') or '').strip()
+            if tz and '..' not in tz and os.path.isfile(os.path.join('/usr/share/zoneinfo', tz)):
+                if tz != self._current_timezone():
+                    tdc_bin = shutil.which('timedatectl') or '/usr/bin/timedatectl'
+                    try:
+                        proc = subprocess.run(['sudo', '-n', tdc_bin, 'set-timezone', tz],
+                                              capture_output=True, text=True, timeout=10)
+                        if proc.returncode == 0:
+                            result['timezone_set'] = True
+                            self.logger.info(f"Timezone set from app: {tz}")
+                        else:
+                            self.logger.warning(
+                                f"Timezone set refused: {proc.stderr.strip() or 'sudo denied'}")
+                    except Exception as e:
+                        self.logger.warning(f"Timezone set failed: {e}")
+
+            return jsonify(result)
 
         def _hardware_locked_response(feature):
             reason = (f'{self._get_controller_type().upper()} controller '
@@ -938,6 +1012,29 @@ class OWLDashboard:
             except Exception as e:
                 self.logger.error(f"Error setting allow_high_resolution: {e}")
                 return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/frame.jpg')
+        def frame_jpg():
+            """Single current frame as a plain GET. The phone app's
+            save-frame button hands this URL to Android's DownloadManager,
+            which can only GET (the kiosk keeps using POST /api/download_frame)."""
+            try:
+                with urllib.request.urlopen('http://127.0.0.1:8001/latest_frame.jpg',
+                                            timeout=2) as response:
+                    frame_data = response.read()
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                return Response(
+                    frame_data,
+                    mimetype='image/jpeg',
+                    headers={'Content-Disposition':
+                             f'attachment; filename=owl_frame_{timestamp}.jpg'})
+            except urllib.error.URLError as e:
+                self.logger.error(f"Error proxying frame download: {e}")
+                return jsonify(
+                    {'error': 'Failed to retrieve frame from OWL. Is it running?'}), 503
+            except Exception as e:
+                self.logger.error(f"Unexpected error during frame download: {e}")
+                return jsonify({'error': str(e)}), 500
 
         @self.app.route('/api/download_frame', methods=['POST'])
         def download_frame():
@@ -2560,6 +2657,27 @@ class OWLDashboard:
         lacks it; None when the request may proceed. Lazily tolerates test
         fixtures built via __new__ without __init__ (no reader = legacy allow)."""
         return check_device_token(getattr(self, 'token_reader', None))
+
+    def _ntp_synchronized(self):
+        """True when systemd-timesyncd reports an active NTP sync (no sudo
+        needed for `timedatectl show`). False on any failure — a unit that
+        can't answer is treated as unsynced so phone time can step it."""
+        tdc_bin = shutil.which('timedatectl')
+        if not tdc_bin:
+            return False
+        try:
+            proc = subprocess.run([tdc_bin, 'show', '-p', 'NTPSynchronized', '--value'],
+                                  capture_output=True, text=True, timeout=5)
+            return proc.returncode == 0 and proc.stdout.strip() == 'yes'
+        except Exception:
+            return False
+
+    def _current_timezone(self):
+        """System timezone name (e.g. 'Australia/Perth'), or '' if unknown."""
+        try:
+            return Path('/etc/timezone').read_text().strip()
+        except OSError:
+            return ''
 
     def _run_pinctrl(self, *args):
         cmd = ['/usr/bin/sudo', '-n', '/usr/bin/pinctrl', *args]

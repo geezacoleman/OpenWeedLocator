@@ -765,10 +765,16 @@ if [[ "$SHIP_MODE" == "1" ]]; then
     fi
 
     echo -e ""
+    # Everything provisioning wrote (the FAT32 first-boot flag above all)
+    # must be on disk before anyone pulls the plug — an unsynced power-off
+    # shipped an un-armed unit with a zero-filled /etc/hosts (2026-08-15).
+    sync
+
     echo -e "${GREEN}[SHIP-READY] Unit provisioned for shipping:${NC}"
     echo -e "  • Hotspot: ${SHIP_SSID:-OWL-XXXX} (setup password)"
     echo -e "  • First-boot setup armed — the phone app takes over on next boot"
-    echo -e "  • Focus the camera, power off, and box it."
+    echo -e "  • Focus the camera, then SHUT DOWN CLEANLY (sudo shutdown now)"
+    echo -e "    before boxing — pulling power mid-write can un-arm the unit."
 
     # Factory hygiene, deliberately the LAST step: dev/clean.sh --yes strips
     # dev residue — every WiFi profile except the OWL hotspot (a dev phone

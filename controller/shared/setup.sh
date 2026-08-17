@@ -611,9 +611,11 @@ setup_device_settings_permissions() {
 
     local PASSWORD_HELPER="/usr/local/sbin/owl-set-user-password"
     local SUDOERS_FILE="/etc/sudoers.d/95-owl-device-settings"
-    local NMCLI_BIN CHPASSWD_BIN
+    local NMCLI_BIN CHPASSWD_BIN DATE_BIN TIMEDATECTL_BIN
     NMCLI_BIN="$(command -v nmcli 2>/dev/null || echo /usr/bin/nmcli)"
     CHPASSWD_BIN="$(command -v chpasswd 2>/dev/null || echo /usr/sbin/chpasswd)"
+    DATE_BIN="$(command -v date 2>/dev/null || echo /usr/bin/date)"
+    TIMEDATECTL_BIN="$(command -v timedatectl 2>/dev/null || echo /usr/bin/timedatectl)"
 
     # Root-owned helper: sudoers must never reference a user-writable file,
     # so the password change lives in /usr/local/sbin with the username
@@ -637,10 +639,12 @@ EOF
     sudo tee "$SUDOERS_FILE" > /dev/null <<EOF
 # Managed by OWL controller/shared/setup.sh
 # Device-settings capability for the dashboard/app: full nmcli for Wi-Fi
-# reconfiguration (matches the pinctrl sudo precedent) plus the root-owned
-# password helper. Dashboard settings routes return 503 when this is absent.
+# reconfiguration (matches the pinctrl sudo precedent), the root-owned
+# password helper, and clock control (date/timedatectl) so the phone app can
+# correct the RTC-less Pi clock via /api/time/sync. Dashboard settings routes
+# return 503 when this is absent.
 
-Cmnd_Alias OWL_SETTINGS_CMDS = ${NMCLI_BIN}, ${PASSWORD_HELPER}
+Cmnd_Alias OWL_SETTINGS_CMDS = ${NMCLI_BIN}, ${PASSWORD_HELPER}, ${DATE_BIN}, ${TIMEDATECTL_BIN}
 
 ${CURRENT_USER} ALL=(root) NOPASSWD: OWL_SETTINGS_CMDS
 EOF
@@ -931,9 +935,17 @@ echo -e "${GREEN}[INFO] Setting hostname to ${HOSTNAME}...${NC}"
 sudo hostnamectl set-hostname "${HOSTNAME}"
 
 echo -e "${GREEN}[INFO] Updating local hostname resolution...${NC}"
-sudo sed -i "/${HOSTNAME}/d" /etc/hosts
-echo "127.0.0.1 ${HOSTNAME}" | sudo tee -a /etc/hosts
-echo "127.0.1.1 ${HOSTNAME}" | sudo tee -a /etc/hosts
+# Rebuild-then-replace instead of in-place append: strips NUL runs left by
+# an unclean power-off (which zero-fill the file tail and glue appended
+# lines into garbage — every sudo then hangs on hostname resolution) and
+# normalises a missing trailing newline (awk '1'). Synced so the entries
+# survive an immediate power cut.
+HOSTS_TMP=$(mktemp)
+sudo sed "/${HOSTNAME}/d" /etc/hosts | tr -d '\000' | awk '1' > "$HOSTS_TMP"
+printf '127.0.0.1\t%s\n127.0.1.1\t%s\n' "${HOSTNAME}" "${HOSTNAME}" >> "$HOSTS_TMP"
+sudo cp "$HOSTS_TMP" /etc/hosts
+rm -f "$HOSTS_TMP"
+sudo sync
 
 check_status "Setting hostname and local resolution" "HOSTNAME"
 

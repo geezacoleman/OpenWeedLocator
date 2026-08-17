@@ -179,7 +179,11 @@ class BaseStatusIndicator:
             pass
 
         else:
-            self.error(6)
+            # No storage resolved. Error 6 is the "insert a USB drive" signal —
+            # only honest in usb mode. internal/auto landing here means the
+            # internal path itself failed (floor/permissions): a storage
+            # error (code 5), not a missing drive.
+            self.error(6 if self.storage_location == 'usb' else 5)
 
     def _update_internal_storage(self, free_bytes):
         """Internal (eMMC) mode: absolute free-space floor, not a percent.

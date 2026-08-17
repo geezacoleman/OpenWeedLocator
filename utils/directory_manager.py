@@ -201,15 +201,17 @@ def stream_zip(file_pairs):
 
 
 class DirectorySetup:
-    def __init__(self, save_directory, storage_location='usb',
+    def __init__(self, save_directory, storage_location='auto',
                  internal_save_directory=None, min_free_gb=0):
         self.logger = LogManager.get_logger(__name__)
         self.save_directory = save_directory
         self.save_subdirectory = None
-        # usb: /media mount required (legacy behaviour, the default)
+        # usb: /media mount required (legacy behaviour)
         # internal: eMMC/SD path, no mount gate (sealed OWL 3.0 units)
-        # auto: USB when one is mounted, else internal
-        self.storage_location = (storage_location or 'usb').lower()
+        # auto (default): USB when one is mounted, else internal
+        # Empty/whitespace values resolve to auto, matching owl.py's fallback —
+        # a blank key in an INI must never silently disable the internal path.
+        self.storage_location = ((storage_location or '').strip() or 'auto').lower()
         self.internal_save_directory = internal_save_directory
         self.min_free_gb = min_free_gb
         # What setup actually landed on ('usb' or 'internal') — auto mode
@@ -279,7 +281,20 @@ class DirectorySetup:
 
         if self.min_free_gb:
             free = shutil.disk_usage(self.save_directory).free
-            if free < self.min_free_gb * GB:
+            floor = self.min_free_gb * GB
+            if free < floor:
+                # Distinguish "delete sessions and it works" from "this floor
+                # can never be met on this disk" — telling an operator to
+                # delete sessions that don't exist reads as a hard ban.
+                reclaimable = sum(s['total_size']
+                                  for s in scan_sessions(self.save_directory))
+                if free + reclaimable < floor:
+                    raise errors.StorageSystemError(
+                        message=(f"free-space floor unreachable on this disk: floor is "
+                                 f"{self.min_free_gb} GB but at most "
+                                 f"{(free + reclaimable) / GB:.1f} GB can be freed "
+                                 f"({free / GB:.1f} GB free + {reclaimable / GB:.1f} GB in sessions). "
+                                 f"Lower min_free_gb in the config to record on this device."))
                 raise errors.StorageSystemError(
                     message=(f"Internal storage below the free-space floor: "
                              f"{free / GB:.1f} GB free, floor is {self.min_free_gb} GB. "

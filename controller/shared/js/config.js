@@ -80,7 +80,7 @@ const CONFIG_FIELD_DEFS = {
         'detection_enable': { type: 'boolean' },
         'log_fps': { type: 'boolean', help: 'Log FPS to console' },
         'camera_name': { type: 'text', help: 'Camera identifier for saved images' },
-        'storage_location': { type: 'select', options: ['usb', 'internal', 'auto'], help: 'Where recordings go: usb (drive in /media), internal (eMMC/SD, sealed units), auto (USB if present, else internal)' },
+        'storage_location': { type: 'select', options: ['auto', 'usb', 'internal'], help: 'Where recordings go: auto (default; USB if present, else internal with the free-space floor), usb (drive in /media required), internal (eMMC/SD, sealed units)' },
         'internal_save_directory': { type: 'text', help: 'Recording path for internal storage mode' },
         'min_free_gb': { type: 'number', min: 1, max: 100, help: 'Internal mode: recording stops when free disk space falls below this (GB)' },
         'image_quota_gb': { type: 'number', min: 1, max: 1000, help: 'Image allowance shown on the storage bar (GB, display only)' }

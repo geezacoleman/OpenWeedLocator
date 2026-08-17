@@ -88,13 +88,61 @@ class TestDirectorySetupInternal:
         assert save_dir == internal
         assert os.path.isdir(subdir)
 
-    def test_usb_mode_unchanged_raises_without_drive(self, tmp_path):
-        """Legacy default: no internal fallback unless auto/internal is set."""
-        ds = DirectorySetup(save_directory=str(tmp_path / 'usb'))
+    def test_usb_mode_raises_without_drive(self, tmp_path):
+        """Explicit usb mode: no internal fallback, missing drive raises."""
+        ds = DirectorySetup(save_directory=str(tmp_path / 'usb'),
+                            storage_location='usb')
         with patch('utils.directory_manager.os.path.ismount', return_value=False), \
                 patch('utils.directory_manager.platform.system', return_value='Linux'), \
                 patch.object(DirectorySetup, '_find_mounted_drives', return_value=[]):
             with pytest.raises(errors.NoWritableUSBError):
+                ds.setup_directories(max_retries=1)
+
+    def test_default_is_auto(self, tmp_path):
+        """v3.11.1: the constructor default is auto, matching owl.py and the
+        shipped GENERAL_CONFIG.ini — usb-only is now always an explicit choice."""
+        ds = DirectorySetup(save_directory=str(tmp_path / 'usb'))
+        assert ds.storage_location == 'auto'
+
+    @pytest.mark.parametrize('value', [None, '', '   '])
+    def test_blank_location_resolves_auto(self, value, tmp_path):
+        """A blank `storage_location =` line must behave like a missing key
+        (auto) — v3.10 resolved it to usb, silently banning eMMC recording."""
+        ds = DirectorySetup(save_directory=str(tmp_path / 'usb'),
+                            storage_location=value)
+        assert ds.storage_location == 'auto'
+
+    def test_blank_location_still_falls_back_to_internal(self, tmp_path):
+        internal = str(tmp_path / 'internal')
+        ds = DirectorySetup(save_directory=str(tmp_path / 'usb'),
+                            storage_location='',
+                            internal_save_directory=internal)
+        with patch('utils.directory_manager.os.path.ismount', return_value=False), \
+                patch('utils.directory_manager.platform.system', return_value='Linux'), \
+                patch.object(DirectorySetup, '_find_mounted_drives', return_value=[]):
+            save_dir, subdir = ds.setup_directories(max_retries=1)
+        assert save_dir == internal
+
+    def test_floor_unreachable_message_when_no_sessions(self, tmp_path):
+        """Free below floor AND nothing to delete: the error must say the
+        floor is unreachable (lower min_free_gb), not 'delete sessions'."""
+        ds = DirectorySetup(save_directory='ignored', storage_location='internal',
+                            internal_save_directory=str(tmp_path), min_free_gb=4)
+        low = DiskUsage(total=8 * GB, used=7 * GB, free=1 * GB)
+        with patch('utils.directory_manager.shutil.disk_usage', return_value=low):
+            with pytest.raises(errors.StorageSystemError, match='floor unreachable'):
+                ds.setup_directories(max_retries=1)
+
+    def test_floor_breach_with_reclaimable_sessions_says_delete(self, tmp_path):
+        """Free below floor but deleting sessions would clear it: keep the
+        'delete or download sessions' guidance (reason storage_full)."""
+        ds = DirectorySetup(save_directory='ignored', storage_location='internal',
+                            internal_save_directory=str(tmp_path), min_free_gb=4)
+        low = DiskUsage(total=16 * GB, used=13 * GB, free=3 * GB)
+        fat_session = [{'total_size': 2 * GB}]
+        with patch('utils.directory_manager.shutil.disk_usage', return_value=low), \
+                patch('utils.directory_manager.scan_sessions', return_value=fat_session):
+            with pytest.raises(errors.StorageSystemError, match='Delete or download'):
                 ds.setup_directories(max_retries=1)
 
 
@@ -122,6 +170,14 @@ class TestStorageLocationConfig:
         from utils.config_manager import ConfigValidator
         ok, errs = ConfigValidator.validate_storage_location(self._config_with(None))
         assert ok
+
+    @pytest.mark.parametrize('value', ['', '   '])
+    def test_blank_value_passes_like_missing(self, value):
+        """`storage_location =` with no value must validate (treated as auto),
+        not hard-fail config load."""
+        from utils.config_manager import ConfigValidator
+        ok, errs = ConfigValidator.validate_storage_location(self._config_with(value))
+        assert ok, errs
 
     def test_typo_flagged_with_options(self):
         from utils.config_manager import ConfigValidator

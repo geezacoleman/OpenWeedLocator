@@ -375,18 +375,28 @@ function _doStartRecording() {
         });
 }
 
+// Keyed off the OWL's published refusal reason — storage_location only says
+// where recording WOULD go, not why it was refused, and is stale when setup
+// never succeeded (it mislabelled full internal storage as a missing USB drive).
+const RECORDING_BLOCKED_NOTICES = {
+    no_drive: ['No USB drive',
+        'No USB drive found. Insert a drive and press Record again'],
+    storage_full: ['Storage full',
+        'Internal storage is below the free-space floor. Download or delete sessions, then press Record again'],
+    floor_unreachable: ['Storage floor too high',
+        'The free-space floor (min_free_gb) is more than this disk can ever have free. Lower it in Advanced Settings to record on this device'],
+    storage_error: ['Storage error',
+        'Recording storage error. Check the OWL logs (journalctl -u owl)']
+};
+
 function checkStorageAfterRecordingStart() {
     apiRequest('/api/system_stats')
         .then(response => response.json())
         .then(stats => {
             if (stats && stats.storage_available === false && !stats.image_sample_enable) {
-                if (stats.storage_location === 'internal') {
-                    showNotification('Storage full',
-                        'Internal storage is full. Download or delete sessions, then press Record again', 'error', 8000);
-                } else {
-                    showNotification('No USB drive',
-                        'No USB drive found. Insert a drive and press Record again', 'error', 8000);
-                }
+                const notice = RECORDING_BLOCKED_NOTICES[stats.recording_blocked_reason]
+                    || RECORDING_BLOCKED_NOTICES.no_drive;
+                showNotification(notice[0], notice[1], 'error', 8000);
                 updateSystemStats();
             }
         })

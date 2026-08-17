@@ -292,12 +292,22 @@ echo
 echo -e "${GREEN}[INFO] Cleaning completed successfully!${NC}"
 echo -e "${GREEN}[INFO] Clean status saved to: /opt/owl-clean-status.txt${NC}"
 
+# Everything above must survive an immediate power pull (ship benches box
+# units straight after cleaning) — flush before the optional prompts, which
+# also cannot run detached (read under set -e dies on a closed stdin).
+sync
+
 # Optional: Secure delete free space
 echo
 echo -e "${YELLOW}[OPTIONAL] Zero free space for extra security?${NC}"
 echo "This overwrites deleted data to prevent recovery."
 echo "Takes 5-15 minutes depending on free space."
-read -p "Zero free space? (y/N): " zero_choice
+if [[ "$ASSUME_YES" == "1" ]]; then
+    zero_choice="n"
+    echo -e "${GREEN}[INFO] Non-interactive: skipping free-space zeroing${NC}"
+else
+    read -p "Zero free space? (y/N): " zero_choice || zero_choice="n"
+fi
 case "$zero_choice" in
   y|Y )
     echo -e "${GREEN}[INFO] Zeroing free space (this will take a while)...${NC}"
@@ -325,7 +335,12 @@ echo -e "${GREEN}  ✓ Personal/sensitive data removed${NC}"
 echo
 
 # Option to shutdown
-read -p "Shutdown device now? (y/N): " shutdown_choice
+if [[ "$ASSUME_YES" == "1" ]]; then
+    shutdown_choice="n"
+    echo -e "${GREEN}[INFO] Non-interactive: shutdown left to the operator${NC}"
+else
+    read -p "Shutdown device now? (y/N): " shutdown_choice || shutdown_choice="n"
+fi
 case "$shutdown_choice" in
   y|Y )
     echo -e "${GREEN}[INFO] Syncing filesystems...${NC}"

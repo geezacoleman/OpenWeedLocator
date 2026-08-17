@@ -744,9 +744,11 @@ class ConfigValidator:
     def validate_storage_location(cls, config: ConfigParser) -> Tuple[bool, Dict[str, Dict[str, str]]]:
         """Validate storage location selection (usb | internal | auto)."""
         if not config.has_option('DataCollection', 'storage_location'):
-            return True, {}  # Optional key; absent means usb (legacy behaviour)
+            return True, {}  # Optional key; absent means auto
 
-        storage_location = config.get('DataCollection', 'storage_location', fallback='').lower()
+        storage_location = config.get('DataCollection', 'storage_location', fallback='').strip().lower()
+        if not storage_location:
+            return True, {}  # Blank value treated exactly like a missing key (auto)
 
         if storage_location not in cls.VALID_STORAGE_LOCATIONS:
             return False, {'DataCollection': {

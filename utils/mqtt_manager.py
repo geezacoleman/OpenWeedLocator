@@ -204,7 +204,8 @@ class OWLMQTTPublisher:
             # Where recording actually lands ('usb'|'internal', None until
             # storage resolves), whether that was a fallback from a missing
             # USB drive, and why recording was refused (None when it wasn't):
-            # no_drive | storage_full | storage_error. Additive fields.
+            # no_drive | storage_full | floor_unreachable | storage_error.
+            # Additive fields.
             'recording_location': None,
             'storage_fallback': False,
             'recording_blocked_reason': None,
@@ -2797,7 +2798,7 @@ class OWLMQTTPublisher:
     def set_recording_blocked(self, reason):
         """Recording was refused: publish why so dashboards/app can say so
         instead of silently snapping the toggle back.
-        reason: no_drive | storage_full | storage_error."""
+        reason: no_drive | storage_full | floor_unreachable | storage_error."""
         with self.state_lock:
             self.state['recording_blocked_reason'] = reason
             self.state['recording_location'] = None
