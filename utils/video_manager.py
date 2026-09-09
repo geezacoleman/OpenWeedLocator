@@ -62,13 +62,19 @@ AWB_PRESET_ENUMS = {
 }
 
 
-def build_awb_controls(awb_mode='daylight', awb_red_gain=2.0, awb_blue_gain=2.0,
+def build_awb_controls(awb_mode='auto', awb_red_gain=2.0, awb_blue_gain=2.0,
                        exp_compensation=None) -> dict:
     """Translate [Camera] white-balance config into libcamera controls.
 
     Single source of truth used at stream init and by live updates.
     AwbEnable is sent explicitly every time so switching back from manual
     re-enables auto white balance. Returns {} when libcamera is unavailable.
+
+    Default is auto (what rpicam-hello uses). The presets restrict the Pi
+    AWB search to a narrow colour-temperature window of the sensor tuning
+    file (daylight = 5500-6500 K on imx296.json), which renders modules
+    whose lens/IR filter sit off the Pi GS calibration curve (Arducam
+    IMX296) strongly red.
     """
     if libcamera is None:
         return {}
@@ -81,8 +87,8 @@ def build_awb_controls(awb_mode='daylight', awb_red_gain=2.0, awb_blue_gain=2.0,
     else:
         if mode not in AWB_PRESET_ENUMS:
             LogManager.get_logger(__name__).warning(
-                f"Unknown awb_mode '{awb_mode}', falling back to daylight")
-            mode = 'daylight'
+                f"Unknown awb_mode '{awb_mode}', falling back to auto")
+            mode = 'auto'
         controls['AwbEnable'] = True
         controls['AwbMode'] = getattr(libcamera.controls.AwbModeEnum,
                                       AWB_PRESET_ENUMS[mode])
@@ -249,7 +255,7 @@ class WebcamStream:
 
 class PiCamera2Stream:
     def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2,
-                 awb_mode='daylight', awb_red_gain=2.0, awb_blue_gain=2.0,
+                 awb_mode='auto', awb_red_gain=2.0, awb_blue_gain=2.0,
                  rotation='auto', **kwargs):
         self.logger = LogManager.get_logger(__name__)
         self.name = 'Picamera2Stream'
@@ -487,7 +493,7 @@ LEGACY_AWB_MODES = {
 
 class PiCameraStream:
     def __init__(self, resolution=(416, 320), exp_compensation=-2,
-                 awb_mode='daylight', awb_red_gain=2.0, awb_blue_gain=2.0,
+                 awb_mode='auto', awb_red_gain=2.0, awb_blue_gain=2.0,
                  rotation='auto', **kwargs):
         self.logger = LogManager.get_logger(__name__)
         self.name = 'PicameraStream'
@@ -507,8 +513,8 @@ class PiCameraStream:
             else:
                 if awb_mode not in LEGACY_AWB_MODES:
                     self.logger.warning(
-                        f"Unknown awb_mode '{awb_mode}', falling back to daylight")
-                    awb_mode = 'daylight'
+                        f"Unknown awb_mode '{awb_mode}', falling back to auto")
+                    awb_mode = 'auto'
                 self.camera.awb_mode = LEGACY_AWB_MODES[awb_mode]
             self.camera.sensor_mode = 0
             self.camera.exposure_compensation = exp_compensation
@@ -602,7 +608,7 @@ class VideoStream:
     """
 
     def __init__(self, src=0, resolution=(416, 320), exp_compensation=-2, camera_type='auto',
-                 awb_mode='daylight', awb_red_gain=2.0, awb_blue_gain=2.0, **kwargs):
+                 awb_mode='auto', awb_red_gain=2.0, awb_blue_gain=2.0, **kwargs):
         self.logger = LogManager.get_logger(__name__)
         self.platform_info = get_platform_info()
         self.frame_height = None

@@ -191,6 +191,12 @@ function updateSystemStats() {
             if (typeof updateAlgorithmError === 'function') {
                 updateAlgorithmError(data.algorithm_error);
             }
+
+            // Live white balance readout + calibration progress (Config tab)
+            if (typeof updateAwbReadout === 'function') {
+                updateAwbReadout(data.camera, data.awb_calibration,
+                    typeof onAwbCalibrationComplete === 'function' ? onAwbCalibrationComplete : null);
+            }
         })
         .catch(err => {
             // Silent fail for stats polling

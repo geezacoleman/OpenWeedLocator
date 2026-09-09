@@ -27,7 +27,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from utils.mqtt_manager import DashMQTTSubscriber
 from utils.input_manager import get_rpi_version
 from utils.device_identity import get_device_serial
-from utils.directory_manager import scan_sessions, stream_zip
+from utils.directory_manager import (scan_sessions, stream_zip,
+                                     read_session_locations,
+                                     scan_exif_locations, read_session_tracks)
 from utils.config_manager import (
     build_config_filename, parse_config_meta, strip_geometry_keys, GEOMETRY_FILE,
     stamp_config_meta, atomic_write_config, AUTOSAVE_CONFIG, seed_autosave,
@@ -420,6 +422,28 @@ class OWLDashboard:
             self.logger.info("owl.service restart requested")
             return jsonify({'success': True,
                             'message': 'OWL service restarting.'})
+
+        @self.app.route('/api/camera/calibrate-awb', methods=['POST'])
+        def calibrate_awb():
+            """One-tap white balance: OWL samples auto AWB for ~2 s and locks
+            the result as manual gains (mqtt_manager calibrate_awb). Progress
+            and the resulting gains arrive via state['awb_calibration'],
+            surfaced in /api/system_stats. Token-guarded like restart."""
+            denied = self._check_device_token()
+            if denied is not None:
+                return denied
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            try:
+                result = self.mqtt_client._send_command('calibrate_awb')
+                if isinstance(result, dict) and not result.get('success', True):
+                    return jsonify(result), 500
+                return jsonify({'success': True,
+                                'message': 'Calibrating white balance. Keep bare soil '
+                                           'or a grey card in view for a few seconds.'})
+            except Exception as e:
+                self.logger.error(f"Error starting white balance calibration: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
 
         @self.app.route('/api/time/sync', methods=['POST'])
         def sync_time():
@@ -874,18 +898,43 @@ class OWLDashboard:
 
         @self.app.route('/api/update_gps', methods=['POST'])
         def update_gps():
+            # Deliberately tokenless: the kiosk browser's geolocation push
+            # goes through the shared apiRequest, which never attaches
+            # X-Device-Token. The phone app posts the same shape.
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            gps_data = request.get_json(silent=True) or {}
             try:
-                gps_data = request.get_json()
-                lat = float(gps_data.get('latitude', 0.0))
-                lon = float(gps_data.get('longitude', 0.0))
-                accuracy = float(gps_data.get('accuracy', 0.0))
-                result = self.mqtt_client.update_gps(lat, lon, accuracy)
-                # self.logger.info(f"GPS updated: lat={lat}, lon={lon}")
-                return jsonify(result)
-            except Exception as e:
-                return jsonify({'success': False, 'error': str(e)})
+                lat = float(gps_data['latitude'])
+                lon = float(gps_data['longitude'])
+            except (KeyError, TypeError, ValueError):
+                return jsonify({'success': False,
+                                'error': 'latitude and longitude (numbers) required'})
+            # Optional fields pass through only when present and numeric —
+            # absent data is omitted, never defaulted (fail-safe metadata).
+            extra = {}
+            for key in ('accuracy', 'altitude', 'heading', 'timestamp'):
+                value = gps_data.get(key)
+                if value is None:
+                    continue
+                try:
+                    extra[key] = float(value)
+                except (TypeError, ValueError):
+                    pass
+            # Browser geolocation and Android both report speed in m/s;
+            # the EXIF pipeline speaks km/h.
+            try:
+                if gps_data.get('speed') is not None:
+                    extra['speed_kmh'] = float(gps_data['speed']) * 3.6
+                elif gps_data.get('speed_kmh') is not None:
+                    extra['speed_kmh'] = float(gps_data['speed_kmh'])
+            except (TypeError, ValueError):
+                pass
+            result = self.mqtt_client.update_gps(lat, lon,
+                                                 accuracy=extra.get('accuracy'),
+                                                 timestamp=extra.get('timestamp'),
+                                                 extra=extra)
+            return jsonify(result)
 
         @self.app.route('/api/system_stats')
         def system_stats():
@@ -932,6 +981,14 @@ class OWLDashboard:
                 'available_lut_profiles': mqtt_state.get('available_lut_profiles', []),
                 # Tracking
                 'tracking_enabled': mqtt_state.get('tracking_enabled', False),
+                # GPS (additive): best-source fix as seen by owl.py — lets
+                # the phone confirm its pushed position is actually in use.
+                # Coordinates only when there is a fix, never 0.0 defaults.
+                'gps_fix': mqtt_state.get('gps_fix', False),
+                'gps_source': mqtt_state.get('gps_source'),
+                'gps_latitude': mqtt_state.get('gps_best_lat') if mqtt_state.get('gps_fix') else None,
+                'gps_longitude': mqtt_state.get('gps_best_lon') if mqtt_state.get('gps_fix') else None,
+                'gps_accuracy': mqtt_state.get('gps_best_accuracy') if mqtt_state.get('gps_fix') else None,
                 # Camera resolution
                 'resolution_width': mqtt_state.get('resolution_width', 0),
                 'resolution_height': mqtt_state.get('resolution_height', 0),
@@ -1306,6 +1363,46 @@ class OWLDashboard:
                     })
 
             return jsonify({'files': files, 'session_id': session_id})
+
+        @self.app.route('/api/downloads/session/<path:session_id>/locations')
+        def api_downloads_session_locations(session_id):
+            """GeoJSON of where a session's images were taken (Map tab).
+
+            Point features come from the locations.jsonl sidecar written at
+            save time; sessions recorded before the sidecar existed fall
+            back to a capped EXIF scan of the JPEGs. Any track_*.geojson in
+            the session dir (TrackRecorder) is appended as LineString
+            feature(s) so the collection is directly QGIS-importable.
+            """
+            session_path, err = _validate_session_path(session_id)
+            if err:
+                return err
+
+            try:
+                result = read_session_locations(session_path)
+                if result is not None:
+                    features, total, truncated = result
+                    source = 'sidecar'
+                else:
+                    features, total, truncated = scan_exif_locations(session_path)
+                    source = 'exif'
+                    if not features:
+                        # Candidates without GPS are not locations — an
+                        # untagged legacy session reports an honest zero.
+                        source, total, truncated = 'none', 0, False
+
+                features.extend(read_session_tracks(session_path))
+
+                return jsonify({
+                    'type': 'FeatureCollection',
+                    'source': source,
+                    'count': total,
+                    'truncated': truncated,
+                    'features': features,
+                })
+            except Exception as e:
+                self.logger.error(f"Error reading session locations: {e}")
+                return jsonify({'error': str(e)}), 500
 
         @self.app.route('/api/downloads/file/<path:session_id>/<filename>')
         def api_downloads_serve_file(session_id, filename):
@@ -2639,6 +2736,10 @@ class OWLDashboard:
             'recording_blocked_reason': mqtt_state.get('recording_blocked_reason'),
             'sensitivity_level': mqtt_state.get('sensitivity_level', 'high'),
             'stream_active': mqtt_state.get('stream_active', False),
+            # Live white balance + one-tap calibration progress (additive,
+            # v3.14): the app feature-detects on awb_calibration presence
+            'camera': mqtt_state.get('camera'),
+            'awb_calibration': mqtt_state.get('awb_calibration'),
             'weed_detect_indicator': self.mqtt_client.get_weed_detect_indicator() if self.mqtt_client else False,
             'image_write_indicator': self.mqtt_client.get_image_write_indicator() if self.mqtt_client else False
         })

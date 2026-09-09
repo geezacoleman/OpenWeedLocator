@@ -1,5 +1,6 @@
 from datetime import datetime
 import utils.error_manager as errors
+import json
 import platform
 import re
 import shutil
@@ -16,6 +17,13 @@ GB = 1024 ** 3
 IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png')
 _DATE_PATTERN = re.compile(r'^\d{8}$')
 _SESSION_PATTERN = re.compile(r'^session_\d{6}$')
+
+
+def _is_session_metadata_file(filename):
+    """Location sidecar / GPS track files that ride along with a session's
+    images (included in ZIP downloads, excluded from image listings)."""
+    return (filename == 'locations.jsonl'
+            or (filename.startswith('track_') and filename.endswith('.geojson')))
 
 
 def scan_sessions(save_dir):
@@ -102,11 +110,14 @@ def collect_session_files(save_dir, session_id):
 
     files = []
 
+    def _wanted(name):
+        return name.lower().endswith(IMAGE_EXTENSIONS) or _is_session_metadata_file(name)
+
     if '/' in session_id:
         # Specific session: YYYYMMDD/session_HHMMSS
         for f in os.listdir(target):
             fp = os.path.join(target, f)
-            if os.path.isfile(fp) and f.lower().endswith(IMAGE_EXTENSIONS):
+            if os.path.isfile(fp) and _wanted(f):
                 files.append((f'images/{f}', fp))
     else:
         # Date-level: collect from session subdirs AND flat files
@@ -116,7 +127,7 @@ def collect_session_files(save_dir, session_id):
                 # Session subdir — include subdir name in archive path
                 for f in os.listdir(entry_path):
                     fp = os.path.join(entry_path, f)
-                    if os.path.isfile(fp) and f.lower().endswith(IMAGE_EXTENSIONS):
+                    if os.path.isfile(fp) and _wanted(f):
                         files.append((f'images/{entry}/{f}', fp))
             elif os.path.isfile(entry_path) and entry.lower().endswith(IMAGE_EXTENSIONS):
                 # Legacy flat file
@@ -140,7 +151,9 @@ def select_preview_images(save_dir, session_id, count):
         return []
 
     files = collect_session_files(save_dir, session_id)
-    paths = [fp for _, fp in sorted(files)]
+    # Images only — collect_session_files also carries sidecar/track files
+    paths = [fp for _, fp in sorted(files)
+             if fp.lower().endswith(IMAGE_EXTENSIONS)]
 
     if len(paths) <= count:
         return paths
@@ -198,6 +211,163 @@ def stream_zip(file_pairs):
     tail = buffer.drain()
     if tail:
         yield tail
+
+
+def _downsample_keep_ends(items, target):
+    """Even-stride downsample that always keeps the first and last items."""
+    if len(items) <= target:
+        return list(items)
+    if target < 2:
+        return list(items[:target])
+    step = (len(items) - 1) / (target - 1)
+    return [items[round(i * step)] for i in range(target)]
+
+
+def read_session_locations(session_path, max_features=2000):
+    """Parse a session's locations.jsonl sidecar into GeoJSON Point features.
+
+    Returns (features, total, truncated), or None when the session has no
+    sidecar at all (caller falls back to an EXIF scan). Malformed or
+    coordinate-less lines — including a torn final line from a mid-write
+    power cut — are skipped, never fatal.
+    """
+    path = os.path.join(session_path, 'locations.jsonl')
+    if not os.path.isfile(path):
+        return None
+
+    features = []
+    try:
+        with open(path, 'r') as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    lat = float(entry['lat'])
+                    lon = float(entry['lon'])
+                except (ValueError, KeyError, TypeError):
+                    continue
+                props = {k: entry[k]
+                         for k in ('ts', 'frame_id', 'files', 'accuracy',
+                                   'speed_kmh', 'heading', 'source')
+                         if k in entry}
+                features.append({
+                    'type': 'Feature',
+                    'geometry': {'type': 'Point', 'coordinates': [lon, lat]},
+                    'properties': props,
+                })
+    except OSError:
+        return None
+
+    total = len(features)
+    truncated = total > max_features
+    if truncated:
+        features = _downsample_keep_ends(features, max_features)
+    return features, total, truncated
+
+
+def _exif_dms_to_decimal(rationals, ref):
+    """EXIF GPS rationals + hemisphere ref -> decimal degrees, or None.
+
+    Inverse of image_sampler._decimal_to_dms; tolerates 2- or 3-part DMS.
+    """
+    try:
+        degrees = rationals[0][0] / rationals[0][1]
+        minutes = rationals[1][0] / rationals[1][1]
+        seconds = 0.0
+        if len(rationals) > 2 and rationals[2][1]:
+            seconds = rationals[2][0] / rationals[2][1]
+        value = degrees + minutes / 60.0 + seconds / 3600.0
+        if isinstance(ref, bytes):
+            ref = ref.decode('ascii', 'ignore')
+        if ref in ('S', 'W'):
+            value = -value
+        return value
+    except (TypeError, ZeroDivisionError, IndexError, KeyError):
+        return None
+
+
+def scan_exif_locations(session_path, max_files=500):
+    """Legacy fallback: pull GPS points from a session's JPEG EXIF.
+
+    Prefers whole-frame files (``*_frame_N.jpg`` without ``_n_``); a
+    crops-only session (bbox/square modes) is deduplicated to one file per
+    frame by the prefix before ``_n_``. Capped at max_files because each
+    file costs a piexif.load on the Pi. Returns (features, total, truncated);
+    `total` counts candidate frames, features only those with GPS.
+    """
+    import piexif
+
+    try:
+        entries = [f for f in os.listdir(session_path)
+                   if f.lower().endswith(('.jpg', '.jpeg'))]
+    except OSError:
+        return [], 0, False
+
+    frames = sorted(f for f in entries if '_frame_' in f and '_n_' not in f)
+    if not frames:
+        by_frame = {}
+        for f in sorted(entries):
+            by_frame.setdefault(f.split('_n_')[0], f)
+        frames = sorted(by_frame.values())
+
+    total = len(frames)
+    truncated = total > max_files
+    frames = frames[:max_files]
+
+    features = []
+    for fname in frames:
+        try:
+            exif = piexif.load(os.path.join(session_path, fname))
+        except Exception:
+            continue
+        gps = exif.get('GPS') or {}
+        lat = _exif_dms_to_decimal(gps.get(piexif.GPSIFD.GPSLatitude),
+                                   gps.get(piexif.GPSIFD.GPSLatitudeRef))
+        lon = _exif_dms_to_decimal(gps.get(piexif.GPSIFD.GPSLongitude),
+                                   gps.get(piexif.GPSIFD.GPSLongitudeRef))
+        if lat is None or lon is None:
+            continue
+        props = {'files': [fname]}
+        dto = (exif.get('Exif') or {}).get(piexif.ExifIFD.DateTimeOriginal)
+        if dto:
+            if isinstance(dto, bytes):
+                dto = dto.decode('ascii', 'ignore')
+            # 'YYYY:MM:DD HH:MM:SS' -> ISO, LOCAL time (no Z — EXIF
+            # DateTimeOriginal is local; sidecar ts is UTC with Z)
+            props['ts'] = dto.replace(':', '-', 2).replace(' ', 'T')
+        features.append({
+            'type': 'Feature',
+            'geometry': {'type': 'Point', 'coordinates': [lon, lat]},
+            'properties': props,
+        })
+    return features, total, truncated
+
+
+def read_session_tracks(session_path):
+    """Return the LineString feature(s) from a session's track_*.geojson.
+
+    Written by TrackRecorder (utils/gps_manager.py) — same format as the
+    networked controller's tracks/. Unreadable files are skipped.
+    """
+    features = []
+    try:
+        names = sorted(os.listdir(session_path))
+    except OSError:
+        return features
+    for fname in names:
+        if not (fname.startswith('track_') and fname.endswith('.geojson')):
+            continue
+        try:
+            with open(os.path.join(session_path, fname), 'r') as fh:
+                data = json.load(fh)
+            for feat in data.get('features', []):
+                if (feat.get('geometry') or {}).get('type') == 'LineString':
+                    features.append(feat)
+        except (OSError, ValueError):
+            continue
+    return features
 
 
 class DirectorySetup:

@@ -304,6 +304,24 @@ class OWLMQTTPublisher:
                 'progress': 0,
                 'error': ''
             },
+            # One-tap white-balance calibration (calibrate_awb command):
+            # auto AWB sampled on a grey card / bare soil, then locked as
+            # manual gains. updated_at lets the UI spot a fresh completion.
+            'awb_calibration': {
+                'status': 'idle',
+                'red_gain': None,
+                'blue_gain': None,
+                'colour_temperature': None,
+                'error': '',
+                'updated_at': 0
+            },
+            # Live camera colour state from picamera2 frame metadata
+            # (refreshed every heartbeat; metadata keys omitted on webcams)
+            'camera': {
+                'awb_mode': None,
+                'awb_red_gain': None,
+                'awb_blue_gain': None,
+            },
             # Storage
             'save_directory': '',
             # Session metadata (filled by farmer via dashboard)
@@ -878,6 +896,17 @@ class OWLMQTTPublisher:
                     ).start()
                 else:
                     self.logger.error("download_model missing url or filename")
+
+            elif action == 'calibrate_awb':
+                # Needs ~2 s of auto AWB; the dispatch holds state_lock, so
+                # the wait runs in a worker like download_model.
+                if self.state['awb_calibration'].get('status') == 'running':
+                    self.logger.info("calibrate_awb already running; ignored")
+                else:
+                    self.state['awb_calibration'].update(
+                        status='running', error='', updated_at=time.time())
+                    threading.Thread(target=self._calibrate_awb,
+                                     daemon=True).start()
 
             elif action == 'set_lut_profile':
                 name = str(command.get('name', '')).strip().lower()
@@ -1736,6 +1765,75 @@ class OWLMQTTPublisher:
 
         except (ValueError, TypeError) as e:
             self.logger.error(f"Invalid actuation params: {e}")
+
+    AWB_CALIBRATION_SETTLE_S = 2.0
+
+    def _set_awb_calibration(self, **fields):
+        with self.state_lock:
+            self.state['awb_calibration'].update(fields, updated_at=time.time())
+        self._publish_state()
+
+    def _calibrate_awb(self):
+        """Sample auto white balance, then lock it as manual gains.
+
+        Farmer flow: point the camera at bare soil or a grey card, tap once.
+        Runs auto AWB for AWB_CALIBRATION_SETTLE_S, reads ColourGains from
+        the latest frame metadata (owl._last_camera_metadata, written by the
+        main loop; read_with_metadata() is consuming and must not be called
+        here), then applies awb_mode = manual with those gains through the
+        normal set_config_section path and saves the config. Any failure
+        restores the previous WB state. Runs in a background thread.
+        """
+        owl = self.owl_instance
+        cam = getattr(owl, 'cam', None) if owl is not None else None
+        if cam is None or not hasattr(cam, 'set_camera_controls'):
+            self._set_awb_calibration(
+                status='error',
+                error='Camera backend has no live white-balance control')
+            return
+
+        previous = {
+            'awb_mode': getattr(owl, 'awb_mode', 'auto'),
+            'awb_red_gain': getattr(owl, 'awb_red_gain', 2.0),
+            'awb_blue_gain': getattr(owl, 'awb_blue_gain', 2.0),
+        }
+        try:
+            cam.set_camera_controls({'awb_mode': 'auto'})
+            time.sleep(self.AWB_CALIBRATION_SETTLE_S)
+
+            metadata = getattr(owl, '_last_camera_metadata', None) or {}
+            gains = metadata.get('ColourGains')
+            if not gains or len(gains) < 2:
+                raise ValueError('No ColourGains in camera metadata')
+            red_gain = round(float(gains[0]), 3)
+            blue_gain = round(float(gains[1]), 3)
+            colour_temperature = metadata.get('ColourTemperature')
+
+            self._handle_set_config_section('Camera', {
+                'awb_mode': 'manual',
+                'awb_red_gain': red_gain,
+                'awb_blue_gain': blue_gain,
+            })
+            # Camera keys are not written to disk by set_config_section
+            # (only GoB thresholds auto-save); the lock must survive a restart.
+            self._handle_save_config()
+            self.logger.info(
+                "White balance calibrated and locked",
+                extra=dict(awb_red_gain=red_gain, awb_blue_gain=blue_gain,
+                           colour_temperature=colour_temperature))
+            self._set_awb_calibration(
+                status='complete', red_gain=red_gain, blue_gain=blue_gain,
+                colour_temperature=colour_temperature, error='')
+
+        except Exception as e:
+            self.logger.error(f"White balance calibration failed: {e}")
+            try:
+                cam.set_camera_controls(previous)
+            except Exception as restore_error:
+                self.logger.error(
+                    f"Could not restore white balance after failed "
+                    f"calibration: {restore_error}")
+            self._set_awb_calibration(status='error', error=str(e))
 
     def _download_model(self, url, filename, expected_sha256, is_archive):
         """Download a model file from the controller. Runs in background thread."""
@@ -2694,6 +2792,7 @@ class OWLMQTTPublisher:
             try:
                 if self.connected:
                     self._refresh_ai_state()
+                    self._refresh_camera_state()
                     self._read_update_status()
                     with self.state_lock:
                         self._publish_state()
@@ -2701,6 +2800,37 @@ class OWLMQTTPublisher:
             except Exception as e:
                 self.logger.error(f"Error in heartbeat loop: {e}")
                 time.sleep(heartbeat_interval)
+
+    def _refresh_camera_state(self):
+        """Refresh state['camera'] from the configured WB and the latest
+        picamera2 frame metadata. Called every heartbeat. Metadata-derived
+        keys are omitted (not defaulted) when unavailable, e.g. on webcams."""
+        owl = self.owl_instance
+        if owl is None:
+            return
+        # Type-guarded so state stays JSON-serialisable even with a partial
+        # owl instance (tests, webcam backends).
+        mode = getattr(owl, 'awb_mode', None)
+        red = getattr(owl, 'awb_red_gain', None)
+        blue = getattr(owl, 'awb_blue_gain', None)
+        camera = {
+            'awb_mode': mode if isinstance(mode, str) else None,
+            'awb_red_gain': float(red) if isinstance(red, (int, float)) else None,
+            'awb_blue_gain': float(blue) if isinstance(blue, (int, float)) else None,
+        }
+        metadata = getattr(owl, '_last_camera_metadata', None)
+        if isinstance(metadata, dict):
+            gains = metadata.get('ColourGains')
+            if gains and len(gains) >= 2:
+                camera['colour_gains'] = [round(float(gains[0]), 3),
+                                          round(float(gains[1]), 3)]
+            for src_key, dst_key in (('ColourTemperature', 'colour_temperature'),
+                                     ('Lux', 'lux')):
+                value = metadata.get(src_key)
+                if isinstance(value, (int, float)):
+                    camera[dst_key] = round(float(value), 1)
+        with self.state_lock:
+            self.state['camera'] = camera
 
     def _refresh_ai_state(self):
         """Refresh AI tab state from live OWL detector. Called every heartbeat."""
@@ -2828,6 +2958,32 @@ class OWLMQTTPublisher:
             self.state['storage_free_mb'] = quantized
             self.state['storage_warning'] = warning
             self.state['image_quota_gb'] = quota_gb
+            self.state['last_update'] = time.time()
+        self._publish_state()
+
+    def set_gps_status(self, fix, source, latitude, longitude, accuracy):
+        """Push the current best-GPS reading into state (additive fields).
+
+        Coordinates are quantized to 5 decimal places (~1.1 m) for the
+        change check so a stationary rig doesn't republish state on every
+        jitter; fix/source transitions always publish.
+        """
+        lat_q = None if latitude is None else round(float(latitude), 5)
+        lon_q = None if longitude is None else round(float(longitude), 5)
+        acc_q = None if accuracy is None else round(float(accuracy), 1)
+        with self.state_lock:
+            changed = (self.state.get('gps_fix') != fix
+                       or self.state.get('gps_source') != source
+                       or self.state.get('gps_best_lat') != lat_q
+                       or self.state.get('gps_best_lon') != lon_q
+                       or self.state.get('gps_best_accuracy') != acc_q)
+            if not changed:
+                return
+            self.state['gps_fix'] = bool(fix)
+            self.state['gps_source'] = source
+            self.state['gps_best_lat'] = lat_q
+            self.state['gps_best_lon'] = lon_q
+            self.state['gps_best_accuracy'] = acc_q
             self.state['last_update'] = time.time()
         self._publish_state()
 
@@ -3198,17 +3354,23 @@ class DashMQTTSubscriber:
         """Set detection mode: 0=spot spray, 1=off, 2=blanket"""
         return self._send_command('set_detection_mode', value=int(mode))
 
-    def update_gps(self, lat, lon, accuracy, timestamp=None):
-        """Update GPS data"""
-        if timestamp is None:
-            timestamp = time.time()
+    def update_gps(self, lat, lon, accuracy=None, timestamp=None, extra=None):
+        """Publish a GPS position to the OWL (owl/gps topic).
 
+        Only keys with real values are sent — absent data is omitted, never
+        defaulted, so the EXIF writer downstream can apply its fail-safe
+        rule. `extra` carries optional fields (altitude, heading, speed_kmh)
+        straight through; owl.py stores the payload verbatim.
+        """
         gps_data = {
             'latitude': lat,
             'longitude': lon,
-            'accuracy': accuracy,
-            'timestamp': timestamp
+            'timestamp': time.time() if timestamp is None else timestamp,
         }
+        if accuracy is not None:
+            gps_data['accuracy'] = accuracy
+        if extra:
+            gps_data.update({k: v for k, v in extra.items() if v is not None})
 
         try:
             self.client.publish(self.topics['gps'], json.dumps(gps_data))

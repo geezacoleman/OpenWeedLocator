@@ -33,6 +33,14 @@ GEOMETRY_FILE = 'GEOMETRY.ini'
 # file per slider move. Explicit "Save As" still creates named presets.
 AUTOSAVE_CONFIG = 'config_autosave.ini'
 
+# [Camera] white-balance keys seeded into profiles saved before they existed
+# (v3.11). Must match the fallbacks in owl.py and utils/video_manager.py.
+CAMERA_WB_DEFAULTS = {
+    'awb_mode': 'auto',
+    'awb_red_gain': '2.0',
+    'awb_blue_gain': '2.0',
+}
+
 
 def strip_geometry_keys(config_dict):
     """Return a copy of a {section: {key: value}} config dict with mount geometry
@@ -201,6 +209,13 @@ def seed_autosave(config_dir, source_path):
     if not cp.has_section('Meta'):
         cp.add_section('Meta')
     cp.set('Meta', 'source', basename)
+    # Profiles saved before the white-balance keys existed fall back to the
+    # code defaults at runtime; seed them so the working file carries them
+    # (the kiosk config editor renders present keys only).
+    if cp.has_section('Camera'):
+        for key, default in CAMERA_WB_DEFAULTS.items():
+            if not cp.has_option('Camera', key):
+                cp.set('Camera', key, default)
     atomic_write_config(autosave_path, cp.write)
     return autosave_path
 

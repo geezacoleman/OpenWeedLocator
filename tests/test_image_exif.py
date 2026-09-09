@@ -355,3 +355,96 @@ class TestImageRecorderSavePath:
         assert len(files) == 1
         exif = piexif.load(str(files[0]))
         assert not exif['GPS']
+
+
+# ---------------------------------------------------------------------------
+# Location sidecar (locations.jsonl) — one line per frame, only with GPS
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestLocationSidecar:
+
+    def _bare_recorder(self, tmp_path, mode='whole'):
+        from utils.image_sampler import ImageRecorder
+        recorder = ImageRecorder.__new__(ImageRecorder)
+        recorder.save_directory = str(tmp_path)
+        recorder.mode = mode
+        return recorder
+
+    def _lines(self, tmp_path):
+        path = tmp_path / 'locations.jsonl'
+        if not path.exists():
+            return None
+        return [json.loads(line) for line in
+                path.read_text().strip().splitlines()]
+
+    def test_sidecar_written_with_gps(self, tmp_path):
+        recorder = self._bare_recorder(tmp_path)
+        frame = np.zeros((24, 32, 3), dtype=np.uint8)
+        recorder.process_frame(frame, 7, None, None, FULL_GPS,
+                               None, None, CAPTURE_TIME)
+        entries = self._lines(tmp_path)
+        assert len(entries) == 1
+        entry = entries[0]
+        assert entry['frame_id'] == 7
+        assert entry['lat'] == pytest.approx(FULL_GPS['latitude'])
+        assert entry['lon'] == pytest.approx(FULL_GPS['longitude'])
+        assert entry['speed_kmh'] == pytest.approx(FULL_GPS['speed_kmh'])
+        assert entry['files'] == [f.name for f in tmp_path.glob('*.jpg')]
+
+    def test_ts_is_utc_iso_with_z(self, tmp_path):
+        recorder = self._bare_recorder(tmp_path)
+        frame = np.zeros((24, 32, 3), dtype=np.uint8)
+        recorder.process_frame(frame, 1, None, None, FULL_GPS,
+                               None, None, CAPTURE_TIME)
+        ts = self._lines(tmp_path)[0]['ts']
+        assert ts == '2026-06-11T01:52:30.500Z'
+
+    def test_no_sidecar_without_gps(self, tmp_path):
+        """Fail-safe: no GPS means no sidecar file at all — never a line
+        with invented coordinates."""
+        recorder = self._bare_recorder(tmp_path)
+        frame = np.zeros((24, 32, 3), dtype=np.uint8)
+        recorder.process_frame(frame, 1, None, None, None,
+                               None, None, CAPTURE_TIME)
+        recorder.process_frame(frame, 2, None, None, {'accuracy': 3.0},
+                               None, None, CAPTURE_TIME)
+        assert self._lines(tmp_path) is None
+
+    def test_optional_keys_omitted_when_absent(self, tmp_path):
+        recorder = self._bare_recorder(tmp_path)
+        frame = np.zeros((24, 32, 3), dtype=np.uint8)
+        recorder.process_frame(frame, 1, None, None,
+                               {'latitude': -31.5, 'longitude': 150.25},
+                               None, None, CAPTURE_TIME)
+        entry = self._lines(tmp_path)[0]
+        for key in ('accuracy', 'altitude', 'speed_kmh', 'heading'):
+            assert key not in entry
+
+    def test_bbox_mode_one_entry_many_files(self, tmp_path):
+        recorder = self._bare_recorder(tmp_path, mode='bbox')
+        frame = np.zeros((100, 100, 3), dtype=np.uint8)
+        boxes = [(0, 0, 20, 20), (30, 30, 20, 20), (60, 60, 20, 20)]
+        recorder.process_frame(frame, 3, boxes, None, FULL_GPS,
+                               None, None, CAPTURE_TIME)
+        entries = self._lines(tmp_path)
+        assert len(entries) == 1
+        assert len(entries[0]['files']) == 3
+        assert all('_n_' in name for name in entries[0]['files'])
+
+    def test_entries_append_across_frames(self, tmp_path):
+        recorder = self._bare_recorder(tmp_path)
+        frame = np.zeros((24, 32, 3), dtype=np.uint8)
+        for frame_id in (1, 2, 3):
+            recorder.process_frame(frame, frame_id, None, None, FULL_GPS,
+                                   None, None, CAPTURE_TIME)
+        entries = self._lines(tmp_path)
+        assert [e['frame_id'] for e in entries] == [1, 2, 3]
+
+    def test_source_recorded_when_present(self, tmp_path):
+        recorder = self._bare_recorder(tmp_path)
+        frame = np.zeros((24, 32, 3), dtype=np.uint8)
+        gps = dict(FULL_GPS, source='dashboard')
+        recorder.process_frame(frame, 1, None, None, gps,
+                               None, None, CAPTURE_TIME)
+        assert self._lines(tmp_path)[0]['source'] == 'dashboard'

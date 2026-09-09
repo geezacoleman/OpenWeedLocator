@@ -833,12 +833,51 @@ class TestCameraWhiteBalance:
     def test_general_config_has_awb_keys_with_defaults(self):
         cfg = configparser.ConfigParser()
         cfg.read(PROJECT_ROOT / 'config' / 'GENERAL_CONFIG.ini')
-        assert cfg.get('Camera', 'awb_mode') == 'daylight', (
-            "Default awb_mode must be daylight — zero behavior change on "
-            "existing rigs (the historical hardcoded outdoor WB)."
+        assert cfg.get('Camera', 'awb_mode') == 'auto', (
+            "Default awb_mode must be auto (v3.14): the old daylight lock "
+            "pins the Pi AWB search to 5500-6500 K and renders Arducam "
+            "IMX296 modules red."
         )
         assert cfg.getfloat('Camera', 'awb_red_gain') == 2.0
         assert cfg.getfloat('Camera', 'awb_blue_gain') == 2.0
+
+    def test_code_fallbacks_match_general_config(self):
+        """owl.py, video_manager and seed_autosave must agree on the default
+        so a profile without the key behaves like a fresh GENERAL_CONFIG."""
+        import inspect
+        from utils import video_manager
+        from utils.config_manager import CAMERA_WB_DEFAULTS
+        assert CAMERA_WB_DEFAULTS['awb_mode'] == 'auto'
+        sig = inspect.signature(video_manager.build_awb_controls)
+        assert sig.parameters['awb_mode'].default == 'auto'
+        assert inspect.signature(video_manager.VideoStream.__init__) \
+            .parameters['awb_mode'].default == 'auto'
+        owl_source = (PROJECT_ROOT / 'owl.py').read_text()
+        assert "config.get('Camera', 'awb_mode', fallback='auto')" in owl_source
+
+    def test_seed_autosave_injects_missing_wb_keys(self, tmp_path):
+        """Profiles saved before v3.11 have no WB keys; the autosave working
+        copy must carry them so the kiosk editor renders the WB fields."""
+        from utils.config_manager import seed_autosave, AUTOSAVE_CONFIG
+        src = tmp_path / 'old_profile.ini'
+        src.write_text("[Camera]\nresolution_width = 416\nresolution_height = 320\n")
+        seed_autosave(tmp_path, src)
+        cfg = configparser.ConfigParser()
+        cfg.read(tmp_path / AUTOSAVE_CONFIG)
+        assert cfg.get('Camera', 'awb_mode') == 'auto'
+        assert cfg.get('Camera', 'awb_red_gain') == '2.0'
+        assert cfg.get('Camera', 'awb_blue_gain') == '2.0'
+
+    def test_seed_autosave_keeps_existing_wb_keys(self, tmp_path):
+        from utils.config_manager import seed_autosave, AUTOSAVE_CONFIG
+        src = tmp_path / 'tuned.ini'
+        src.write_text("[Camera]\nawb_mode = manual\nawb_red_gain = 1.4\n"
+                       "awb_blue_gain = 3.1\n")
+        seed_autosave(tmp_path, src)
+        cfg = configparser.ConfigParser()
+        cfg.read(tmp_path / AUTOSAVE_CONFIG)
+        assert cfg.get('Camera', 'awb_mode') == 'manual'
+        assert cfg.get('Camera', 'awb_red_gain') == '1.4'
 
     def test_validator_lists_awb_keys_as_optional(self):
         from utils.config_manager import ConfigValidator

@@ -84,7 +84,7 @@ All algorithms except `gog`, `gog-hybrid`, and `hsv` use the `[GreenOnBrown]` th
 | `resolution_width` | `1456` | 1+ (integer) | Camera capture width in pixels |
 | `resolution_height` | `1088` | 1+ (integer) | Camera capture height in pixels |
 | `exp_compensation` | `-2` | -10 to 10 (integer) | Exposure compensation. Negative = darker (reduces sky/soil glare) |
-| `awb_mode` | `daylight` | `auto`, `daylight`, `cloudy`, `tungsten`, `fluorescent`, `indoor`, `manual` | White balance. `daylight` preserves the historical fixed outdoor WB. `manual` disables auto white balance and applies the gains below. Applied live (no restart) on picamera2 |
+| `awb_mode` | `auto` | `auto`, `daylight`, `cloudy`, `tungsten`, `fluorescent`, `indoor`, `manual` | White balance. `auto` matches rpicam-hello. Presets pin the colour temperature to a narrow window of the Pi tuning file and render Arducam IMX296 modules red. `manual` disables auto white balance and applies the gains below; "Calibrate white balance" on the dashboard/app fills them in. Applied live (no restart) on picamera2 |
 | `awb_red_gain` | `2.0` | 0.1 to 8.0 (float) | Red colour gain, used only when `awb_mode = manual`. Higher = redder |
 | `awb_blue_gain` | `2.0` | 0.1 to 8.0 (float) | Blue colour gain, used only when `awb_mode = manual` |
 | `rotation` | `auto` | `auto`, `0`, `180` | Image rotation. `auto` is upright for the Global Shutter camera (imx296, OWL 3.0 mount) and `180` for the classic enclosure (HQ/CM3 mount upside down). Restart to apply |

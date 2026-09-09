@@ -308,3 +308,18 @@
     width: 70px;
     text-align: center;
 }
+
+/* -------------------------------------------------------------------------
+   White balance calibration row (Camera section, shared config.js)
+   ------------------------------------------------------------------------- */
+.awb-calibrate-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.awb-calibrate-row .awb-readout {
+    font-size: 0.85rem;
+    color: #555;
+}

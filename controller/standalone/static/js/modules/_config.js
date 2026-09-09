@@ -12,6 +12,10 @@ let isDefaultConfig = true;
 let availableConfigs = [];
 
 function initConfigEditor() {
+    // Shared config.js renders the "Calibrate white balance" row in the
+    // Camera section and calls this hook; progress comes back via
+    // /api/system_stats (awb_calibration) -> updateAwbReadout in _stats.js.
+    window.OWL_AWB_CALIBRATE = calibrateWhiteBalance;
     document.getElementById('reloadConfig')?.addEventListener('click', loadConfig);
     document.getElementById('saveConfig')?.addEventListener('click', saveConfig);
     document.getElementById('resetDefault')?.addEventListener('click', resetToDefault);
@@ -19,6 +23,24 @@ function initConfigEditor() {
     document.querySelector('[data-tab="config"]')?.addEventListener('click', () => {
         if (Object.keys(currentConfig).length === 0) loadConfig();
     });
+}
+
+async function calibrateWhiteBalance() {
+    try {
+        const res = await apiRequest('/api/camera/calibrate-awb', { method: 'POST' });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Calibration did not start');
+        showNotification('White balance', data.message || 'Calibrating white balance', 'info', 4000);
+    } catch (err) {
+        showNotification('White balance', 'Could not start calibration: ' + err.message, 'error');
+        if (typeof updateAwbReadout === 'function') updateAwbReadout(null, null);
+    }
+}
+
+function onAwbCalibrationComplete() {
+    // The OWL persisted the locked gains to the active config; reload the
+    // editor from disk unless the user has unsaved edits in progress.
+    if (!configHasChanges && Object.keys(currentConfig).length > 0) loadConfig();
 }
 
 async function loadConfig() {

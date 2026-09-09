@@ -68,10 +68,16 @@ class TestBuildAwbControls:
         controls = build_awb_controls(awb_mode='daylight')
         assert 'ExposureValue' not in controls
 
-    def test_unknown_mode_falls_back_to_daylight(self, fake_libcamera):
+    def test_unknown_mode_falls_back_to_auto(self, fake_libcamera):
         controls = build_awb_controls(awb_mode='banana')
         assert controls['AwbEnable'] is True
-        assert controls['AwbMode'] == _FakeEnum.Daylight
+        assert controls['AwbMode'] == _FakeEnum.Auto
+
+    def test_default_mode_is_auto(self, fake_libcamera):
+        """No awb_mode given -> Auto, matching rpicam-hello. The old
+        Daylight default pinned the search to 5500-6500 K (Arducam red)."""
+        controls = build_awb_controls()
+        assert controls['AwbMode'] == _FakeEnum.Auto
 
     def test_returns_empty_without_libcamera(self, monkeypatch):
         monkeypatch.setattr(vm, 'libcamera', None)

@@ -897,13 +897,85 @@ class TestUpdateGPS:
         })
         assert resp.status_code == 500
 
-    def test_missing_data_uses_defaults(self, standalone_test_client):
-        client, dashboard, tmp_dir = standalone_test_client
+    # ---- full pass-through (phone GPS -> EXIF, 2026-08-18) ----
+
+    def _capture_publish(self, dashboard):
+        """MagicMock the paho publish so tests can read the payload sent
+        to owl/gps (the fixture's DashMQTTSubscriber is real)."""
         _stabilize_mqtt(dashboard)
+        dashboard.mqtt_client.client.publish = MagicMock()
+        return dashboard.mqtt_client.client.publish
+
+    def _payload(self, publish_mock):
+        args, _ = publish_mock.call_args
+        return json.loads(args[1])
+
+    def test_missing_coordinates_is_error(self, standalone_test_client):
+        """No more silent lat/lon 0.0 defaults — coordinates are required
+        (a 0,0 position written into EXIF is worse than none)."""
+        client, dashboard, tmp_dir = standalone_test_client
+        publish = self._capture_publish(dashboard)
         resp = client.post('/api/update_gps', json={})
         data = resp.get_json()
-        # Should not crash — defaults to 0.0 for missing fields
-        assert data['success'] is True
+        assert data['success'] is False
+        publish.assert_not_called()
+
+    def test_garbage_coordinates_is_error(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        self._capture_publish(dashboard)
+        resp = client.post('/api/update_gps', json={
+            'latitude': 'nope', 'longitude': 151.2})
+        assert resp.get_json()['success'] is False
+
+    def test_speed_ms_converted_to_kmh(self, standalone_test_client):
+        """Browser/Android speed is m/s; the EXIF pipeline speaks km/h."""
+        client, dashboard, tmp_dir = standalone_test_client
+        publish = self._capture_publish(dashboard)
+        client.post('/api/update_gps', json={
+            'latitude': -31.5, 'longitude': 150.25, 'speed': 2.7})
+        payload = self._payload(publish)
+        assert payload['speed_kmh'] == pytest.approx(9.72)
+        assert 'speed' not in payload
+
+    def test_pre_converted_speed_kmh_accepted(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        publish = self._capture_publish(dashboard)
+        client.post('/api/update_gps', json={
+            'latitude': -31.5, 'longitude': 150.25, 'speed_kmh': 12.0})
+        assert self._payload(publish)['speed_kmh'] == pytest.approx(12.0)
+
+    def test_optional_fields_pass_through(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        publish = self._capture_publish(dashboard)
+        client.post('/api/update_gps', json={
+            'latitude': -31.5, 'longitude': 150.25, 'accuracy': 4.2,
+            'altitude': 12.3, 'heading': 184.0, 'timestamp': 1755400000.1})
+        payload = self._payload(publish)
+        assert payload['altitude'] == pytest.approx(12.3)
+        assert payload['heading'] == pytest.approx(184.0)
+        assert payload['accuracy'] == pytest.approx(4.2)
+        assert payload['timestamp'] == pytest.approx(1755400000.1)
+
+    def test_absent_optional_fields_omitted(self, standalone_test_client):
+        """Fail-safe metadata: absent means absent, never a default."""
+        client, dashboard, tmp_dir = standalone_test_client
+        publish = self._capture_publish(dashboard)
+        client.post('/api/update_gps', json={
+            'latitude': -31.5, 'longitude': 150.25})
+        payload = self._payload(publish)
+        for key in ('accuracy', 'altitude', 'heading', 'speed_kmh'):
+            assert key not in payload
+
+    def test_garbage_optional_field_dropped_not_fatal(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        publish = self._capture_publish(dashboard)
+        resp = client.post('/api/update_gps', json={
+            'latitude': -31.5, 'longitude': 150.25,
+            'heading': 'north', 'speed': 'fast'})
+        assert resp.get_json()['success'] is True
+        payload = self._payload(publish)
+        assert 'heading' not in payload
+        assert 'speed_kmh' not in payload
 
 
 @pytest.mark.unit
@@ -1121,3 +1193,49 @@ class TestTimeSync:
                                        'timezone': '../../etc/passwd'})
         assert resp.get_json()['timezone_set'] is False
         run.assert_not_called()
+
+
+@pytest.mark.unit
+class TestCalibrateAwbRoute:
+    """POST /api/camera/calibrate-awb -> MQTT calibrate_awb; progress and
+    live WB flow back through /api/system_stats (camera, awb_calibration)."""
+
+    def test_sends_calibrate_command(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        dashboard.mqtt_client = MagicMock()
+        dashboard.mqtt_client._send_command.return_value = {'success': True}
+        resp = client.post('/api/camera/calibrate-awb')
+        assert resp.status_code == 200
+        assert resp.get_json()['success'] is True
+        dashboard.mqtt_client._send_command.assert_called_once_with('calibrate_awb')
+
+    def test_mqtt_send_failure_is_500(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        dashboard.mqtt_client = MagicMock()
+        dashboard.mqtt_client._send_command.return_value = {
+            'success': False, 'error': 'Not connected to MQTT broker'}
+        resp = client.post('/api/camera/calibrate-awb')
+        assert resp.status_code == 500
+        assert resp.get_json()['success'] is False
+
+    def test_no_mqtt_client_is_500(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        dashboard.mqtt_client = None
+        resp = client.post('/api/camera/calibrate-awb')
+        assert resp.status_code == 500
+
+    def test_system_stats_exposes_camera_and_calibration(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        if not dashboard.mqtt_client:
+            pytest.skip('fixture has no MQTT subscriber')
+        dashboard.mqtt_client.current_state['camera'] = {
+            'awb_mode': 'auto', 'colour_gains': [1.4, 3.2],
+            'colour_temperature': 5200.0}
+        dashboard.mqtt_client.current_state['awb_calibration'] = {
+            'status': 'complete', 'red_gain': 1.4, 'blue_gain': 3.2,
+            'updated_at': 1.0}
+        resp = client.get('/api/system_stats')
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['camera']['colour_gains'] == [1.4, 3.2]
+        assert data['awb_calibration']['status'] == 'complete'

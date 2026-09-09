@@ -83,7 +83,7 @@ try:
     from utils.log_manager import LogManager, MQTTLogHandler
     from utils.shared_types import Sensitivity
     import utils.error_manager as errors
-    from utils.gps_manager import GPSState, parse_sentence
+    from utils.gps_manager import GPSState, TrackRecorder, parse_sentence
     from version import SystemInfo, VERSION
 
 except ImportError as e:
@@ -216,9 +216,21 @@ class Owl:
         self.camera_type = self.config.get('Camera', 'camera_type', fallback='auto')
         # White balance - live-tunable via MQTT set_config_section (see
         # mqtt_manager CAMERA_LIVE_KEYS); attrs kept current for dashboard state
-        self.awb_mode = self.config.get('Camera', 'awb_mode', fallback='daylight').lower()
+        self.awb_mode = self.config.get('Camera', 'awb_mode', fallback='auto').lower()
         self.awb_red_gain = self.config.getfloat('Camera', 'awb_red_gain', fallback=2.0)
         self.awb_blue_gain = self.config.getfloat('Camera', 'awb_blue_gain', fallback=2.0)
+        # Profiles saved before the WB keys existed lack them; write the
+        # resolved values back so the next save persists them and the kiosk
+        # config editor (renders present keys only) shows the WB fields.
+        for wb_key, wb_value in (('awb_mode', self.awb_mode),
+                                 ('awb_red_gain', self.awb_red_gain),
+                                 ('awb_blue_gain', self.awb_blue_gain)):
+            if not self.config.has_option('Camera', wb_key):
+                self.config.set('Camera', wb_key, str(wb_value))
+        # Latest picamera2 per-frame metadata (ColourGains, ColourTemperature,
+        # Lux, ...) for dashboard state and the calibrate_awb command. Written
+        # by the main loop only; other threads read the reference.
+        self._last_camera_metadata = None
         # auto: upright for GS (imx296) OWL 3.0 mounts, 180 for the classic
         # enclosure (HQ/CM3 mounted upside down); 0|180 overrides per unit
         self.camera_rotation = self.config.get('Camera', 'rotation',
@@ -332,6 +344,10 @@ class Owl:
         self._gps_serial = None
         self._gps_running = False
         self.gps_status_led = None
+        # Per-session GPS track (same GeoJSON format as the networked
+        # controller's tracks/): starts/stops with each recording session,
+        # file lands inside the session dir so it ships in session ZIPs.
+        self.track_recorder = TrackRecorder()
 
         if self.gps_source == 'serial':
             self.gps_port = self.config.get('GPS', 'port', fallback='/dev/ttyUSB1')
@@ -863,6 +879,7 @@ class Owl:
             while True:
                 loop_start = time.time()
                 frame, camera_metadata = self.cam.read_with_metadata()
+                self._last_camera_metadata = camera_metadata
 
                 if frame is None:
                     self.logger.info("[INFO] Frame is None. Stopped.")
@@ -903,6 +920,11 @@ class Owl:
                         self.image_recorder = ImageRecorder(
                             save_directory=session_dir, mode=self.sample_method)
                         self.logger.info(f"New recording session: {session_dir}")
+                        # GPS track alongside the images (flush any previous
+                        # session's tail first — start() resets buffers)
+                        if self.track_recorder.recording:
+                            self.track_recorder.stop()
+                        self.track_recorder.start(session_dir)
                         if self.dash:
                             # Metadata arrives before recording starts and is
                             # buffered in state — write it into the fresh
@@ -921,6 +943,10 @@ class Owl:
                             with self.image_sample_enable.get_lock():
                                 self.image_sample_enable.value = False
                         self._image_sample_enable = False
+                # Recording stopped: close out the session GPS track
+                if prev_recording_enable and not self._image_sample_enable:
+                    if self.track_recorder.recording:
+                        self.track_recorder.stop()
                 prev_recording_enable = self._image_sample_enable
 
                 # Drain queued trackbar updates from MQTT thread (thread-safe)
@@ -1409,6 +1435,10 @@ class Owl:
             if hasattr(self, 'image_recorder') and self.image_recorder:
                 safe_stop(self.image_recorder, 'image recorder')
 
+            # Flush the session GPS track
+            if hasattr(self, 'track_recorder') and self.track_recorder.recording:
+                safe_stop(self.track_recorder, 'track recorder', fallback_to_terminate=False)
+
             # Stop status indicator
             if hasattr(self, 'status_indicator') and self.status_indicator:
                 safe_stop(self.status_indicator, 'status indicator', fallback_to_terminate=False)
@@ -1765,6 +1795,27 @@ class Owl:
             # GPS: serial takes priority, then dashboard (browser geolocation)
             self.gps_data = self._get_best_gps_data()
 
+            # Best-GPS reading → dashboard/app state (change-guarded in the
+            # setter; coords quantized there so a parked rig stays quiet)
+            if self.dash:
+                gps = self.gps_data
+                self.dash.set_gps_status(
+                    fix=gps is not None,
+                    source=gps.get('source') if gps else None,
+                    latitude=gps.get('latitude') if gps else None,
+                    longitude=gps.get('longitude') if gps else None,
+                    accuracy=gps.get('accuracy') if gps else None)
+
+            # Session GPS track: recorder throttles internally (1 s / 0.5 m)
+            if (self.track_recorder.recording and self._image_sample_enable
+                    and self.gps_data):
+                self.track_recorder.add_point(
+                    lat=self.gps_data.get('latitude'),
+                    lon=self.gps_data.get('longitude'),
+                    speed=self.gps_data.get('speed_kmh'),
+                    heading=self.gps_data.get('heading'),
+                    altitude=self.gps_data.get('altitude'))
+
             # Storage watchdog readings → dashboard/app (change-guarded in
             # the setter, so this is cheap every cycle)
             if self.dash and hasattr(self, 'status_indicator'):
@@ -1807,7 +1858,8 @@ class Owl:
                     'satellites': snapshot.get('satellites'),
                     'utc_time': snapshot.get('utc_time'),
                     'utc_date': snapshot.get('utc_date'),
-                    'timestamp': time.time()
+                    'timestamp': time.time(),
+                    'source': 'serial'
                 }
 
         # Fallback to dashboard GPS (browser geolocation or controller broadcast via MQTT)
@@ -1820,7 +1872,8 @@ class Owl:
                 if age <= self._GPS_STALE_THRESHOLD:
                     if self.gps_status_led:
                         self.gps_status_led.set_state(GPSLEDState.FIX)
-                    return gps
+                    # Copy — the stored payload must not grow keys.
+                    return dict(gps, source='dashboard')
                 else:
                     # Dashboard GPS is stale — phone disconnected or tab backgrounded
                     if self.gps_status_led:

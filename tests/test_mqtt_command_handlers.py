@@ -1346,3 +1346,123 @@ class TestCameraLiveControls:
         mock_owl.cam.set_camera_controls.assert_called_once_with(
             {'awb_mode': 'daylight', 'awb_red_gain': 2.5})
         assert mock_owl.config.get('Camera', 'awb_red_gain') == '2.5'
+
+
+@pytest.mark.unit
+class TestCalibrateAwb:
+    """calibrate_awb: sample auto white balance, lock as manual gains.
+
+    Runs in a worker thread (dispatch holds state_lock); the worker is
+    called directly here with time.sleep patched out. Gains come from the
+    Owl-held frame metadata, never from a consuming read_with_metadata()."""
+
+    def _run(self, mqtt_publisher):
+        with patch('utils.mqtt_manager.time.sleep'), \
+                patch.object(mqtt_publisher, '_handle_save_config') as save:
+            mqtt_publisher._calibrate_awb()
+        return save
+
+    def _seed(self, mock_owl, mode='auto'):
+        mock_owl.awb_mode = mode
+        mock_owl.awb_red_gain = 2.0
+        mock_owl.awb_blue_gain = 2.0
+
+    def test_locks_sampled_gains_as_manual(self, mqtt_publisher, mock_owl):
+        self._seed(mock_owl)
+        mock_owl._last_camera_metadata = {
+            'ColourGains': (1.4321, 3.2), 'ColourTemperature': 5200, 'Lux': 800}
+        save = self._run(mqtt_publisher)
+
+        calls = mock_owl.cam.set_camera_controls.call_args_list
+        assert calls[0].args[0] == {'awb_mode': 'auto'}
+        assert calls[-1].args[0] == {
+            'awb_mode': 'manual', 'awb_red_gain': 1.432, 'awb_blue_gain': 3.2}
+        assert mock_owl.config.get('Camera', 'awb_mode') == 'manual'
+        assert mock_owl.config.get('Camera', 'awb_red_gain') == '1.432'
+        assert mock_owl.config.get('Camera', 'awb_blue_gain') == '3.2'
+        # Camera keys are not auto-saved by set_config_section: the lock
+        # must be written so it survives a restart.
+        save.assert_called_once()
+        st = mqtt_publisher.state['awb_calibration']
+        assert st['status'] == 'complete'
+        assert st['red_gain'] == 1.432
+        assert st['blue_gain'] == 3.2
+        assert st['colour_temperature'] == 5200
+        assert st['updated_at'] > 0
+        assert st['error'] == ''
+
+    def test_no_metadata_restores_previous_wb(self, mqtt_publisher, mock_owl):
+        self._seed(mock_owl, mode='daylight')
+        mock_owl._last_camera_metadata = None
+        save = self._run(mqtt_publisher)
+
+        st = mqtt_publisher.state['awb_calibration']
+        assert st['status'] == 'error'
+        assert 'ColourGains' in st['error']
+        # Previous mode is put back on the running camera
+        assert mock_owl.cam.set_camera_controls.call_args_list[-1].args[0] == {
+            'awb_mode': 'daylight', 'awb_red_gain': 2.0, 'awb_blue_gain': 2.0}
+        save.assert_not_called()
+        assert mock_owl.config.get('Camera', 'awb_mode', fallback='') != 'manual'
+
+    def test_backend_without_live_controls(self, mqtt_publisher, mock_owl):
+        self._seed(mock_owl)
+        del mock_owl.cam.set_camera_controls
+        save = self._run(mqtt_publisher)
+        assert mqtt_publisher.state['awb_calibration']['status'] == 'error'
+        save.assert_not_called()
+
+    def test_command_dispatch_spawns_worker(self, mqtt_publisher):
+        with patch('utils.mqtt_manager.threading.Thread') as thread:
+            mqtt_publisher._handle_command({'action': 'calibrate_awb'})
+        thread.assert_called_once()
+        assert thread.call_args.kwargs['target'] == mqtt_publisher._calibrate_awb
+        assert mqtt_publisher.state['awb_calibration']['status'] == 'running'
+
+    def test_command_ignored_while_running(self, mqtt_publisher):
+        mqtt_publisher.state['awb_calibration']['status'] = 'running'
+        with patch('utils.mqtt_manager.threading.Thread') as thread:
+            mqtt_publisher._handle_command({'action': 'calibrate_awb'})
+        thread.assert_not_called()
+
+    def test_state_seeds_idle(self, mqtt_publisher):
+        st = mqtt_publisher.state['awb_calibration']
+        assert st['status'] == 'idle'
+        assert st['red_gain'] is None
+        json.dumps(mqtt_publisher.state)
+
+
+@pytest.mark.unit
+class TestRefreshCameraState:
+    """state['camera'] from configured WB + latest frame metadata. Metadata
+    keys are omitted, never defaulted, when unavailable (webcams)."""
+
+    def test_with_metadata(self, mqtt_publisher, mock_owl):
+        mock_owl.awb_mode = 'manual'
+        mock_owl.awb_red_gain = 1.5
+        mock_owl.awb_blue_gain = 2.5
+        mock_owl._last_camera_metadata = {
+            'ColourGains': (1.4, 3.2), 'ColourTemperature': 5200, 'Lux': 812.34}
+        mqtt_publisher._refresh_camera_state()
+        cam = mqtt_publisher.state['camera']
+        assert cam == {'awb_mode': 'manual', 'awb_red_gain': 1.5,
+                       'awb_blue_gain': 2.5, 'colour_gains': [1.4, 3.2],
+                       'colour_temperature': 5200.0, 'lux': 812.3}
+        json.dumps(mqtt_publisher.state)
+
+    def test_without_metadata_omits_measured_keys(self, mqtt_publisher, mock_owl):
+        mock_owl.awb_mode = 'auto'
+        mock_owl.awb_red_gain = 2.0
+        mock_owl.awb_blue_gain = 2.0
+        mock_owl._last_camera_metadata = None
+        mqtt_publisher._refresh_camera_state()
+        cam = mqtt_publisher.state['camera']
+        assert cam['awb_mode'] == 'auto'
+        assert 'colour_gains' not in cam
+        assert 'colour_temperature' not in cam
+        assert 'lux' not in cam
+
+    def test_partial_owl_stays_serialisable(self, mqtt_publisher, mock_owl):
+        # MagicMock attrs would otherwise leak into the JSON state
+        mqtt_publisher._refresh_camera_state()
+        json.dumps(mqtt_publisher.state)

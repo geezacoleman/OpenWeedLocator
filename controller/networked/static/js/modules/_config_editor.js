@@ -25,6 +25,10 @@ function getConfigEditorTarget() {
  * Initialize the config editor page
  */
 function initConfigEditor() {
+    // Shared config.js renders the "Calibrate white balance" row in the
+    // Camera section and calls this hook; progress arrives via the
+    // /api/owls poll (_dashboard.js -> updateAwbReadout).
+    window.OWL_AWB_CALIBRATE = calibrateDeviceWhiteBalance;
     document.getElementById('load-device-config-btn')?.addEventListener('click', () => {
         const deviceId = getConfigEditorTarget();
         if (deviceId) loadDeviceConfig(deviceId);
@@ -33,6 +37,36 @@ function initConfigEditor() {
     document.getElementById('config-library-selector')?.addEventListener('change', updateLibraryCaption);
 
     loadConfigLibrary();
+}
+
+async function calibrateDeviceWhiteBalance() {
+    const deviceId = getConfigEditorTarget();
+    if (!deviceId) {
+        showToast('Select an OWL in the config editor first', 'error');
+        return;
+    }
+    try {
+        const res = await apiRequest('/api/send_command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ device_id: deviceId, action: 'calibrate_awb' })
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Calibration did not start');
+        showToast('Calibrating white balance on ' + deviceId + '. Keep soil or a grey card in view.', 'info');
+    } catch (err) {
+        showToast('Could not start calibration: ' + err.message, 'error');
+        if (typeof updateAwbReadout === 'function') updateAwbReadout(null, null);
+    }
+}
+
+function onDeviceAwbCalibrationComplete() {
+    // The OWL persisted the locked gains; refresh the editor unless the
+    // user is mid-edit.
+    const deviceId = getConfigEditorTarget();
+    if (deviceId && !configEditorHasChanges && Object.keys(deviceConfig).length > 0) {
+        loadDeviceConfig(deviceId);
+    }
 }
 
 /**

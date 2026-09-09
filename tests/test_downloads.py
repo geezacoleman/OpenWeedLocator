@@ -1714,3 +1714,243 @@ class TestUploadPreviews:
         state = mqtt_publisher.state['preview_upload']
         assert state['status'] == 'error'
         assert 'Invalid' in state['error']
+
+
+# ---------------------------------------------------------------------------
+# Session locations (Map tab, contract 3): sidecar helpers + route
+# ---------------------------------------------------------------------------
+
+from utils.directory_manager import (read_session_locations,
+                                     scan_exif_locations,
+                                     read_session_tracks,
+                                     _downsample_keep_ends)
+
+
+def _write_sidecar(session_dir, entries):
+    lines = '\n'.join(json.dumps(e) for e in entries)
+    (Path(session_dir) / 'locations.jsonl').write_text(lines + '\n')
+
+
+def _gps_jpeg(path, lat=-31.5, lon=150.25):
+    """A real JPEG with real GPS EXIF, built by the production writer."""
+    import numpy as np
+    from PIL import Image
+    from utils.image_sampler import build_exif_bytes, encode_jpeg
+    exif = build_exif_bytes(gps_data={'latitude': lat, 'longitude': lon})
+    image = Image.fromarray(np.zeros((8, 8, 3), dtype='uint8'))
+    Path(path).write_bytes(encode_jpeg(image, exif))
+
+
+@pytest.mark.unit
+class TestReadSessionLocations:
+
+    def test_no_sidecar_returns_none(self, tmp_path):
+        assert read_session_locations(str(tmp_path)) is None
+
+    def test_parses_entries_lon_lat_order(self, tmp_path):
+        _write_sidecar(tmp_path, [
+            {'ts': '2026-08-18T01:00:00.000Z', 'frame_id': 1,
+             'lat': -31.5, 'lon': 150.25, 'files': ['a.jpg'],
+             'speed_kmh': 9.7},
+        ])
+        features, total, truncated = read_session_locations(str(tmp_path))
+        assert total == 1 and truncated is False
+        feature = features[0]
+        # GeoJSON is [lon, lat]
+        assert feature['geometry']['coordinates'] == [150.25, -31.5]
+        assert feature['properties']['files'] == ['a.jpg']
+        assert feature['properties']['speed_kmh'] == 9.7
+
+    def test_torn_and_malformed_lines_skipped(self, tmp_path):
+        (tmp_path / 'locations.jsonl').write_text(
+            json.dumps({'ts': 't', 'frame_id': 1,
+                        'lat': -31.5, 'lon': 150.25, 'files': []}) + '\n'
+            + 'not json at all\n'
+            + json.dumps({'frame_id': 2, 'lon': 150.0}) + '\n'
+            + '{"frame_id": 3, "lat": -31.6, "lon": 150.'
+        )
+        features, total, truncated = read_session_locations(str(tmp_path))
+        assert total == 1
+
+    def test_truncation_keeps_first_and_last(self, tmp_path):
+        entries = [{'ts': 't', 'frame_id': i, 'lat': -31.0 - i * 0.001,
+                    'lon': 150.0, 'files': []} for i in range(10)]
+        _write_sidecar(tmp_path, entries)
+        features, total, truncated = read_session_locations(
+            str(tmp_path), max_features=4)
+        assert total == 10 and truncated is True
+        assert len(features) == 4
+        assert features[0]['properties']['frame_id'] == 0
+        assert features[-1]['properties']['frame_id'] == 9
+
+    def test_downsample_keep_ends_short_list_untouched(self):
+        items = [1, 2, 3]
+        assert _downsample_keep_ends(items, 5) == [1, 2, 3]
+
+
+@pytest.mark.unit
+class TestScanExifLocations:
+
+    def test_reads_gps_from_frame_jpegs(self, tmp_path):
+        _gps_jpeg(tmp_path / '2026_frame_1.jpg', lat=-31.5, lon=150.25)
+        _gps_jpeg(tmp_path / '2026_frame_2.jpg', lat=-31.6, lon=150.26)
+        features, total, truncated = scan_exif_locations(str(tmp_path))
+        assert total == 2 and truncated is False
+        assert len(features) == 2
+        lat = features[0]['geometry']['coordinates'][1]
+        # Round-trips through DMS rationals; sub-metre tolerance
+        assert lat == pytest.approx(-31.5, abs=1e-5)
+
+    def test_crops_prefer_frame_files(self, tmp_path):
+        """Whole frames beat crops; crops of the same frame dedupe."""
+        _gps_jpeg(tmp_path / '2026_frame_1.jpg')
+        _gps_jpeg(tmp_path / '2026_frame_1_n_0.jpg')
+        _gps_jpeg(tmp_path / '2026_frame_1_n_1.jpg')
+        features, total, _ = scan_exif_locations(str(tmp_path))
+        assert total == 1
+
+    def test_crops_only_session_dedupes_per_frame(self, tmp_path):
+        _gps_jpeg(tmp_path / '2026_frame_1_n_0.jpg')
+        _gps_jpeg(tmp_path / '2026_frame_1_n_1.jpg')
+        _gps_jpeg(tmp_path / '2026_frame_2_n_0.jpg')
+        features, total, _ = scan_exif_locations(str(tmp_path))
+        assert total == 2
+
+    def test_gpsless_and_broken_jpegs_skipped(self, tmp_path):
+        import numpy as np
+        from PIL import Image
+        from utils.image_sampler import encode_jpeg
+        image = Image.fromarray(np.zeros((8, 8, 3), dtype='uint8'))
+        (tmp_path / '2026_frame_1.jpg').write_bytes(encode_jpeg(image))
+        (tmp_path / '2026_frame_2.jpg').write_bytes(b'\xff\xd8junk')
+        features, total, _ = scan_exif_locations(str(tmp_path))
+        assert total == 2
+        assert features == []
+
+    def test_cap_marks_truncated(self, tmp_path):
+        for i in range(4):
+            _gps_jpeg(tmp_path / ('2026_frame_' + str(i) + '.jpg'))
+        features, total, truncated = scan_exif_locations(
+            str(tmp_path), max_files=2)
+        assert total == 4 and truncated is True
+        assert len(features) == 2
+
+
+@pytest.mark.unit
+class TestReadSessionTracks:
+
+    def test_reads_linestring_features(self, tmp_path):
+        track = {'type': 'FeatureCollection', 'features': [{
+            'type': 'Feature',
+            'geometry': {'type': 'LineString',
+                         'coordinates': [[150.0, -31.0], [150.1, -31.1]]},
+            'properties': {'name': 'OWL Session'},
+        }]}
+        (tmp_path / 'track_2026-08-18_040000.geojson').write_text(
+            json.dumps(track))
+        features = read_session_tracks(str(tmp_path))
+        assert len(features) == 1
+        assert features[0]['geometry']['type'] == 'LineString'
+
+    def test_malformed_track_skipped(self, tmp_path):
+        (tmp_path / 'track_bad.geojson').write_text('{not json')
+        assert read_session_tracks(str(tmp_path)) == []
+
+    def test_non_track_files_ignored(self, tmp_path):
+        (tmp_path / 'other.geojson').write_text('{}')
+        assert read_session_tracks(str(tmp_path)) == []
+
+
+@pytest.mark.unit
+class TestStandaloneLocationsRoute:
+
+    def test_sidecar_session(self, standalone_dl_client_subdirs):
+        client, save_dir = standalone_dl_client_subdirs
+        session = save_dir / '20260331' / 'session_143015'
+        _write_sidecar(session, [
+            {'ts': '2026-03-31T14:30:20.000Z', 'frame_id': 1,
+             'lat': -31.5, 'lon': 150.25, 'files': ['img1.jpg']},
+        ])
+        resp = client.get(
+            '/api/downloads/session/20260331/session_143015/locations')
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['type'] == 'FeatureCollection'
+        assert data['source'] == 'sidecar'
+        assert data['count'] == 1
+        assert data['features'][0]['geometry']['coordinates'] == [150.25, -31.5]
+
+    def test_track_appended_as_linestring(self, standalone_dl_client_subdirs):
+        client, save_dir = standalone_dl_client_subdirs
+        session = save_dir / '20260331' / 'session_143015'
+        _write_sidecar(session, [
+            {'ts': 't', 'frame_id': 1, 'lat': -31.5, 'lon': 150.25,
+             'files': ['img1.jpg']},
+        ])
+        track = {'type': 'FeatureCollection', 'features': [{
+            'type': 'Feature',
+            'geometry': {'type': 'LineString',
+                         'coordinates': [[150.25, -31.5], [150.26, -31.6]]},
+            'properties': {},
+        }]}
+        (session / 'track_2026-03-31_143015.geojson').write_text(
+            json.dumps(track))
+        data = client.get(
+            '/api/downloads/session/20260331/session_143015/locations'
+        ).get_json()
+        types = [f['geometry']['type'] for f in data['features']]
+        assert types.count('Point') == 1
+        assert types.count('LineString') == 1
+        # count reflects image points only, not track features
+        assert data['count'] == 1
+
+    def test_exif_fallback_for_legacy_session(self, standalone_dl_client_subdirs):
+        client, save_dir = standalone_dl_client_subdirs
+        session = save_dir / '20260331' / 'session_160000'
+        _gps_jpeg(session / '2026_frame_1.jpg')
+        data = client.get(
+            '/api/downloads/session/20260331/session_160000/locations'
+        ).get_json()
+        assert data['source'] == 'exif'
+        assert data['count'] == 1
+
+    def test_no_location_data(self, standalone_dl_client_subdirs):
+        """Junk-byte JPEGs (no EXIF) and no sidecar -> source none."""
+        client, save_dir = standalone_dl_client_subdirs
+        data = client.get(
+            '/api/downloads/session/20260331/session_143015/locations'
+        ).get_json()
+        assert data['source'] == 'none'
+        assert data['features'] == []
+        assert data['count'] == 0
+
+    def test_path_traversal_rejected(self, standalone_dl_client_subdirs):
+        client, _ = standalone_dl_client_subdirs
+        resp = client.get('/api/downloads/session/..%2F..%2Fetc/locations')
+        assert resp.status_code in (400, 404)
+
+    def test_sidecar_and_track_ride_in_zip(self, standalone_dl_client_subdirs):
+        """collect_session_files carries the metadata files, so date-level
+        ZIPs (and the networked pull path) include them."""
+        _, save_dir = standalone_dl_client_subdirs
+        session = save_dir / '20260331' / 'session_143015'
+        _write_sidecar(session, [
+            {'ts': 't', 'frame_id': 1, 'lat': -31.5, 'lon': 150.25,
+             'files': ['img1.jpg']},
+        ])
+        (session / 'track_x.geojson').write_text('{}')
+        pairs = collect_session_files(str(save_dir), '20260331/session_143015')
+        names = [name for name, _ in pairs]
+        assert 'images/locations.jsonl' in names
+        assert 'images/track_x.geojson' in names
+
+    def test_preview_selection_skips_metadata_files(self, standalone_dl_client_subdirs):
+        _, save_dir = standalone_dl_client_subdirs
+        session = save_dir / '20260331' / 'session_143015'
+        _write_sidecar(session, [
+            {'ts': 't', 'frame_id': 1, 'lat': -31.5, 'lon': 150.25,
+             'files': ['img1.jpg']},
+        ])
+        paths = select_preview_images(str(save_dir), '20260331/session_143015', 10)
+        assert all(p.lower().endswith(('.jpg', '.jpeg', '.png')) for p in paths)
+        assert len(paths) == 2

@@ -256,3 +256,59 @@ class TestNetworkedMode:
             )
             assert sub.networked_mode is False
             assert sub.topics['commands'] == 'owl/commands'
+
+
+# ---------------------------------------------------------------------------
+# GPS publish (update_gps) — full pass-through for phone/browser positions
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestUpdateGps:
+
+    def _published(self, subscriber):
+        args, kwargs = subscriber.client.publish.call_args
+        topic = args[0]
+        payload = json.loads(args[1])
+        return topic, payload
+
+    def test_publishes_to_gps_topic(self, subscriber):
+        result = subscriber.update_gps(-31.5, 150.25, 4.2)
+        topic, payload = self._published(subscriber)
+        assert result['success'] is True
+        assert topic == subscriber.topics['gps']
+        assert payload['latitude'] == -31.5
+        assert payload['longitude'] == 150.25
+        assert payload['accuracy'] == 4.2
+
+    def test_legacy_positional_call_still_works(self, subscriber):
+        """Pre-extra callers pass (lat, lon, accuracy) positionally."""
+        result = subscriber.update_gps(1.0, 2.0, 3.0)
+        assert result['success'] is True
+        _, payload = self._published(subscriber)
+        assert payload['accuracy'] == 3.0
+
+    def test_accuracy_none_omitted(self, subscriber):
+        """No more invented 0.0 accuracy — absent means absent (fail-safe)."""
+        subscriber.update_gps(-31.5, 150.25)
+        _, payload = self._published(subscriber)
+        assert 'accuracy' not in payload
+
+    def test_extra_fields_merged(self, subscriber):
+        subscriber.update_gps(-31.5, 150.25, 4.2, extra={
+            'speed_kmh': 9.72, 'heading': 184.0, 'altitude': 12.3,
+        })
+        _, payload = self._published(subscriber)
+        assert payload['speed_kmh'] == 9.72
+        assert payload['heading'] == 184.0
+        assert payload['altitude'] == 12.3
+
+    def test_extra_none_values_dropped(self, subscriber):
+        subscriber.update_gps(-31.5, 150.25, extra={'heading': None})
+        _, payload = self._published(subscriber)
+        assert 'heading' not in payload
+
+    def test_timestamp_defaults_to_now(self, subscriber):
+        before = time.time()
+        subscriber.update_gps(-31.5, 150.25)
+        _, payload = self._published(subscriber)
+        assert before <= payload['timestamp'] <= time.time()

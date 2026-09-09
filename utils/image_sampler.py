@@ -273,11 +273,47 @@ class ImageRecorder:
                                       context=context,
                                       capture_time=capture_time)
         if self.mode == 'whole':
-            self.save_frame(frame, frame_id, timestamp, exif_bytes)
+            files = self.save_frame(frame, frame_id, timestamp, exif_bytes)
         elif self.mode == 'bbox':
-            self.save_bboxes(frame, frame_id, boxes, timestamp, exif_bytes)
+            files = self.save_bboxes(frame, frame_id, boxes, timestamp, exif_bytes)
         elif self.mode == 'square':
-            self.save_squares(frame, frame_id, centres, timestamp, exif_bytes)
+            files = self.save_squares(frame, frame_id, centres, timestamp, exif_bytes)
+        else:
+            files = []
+
+        if files and gps_data and gps_data.get('latitude') is not None \
+                and gps_data.get('longitude') is not None:
+            self._append_location(frame_id, gps_data, capture_time, files)
+
+    def _append_location(self, frame_id, gps_data, capture_time, files):
+        """Append one line to the per-session location sidecar
+        (locations.jsonl); all of a frame's crops share the one entry.
+        The Map tab and GeoJSON route read this instead of re-scanning EXIF.
+
+        Only called when a GPS fix was present (fail-safe — no line beats a
+        fake one). Workers are separate processes, so there is no shared
+        lock: each entry is a single short write() to an O_APPEND handle,
+        which POSIX keeps atomic per line. Readers skip malformed/torn
+        lines. A sidecar failure must never fail the image save.
+        """
+        try:
+            entry = {
+                # Full ISO-8601 UTC (with colons) — distinct from the filename stamp
+                'ts': capture_time.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z',
+                'frame_id': frame_id,
+                'lat': float(gps_data['latitude']),
+                'lon': float(gps_data['longitude']),
+            }
+            for key in ('accuracy', 'altitude', 'speed_kmh', 'heading', 'source'):
+                if gps_data.get(key) is not None:
+                    entry[key] = gps_data[key]
+            entry['files'] = files
+            path = os.path.join(self.save_directory, 'locations.jsonl')
+            with open(path, 'a') as f:
+                f.write(json.dumps(entry) + '\n')
+        except Exception as e:
+            # Module logger: worker processes may hold a bare recorder
+            logger.warning(f"Failed to append location sidecar entry: {e}")
 
     def save_frame(self, frame, frame_id, timestamp, exif_bytes):
         filename = f"{timestamp}_frame_{frame_id}.jpg"
@@ -286,8 +322,10 @@ class ImageRecorder:
         image_bytes = encode_jpeg(image, exif_bytes)
         with open(filepath, 'wb') as f:
             f.write(image_bytes)
+        return [filename]
 
     def save_bboxes(self, frame, frame_id, boxes, timestamp, exif_bytes):
+        filenames = []
         for contour_id, box in enumerate(boxes):
             startX, startY, width, height = box
             cropped_image = frame[startY:startY+height, startX:startX+width]
@@ -297,8 +335,11 @@ class ImageRecorder:
             image_bytes = encode_jpeg(image, exif_bytes)
             with open(filepath, 'wb') as f:
                 f.write(image_bytes)
+            filenames.append(filename)
+        return filenames
 
     def save_squares(self, frame, frame_id, centres, timestamp, exif_bytes):
+        filenames = []
         side_length = min(200, frame.shape[0])
         halfLength = side_length // 2
         for contour_id, centre in enumerate(centres):
@@ -317,6 +358,8 @@ class ImageRecorder:
             image_bytes = encode_jpeg(image, exif_bytes)
             with open(filepath, 'wb') as f:
                 f.write(image_bytes)
+            filenames.append(filename)
+        return filenames
 
     def add_frame(self, frame, frame_id, boxes, centres, gps_data=None,
                   camera_metadata=None, context=None):

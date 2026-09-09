@@ -35,9 +35,9 @@ const CONFIG_FIELD_DEFS = {
             keys: { width: 'resolution_width', height: 'resolution_height' }
         },
         'exp_compensation': { type: 'select', options: ['-4', '-3', '-2', '-1', '0', '1', '2', '3', '4'], help: 'Exposure compensation' },
-        'awb_mode': { type: 'select', options: ['auto', 'daylight', 'cloudy', 'tungsten', 'fluorescent', 'indoor', 'manual'], help: 'White balance. daylight = fixed outdoor WB (default). manual uses the red/blue gains below.' },
-        'awb_red_gain': { type: 'number', step: 0.05, min: 0.1, max: 8.0, help: 'Manual WB red gain. Ignored for presets.' },
-        'awb_blue_gain': { type: 'number', step: 0.05, min: 0.1, max: 8.0, help: 'Manual WB blue gain. Ignored for presets.' },
+        'awb_mode': { type: 'select', options: ['auto', 'daylight', 'cloudy', 'tungsten', 'fluorescent', 'indoor', 'manual'], help: 'White balance. auto (default) matches rpicam. Presets pin the colour temperature and render Arducam IMX296 red. manual uses the red/blue gains below.' },
+        'awb_red_gain': { type: 'number', step: 0.05, min: 0.1, max: 8.0, help: 'Manual WB red gain. Ignored for presets. Use Calibrate white balance to fill it in.' },
+        'awb_blue_gain': { type: 'number', step: 0.05, min: 0.1, max: 8.0, help: 'Manual WB blue gain. Ignored for presets. Use Calibrate white balance to fill it in.' },
         'rotation': { type: 'select', options: ['auto', '0', '180'], help: 'Image rotation. auto = upright for the Global Shutter camera, 180 for the classic enclosure (HQ/CM3 mount upside down). Restart to apply.' },
         'crop_factor_horizontal': { type: 'number', step: 0.01, min: 0, max: 0.5, help: 'Legacy symmetric horizontal crop. Use crop_left/crop_right instead.' },
         'crop_factor_vertical': { type: 'number', step: 0.01, min: 0, max: 0.5, help: 'Legacy symmetric vertical crop. Use crop_top/crop_bottom instead.' },
@@ -218,6 +218,9 @@ function createConfigSection(sectionName, sectionData, onFieldChange) {
             if (renderedKeys.has(key)) return; // Already rendered as combined
             body.appendChild(createConfigField(sectionName, key, value, fieldDefs[key]));
         });
+        if (sectionName === 'Camera') {
+            body.appendChild(createAwbCalibrateRow());
+        }
     }
 
     section.appendChild(header);
@@ -397,4 +400,110 @@ function getOrderedSections(configData) {
     // [Meta] is internal bookkeeping (display_name/notes/created), not a detection
     // setting — it is stamped by the save flow, so never show it as editable fields.
     return order.filter(s => configData[s] && s !== 'Meta');
+}
+
+/* -------------------------------------------------------------------------
+   White balance calibration (Camera section)
+
+   One tap: the OWL runs auto white balance for ~2 s, reads the gains the
+   camera settled on, and locks them as awb_mode = manual so colours stay
+   fixed for detection (green-heavy scenes fool auto WB toward magenta).
+   The controller defines window.OWL_AWB_CALIBRATE to send the command
+   (standalone: POST /api/camera/calibrate-awb; networked: send_command
+   calibrate_awb to the editor's device) and feeds state into
+   updateAwbReadout() from its stats/owls poll.
+   ------------------------------------------------------------------------- */
+let _lastAwbCalibrationTs = 0;
+
+function createAwbCalibrateRow() {
+    const row = document.createElement('div');
+    row.className = 'config-field full-width awb-calibrate-row';
+    const canCalibrate = typeof window.OWL_AWB_CALIBRATE === 'function';
+    row.innerHTML =
+        '<label>White balance calibration</label>' +
+        '<div class="awb-calibrate-controls">' +
+        '<button type="button" class="btn-primary btn-lg awb-calibrate-btn"' +
+        (canCalibrate ? '' : ' disabled') + '>Calibrate white balance</button>' +
+        '<span class="awb-readout">Waiting for camera state</span>' +
+        '</div>' +
+        '<span class="field-help">Point the camera at bare soil or a grey card, then tap. ' +
+        'Auto white balance is sampled and locked as manual gains so colours stay fixed for detection.</span>';
+    const btn = row.querySelector('.awb-calibrate-btn');
+    btn.addEventListener('click', () => {
+        if (typeof window.OWL_AWB_CALIBRATE !== 'function') return;
+        btn.disabled = true;
+        window.OWL_AWB_CALIBRATE();
+    });
+    return row;
+}
+
+function _formatAwbReadout(camera, calib) {
+    const parts = [];
+    if (calib && calib.status === 'running') {
+        return 'Calibrating. Keep soil or a grey card in view.';
+    }
+    if (calib && calib.status === 'error' && calib.error) {
+        parts.push('Calibration failed: ' + calib.error);
+    }
+    if (camera && camera.awb_mode) {
+        let line = 'Mode ' + camera.awb_mode;
+        if (Array.isArray(camera.colour_gains) && camera.colour_gains.length >= 2) {
+            line += ', gains R ' + Number(camera.colour_gains[0]).toFixed(2) +
+                ' / B ' + Number(camera.colour_gains[1]).toFixed(2);
+        }
+        if (camera.colour_temperature) {
+            line += ', about ' + Math.round(camera.colour_temperature) + ' K';
+        }
+        parts.push(line);
+    }
+    return parts.length ? parts.join('. ') : 'Camera state unavailable';
+}
+
+/**
+ * Set the three WB inputs from a completed calibration and fire change
+ * events so the host editor's currentConfig / modified markers follow.
+ */
+function applyAwbCalibrationToFields(calib) {
+    const values = {
+        awb_mode: 'manual',
+        awb_red_gain: calib.red_gain,
+        awb_blue_gain: calib.blue_gain
+    };
+    Object.entries(values).forEach(([key, value]) => {
+        if (value === null || value === undefined) return;
+        const el = document.getElementById('config-Camera-' + key);
+        if (!el) return;
+        el.value = String(value);
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+}
+
+/**
+ * Called from the controller's state poll. camera = state.camera,
+ * calib = state.awb_calibration. onComplete fires once per new completion.
+ */
+function updateAwbReadout(camera, calib, onComplete) {
+    const text = _formatAwbReadout(camera, calib);
+    document.querySelectorAll('.awb-readout').forEach(el => { el.textContent = text; });
+    const running = !!(calib && calib.status === 'running');
+    const canCalibrate = typeof window.OWL_AWB_CALIBRATE === 'function';
+    document.querySelectorAll('.awb-calibrate-btn').forEach(btn => {
+        btn.disabled = running || !canCalibrate;
+        btn.textContent = running ? 'Calibrating' : 'Calibrate white balance';
+    });
+    if (!calib || !calib.updated_at || calib.updated_at <= _lastAwbCalibrationTs) return;
+    if (calib.status === 'complete') {
+        _lastAwbCalibrationTs = calib.updated_at;
+        applyAwbCalibrationToFields(calib);
+        if (typeof showToast === 'function') {
+            showToast('White balance locked: R ' + Number(calib.red_gain).toFixed(2) +
+                ' / B ' + Number(calib.blue_gain).toFixed(2), 'success');
+        }
+        if (typeof onComplete === 'function') onComplete(calib);
+    } else if (calib.status === 'error') {
+        _lastAwbCalibrationTs = calib.updated_at;
+        if (typeof showToast === 'function') {
+            showToast('White balance calibration failed: ' + (calib.error || 'unknown error'), 'error');
+        }
+    }
 }
