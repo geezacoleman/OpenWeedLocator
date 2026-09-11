@@ -68,14 +68,18 @@ class TestTestLED:
         led = TestLED(pin='BOARD37')
         led.blink(on_time=0.1, off_time=0.1, n=1)
 
-    def test_on_off(self, capsys):
+    def test_on_off_tracks_state_quietly(self, capsys):
+        """The stub must track state without printing: the GPS LED thread
+        drives off() twice a second, which used to flood the console on any
+        non-Pi machine."""
         from utils.output_manager import TestLED
         led = TestLED(pin='BOARD37')
+        assert led.is_lit is False
         led.on()
+        assert led.is_lit is True
         led.off()
-        captured = capsys.readouterr()
-        assert 'ON' in captured.out
-        assert 'OFF' in captured.out
+        assert led.is_lit is False
+        assert capsys.readouterr().out == ''
 
     def test_blink_none_n(self):
         """n=None should not crash (converted to n=1 internally)."""
