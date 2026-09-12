@@ -33,7 +33,7 @@ from utils.directory_manager import (scan_sessions, stream_zip,
 from utils.config_manager import (
     build_config_filename, parse_config_meta, strip_geometry_keys, GEOMETRY_FILE,
     stamp_config_meta, atomic_write_config, AUTOSAVE_CONFIG, seed_autosave,
-    strip_legacy_min_area, config_unsaved_state,
+    strip_legacy_min_area, config_unsaved_state, ConfigValidator,
 )
 from utils.lut_manager import LUTProfileManager, LUTProfileError, MIN_CLASS_PIXELS
 from utils.painter_sessions import (
@@ -129,6 +129,13 @@ class OWLDashboard:
         self.token_reader = make_token_reader(self.controller_ini_path)
         self.network_settings = NetworkSettingsManager(
             NetworkManager(runner=self._sudo_runner))
+        # A phone-hotspot session that died with the process must not leave
+        # its throwaway profile behind (NetworkManager could pick it later)
+        if NetworkManager.is_supported():
+            self.network_settings.cleanup_stale_temporary()
+        # Software version for the app's Maintenance card (system_stats).
+        # Computed once: the dashboard restarts after an update.
+        self.version_info = self._read_version_info()
 
         self.setup_routes()
 
@@ -428,10 +435,12 @@ class OWLDashboard:
             """One-tap white balance: OWL samples auto AWB for ~2 s and locks
             the result as manual gains (mqtt_manager calibrate_awb). Progress
             and the resulting gains arrive via state['awb_calibration'],
-            surfaced in /api/system_stats. Token-guarded like restart."""
-            denied = self._check_device_token()
-            if denied is not None:
-                return denied
+            surfaced in /api/system_stats.
+
+            Deliberately NOT token-guarded: the kiosk browser sends no
+            X-Device-Token (there is no localhost bypass), and this is the
+            same privilege class as /api/config/section, which already
+            lets the kiosk set awb_mode/gains directly."""
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             try:
@@ -1686,11 +1695,33 @@ class OWLDashboard:
                 params = data.get('params') or {}
                 if not section or not params:
                     return jsonify({'success': False, 'error': 'section and params required'}), 400
+                # Live camera keys are clamped/validated with the same rule
+                # the OWL applies, so what lands in the INI here is what the
+                # camera runs AND what the next boot's validator accepts (a
+                # raw awb_red_gain = 50 would keep owl.service from starting).
+                rejected = {}
+                if section == 'Camera':
+                    clean = {}
+                    for key, value in params.items():
+                        try:
+                            clean[key] = ConfigValidator.coerce_camera_live_value(key, value)
+                        except KeyError:
+                            clean[key] = value      # not a live camera key
+                        except (ValueError, TypeError) as e:
+                            rejected[key] = str(e)
+                    params = clean
+                    if not params:
+                        return jsonify({'success': False,
+                                        'error': '; '.join(rejected.values()),
+                                        'rejected': rejected}), 400
                 result = self.mqtt_client._send_command(
                     'set_config_section', section=section, params=params)
                 for key, value in params.items():
                     self._persist_config_change(section, key, str(value))
-                return jsonify(result if isinstance(result, dict) else {'success': True})
+                payload = result if isinstance(result, dict) else {'success': True}
+                if rejected:
+                    payload = dict(payload, rejected=rejected)
+                return jsonify(payload)
             except Exception as e:
                 self.logger.error(f"Error setting config section: {e}")
                 return jsonify({'success': False, 'error': str(e)}), 500
@@ -1957,6 +1988,26 @@ class OWLDashboard:
 
             except Exception as e:
                 self.logger.error(f"Error resetting to default: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @self.app.route('/api/config/factory-reset', methods=['POST'])
+        def factory_reset_settings():
+            """Detection settings back to the shipped defaults (token-guarded;
+            phone app Maintenance card). Removes the active-config pointer,
+            the autosave working file, user-saved profiles, painted LUT
+            profiles and custom sensitivity presets. Keeps GEOMETRY.ini,
+            CONTROLLER.ini (network, token), models and recordings."""
+            denied = self._check_device_token()
+            if denied is not None:
+                return denied
+            try:
+                removed = self._factory_reset_settings()
+                self._apply_config_to_owl()
+                self.logger.warning(f"Factory reset of settings: {removed}")
+                return jsonify({'success': True, 'removed': removed,
+                                'active_config': DEFAULT_CONFIG})
+            except Exception as e:
+                self.logger.error(f"Factory reset failed: {e}")
                 return jsonify({'success': False, 'error': str(e)}), 500
 
         @self.app.route('/api/config/delete', methods=['POST'])
@@ -2249,6 +2300,11 @@ class OWLDashboard:
                 logger=self.logger,
                 controller_ini_path=self.controller_ini_path,
                 owl_active_getter=lambda: self.get_owl_service_state().get('active', False),
+                update_state_getter=lambda: (self.mqtt_client.get_state()
+                                             if self.mqtt_client else {}),
+                git_info_getter=lambda: {
+                    'branch': self.version_info.get('git_branch'),
+                    'commit': self.version_info.get('git_commit')},
             ))
 
     def _get_active_config_path(self):
@@ -2719,6 +2775,9 @@ class OWLDashboard:
             return stats
 
         mqtt_state = self.mqtt_client.get_state() if self.mqtt_client else {}
+        # Software version for the app's Maintenance card (additive fields;
+        # getattr-guarded for fixtures built without __init__)
+        stats.update(getattr(self, 'version_info', None) or self._read_version_info())
         stats.update({
             # Checked by the OWL phone app on first contact (see version.py)
             'contract_version': APP_CONTRACT_VERSION,
@@ -2740,11 +2799,86 @@ class OWLDashboard:
             # v3.14): the app feature-detects on awb_calibration presence
             'camera': mqtt_state.get('camera'),
             'awb_calibration': mqtt_state.get('awb_calibration'),
+            # Comma-separated keys changed live that need a service restart
+            # (mqtt_manager RESTART_REQUIRED_KEYS). The phone app toggles
+            # its restart pill from this; it was never forwarded before.
+            'restart_required': mqtt_state.get('restart_required', ''),
             'weed_detect_indicator': self.mqtt_client.get_weed_detect_indicator() if self.mqtt_client else False,
             'image_write_indicator': self.mqtt_client.get_image_write_indicator() if self.mqtt_client else False
         })
 
         return stats
+
+    def _factory_reset_settings(self):
+        """Delete user-created detection state; keep hardware and network
+        files. Returns what was removed (the app toasts it).
+
+        Removed: active-config pointer, the autosave working file, every
+        user-saved profile .ini, painted LUT profiles, custom sensitivity
+        presets (owl.py owns those; deleted via MQTT).
+        Kept: GENERAL_CONFIG.ini, GEOMETRY.ini, CONTROLLER.ini, templates,
+        models, recordings.
+        """
+        from utils.sensitivity_manager import PROTECTED_CONFIGS
+
+        config_dir = self._get_config_dir()
+        removed = {'pointer': False, 'autosave': False, 'configs': [],
+                   'lut_profiles': [], 'presets': []}
+
+        pointer = os.path.join(config_dir, 'active_config.txt')
+        if os.path.exists(pointer):
+            os.remove(pointer)
+            removed['pointer'] = True
+
+        for name in sorted(os.listdir(config_dir)):
+            if not name.endswith('.ini'):
+                continue
+            if (name in PROTECTED_CONFIGS or name.endswith('_TEMPLATE.ini')
+                    or name == 'DESKTOP_TEST.ini'):
+                continue
+            os.remove(os.path.join(config_dir, name))
+            if name == AUTOSAVE_CONFIG:
+                removed['autosave'] = True
+            else:
+                removed['configs'].append(name)
+
+        lut = getattr(self, 'lut_profile_manager', None)
+        if lut is not None:
+            for profile in lut.list_profiles():
+                if profile.get('is_builtin'):
+                    continue
+                try:
+                    lut.delete(profile['name'])
+                    removed['lut_profiles'].append(profile['name'])
+                except Exception as e:
+                    self.logger.warning(f"Factory reset: LUT profile "
+                                        f"{profile['name']} not deleted: {e}")
+
+        if self.mqtt_client:
+            state = self.mqtt_client.get_state() or {}
+            for preset in state.get('sensitivity_presets') or []:
+                if preset.get('is_builtin'):
+                    continue
+                result = self.mqtt_client._send_command(
+                    'delete_sensitivity_preset', name=preset['name'])
+                if not isinstance(result, dict) or result.get('success', True):
+                    removed['presets'].append(preset['name'])
+        return removed
+
+    @staticmethod
+    def _read_version_info():
+        """{'version', 'git_branch', 'git_commit'} — never raises (git or
+        version.py may be missing on a dev box)."""
+        info = {'version': None, 'git_branch': None, 'git_commit': None}
+        try:
+            from version import VERSION, SystemInfo
+            info['version'] = str(VERSION)
+            git = SystemInfo.get_git_info() or {}
+            info['git_branch'] = git.get('branch')
+            info['git_commit'] = git.get('commit')
+        except Exception:
+            pass
+        return info
 
     @staticmethod
     def _sudo_runner(argv, timeout=30):

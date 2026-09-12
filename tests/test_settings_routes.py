@@ -70,8 +70,12 @@ def mgr(nm):
     return NetworkSettingsManager(nm, timer_factory=CapturingTimer)
 
 
+GIT_INFO = {'branch': 'main', 'commit': 'abc1234'}
+
+
 def build_client(mgr, tmp_path, token=None, network_mode='standalone',
-                 mqtt=None, owl_active=False, runner=None):
+                 mqtt=None, owl_active=False, runner=None, internet=None,
+                 popen=None, update_state=None, process_started_at=None):
     ini = tmp_path / 'CONTROLLER.ini'
     lines = ['[Network]', f'mode = {network_mode}']
     if token:
@@ -90,6 +94,15 @@ def build_client(mgr, tmp_path, token=None, network_mode='standalone',
         runner=runner or MagicMock(return_value=MagicMock(returncode=0,
                                                           stdout='', stderr='')),
         timer_factory=CapturingTimer,
+        internet_probe=lambda: (internet if internet is not None
+                                else {'reachable': True, 'has_route': True,
+                                      'can_ping': True, 'default_dev': 'wlan0',
+                                      'checked_at': 0, 'error': None}),
+        update_state_getter=lambda: update_state or {},
+        status_path=str(tmp_path / '.update_status.json'),
+        popen=popen or MagicMock(),
+        process_started_at=process_started_at,
+        git_info_getter=lambda: dict(GIT_INFO),
     )
     app.register_blueprint(bp)
     return app.test_client()
@@ -102,10 +115,12 @@ MUTATING_ROUTES = [
     ('/api/settings/network/scan', {}),
     ('/api/settings/network/join', {'ssid': 'HomeNet'}),
     ('/api/settings/network/cancel', {}),
+    ('/api/settings/network/revert', {}),
     ('/api/settings/password/user', {'password': 'longenough1'}),
     ('/api/settings/password/hotspot', {'password': 'longenough1'}),
     ('/api/system/shutdown', {}),
     ('/api/system/reboot', {}),
+    ('/api/settings/update/start', {}),
 ]
 
 
@@ -139,7 +154,9 @@ class TestTokenMatrix:
         client = build_client(mgr, tmp_path, token=TOKEN)
         for route in ('/api/settings/network/status',
                       '/api/settings/network/scan',
-                      '/api/settings/network/result'):
+                      '/api/settings/network/result',
+                      '/api/settings/internet',
+                      '/api/settings/update/status'):
             response = client.get(route)
             assert response.status_code == 200, route
 

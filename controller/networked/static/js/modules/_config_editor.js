@@ -40,20 +40,19 @@ function initConfigEditor() {
 }
 
 async function calibrateDeviceWhiteBalance() {
-    const deviceId = getConfigEditorTarget();
-    if (!deviceId) {
-        showToast('Select an OWL in the config editor first', 'error');
-        return;
-    }
+    // Every OWL samples its OWN camera: one tap calibrates the whole boom.
+    // The readout under the button follows the editor's selected OWL.
     try {
-        const res = await apiRequest('/api/send_command', {
+        // /api/command via the shared sendCommand helper (_core.js); it
+        // toasts on a failed result itself.
+        const res = await fetch('/api/command', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ device_id: deviceId, action: 'calibrate_awb' })
+            body: JSON.stringify({ device_id: 'all', action: 'calibrate_awb' })
         });
         const data = await res.json();
         if (!data.success) throw new Error(data.error || 'Calibration did not start');
-        showToast('Calibrating white balance on ' + deviceId + '. Keep soil or a grey card in view.', 'info');
+        showToast('Calibrating white balance on all OWLs. Keep soil or a grey card in view.', 'info');
     } catch (err) {
         showToast('Could not start calibration: ' + err.message, 'error');
         if (typeof updateAwbReadout === 'function') updateAwbReadout(null, null);
@@ -210,8 +209,54 @@ function handleConfigEditorFieldChange(event) {
     if (!deviceConfig[section]) deviceConfig[section] = {};
     deviceConfig[section][key] = value;
 
+    const fromCalibration = !!(event.detail && event.detail.fromCalibration);
+    if (fromCalibration) {
+        // Each OWL calibrated and saved its OWN gains. They are this
+        // device's baseline, not an edit: they must never ride the next
+        // Apply/Save, which broadcasts changed sections to every OWL.
+        if (!originalDeviceConfig[section]) originalDeviceConfig[section] = {};
+        originalDeviceConfig[section][key] = value;
+    }
     input.classList.toggle('modified', String(originalDeviceConfig[section]?.[key]) !== String(value));
     updateConfigEditorChangeState();
+    if (!fromCalibration && section === 'Camera' && EDITOR_CAMERA_LIVE_KEYS.includes(key) &&
+            String(value).trim() !== '') {
+        hotApplyDeviceCameraKey(key, value);
+    }
+}
+
+// [Camera] keys the OWL applies to the running camera without a restart
+// (mirrors CAMERA_LIVE_KEYS in utils/mqtt_manager.py). White balance and
+// exposure are tuned against the live feed, so the editor pushes them on
+// change instead of waiting for Apply. Target is 'all', the same as Apply
+// and Save on this tab (the editor shows one OWL's values but the tab
+// tunes the fleet), so what you see live is what Apply would send. Live
+// only: the unsaved marker stays until Save to Device.
+const EDITOR_CAMERA_LIVE_KEYS = ['awb_mode', 'awb_red_gain', 'awb_blue_gain', 'exp_compensation'];
+let _editorCameraLiveTimer = null;
+let _editorCameraLivePending = {};
+
+function hotApplyDeviceCameraKey(key, value) {
+    _editorCameraLivePending[key] = value;
+    clearTimeout(_editorCameraLiveTimer);
+    _editorCameraLiveTimer = setTimeout(async () => {
+        const params = _editorCameraLivePending;
+        _editorCameraLivePending = {};
+        try {
+            // Query string keeps this distinct from Load's GET on the same
+            // path: apiRequest aborts an in-flight request to the same URL.
+            const res = await apiRequest('/api/config/all?source=camera-live', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ section: 'Camera', params })
+            });
+            const data = await res.json();
+            if (!data.success) throw new Error(data.error || 'apply failed');
+        } catch (err) {
+            if (err.name === 'AbortError') return; // superseded by a newer change
+            showToast('Live camera apply failed: ' + err.message, 'error');
+        }
+    }, 300);
 }
 
 function updateConfigEditorChangeState() {

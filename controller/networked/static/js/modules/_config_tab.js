@@ -342,6 +342,83 @@ function sendConfigUpdate(param, value) {
     }
 }
 
+// ============================================
+// PER-DEVICE SETTINGS GUARD
+// ============================================
+// The Advanced editor is loaded from ONE OWL, and that OWL's config comes back
+// with its GEOMETRY.ini merged in (crop edges, actuation band) plus its own
+// identity/network/pin sections. A fleet Apply must send only the keys the
+// user actually changed, and never these: one OWL's mount geometry or pin map
+// on every other OWL means spraying the wrong lanes. Mount geometry is edited
+// per feed in the geometry editor; the rest lives in each unit's
+// CONTROLLER.ini / [Relays].
+var PER_DEVICE_SECTIONS = ['MQTT', 'Network', 'WebDashboard', 'Relays'];
+var PER_DEVICE_KEYS = {
+    Camera: ['crop_left', 'crop_right', 'crop_top', 'crop_bottom',
+             'crop_factor_horizontal', 'crop_factor_vertical'],
+    System: ['actuation_top', 'actuation_bottom', 'actuation_zone'],
+    Cloud: ['device_id']
+};
+
+/**
+ * Editor keys that differ from what was loaded, grouped by section.
+ * fleetWide=true drops per-device keys/sections and reports them in `skipped`.
+ */
+function changedEditorSections(fleetWide) {
+    var sections = [], skipped = [];
+    if (typeof deviceConfig === 'undefined' || !deviceConfig) return { sections: sections, skipped: skipped };
+    var original = (typeof originalDeviceConfig !== 'undefined' && originalDeviceConfig) || {};
+    for (var section in deviceConfig) {
+        var cur = deviceConfig[section] || {};
+        var orig = original[section] || {};
+        var params = {};
+        for (var key in cur) {
+            if (String(cur[key]) === String(orig[key])) continue;
+            var perDevice = fleetWide && (PER_DEVICE_SECTIONS.indexOf(section) !== -1 ||
+                (PER_DEVICE_KEYS[section] || []).indexOf(key) !== -1);
+            if (perDevice) { skipped.push(section + '.' + key); continue; }
+            params[key] = cur[key];
+        }
+        if (Object.keys(params).length) sections.push({ section: section, params: params });
+    }
+    return { sections: sections, skipped: skipped };
+}
+
+/** After a send, the sent keys are the editor's new baseline. */
+function markEditorKeysSent(sections) {
+    if (typeof originalDeviceConfig === 'undefined' || !originalDeviceConfig) return;
+    sections.forEach(function (s) {
+        if (!originalDeviceConfig[s.section]) originalDeviceConfig[s.section] = {};
+        for (var k in s.params) {
+            originalDeviceConfig[s.section][k] = s.params[k];
+            var el = document.getElementById('config-' + s.section + '-' + k);
+            if (el) el.classList.remove('modified');
+        }
+    });
+    if (typeof updateConfigEditorChangeState === 'function') updateConfigEditorChangeState();
+}
+
+function toastSkippedPerDevice(skipped) {
+    if (!skipped.length) return;
+    showToast('Not sent to all OWLs (per-OWL settings): ' + skipped.join(', ') +
+        '. Use the geometry editor or Push to device.', 'warning', 6000);
+}
+
+/** Strip per-device keys/sections from a profile before it is broadcast. */
+function fleetSafeProfile(config) {
+    var out = {};
+    for (var section in config) {
+        if (PER_DEVICE_SECTIONS.indexOf(section) !== -1) continue;
+        var params = {};
+        for (var key in config[section]) {
+            if ((PER_DEVICE_KEYS[section] || []).indexOf(key) !== -1) continue;
+            params[key] = config[section][key];
+        }
+        if (Object.keys(params).length) out[section] = params;
+    }
+    return out;
+}
+
 /**
  * Send all slider + editor values to device(s) via set_config_section.
  * Live-updates the device — does NOT persist to disk.
@@ -370,19 +447,15 @@ function sendAllToDevice() {
         sendCommand(target, 'set_config_section', { section: 'GreenOnGreen', params: gogParams });
     }
 
-    // Also send any editor changes if loaded
+    // Also send any editor changes if loaded: changed keys only, never one
+    // OWL's geometry / identity / pins to the fleet.
     if (configEditorHasChanges && typeof deviceConfig !== 'undefined') {
-        for (var section in deviceConfig) {
-            if (JSON.stringify(deviceConfig[section]) !== JSON.stringify(originalDeviceConfig[section])) {
-                sendCommand(target, 'set_config_section', {
-                    section: section,
-                    params: deviceConfig[section]
-                });
-            }
-        }
-        originalDeviceConfig = JSON.parse(JSON.stringify(deviceConfig));
-        configEditorHasChanges = false;
-        if (typeof updateConfigEditorChangeState === 'function') updateConfigEditorChangeState();
+        var changes = changedEditorSections(true);
+        changes.sections.forEach(function (s) {
+            sendCommand(target, 'set_config_section', { section: s.section, params: s.params });
+        });
+        markEditorKeysSent(changes.sections);
+        toastSkippedPerDevice(changes.skipped);
     }
 
     showToast('Applied to all OWLs, not saved', 'info');
@@ -638,10 +711,14 @@ async function loadPresetToDevice() {
         var data = await res.json();
         if (!data.success) throw new Error(data.error || 'Failed to load preset');
 
-        for (var section in data.config) {
+        // A profile saved from a device may still carry its [MQTT]/[Network]/
+        // [Relays] and legacy crop/zone keys (only canonical geometry is
+        // stripped on save); those never go to the fleet.
+        var safe = fleetSafeProfile(data.config);
+        for (var section in safe) {
             sendCommand('all', 'set_config_section', {
                 section: section,
-                params: data.config[section]
+                params: safe[section]
             });
         }
 
@@ -1173,16 +1250,15 @@ function sendToSingleDevice() {
         sendCommand(target, 'set_config_section', { section: 'GreenOnGreen', params: gogParams });
     }
 
-    // Also send any editor changes if loaded
+    // Also send any editor changes if loaded. Per-device keys are allowed
+    // here (it IS one device), and the sent keys become the baseline so a
+    // later fleet Apply does not re-broadcast this unit's edits.
     if (configEditorHasChanges && typeof deviceConfig !== 'undefined') {
-        for (var section in deviceConfig) {
-            if (JSON.stringify(deviceConfig[section]) !== JSON.stringify(originalDeviceConfig[section])) {
-                sendCommand(target, 'set_config_section', {
-                    section: section,
-                    params: deviceConfig[section]
-                });
-            }
-        }
+        var changes = changedEditorSections(false);
+        changes.sections.forEach(function (s) {
+            sendCommand(target, 'set_config_section', { section: s.section, params: s.params });
+        });
+        markEditorKeysSent(changes.sections);
     }
 
     showToast('Settings sent to ' + target, 'success');

@@ -237,8 +237,63 @@ function handleFieldChange(event) {
     const value = input.type === 'checkbox' ? (input.checked ? 'True' : 'False') : input.value;
     if (!currentConfig[section]) currentConfig[section] = {};
     currentConfig[section][key] = value;
+    const fromCalibration = !!(event.detail && event.detail.fromCalibration);
+    if (fromCalibration) {
+        // The OWL applied and saved these itself: they are the new baseline,
+        // not an unsaved edit, and must not be re-sent.
+        if (!originalConfig[section]) originalConfig[section] = {};
+        originalConfig[section][key] = value;
+    }
     input.classList.toggle('modified', String(originalConfig[section]?.[key]) !== String(value));
     updateChangeIndicators();
+    if (!fromCalibration && section === 'Camera' && KIOSK_CAMERA_LIVE_KEYS.includes(key) &&
+            String(value).trim() !== '') {
+        hotApplyCameraKey(key, value);
+    }
+}
+
+// [Camera] keys the OWL applies to the running camera without a restart
+// (mirrors CAMERA_LIVE_KEYS in utils/mqtt_manager.py). White balance and
+// exposure are tuned against the live feed, so the kiosk editor pushes
+// them on change like the phone app does; Save still handles the rest.
+const KIOSK_CAMERA_LIVE_KEYS = ['awb_mode', 'awb_red_gain', 'awb_blue_gain', 'exp_compensation'];
+let _cameraLiveTimer = null;
+let _cameraLivePending = {};
+
+function hotApplyCameraKey(key, value) {
+    _cameraLivePending[key] = value;
+    clearTimeout(_cameraLiveTimer);
+    _cameraLiveTimer = setTimeout(async () => {
+        const params = _cameraLivePending;
+        _cameraLivePending = {};
+        try {
+            // Query string only distinguishes this from the geometry
+            // editor's use of the same route: apiRequest aborts an in-flight
+            // request to the same URL, and the two must not cancel each other.
+            const res = await apiRequest('/api/config/section?source=camera-live', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ section: 'Camera', params })
+            });
+            const data = await res.json();
+            if (!data.success) throw new Error(data.error || 'apply failed');
+            // The route persists to the active config as well, so these
+            // keys are no longer "unsaved" in the editor. A key the OWL
+            // rejected stays marked and is reported.
+            const rejected = data.rejected || {};
+            if (!originalConfig.Camera) originalConfig.Camera = {};
+            Object.entries(params).forEach(([k, v]) => {
+                if (rejected[k]) return;
+                originalConfig.Camera[k] = v;
+                document.getElementById('config-Camera-' + k)?.classList.remove('modified');
+            });
+            updateChangeIndicators();
+            Object.values(rejected).forEach(msg => showNotification('Camera', msg, 'error'));
+        } catch (err) {
+            if (err.name === 'AbortError') return; // superseded by a newer change
+            showNotification('Camera', 'Live apply failed: ' + err.message, 'error');
+        }
+    }, 300);
 }
 
 function updateChangeIndicators() {

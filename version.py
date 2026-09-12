@@ -10,7 +10,7 @@ from typing import Optional
 @dataclass
 class Version:
     major: int = 3
-    minor: int = 14
+    minor: int = 15
     patch: int = 0
     tag: Optional[str] = None
 
@@ -28,7 +28,11 @@ VERSION = Version()
 # 3: /api/downloads/session/<id>/locations exists (additive route, but the
 #    bump is the app's gating mechanism for the Map tab — same pattern as
 #    the Config tab at 2).
-APP_CONTRACT_VERSION = 3
+# 4: maintenance routes exist (/api/settings/update/*, /api/settings/internet,
+#    /api/settings/network/revert + temporary joins, /api/config/factory-reset)
+#    and system_stats carries version/git_branch/git_commit. Gates the app's
+#    Maintenance card.
+APP_CONTRACT_VERSION = 4
 
 class SystemInfo:
     logger = logging.getLogger("SystemInfo")

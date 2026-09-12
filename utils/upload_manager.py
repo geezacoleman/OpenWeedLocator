@@ -95,55 +95,16 @@ class S3Uploader:
             raise ImportError("boto3 not available. Install with: pip install boto3")
 
     def check_ethernet_connection(self) -> Dict[str, any]:
-        """Check if ethernet connection is available"""
-        try:
-            # Find the ip command location
-            ip_command = None
-            for path in ['/sbin/ip', '/usr/sbin/ip', '/bin/ip', '/usr/bin/ip']:
-                if Path(path).exists():
-                    ip_command = path
-                    break
-
-            if not ip_command:
-                return {'connected': False, 'error': 'ip command not found'}
-
-            # Check network interfaces
-            result = subprocess.run([ip_command, 'route'], capture_output=True, text=True, timeout=5)
-            if result.returncode != 0:
-                return {'connected': False, 'error': 'Failed to check network routes'}
-
-            has_default_route = 'default' in result.stdout
-
-            ping_command = None
-            for path in ['/bin/ping', '/usr/bin/ping', '/sbin/ping', '/usr/sbin/ping']:
-                if Path(path).exists():
-                    ping_command = path
-                    break
-
-            if not ping_command:
-                return {
-                    'connected': has_default_route,
-                    'has_route': has_default_route,
-                    'can_ping': False,
-                    'error': 'ping command not found' if has_default_route else 'No default route and ping not found'
-                }
-
-            # Try to ping a reliable server
-            ping_result = subprocess.run([ping_command, '-c', '1', '-W', '3', '8.8.8.8'],
-                                         capture_output=True, timeout=10)
-            can_ping = ping_result.returncode == 0
-
-            return {
-                'connected': has_default_route and can_ping,
-                'has_route': has_default_route,
-                'can_ping': can_ping,
-                'error': None if (has_default_route and can_ping) else 'No internet connectivity'
-            }
-
-        except subprocess.TimeoutExpired:
-            return {'connected': False, 'error': 'Network check timed out'}
-        except Exception as e:
-            return {'connected': False, 'error': str(e)}
+        """Check if an internet connection is available (default route +
+        one ping). Shared with the dashboard's /api/settings/internet."""
+        from utils.internet_probe import probe_internet
+        probe = probe_internet()
+        return {
+            'connected': probe['reachable'],
+            'has_route': probe['has_route'],
+            'can_ping': probe['can_ping'],
+            'error': probe['error'],
+        }
 
     def test_s3_credentials(self, access_key: str, secret_key: str,
                             bucket_name: str, region: str = 'us-east-1',

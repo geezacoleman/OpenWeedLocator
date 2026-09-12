@@ -868,6 +868,23 @@ class TestCameraWhiteBalance:
         assert cfg.get('Camera', 'awb_red_gain') == '2.0'
         assert cfg.get('Camera', 'awb_blue_gain') == '2.0'
 
+    def test_coerce_camera_live_value_single_source(self):
+        """One rule for the OWL's live-apply branch AND the dashboard's
+        persist route: clamp gains/exposure to VALUE_VALIDATORS, normalise
+        the mode, reject garbage, KeyError for non-live keys."""
+        from utils.config_manager import ConfigValidator as CV
+        assert CV.coerce_camera_live_value('awb_red_gain', '50') == 8.0
+        assert CV.coerce_camera_live_value('awb_blue_gain', 0) == 0.1
+        assert CV.coerce_camera_live_value('exp_compensation', '3.7') == 3
+        assert CV.coerce_camera_live_value('exp_compensation', -99) == -10
+        assert CV.coerce_camera_live_value('awb_mode', ' Manual ') == 'manual'
+        with pytest.raises(ValueError):
+            CV.coerce_camera_live_value('awb_mode', 'sunset')
+        with pytest.raises(ValueError):
+            CV.coerce_camera_live_value('awb_red_gain', 'abc')
+        with pytest.raises(KeyError):
+            CV.coerce_camera_live_value('crop_left', '0.02')
+
     def test_seed_autosave_keeps_existing_wb_keys(self, tmp_path):
         from utils.config_manager import seed_autosave, AUTOSAVE_CONFIG
         src = tmp_path / 'tuned.ini'

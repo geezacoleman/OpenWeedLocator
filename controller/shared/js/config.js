@@ -413,22 +413,32 @@ function getOrderedSections(configData) {
    calibrate_awb to the editor's device) and feeds state into
    updateAwbReadout() from its stats/owls poll.
    ------------------------------------------------------------------------- */
-let _lastAwbCalibrationTs = 0;
+// Last state seen by updateAwbReadout, so a re-rendered section shows the
+// current readout immediately instead of waiting for the next poll.
+let _lastAwbCamera = null;
+let _lastAwbCalib = null;
 
 function createAwbCalibrateRow() {
     const row = document.createElement('div');
     row.className = 'config-field full-width awb-calibrate-row';
     const canCalibrate = typeof window.OWL_AWB_CALIBRATE === 'function';
+    const running = !!(_lastAwbCalib && _lastAwbCalib.status === 'running');
+    // Static markup only; state text (which includes OWL error strings)
+    // goes in via textContent below.
     row.innerHTML =
         '<label>White balance calibration</label>' +
         '<div class="awb-calibrate-controls">' +
-        '<button type="button" class="btn-primary btn-lg awb-calibrate-btn"' +
-        (canCalibrate ? '' : ' disabled') + '>Calibrate white balance</button>' +
-        '<span class="awb-readout">Waiting for camera state</span>' +
+        '<button type="button" class="btn-primary btn-lg awb-calibrate-btn"></button>' +
+        '<span class="awb-readout"></span>' +
         '</div>' +
         '<span class="field-help">Point the camera at bare soil or a grey card, then tap. ' +
         'Auto white balance is sampled and locked as manual gains so colours stay fixed for detection.</span>';
     const btn = row.querySelector('.awb-calibrate-btn');
+    btn.disabled = !canCalibrate || running;
+    btn.textContent = running ? 'Calibrating' : 'Calibrate white balance';
+    row.querySelector('.awb-readout').textContent =
+        (_lastAwbCamera || _lastAwbCalib) ? _formatAwbReadout(_lastAwbCamera, _lastAwbCalib)
+                                          : 'Waiting for camera state';
     btn.addEventListener('click', () => {
         if (typeof window.OWL_AWB_CALIBRATE !== 'function') return;
         btn.disabled = true;
@@ -462,6 +472,8 @@ function _formatAwbReadout(camera, calib) {
 /**
  * Set the three WB inputs from a completed calibration and fire change
  * events so the host editor's currentConfig / modified markers follow.
+ * The event carries detail.fromCalibration so the host's on-change
+ * hot-apply can skip it: the OWL already holds and saved these values.
  */
 function applyAwbCalibrationToFields(calib) {
     const values = {
@@ -474,15 +486,23 @@ function applyAwbCalibrationToFields(calib) {
         const el = document.getElementById('config-Camera-' + key);
         if (!el) return;
         el.value = String(value);
-        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new CustomEvent('change', { bubbles: true, detail: { fromCalibration: true } }));
     });
 }
 
 /**
  * Called from the controller's state poll. camera = state.camera,
- * calib = state.awb_calibration. onComplete fires once per new completion.
+ * calib = state.awb_calibration. onComplete fires once per NEW completion:
+ * the first state seen for a device (page load, editor device switch) is
+ * history and only seeds the dedupe, so an old completion is never replayed
+ * as a toast or written into another device's fields. deviceKey scopes the
+ * dedupe (networked passes the editor's device id).
  */
-function updateAwbReadout(camera, calib, onComplete) {
+const _awbSeenTs = {};
+
+function updateAwbReadout(camera, calib, onComplete, deviceKey = 'local') {
+    _lastAwbCamera = camera || null;
+    _lastAwbCalib = calib || null;
     const text = _formatAwbReadout(camera, calib);
     document.querySelectorAll('.awb-readout').forEach(el => { el.textContent = text; });
     const running = !!(calib && calib.status === 'running');
@@ -491,9 +511,20 @@ function updateAwbReadout(camera, calib, onComplete) {
         btn.disabled = running || !canCalibrate;
         btn.textContent = running ? 'Calibrating' : 'Calibrate white balance';
     });
-    if (!calib || !calib.updated_at || calib.updated_at <= _lastAwbCalibrationTs) return;
+    // Hold the WB inputs while the OWL is sampling so a stray edit cannot
+    // land between its apply and its save.
+    ['awb_mode', 'awb_red_gain', 'awb_blue_gain'].forEach(key => {
+        const el = document.getElementById('config-Camera-' + key);
+        if (el) el.disabled = running;
+    });
+    if (!calib || !calib.updated_at) return;
+    if (!(deviceKey in _awbSeenTs)) {
+        _awbSeenTs[deviceKey] = calib.updated_at;
+        return;
+    }
+    if (calib.updated_at <= _awbSeenTs[deviceKey]) return;
     if (calib.status === 'complete') {
-        _lastAwbCalibrationTs = calib.updated_at;
+        _awbSeenTs[deviceKey] = calib.updated_at;
         applyAwbCalibrationToFields(calib);
         if (typeof showToast === 'function') {
             showToast('White balance locked: R ' + Number(calib.red_gain).toFixed(2) +
@@ -501,7 +532,7 @@ function updateAwbReadout(camera, calib, onComplete) {
         }
         if (typeof onComplete === 'function') onComplete(calib);
     } else if (calib.status === 'error') {
-        _lastAwbCalibrationTs = calib.updated_at;
+        _awbSeenTs[deviceKey] = calib.updated_at;
         if (typeof showToast === 'function') {
             showToast('White balance calibration failed: ' + (calib.error || 'unknown error'), 'error');
         }

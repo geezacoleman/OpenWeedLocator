@@ -230,6 +230,9 @@ class TestResultShape:
     def test_result_fields(self, mgr):
         result = mgr.result()
         assert set(result) == {'state', 'ssid', 'ip', 'error', 'warning',
-                               'previous'}
+                               'previous', 'temporary', 'expires_at',
+                               'ended_reason', 'con_name'}
         assert result['state'] == 'idle'
         assert result['previous'] is None
+        assert result['temporary'] is False
+        assert result['con_name'] is None

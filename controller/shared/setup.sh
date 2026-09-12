@@ -592,9 +592,11 @@ setup_service_control_permissions() {
 # It allows the 'owl' user to manage the main owl.service
 # without a password, which is required for the web dashboard power button.
 # Also allows shutdown and reboot (triggered by MQTT commands and the
-# token-guarded /api/system/shutdown and /api/system/reboot routes).
+# token-guarded /api/system/shutdown and /api/system/reboot routes), and a
+# restart of the dashboard itself so a software update can bring the new
+# dashboard code up (/api/settings/update/status).
 
-Cmnd_Alias OWL_SERVICE_CMDS = ${SYSTEMCTL_BIN} start owl.service, ${SYSTEMCTL_BIN} stop owl.service, ${SYSTEMCTL_BIN} restart owl.service, ${SYSTEMCTL_BIN} is-active owl.service, ${SYSTEMCTL_BIN} reset-failed owl.service, ${SHUTDOWN_BIN} now, ${REBOOT_BIN}
+Cmnd_Alias OWL_SERVICE_CMDS = ${SYSTEMCTL_BIN} start owl.service, ${SYSTEMCTL_BIN} stop owl.service, ${SYSTEMCTL_BIN} restart owl.service, ${SYSTEMCTL_BIN} is-active owl.service, ${SYSTEMCTL_BIN} reset-failed owl.service, ${SYSTEMCTL_BIN} restart owl-dash.service, ${SHUTDOWN_BIN} now, ${REBOOT_BIN}
 
 # Grant the user permission to run ONLY the commands in the alias.
 ${CURRENT_USER} ALL=(ALL) NOPASSWD: OWL_SERVICE_CMDS
@@ -651,6 +653,43 @@ EOF
     sudo chmod 0440 "$SUDOERS_FILE"
 
     check_status "Device settings permissions" "DEVICE_SETTINGS_PERMISSIONS"
+}
+
+setup_update_permissions() {
+    echo -e "${GREEN}[INFO] Configuring software update permissions...${NC}"
+
+    # Same rule owl_cloud_provision.sh installs for the fleet path. The
+    # dashboard's /api/settings/update/start launches owl_update.sh in a
+    # transient systemd unit so it survives its own service restart step.
+    # SECURITY: the command must be LITERAL up to the script's own
+    # arguments. A wildcard before --uid would let a caller smuggle a
+    # different uid inside the glob (sudoers * matches across spaces).
+    local SUDOERS_FILE="/etc/sudoers.d/96-owl-update"
+    local SYSTEMD_RUN_BIN
+    SYSTEMD_RUN_BIN="$(command -v systemd-run 2>/dev/null || echo /usr/bin/systemd-run)"
+    local REPO_DIR="/home/${CURRENT_USER}/owl"
+
+    local SUDOERS_TMP
+    SUDOERS_TMP="$(mktemp)"
+    cat > "$SUDOERS_TMP" <<EOF
+# Managed by OWL controller/shared/setup.sh
+# Software update from the dashboard / phone app: owl_update.sh runs in a
+# transient systemd unit (see utils/software_update.py for the argv).
+
+Cmnd_Alias OWL_UPDATE_RUN = ${SYSTEMD_RUN_BIN} --unit=owl-update --collect --property=RuntimeMaxSec=1800 --uid=${CURRENT_USER} --gid=${CURRENT_USER} /bin/bash ${REPO_DIR}/owl_update.sh *
+
+${CURRENT_USER} ALL=(ALL) NOPASSWD: OWL_UPDATE_RUN
+EOF
+    if sudo visudo -cf "$SUDOERS_TMP" >/dev/null; then
+        sudo install -m 440 -o root -g root "$SUDOERS_TMP" "$SUDOERS_FILE"
+        rm -f "$SUDOERS_TMP"
+    else
+        rm -f "$SUDOERS_TMP"
+        echo -e "${RED}[ERROR] Generated update sudoers failed validation - not installed${NC}" >&2
+        return 1
+    fi
+
+    check_status "Software update permissions" "UPDATE_PERMISSIONS"
 }
 
 update_owl_configs() {
@@ -953,6 +992,7 @@ check_status "Setting hostname and local resolution" "HOSTNAME"
 setup_fan_permissions
 setup_service_control_permissions
 setup_device_settings_permissions
+setup_update_permissions
 
 # Step 7: Generate SSL certificates
 echo -e "${GREEN}[INFO] Generating SSL certificates...${NC}"

@@ -527,3 +527,94 @@ class TestRequirementsSingleSource:
             content = f.read()
         for pkg in ('flask', 'gunicorn', 'paho-mqtt', 'psutil', 'boto3', 'pyserial'):
             assert pkg in content, f"requirements.txt missing {pkg}"
+
+
+# ---------------------------------------------------------------------------
+# Software-update sudoers rule — the dashboard's /api/settings/update/start
+# launches owl_update.sh via systemd-run; the argv is built by
+# utils/software_update.update_argv and must match the rule literally.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestUpdateSudoersRule:
+
+    PROJECT_ROOT = os.path.join(os.path.dirname(__file__), '..')
+
+    def _read(self, relpath):
+        with open(os.path.join(self.PROJECT_ROOT, relpath), encoding='utf-8') as f:
+            return f.read()
+
+    def test_shared_setup_installs_the_update_rule(self):
+        content = self._read('controller/shared/setup.sh')
+        assert 'setup_update_permissions()' in content
+        assert '/etc/sudoers.d/96-owl-update' in content
+        # Called in the permissions block, after device settings
+        assert re.search(r'setup_device_settings_permissions\s*\nsetup_update_permissions',
+                         content), 'setup_update_permissions is not called'
+        # Validated before install (a bad sudoers file locks sudo out)
+        assert 'visudo -cf' in content
+
+    def test_rule_matches_the_shared_argv(self):
+        """Literal up to the script, then a single glob for its own args —
+        the same shape owl_cloud_provision.sh installs."""
+        from utils import software_update as swu
+        content = self._read('controller/shared/setup.sh')
+        match = re.search(r'Cmnd_Alias OWL_UPDATE_RUN = (.+)', content)
+        assert match, 'OWL_UPDATE_RUN alias missing'
+        rule = match.group(1)
+        expected_tail = (f'--unit={swu.UNIT_NAME} --collect '
+                         f'--property=RuntimeMaxSec={swu.RUNTIME_MAX_S} '
+                         '--uid=${CURRENT_USER} --gid=${CURRENT_USER} '
+                         '/bin/bash ${REPO_DIR}/owl_update.sh *')
+        assert rule.endswith(expected_tail), rule
+        cloud = self._read('owl_cloud_provision.sh')
+        assert expected_tail in cloud, 'cloud provisioning rule drifted'
+
+    def test_dashboard_restart_is_permitted(self):
+        content = self._read('controller/shared/setup.sh')
+        assert 'restart owl-dash.service' in content
+
+
+# ---------------------------------------------------------------------------
+# Software-update sudoers rule: the dashboard's /api/settings/update/start
+# launches owl_update.sh via systemd-run; the argv is built by
+# utils/software_update.update_argv and must match the rule literally.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestUpdateSudoersRule:
+
+    PROJECT_ROOT = os.path.join(os.path.dirname(__file__), '..')
+
+    def _read(self, relpath):
+        with open(os.path.join(self.PROJECT_ROOT, relpath), encoding='utf-8') as f:
+            return f.read()
+
+    def test_shared_setup_installs_the_update_rule(self):
+        content = self._read('controller/shared/setup.sh')
+        assert 'setup_update_permissions()' in content
+        assert '/etc/sudoers.d/96-owl-update' in content
+        assert re.search(r'setup_device_settings_permissions\s*\nsetup_update_permissions',
+                         content), 'setup_update_permissions is not called'
+        # Validated before install (a bad sudoers file locks sudo out)
+        assert 'visudo -cf' in content
+
+    def test_rule_matches_the_shared_argv(self):
+        """Literal up to the script, then a single glob for its own args,
+        the same shape owl_cloud_provision.sh installs."""
+        from utils import software_update as swu
+        content = self._read('controller/shared/setup.sh')
+        match = re.search(r'Cmnd_Alias OWL_UPDATE_RUN = (.+)', content)
+        assert match, 'OWL_UPDATE_RUN alias missing'
+        rule = match.group(1)
+        expected_tail = ('--unit=%s --collect --property=RuntimeMaxSec=%d '
+                         '--uid=${CURRENT_USER} --gid=${CURRENT_USER} '
+                         '/bin/bash ${REPO_DIR}/owl_update.sh *'
+                         % (swu.UNIT_NAME, swu.RUNTIME_MAX_S))
+        assert rule.endswith(expected_tail), rule
+        cloud = self._read('owl_cloud_provision.sh')
+        assert expected_tail in cloud, 'cloud provisioning rule drifted'
+
+    def test_dashboard_restart_is_permitted(self):
+        content = self._read('controller/shared/setup.sh')
+        assert 'restart owl-dash.service' in content

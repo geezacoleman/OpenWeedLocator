@@ -178,10 +178,12 @@ async function updateDashboard() {
         }
         // White balance readout + calibration progress for the editor's device
         if (typeof updateAwbReadout === 'function' && typeof getConfigEditorTarget === 'function') {
-            const editorOwl = owlsData[getConfigEditorTarget()];
+            const editorTarget = getConfigEditorTarget();
+            const editorOwl = owlsData[editorTarget];
             if (editorOwl) {
                 updateAwbReadout(editorOwl.camera, editorOwl.awb_calibration,
-                    typeof onDeviceAwbCalibrationComplete === 'function' ? onDeviceAwbCalibrationComplete : null);
+                    typeof onDeviceAwbCalibrationComplete === 'function' ? onDeviceAwbCalibrationComplete : null,
+                    editorTarget);
             }
         }
         // Show/hide the restart-required notice based on OWL state

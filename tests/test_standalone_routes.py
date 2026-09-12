@@ -1239,3 +1239,70 @@ class TestCalibrateAwbRoute:
         data = resp.get_json()
         assert data['camera']['colour_gains'] == [1.4, 3.2]
         assert data['awb_calibration']['status'] == 'complete'
+
+
+@pytest.mark.unit
+class TestConfigSectionCameraCoercion:
+    """POST /api/config/section clamps/validates live camera keys with the
+    same rule the OWL applies before persisting them. A raw value written to
+    the INI that the OWL only clamped in memory (awb_red_gain = 50) would
+    fail load_and_validate_config on the next boot."""
+
+    def _post(self, client, params):
+        return client.post('/api/config/section', json={
+            'section': 'Camera', 'params': params})
+
+    def _camera_file_value(self, dashboard, key):
+        active = dashboard._resolve_config_path(dashboard._get_active_config_path())
+        cfg = configparser.ConfigParser()
+        cfg.read(active)
+        return cfg.get('Camera', key, fallback=None)
+
+    def test_gain_clamped_before_persist(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        dashboard.mqtt_client = MagicMock()
+        dashboard.mqtt_client._send_command.return_value = {'success': True}
+        resp = self._post(client, {'awb_red_gain': '50', 'awb_mode': 'Manual'})
+        assert resp.status_code == 200
+        sent = dashboard.mqtt_client._send_command.call_args.kwargs['params']
+        assert sent == {'awb_red_gain': 8.0, 'awb_mode': 'manual'}
+        assert self._camera_file_value(dashboard, 'awb_red_gain') == '8.0'
+        assert self._camera_file_value(dashboard, 'awb_mode') == 'manual'
+
+    def test_invalid_mode_rejected_not_persisted(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        dashboard.mqtt_client = MagicMock()
+        dashboard.mqtt_client._send_command.return_value = {'success': True}
+        resp = self._post(client, {'awb_mode': 'sunset'})
+        assert resp.status_code == 400
+        assert 'awb_mode' in resp.get_json()['rejected']
+        dashboard.mqtt_client._send_command.assert_not_called()
+        assert self._camera_file_value(dashboard, 'awb_mode') != 'sunset'
+
+    def test_partial_rejection_reports_and_applies_rest(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        dashboard.mqtt_client = MagicMock()
+        dashboard.mqtt_client._send_command.return_value = {'success': True}
+        resp = self._post(client, {'awb_blue_gain': 'abc', 'exp_compensation': '3'})
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert 'awb_blue_gain' in data['rejected']
+        sent = dashboard.mqtt_client._send_command.call_args.kwargs['params']
+        assert sent == {'exp_compensation': 3}
+
+    def test_non_live_camera_keys_pass_through(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        dashboard.mqtt_client = MagicMock()
+        dashboard.mqtt_client._send_command.return_value = {'success': True}
+        resp = self._post(client, {'crop_left': '0.05'})
+        assert resp.status_code == 200
+        sent = dashboard.mqtt_client._send_command.call_args.kwargs['params']
+        assert sent == {'crop_left': '0.05'}
+
+    def test_system_stats_forwards_restart_required(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        if not dashboard.mqtt_client:
+            pytest.skip('fixture has no MQTT subscriber')
+        dashboard.mqtt_client.current_state['restart_required'] = 'resolution_width'
+        data = client.get('/api/system_stats').get_json()
+        assert data['restart_required'] == 'resolution_width'

@@ -448,6 +448,33 @@ class ConfigValidator:
     VALID_ACTUATION_MODES = {'centre', 'zone'}
     VALID_CAMERA_TYPES = {'rpi', 'usb', 'auto'}
     VALID_AWB_MODES = {'auto', 'daylight', 'cloudy', 'tungsten', 'fluorescent', 'indoor', 'manual'}
+
+    @classmethod
+    def coerce_camera_live_value(cls, key, value):
+        """Coerce/clamp one hot-applied [Camera] key to what the running
+        camera accepts AND what load_and_validate_config accepts next boot.
+
+        Single source for mqtt_manager's live-apply branch and the dashboard
+        route that persists the same keys: a value that is only clamped on
+        the OWL but written raw by the dashboard would fail validation at
+        the next start (VALUE_VALIDATORS) and keep owl.service down.
+        Raises ValueError for an unusable value, KeyError for a key that is
+        not a live camera key.
+        """
+        if key == 'awb_mode':
+            mode = str(value).strip().lower()
+            if mode not in cls.VALID_AWB_MODES:
+                raise ValueError(
+                    f"invalid awb_mode '{value}' (valid: "
+                    f"{', '.join(sorted(cls.VALID_AWB_MODES))})")
+            return mode
+        if key in ('awb_red_gain', 'awb_blue_gain'):
+            lo, hi = cls.VALUE_VALIDATORS[key][1], cls.VALUE_VALIDATORS[key][2]
+            return min(max(float(value), lo), hi)
+        if key == 'exp_compensation':
+            lo, hi = cls.VALUE_VALIDATORS[key][1], cls.VALUE_VALIDATORS[key][2]
+            return min(max(int(float(value)), lo), hi)
+        raise KeyError(key)
     VALID_ROTATIONS = {'auto', '0', '180'}
     VALID_SAMPLE_METHODS = {'bbox', 'square', 'whole'}
     VALID_STORAGE_LOCATIONS = {'usb', 'internal', 'auto'}

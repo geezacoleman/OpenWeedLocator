@@ -25,11 +25,15 @@ import socket
 import subprocess
 import threading
 import time
+from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
 from utils.network_manager import NetworkManagerError
-from controller.standalone.network_settings import SWITCH_DELAY_S
+from utils import software_update
+from utils.internet_probe import probe_internet
+from controller.standalone.network_settings import (
+    SWITCH_DELAY_S, TEMP_CON_NAME, TEMP_REVERT_DELAY_S, TEMP_TTL_S)
 
 PASSWORD_HELPER = '/usr/local/sbin/owl-set-user-password'
 MIN_PASSWORD_LENGTH = 8
@@ -39,6 +43,14 @@ POWER_BACKSTOP_DELAY_S = 10  # direct sudo backstop after a successful MQTT send
 
 PERMISSIONS_MISSING_ERROR = ('Device settings permissions not installed. '
                              'Re-run controller/shared/setup.sh on the OWL.')
+UPDATE_PERMISSIONS_MISSING_ERROR = ('Software update permissions not installed. '
+                                    'Re-run controller/shared/setup.sh on the OWL.')
+
+# The dashboard runs OLD code after owl_update.sh finishes (the script only
+# restarts owl.service), so the status route restarts it once it has
+# reported `complete` to the caller.
+DASHBOARD_UNIT = 'owl-dash.service'
+DASHBOARD_RESTART_DELAY_S = 2
 
 # Token recovery brute-force guard: after this many wrong hotspot passwords,
 # the route locks for TOKEN_RECOVERY_LOCK_S.
@@ -93,6 +105,24 @@ def check_device_token(token_reader):
     return None
 
 
+def _git_info():
+    """{'branch', 'commit'} of the running checkout; empty when git is
+    unavailable. Computed once per process: it restarts after an update."""
+    try:
+        from version import SystemInfo
+        return dict(SystemInfo.get_git_info() or {})
+    except Exception:
+        return {}
+
+
+def _software_version():
+    try:
+        from version import VERSION
+        return str(VERSION)
+    except Exception:
+        return None
+
+
 def require_device_token(token_reader):
     """Decorator factory wrapping check_device_token."""
     def decorator(fn):
@@ -109,7 +139,11 @@ def require_device_token(token_reader):
 def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
                               controller_ini_path=None, owl_active_getter=None,
                               runner=subprocess.run,
-                              timer_factory=threading.Timer):
+                              timer_factory=threading.Timer,
+                              internet_probe=None, update_state_getter=None,
+                              status_path=None, popen=None,
+                              dashboard_unit=DASHBOARD_UNIT,
+                              process_started_at=None, git_info_getter=None):
     """Build the device-settings blueprint.
 
     manager: NetworkSettingsManager (owns the nmcli wrapper as manager.nm)
@@ -119,10 +153,27 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
     owl_active_getter: callable -> bool, is owl.service active (MQTT-first
         power path only works when owl.py is listening)
     runner/timer_factory: injectable for tests
+    internet_probe: zero-arg callable -> utils.internet_probe result
+    update_state_getter: zero-arg callable -> owl.py's published state (the
+        data_transfer status gates an update)
+    status_path/popen/dashboard_unit/process_started_at/git_info_getter:
+        software-update plumbing (see /api/settings/update/*)
     """
     log = logger or logging.getLogger(__name__)
     bp = Blueprint('settings', __name__)
     guard = require_device_token(token_reader)
+
+    probe = internet_probe or (lambda: probe_internet())
+    update_status_file = (Path(status_path) if status_path
+                          else software_update.status_path())
+    started_at = (process_started_at if process_started_at is not None
+                  else time.time())
+    git_info = dict(git_info_getter() or {}) if git_info_getter else _git_info()
+    restart_state = {'scheduled': False}
+
+    def _fail(status, code, message):
+        return jsonify({'success': False, 'error': message,
+                        'code': code}), status
 
     def _network_mode():
         if not controller_ini_path:
@@ -180,6 +231,8 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
         data = request.get_json(silent=True) or {}
         ssid = (data.get('ssid') or '').strip()
         password = data.get('password') or ''
+        temporary = bool(data.get('temporary', False))
+        wait_s = data.get('wait_s')
         if not ssid:
             return jsonify({'success': False, 'error': 'ssid is required'}), 400
         if password and len(password) < MIN_PASSWORD_LENGTH:
@@ -193,18 +246,28 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
                             'error': 'This OWL is part of a rig. Manage its '
                                      'network from the rig controller.'}), 409
         try:
-            manager.request_join(ssid, password or None)
+            if temporary:
+                # Phone-hotspot internet session: throwaway profile, long
+                # retry window, watchdog-ended (see NetworkSettingsManager)
+                manager.request_join(ssid, password or None, temporary=True,
+                                     wait_s=wait_s)
+            else:
+                manager.request_join(ssid, password or None)
         except RuntimeError as e:
             return jsonify({'success': False, 'error': str(e)}), 409
         except NetworkManagerError as e:
             return jsonify({'success': False, 'error': str(e)}), 500
-        return jsonify({
+        body = {
             'success': True,
             'state': 'pending',
             'switch_delay_s': SWITCH_DELAY_S,
             'verify': {'hostname': f'{socket.gethostname()}.local',
                        'port': 443},
-        }), 202
+        }
+        if temporary:
+            body.update({'temporary': True, 'wait_s': manager.wait_s,
+                         'ttl_s': TEMP_TTL_S, 'con_name': TEMP_CON_NAME})
+        return jsonify(body), 202
 
     @bp.route('/api/settings/network/result')
     def network_result():
@@ -218,6 +281,110 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
         except RuntimeError as e:
             return jsonify({'success': False, 'error': str(e)}), 409
         return jsonify({'success': True})
+
+    @bp.route('/api/settings/network/revert', methods=['POST'])
+    @guard
+    def network_revert():
+        """End a temporary (phone-hotspot) session: back to the OWL's own
+        hotspot, throwaway profile deleted. 202: the teardown runs after
+        a short delay so this response reaches the phone over the tether."""
+        try:
+            outcome = manager.revert()
+        except RuntimeError as e:
+            return jsonify({'success': False, 'error': str(e)}), 409
+        return jsonify({'success': True, 'state': outcome,
+                        'delay_s': TEMP_REVERT_DELAY_S}), 202
+
+    @bp.route('/api/settings/internet')
+    def internet_status():
+        """Default route + one ping; ~4.5 s worst case."""
+        return jsonify({'success': True, 'internet': probe()})
+
+    # ------------------------------------------------------------------
+    # Software update (owl_update.sh in a transient systemd unit)
+    # ------------------------------------------------------------------
+    def _default_ref():
+        branch = git_info.get('branch')
+        if not branch or branch == 'HEAD':
+            return 'main'
+        return branch
+
+    def _version_payload():
+        return {'version': _software_version(),
+                'git': {'branch': git_info.get('branch'),
+                        'commit': git_info.get('commit')}}
+
+    @bp.route('/api/settings/update/start', methods=['POST'])
+    @guard
+    def update_start():
+        data = request.get_json(silent=True) or {}
+        ref = str(data.get('ref') or _default_ref())
+        if not software_update.valid_ref(ref):
+            return _fail(400, 'invalid_ref', f'Invalid ref: {ref!r}')
+        current = software_update.read_status(update_status_file)
+        if software_update.in_progress(current):
+            return _fail(409, 'in_progress',
+                         f"Update already in progress (status: {current['status']})")
+        state = (update_state_getter() if update_state_getter else None) or {}
+        transfer = (state.get('data_transfer') or {}).get('status', 'idle')
+        if transfer not in ('idle', 'complete', 'error'):
+            return _fail(409, 'data_transfer_busy',
+                         f'Data transfer in progress (status: {transfer})')
+        if not probe().get('reachable'):
+            return _fail(409, 'no_internet',
+                         'The OWL has no internet connection')
+        request_id = secrets.token_hex(8)
+        argv = software_update.update_argv(ref, request_id,
+                                           status_file=update_status_file)
+        if not software_update.sudo_permits(argv, runner):
+            return _fail(503, 'permissions_missing',
+                         UPDATE_PERMISSIONS_MISSING_ERROR)
+        try:
+            software_update.write_seed_status(update_status_file, request_id, ref)
+            software_update.launch(argv, popen)
+        except Exception as e:
+            log.error(f"Software update failed to launch: {e}")
+            return _fail(500, 'launch_failed',
+                         f'Failed to launch the updater: {e}')
+        log.warning(f"Software update launched from dashboard: ref={ref} "
+                    f"request_id={request_id}")
+        return jsonify({'success': True, 'request_id': request_id, 'ref': ref,
+                        'status': 'starting'}), 202
+
+    @bp.route('/api/settings/update/status')
+    def update_status():
+        """Mirror of the status file plus version/git. The first read of a
+        fresh `complete` schedules the dashboard's own restart (the script
+        only restarts owl.service) so the caller sees it coming."""
+        current = (software_update.read_status(update_status_file)
+                   or software_update.idle_status())
+        payload = {'success': True, 'update': current,
+                   'dashboard_restart_pending': False}
+        payload.update(_version_payload())
+        fresh_complete = (current['status'] == 'complete'
+                          and current['updated_at'] > started_at)
+        if fresh_complete and not restart_state['scheduled']:
+            systemctl = shutil.which('systemctl') or '/usr/bin/systemctl'
+            argv = ['/usr/bin/sudo', '-n', systemctl, 'restart', dashboard_unit]
+            if software_update.sudo_permits(argv, runner):
+                restart_state['scheduled'] = True
+
+                def _restart_dashboard():
+                    try:
+                        runner(argv, capture_output=True, text=True, timeout=30)
+                    except Exception as e:
+                        log.error(f"Dashboard restart after update failed: {e}")
+
+                timer = timer_factory(DASHBOARD_RESTART_DELAY_S, _restart_dashboard)
+                timer.daemon = True
+                timer.start()
+                log.warning("Update complete: restarting the dashboard")
+                payload['dashboard_restart_pending'] = True
+            else:
+                payload['warning'] = 'dashboard_restart_unavailable'
+        elif fresh_complete:
+            payload['dashboard_restart_pending'] = True
+        return jsonify(payload)
 
     # ------------------------------------------------------------------
     # Passwords

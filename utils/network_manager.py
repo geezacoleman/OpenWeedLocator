@@ -216,12 +216,13 @@ class NetworkManager:
 
     def add_wifi_connection(self, ssid, password=None, priority=CLIENT_CONNECTION_PRIORITY,
                             con_name=None, static_ip=None, gateway=None,
-                            prefix=24, dns=None):
+                            prefix=24, dns=None, autoconnect=True):
         """Create (or replace) a client WiFi profile. Does not activate it.
 
         With static_ip/gateway the profile uses a manual IPv4 config
         (networked-rig OWLs get controller-assigned static addresses);
-        otherwise DHCP.
+        otherwise DHCP. autoconnect=False is for throwaway profiles (the
+        phone-hotspot internet session) that must never win on boot.
         """
         con_name = con_name or ssid
         # Replace any stale profile with the same name
@@ -242,10 +243,11 @@ class NetworkManager:
                        'ipv4.dns', dns or gateway,
                        'ipv4.method', 'manual'])
         self._run(['con', 'modify', con_name,
-                   'connection.autoconnect', 'yes',
+                   'connection.autoconnect', 'yes' if autoconnect else 'no',
                    'connection.autoconnect-priority', str(priority)])
-        logger.info("Added wifi connection '%s' (priority %s%s)", con_name, priority,
-                    f', static {static_ip}' if static_ip else '')
+        logger.info("Added wifi connection '%s' (priority %s%s%s)", con_name, priority,
+                    f', static {static_ip}' if static_ip else '',
+                    '' if autoconnect else ', no autoconnect')
 
     def activate_connection(self, name, timeout=DEFAULT_ACTIVATE_TIMEOUT):
         """Activate a profile, blocking until connected. Returns True/False.

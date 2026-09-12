@@ -23,6 +23,7 @@ from utils.config_manager import (
     ConfigValidator,
 )
 from utils.directory_manager import scan_sessions, collect_session_files, select_preview_images
+from utils import software_update
 
 # Config keys whose live change requires re-deriving crop/lane/actuation geometry.
 # When any of these change via set_config_section we call owl.recompute_geometry()
@@ -1229,18 +1230,7 @@ class OWLMQTTPublisher:
                     # must be neither applied nor persisted (it would crash the
                     # next boot's config load).
                     try:
-                        if key == 'awb_mode':
-                            typed = str(value).strip().lower()
-                            if typed not in ConfigValidator.VALID_AWB_MODES:
-                                self.logger.warning(
-                                    f"Rejected invalid awb_mode '{value}' (valid: "
-                                    f"{', '.join(sorted(ConfigValidator.VALID_AWB_MODES))})")
-                                rejected_keys.add(key)
-                                continue
-                        elif key in ('awb_red_gain', 'awb_blue_gain'):
-                            typed = min(max(float(value), 0.1), 8.0)
-                        else:  # exp_compensation
-                            typed = min(max(int(float(value)), -10), 10)
+                        typed = ConfigValidator.coerce_camera_live_value(key, value)
                     except (ValueError, TypeError) as e:
                         self.logger.warning(f"Rejected {section}.{key}={value}: {e}")
                         rejected_keys.add(key)
@@ -1423,6 +1413,37 @@ class OWLMQTTPublisher:
                     # Update active_config.txt to point to the autosave file
                     self._handle_set_active_config(f'config/{AUTOSAVE_CONFIG}',
                                                    seed=False)
+                else:
+                    # Booted from the autosave, but the dashboard may have
+                    # repointed active_config.txt at a named profile since
+                    # (a profile switch re-seeds the autosave and pushes the
+                    # values live, without a restart). A live change written
+                    # here must survive the next boot, so the pointer has to
+                    # follow the working file; carry the on-disk provenance
+                    # across so the dashboard keeps showing "<profile> -
+                    # unsaved changes" rather than the boot-time source.
+                    pointer_path = os.path.join(config_dir, 'active_config.txt')
+                    try:
+                        with open(pointer_path) as f:
+                            pointed = os.path.basename(f.read().strip())
+                    except OSError:
+                        pointed = ''
+                    if pointed and pointed != AUTOSAVE_CONFIG:
+                        on_disk = configparser.ConfigParser()
+                        on_disk.optionxform = str
+                        on_disk.read(save_path)
+                        source = (on_disk.get('Meta', 'source', fallback=None)
+                                  if on_disk.has_section('Meta') else None)
+                        cfg = self.owl_instance.config
+                        with self.config_lock:
+                            if not cfg.has_section('Meta'):
+                                cfg.add_section('Meta')
+                            cfg.set('Meta', 'source', source or pointed)
+                        self.logger.info(
+                            f"active_config.txt pointed at {pointed}; repointing "
+                            f"to {AUTOSAVE_CONFIG} so live changes persist")
+                        self._handle_set_active_config(f'config/{AUTOSAVE_CONFIG}',
+                                                       seed=False)
 
             with self.config_lock:
                 atomic_write_config(
@@ -1603,19 +1624,20 @@ class OWLMQTTPublisher:
         self.logger.warning("Rebooting system...")
         self._run_power_command('reboot', ['sudo', '-n', reboot_bin])
 
-    # Software update — ref allowlist shared with owl_update.sh preflight
-    UPDATE_REF_PATTERN = r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$'
-    UPDATE_TERMINAL_STATUSES = ('idle', 'complete', 'rolled_back', 'error')
+    # Software update — shared with the dashboard's update routes
+    # (utils/software_update.py owns the argv, ref allowlist and status file)
+    UPDATE_REF_PATTERN = software_update.UPDATE_REF_PATTERN
+    UPDATE_TERMINAL_STATUSES = software_update.TERMINAL_STATUSES
 
     def _handle_update_software(self, command):
         """Launch owl_update.sh in a transient systemd unit.
 
         The script must run OUTSIDE owl.service's cgroup or systemd kills it
-        at its own restart step — hence systemd-run. The argv below must match
-        the sudoers entry installed by owl_cloud_provision.sh byte-for-byte.
+        at its own restart step — hence systemd-run. The argv comes from
+        software_update.update_argv and must match the sudoers entry
+        installed by setup.sh / owl_cloud_provision.sh byte-for-byte.
         Progress flows back via the status file read each heartbeat.
         """
-        import re
         import subprocess
 
         ref = str(command.get('ref', 'main'))
@@ -1631,7 +1653,7 @@ class OWLMQTTPublisher:
                 }
             self._publish_state()
 
-        if not re.match(self.UPDATE_REF_PATTERN, ref) or '..' in ref:
+        if not software_update.valid_ref(ref):
             _refuse(f"invalid ref: {ref!r}")
             return
         with self.state_lock:
@@ -1661,18 +1683,10 @@ class OWLMQTTPublisher:
         self._publish_state()
 
         try:
-            import getpass
-            user = getpass.getuser()
-            subprocess.Popen([
-                'sudo', '-n', '/usr/bin/systemd-run',
-                '--unit=owl-update', '--collect',
-                '--property=RuntimeMaxSec=1800',
-                f'--uid={user}', f'--gid={user}',
-                '/bin/bash', str(script),
-                '--unattended', '--ref', ref,
-                '--request-id', request_id,
-                '--status-file', str(self._update_status_path),
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            argv = software_update.update_argv(
+                ref, request_id, script=script,
+                status_file=self._update_status_path)
+            software_update.launch(argv, subprocess.Popen)
             self.logger.warning(f"Software update launched: ref={ref} request_id={request_id}")
         except Exception as e:
             _refuse(f"failed to launch updater: {e}")
@@ -1692,24 +1706,13 @@ class OWLMQTTPublisher:
         stamp = (st.st_mtime_ns, st.st_size)
         if stamp == self._update_status_stamp:
             return
-        try:
-            with open(self._update_status_path) as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
-            self.logger.debug(f"Could not read update status file: {e}")
+        data = software_update.read_status(self._update_status_path)
+        if data is None:
+            self.logger.debug("Could not read update status file")
             return  # keep previous state, retry next heartbeat
         self._update_status_stamp = stamp
         with self.state_lock:
-            self.state['software_update'] = {
-                'request_id': str(data.get('request_id', '')),
-                'status': str(data.get('status', 'idle')),
-                'ref': str(data.get('ref', '')),
-                'from': str(data.get('from', '')),
-                'to': str(data.get('to', '')),
-                'error': str(data.get('error', '')),
-                'rollback_failed': bool(data.get('rollback_failed', False)),
-                'updated_at': int(data.get('updated_at', 0)),
-            }
+            self.state['software_update'] = data
 
     def _populate_version_info(self):
         """Fill version/git/hardware fields in state. Never raises —
