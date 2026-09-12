@@ -29,7 +29,10 @@ def get_python_env():
 
 def setup_basic_logger():
     """Simple startup logger that uses the same file as LogManager"""
-    log_dir = Path(os.getcwd()) / 'logs'
+    # Beside owl.py, not in the working directory: LogManager writes here
+    # too, and `python /path/to/owl.py` from elsewhere (common on a laptop)
+    # must not scatter half-written logs/ folders around the filesystem.
+    log_dir = Path(__file__).resolve().parent / 'logs'
     log_dir.mkdir(exist_ok=True)
 
     file_handler = logging.FileHandler(log_dir / 'owl.jsonl')
@@ -104,6 +107,22 @@ def nothing(x):
     pass
 
 
+def has_gui_support():
+    """True when this OpenCV build can open windows.
+
+    Headless builds (opencv-python-headless, a Pi over SSH with no display,
+    CI) raise cv2.error from any highgui call. Probing once here keeps
+    --show-display from killing OWL on those setups - the detection loop
+    runs exactly the same, just without the preview window.
+    """
+    try:
+        cv2.namedWindow('owl_gui_probe', cv2.WINDOW_AUTOSIZE)
+        cv2.destroyWindow('owl_gui_probe')
+        return True
+    except Exception:
+        return False
+
+
 class Owl:
     def __init__(self, show_display=False,
                  input_file_or_directory=None,
@@ -172,7 +191,7 @@ class Owl:
             self.min_detection_area_percent = migrated
             self.config.set('GreenOnBrown', 'min_detection_area_percent',
                             f'{migrated:.4f}')
-            self.logger.log_line(
+            self.logger.info(
                 f'[CONFIG] migrated legacy min_detection_area '
                 f'{self.min_detection_area}px -> {migrated:.4f}% of frame')
         self.invert_hue = self.config.getboolean('GreenOnBrown', 'invert_hue')
@@ -196,7 +215,16 @@ class Owl:
         # time spent on each image when looping over a directory
         self.image_loop_time = self.config.getint('Visualisation', 'image_loop_time')
 
-        # setup the track bars if show_display is True
+        # setup the track bars if show_display is True. A headless OpenCV
+        # build (or no display attached) cannot open windows, so fall back to
+        # running without the preview instead of crashing at startup.
+        if self.show_display and not has_gui_support():
+            self.logger.warning(
+                'Display requested but this OpenCV build has no GUI support '
+                '(headless install or no display attached). Continuing without '
+                'the preview window.')
+            self.show_display = False
+
         if self.show_display:
             # create trackbars for the threshold calculation
             self.window_name = "Adjust Detection Thresholds"
@@ -580,9 +608,12 @@ class Owl:
             self.logger.warning(
                 f'High-res override active on {self.RPI_VERSION} at {self.resolution[0]}x{self.resolution[1]} '
                 f'- expect low framerate and verify camera stability.')
-        else:
+        elif total_pixels > (832 * 640):
             self.logger.warning(
                 f'High resolution, expect low framerate. Resolution set to {self.resolution[0]}x{self.resolution[1]}.')
+        else:
+            self.logger.info(
+                f'Resolution set to {self.resolution[0]}x{self.resolution[1]}.')
 
         self.frame_width = None
         self.frame_height = None
@@ -1368,7 +1399,9 @@ class Owl:
                     display_frame = cv2.resize(image_out, (600, int(h * 600 / w))) if w != 600 else image_out
                     cv2.imshow("Detection Output", display_frame)
 
-                k = cv2.waitKey(1) & 0xFF
+                # Key handling only makes sense with a window open. waitKey()
+                # raises on headless OpenCV builds, so never call it otherwise.
+                k = cv2.waitKey(1) & 0xFF if self.show_display else 255
                 if k == ord('s'):
                     self.save_parameters()
                     self.logger.info("[INFO] Parameters saved.")

@@ -256,9 +256,15 @@ class AdvancedController:
             self.logger.error(f"Error in set_detection_mode: {e}", exc_info=True)
 
     def update_detection_mode_state(self):
-        if self.detection_mode_switch_up.is_pressed:
+        # Off-Pi (testing=True) the switches are None: the three-position
+        # switch reads as centre/off, matching the recording and sensitivity
+        # switches above, instead of raising on every state update.
+        up = self.detection_mode_switch_up is not None and self.detection_mode_switch_up.is_pressed
+        down = self.detection_mode_switch_down is not None and self.detection_mode_switch_down.is_pressed
+
+        if up:
             self.set_detection_mode(2)  # All solenoids on
-        elif self.detection_mode_switch_down.is_pressed:
+        elif down:
             self.set_detection_mode(0)  # Detection on
         else:
             self.set_detection_mode(1)  # Off

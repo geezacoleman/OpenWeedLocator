@@ -59,22 +59,41 @@ class TestBuzzer:
                 print('BEEP')
 
 class TestLED:
+    """Stand-in for gpiozero.LED when no GPIO is available.
+
+    Mirrors the gpiozero API closely enough for the status/GPS indicator
+    threads to run unchanged on a laptop:
+      * state changes are logged at DEBUG, never printed - the GPS LED thread
+        drives off() twice a second and printing each call buried the real
+        console output;
+      * background=False blinks block for the blink duration, as gpiozero
+        does, so indicator threads sleep instead of spinning the CPU.
+    """
+
     def __init__(self, pin):
         self.pin = pin
+        self.is_lit = False
 
     def blink(self, on_time=0.1, off_time=0.1, n=1, verbose=False, background=True):
         if n is None:
             n = 1
 
-        for i in range(n):
-            if verbose:
+        if verbose:
+            for _ in range(n):
                 print(f'BLINK {self.pin}')
 
+        if not background:
+            time.sleep(n * ((on_time or 0) + (off_time or 0)))
+
     def on(self):
-        print(f'LED {self.pin} ON')
+        if not self.is_lit:
+            self.is_lit = True
+            logger.debug(f'[TEST] LED {self.pin} ON')
 
     def off(self):
-        print(f'LED {self.pin} OFF')
+        if self.is_lit:
+            self.is_lit = False
+            logger.debug(f'[TEST] LED {self.pin} OFF')
 
 
 class BaseStatusIndicator:
