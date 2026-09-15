@@ -151,7 +151,6 @@ cython_debug/
 .htpasswd-*
 
 # OWL configuration (created by setup.sh, contains site-specific settings)
-config/CONTROLLER.ini
 config/CONTROLLER.ini.pre-join.bak
 
 # Fleet roster (device state written by the phone app's add-an-OWL flow)
@@ -159,10 +158,14 @@ config/fleet.json
 
 # Per-unit mount geometry (device-resident; created on first use of the geometry
 # editor). See config/GEOMETRY_TEMPLATE.ini for a documented reference.
-config/GEOMETRY.ini
 
-# User-saved config presets (created from dashboard Save As)
-config/config_*
+# Everything in config/ is per-device state unless re-included below.
+# build_config_filename() emits '<name>_<timestamp>.ini' and bare '<name>.ini'
+# for Save As, so the old 'config/config_*' pattern missed every named preset.
+config/*.ini
+!config/GENERAL_CONFIG.ini
+!config/CONTROLLER_TEMPLATE.ini
+!config/GEOMETRY_TEMPLATE.ini
 
 # Active-config pointer (device state written by the dashboard; readers fall
 # back to config/GENERAL_CONFIG.ini when it's absent, so a fresh clone needs
@@ -177,11 +180,13 @@ uploads/lut_profiles/
 # OWL collected images (created during detection/recording)
 owl_data/
 
-# OWL non-template log files
+# OWL non-template log files, including RotatingFileHandler backups
 owl.jsonl
+logs/*.jsonl.[0-9]*
 
 # Agent runtime data (directory structure kept, contents ignored)
 agent/widgets/*/
+agent/widgets/.gitkeep
 agent/sessions/
 
 # Custom algorithms (user-generated via agent)
@@ -201,12 +206,19 @@ tmpclaude-*
 /agent_sessions/
 /docs/
 /examples/
-/config/DESKTOP_TEST.ini
-/benchmarks/results/
 .idea
 /tests/e2e/screenshots/
 
-/benchmarks/
-/widgets/
+# Loose benchmark run outputs. NOT /benchmarks/ wholesale: the bench
+# scripts and benchmarks/results/*.json are tracked deliberately.
+benchmarks/*.json
+benchmarks/results/*.json
+benchmarks/results/*.png
 /controller/networked/tracks/
+
+# Separate clone of the openweedlocator-docs repository
+/readthedocs/
 /tracks/
+
+# Separate clone of the openweedlocator-docs repository
+/readthedocs/

@@ -1135,7 +1135,7 @@ delay = 0.0
 # Speed-adaptive actuation geometry
 actuation_length_cm = 10
 offset_cm = 30
-speed_avg_window = 5.0
+speed_avg_window = 2.0
 EOF
 
     chown "${CURRENT_USER}:${CURRENT_USER}" "$CTRL_INI"

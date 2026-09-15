@@ -27,6 +27,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from utils.greenonbrown import GreenOnBrown
+from utils.geometry import assign_lanes
 
 BENCHMARK_DIR = PROJECT_ROOT / 'benchmarks'
 BENCHMARK_DIR.mkdir(exist_ok=True)
@@ -79,17 +80,23 @@ def compute_lane_coords(width, relay_num):
 
 
 def run_actuation_logic(weed_centres, lane_coords_int, lane_width, relay_num, actuation_y_thresh=0):
-    """Simulate the actuation logic from owl.py hoot() loop (set-deduplicated)."""
+    """Lane assignment exactly as owl.py runs it.
+
+    This was a hand-copied replica of the hoot() loop and it drifted: it kept
+    filtering on a single lower threshold long after the product moved to a
+    top-and-bottom band, so these tests validated behaviour the OWL no longer
+    had. It now delegates to the shared implementation, which owl.py also
+    calls, so the two cannot disagree again. `actuation_y_thresh` maps to the
+    band's top edge with no bottom, preserving the original intent of the
+    tests that call this.
+    """
     if not weed_centres:
         return []
-    fired = set()
-    for centre in weed_centres:
-        if centre[1] >= actuation_y_thresh:
-            relay_id = min(int(centre[0] / lane_width), relay_num - 1)
-            fired.add(relay_id)
-    return sorted(fired)
+    return sorted(assign_lanes(weed_centres, lane_width, relay_num,
+                               actuation_y_thresh, float('inf')))
 
 
+@pytest.mark.benchmark
 class TestGreenOnBrownPerformance:
     """Benchmark GreenOnBrown inference and actuation logic."""
 
@@ -449,6 +456,7 @@ class TestActuationZoneFilter:
         assert len(fired) == 2
 
 
+@pytest.mark.benchmark
 class TestCCABenchmark:
     """Benchmark CCA vs findContours blob extraction — full pipeline breakdown.
 

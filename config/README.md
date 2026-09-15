@@ -52,7 +52,7 @@ Defaults shown are from `GENERAL_CONFIG.ini`.
 
 | Key | Default | Range / Valid values | Description |
 |-----|---------|---------------------|-------------|
-| `algorithm` | `exhsv` | `exg`, `exgr`, `maxg`, `nexg`, `exhsv`, `hsv`, `gndvi`, `gog`, `gog-hybrid` | Detection algorithm (see table below) |
+| `algorithm` | `exhsv` | `exg`, `exhsv`, `hsv`, `lut`, `gog`, `gog-hybrid` | Detection algorithm (see table below) |
 | `input_file_or_directory` | *(empty)* | File or directory path | Path to video, image, or directory for offline processing. Leave empty for live camera |
 | `relay_num` | `4` | 0+ (integer) | Number of relays connected to the OWL. Must match entries in `[Relays]` |
 | `actuation_duration` | `0.15` | Seconds (float) | How long each relay stays on when a weed is detected |
@@ -66,12 +66,9 @@ Defaults shown are from `GENERAL_CONFIG.ini`.
 | Algorithm | Name | Formula / Method | Notes |
 |-----------|------|-----------------|-------|
 | `exg` | Excess Green | 2g - r - b | Simple and fast. Woebbecke et al. 1995 |
-| `exgr` | Excess Green minus Excess Red | ExG - (1.4r - g) | Better soil rejection than ExG alone |
-| `maxg` | Maximum Green | 24g - 19r - 2b | Jin et al. 2021 |
-| `nexg` | Normalised Excess Green | Standardised ExG using channel ratios | Less sensitive to lighting variation |
 | `exhsv` | ExG + HSV combined | Normalised ExG masked by HSV thresholds | **Default.** Best balance of accuracy and robustness |
 | `hsv` | HSV thresholding | Hue/Saturation/Value range filter | Fast, but sensitive to lighting changes |
-| `gndvi` | Green NDVI | (NIR - green) / (NIR + green) | **Requires NIR camera.** Not for standard setups |
+| `lut` | Painted look-up table | 32x32x32 BGR table baked from operator weed/background strokes | Set `lut_profile` and `lut_sensitivity` in `[GreenOnBrown]` |
 | `gog` | Green-on-Green | Ultralytics YOLO object detection | For in-crop weed detection. Requires a trained model (see `[GreenOnGreen]`) |
 | `gog-hybrid` | AI + Colour | YOLO crop mask + ExHSV colour detection | Uses YOLO to identify crop regions, then runs ExHSV on non-crop areas. Best of both worlds for in-crop scenarios |
 
@@ -105,7 +102,7 @@ Higher resolution gives better detection of small weeds but is slower. The dashb
 
 ### `[GreenOnBrown]`
 
-Used by all algorithms except `gog`. The ExG thresholds are used by `exg`, `exgr`, `maxg`, `nexg`, `exhsv`, and `gndvi`. The HSV thresholds are used by `hsv` and `exhsv`.
+Used by all algorithms except `gog`. The ExG thresholds are used by `exg` and `exhsv`. The HSV thresholds are used by `hsv` and `exhsv`.
 
 | Key | Default | Range | Description |
 |-----|---------|-------|-------------|

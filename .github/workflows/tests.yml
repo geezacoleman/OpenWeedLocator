@@ -2,7 +2,7 @@ name: Tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, display-bug]
   pull_request:
     branches: [main]
 
@@ -18,8 +18,16 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
+        # From the requirements file, not a hand-written list. The list drifted:
+        # it omitted piexif, which utils/image_sampler.py imports at module
+        # scope, so test_image_exif / test_basic_modes / test_internal_storage
+        # would all fail here. opencv-python-headless replaces opencv-python
+        # because the runner has no display.
         run: |
-          pip install pytest flask paho-mqtt opencv-python-headless numpy pandas Pillow matplotlib psutil
+          pip install pytest
+          pip install -r non_rpi_requirements.txt
+          pip uninstall -y opencv-python
+          pip install opencv-python-headless
 
       - name: Create runtime stubs
         run: |

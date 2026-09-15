@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 VALID_TIERS = frozenset({'observe', 'apply', 'developer'})
 
 VALID_ALGORITHMS = frozenset({
-    'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'gog', 'gog-hybrid',
+    'exg', 'exhsv', 'hsv', 'gog', 'gog-hybrid',
 })
 
 PROTECTED_SECTIONS = frozenset({'Relays', 'MQTT', 'Network', 'WebDashboard'})

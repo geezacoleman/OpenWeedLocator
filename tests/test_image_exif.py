@@ -229,12 +229,18 @@ class TestFailSafeOmission:
         assert jpeg_bytes[:2] == b'\xff\xd8'                       # valid JPEG SOI
         assert Image.open(__import__('io').BytesIO(jpeg_bytes)).size == (32, 24)
 
-    def test_oversized_metadata_omits_usercomment_keeps_datetime(self):
-        # A very large camera_metadata payload is dropped from UserComment, but the
-        # structured "Date Taken" tag still survives (bounded EXIF stays in limits).
-        big_meta = {'blob': 'x' * 20000}
+    def test_oversized_metadata_trims_usercomment_keeps_datetime(self):
+        # v3.16: an oversized payload is TRIMMED, not discarded. The offending
+        # key goes, a truncation marker says so, and the structured "Date Taken"
+        # tag is untouched. Dropping the whole field used to throw away every
+        # other key alongside the one that overflowed.
+        big_meta = {'ExposureTime': 1250, 'blob': 'x' * 20000}
         exif = _load(build_exif_bytes(camera_metadata=big_meta, capture_time=CAPTURE_TIME))
-        assert piexif.ExifIFD.UserComment not in exif['Exif']
+        comment = piexif.helper.UserComment.load(exif['Exif'][piexif.ExifIFD.UserComment])
+        payload = json.loads(comment)
+        assert payload['ExposureTime'] == 1250
+        assert payload['metadata_truncated'] is True
+        assert 'blob' not in payload
         assert piexif.ExifIFD.DateTimeOriginal in exif['Exif']
 
     def test_gps_without_coordinates_omits_gps_ifd(self):
@@ -448,3 +454,114 @@ class TestLocationSidecar:
         recorder.process_frame(frame, 1, None, None, gps,
                                None, None, CAPTURE_TIME)
         assert self._lines(tmp_path)[0]['source'] == 'dashboard'
+
+
+# ---------------------------------------------------------------------------
+# v3.16 enrichment: region provenance, and trimming instead of dropping
+# ---------------------------------------------------------------------------
+
+def _description(path):
+    """The ImageDescription JSON from a saved file."""
+    exif = piexif.load(str(path))
+    return json.loads(exif['0th'][piexif.ImageIFD.ImageDescription])
+
+
+@pytest.mark.unit
+class TestRegionProvenance:
+    """Every saved image records the frame it came from and where in it.
+
+    A bbox/square crop was previously untraceable: nothing in the file said
+    which part of which frame it was, so it could not be re-labelled against
+    the original or checked for surrounding context.
+    """
+
+    def _recorder(self, tmp_path, mode):
+        from utils.image_sampler import ImageRecorder
+        recorder = ImageRecorder.__new__(ImageRecorder)
+        recorder.save_directory = str(tmp_path)
+        recorder.mode = mode
+        return recorder
+
+    def test_whole_frame_roi_covers_the_frame(self, tmp_path):
+        recorder = self._recorder(tmp_path, 'whole')
+        recorder.process_frame(np.zeros((24, 32, 3), dtype=np.uint8), 1, None, None,
+                               FULL_GPS, FULL_CAMERA, FULL_CONTEXT, CAPTURE_TIME)
+        desc = _description(list(tmp_path.glob('*.jpg'))[0])
+        assert (desc['source_width'], desc['source_height']) == (32, 24)
+        assert (desc['roi_x'], desc['roi_y']) == (0, 0)
+        assert (desc['roi_width'], desc['roi_height']) == (32, 24)
+
+    def test_bbox_crop_records_its_position_in_the_source(self, tmp_path):
+        recorder = self._recorder(tmp_path, 'bbox')
+        boxes = [(4, 3, 10, 8), (16, 2, 6, 6)]
+        recorder.process_frame(np.zeros((24, 32, 3), dtype=np.uint8), 1, boxes, None,
+                               FULL_GPS, FULL_CAMERA, FULL_CONTEXT, CAPTURE_TIME)
+        files = sorted(tmp_path.glob('*.jpg'))
+        assert len(files) == 2
+        regions = [(d['roi_x'], d['roi_y'], d['roi_width'], d['roi_height'])
+                   for d in (_description(f) for f in files)]
+        assert sorted(regions) == sorted(boxes)
+        # every crop still records the full frame it was taken from
+        for f in files:
+            desc = _description(f)
+            assert (desc['source_width'], desc['source_height']) == (32, 24)
+
+    def test_every_crop_carries_the_capture_time(self, tmp_path):
+        """The #206 fix must hold for crops, not just whole frames."""
+        recorder = self._recorder(tmp_path, 'bbox')
+        recorder.process_frame(np.zeros((24, 32, 3), dtype=np.uint8), 1,
+                               [(4, 3, 10, 8), (16, 2, 6, 6)], None,
+                               FULL_GPS, FULL_CAMERA, FULL_CONTEXT, CAPTURE_TIME)
+        for f in tmp_path.glob('*.jpg'):
+            exif = piexif.load(str(f))
+            assert piexif.ExifIFD.DateTimeOriginal in exif['Exif']
+
+    def test_square_crop_records_a_region_inside_the_source(self, tmp_path):
+        recorder = self._recorder(tmp_path, 'square')
+        recorder.process_frame(np.zeros((240, 320, 3), dtype=np.uint8), 1, None,
+                               [[160, 120]], FULL_GPS, FULL_CAMERA, FULL_CONTEXT,
+                               CAPTURE_TIME)
+        desc = _description(list(tmp_path.glob('*.jpg'))[0])
+        assert desc['roi_width'] > 0 and desc['roi_height'] > 0
+        assert 0 <= desc['roi_x'] <= desc['source_width'] - desc['roi_width']
+        assert 0 <= desc['roi_y'] <= desc['source_height'] - desc['roi_height']
+
+
+@pytest.mark.unit
+class TestOversizeTrimming:
+    """Overflow trims the least important keys; it must not drop the field.
+
+    The old behaviour discarded the whole tag, losing the detection settings
+    along with whatever caused the overflow.
+    """
+
+    def test_huge_free_text_keeps_the_settings(self):
+        from utils.image_sampler import _MAX_EXIF_JSON
+        context = dict(FULL_CONTEXT, algorithm='exhsv', exg_min=25, exg_max=200,
+                       session_id='session_101010',
+                       field_name='x' * (_MAX_EXIF_JSON + 500))
+        exif = piexif.load(build_exif_bytes(context=context, capture_time=CAPTURE_TIME))
+        desc = json.loads(exif['0th'][piexif.ImageIFD.ImageDescription])
+        assert desc['exg_min'] == 25
+        assert desc['exg_max'] == 200
+        assert desc['session_id'] == 'session_101010'
+        assert desc['metadata_truncated'] is True
+        assert 'field_name' not in desc
+
+    def test_biggest_value_is_dropped_first(self):
+        from utils.image_sampler import _MAX_EXIF_JSON
+        context = {'algorithm': 'exhsv',
+                   'weather': 'sunny',
+                   'vehicle': 'y' * (_MAX_EXIF_JSON + 500)}
+        exif = piexif.load(build_exif_bytes(context=context, capture_time=CAPTURE_TIME))
+        desc = json.loads(exif['0th'][piexif.ImageIFD.ImageDescription])
+        assert desc['weather'] == 'sunny'      # small key survives
+        assert 'vehicle' not in desc           # the oversized one went
+
+    def test_oversize_camera_metadata_keeps_the_date(self):
+        from utils.image_sampler import _MAX_EXIF_JSON
+        camera = dict(FULL_CAMERA, Noise='z' * (_MAX_EXIF_JSON + 500))
+        exif = piexif.load(build_exif_bytes(camera_metadata=camera,
+                                            capture_time=CAPTURE_TIME))
+        assert piexif.ExifIFD.DateTimeOriginal in exif['Exif']
+        assert piexif.ExifIFD.ExposureTime in exif['Exif']

@@ -31,6 +31,9 @@ fi
 NONINTERACTIVE=0
 ARM_FIRSTBOOT=0
 ASSUME_YES=0
+# Issue #208: the firewall step resets UFW, wiping any hand-added VNC rule.
+# Off unless the user opts in, so production units stay closed by default.
+ALLOW_VNC=0
 CLI_MODE=""
 CLI_SSID=""
 CLI_PASSWORD=""
@@ -45,6 +48,7 @@ usage() {
     echo "  --password PSK            hotspot password (min 8 chars)"
     echo "  --arm-firstboot           arm phone-app first-boot setup at the end"
     echo "  --yes                     skip confirmation + reboot prompts"
+    echo "  --allow-vnc               open port 5900 in the firewall (default closed)"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -55,6 +59,7 @@ while [[ $# -gt 0 ]]; do
         --owl-id) CLI_OWL_ID="$2"; shift 2 ;;
         --arm-firstboot) ARM_FIRSTBOOT=1; shift ;;
         --yes) ASSUME_YES=1; shift ;;
+        --allow-vnc) ALLOW_VNC=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo -e "${RED}[ERROR] Unknown option: $1${NC}"; usage; exit 1 ;;
     esac
@@ -546,6 +551,16 @@ collect_user_input() {
         echo ""
     fi
 
+    # Optional VNC (issue #208). The firewall step below resets UFW, which wipes
+    # any rule the user added by hand, so RealVNC stops working after every run.
+    # Defaults to no, and is skipped entirely in non-interactive/factory mode.
+    echo ""
+    read -p "Allow VNC remote desktop (port 5900) through the firewall? (y/n, default: n): " vnc_choice
+    if [[ "$vnc_choice" =~ ^[Yy]$ ]]; then
+        ALLOW_VNC=1
+        echo -e "${GREEN}[INFO] VNC port 5900 will be opened${NC}"
+    fi
+
     read -p "Continue with these settings? (y/n): " confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
         echo -e "${RED}[ERROR] Setup cancelled by user.${NC}"
@@ -734,9 +749,9 @@ static_ip = ${NET_STATIC_IP}
 controller_ip = ${NET_CONTROLLER_IP}
 
 [GPS]
-# GPS data source (none / serial / tcp / gpsd)
+# GPS data source (none / serial / nrf91 / tcp / gpsd)
 source = none
-# Serial GPS settings (only when source = serial)
+# Serial GPS settings (only when source = serial or nrf91)
 port = /dev/ttyACM0
 baudrate = 9600
 
@@ -755,7 +770,7 @@ delay = 0.0
 # Speed-adaptive actuation geometry
 actuation_length_cm = 10
 offset_cm = 30
-speed_avg_window = 5.0
+speed_avg_window = 2.0
 EOF
 
     # The owl/owl-dash services run as ${CURRENT_USER} and configparser
@@ -955,6 +970,12 @@ sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
 sudo ufw allow 1883/tcp
 sudo ufw allow 8500/tcp  # GPS NMEA forwarding from Teltonika router
+
+# Optional VNC (issue #208) — only when explicitly requested
+if [[ "$ALLOW_VNC" == "1" ]]; then
+    sudo ufw allow 5900/tcp comment 'VNC remote desktop'
+    echo -e "${GREEN}[INFO] VNC port 5900 opened${NC}"
+fi
 
 if [[ "$OWL_MODE" == "standalone" ]]; then
     echo -e "${GREEN}[INFO] Configuring UFW for standalone mode...${NC}"

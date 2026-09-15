@@ -161,8 +161,8 @@ class TestRelayController:
     def _record_switching(self, rc):
         """Wrap the relay board calls so tests can assert real switching events."""
         events = []
-        rc.relay.relay_on = lambda relay, verbose=True: events.append(('on', relay, time.time()))
-        rc.relay.relay_off = lambda relay, verbose=True: events.append(('off', relay, time.time()))
+        rc.relay.relay_on = lambda relay, verbose=True: events.append(('on', relay, time.monotonic()))
+        rc.relay.relay_off = lambda relay, verbose=True: events.append(('off', relay, time.monotonic()))
         return events
 
     def test_init_creates_consumer_threads(self):
@@ -176,7 +176,7 @@ class TestRelayController:
 
     def test_receive_opens_window(self):
         rc = self._make_controller()
-        t = time.time()
+        t = time.monotonic()
         rc.receive(relay=0, time_stamp=t, delay=0, duration=5)
         schedule = rc.relay_schedule_dict[0]
         assert schedule['on_at'] == pytest.approx(t, abs=0.001)
@@ -185,7 +185,7 @@ class TestRelayController:
 
     def test_overlapping_windows_merge_and_extend(self):
         rc = self._make_controller()
-        t = time.time()
+        t = time.monotonic()
         rc.receive(relay=0, time_stamp=t, delay=0, duration=5)
         rc.receive(relay=0, time_stamp=t + 0.5, delay=0, duration=5)
         schedule = rc.relay_schedule_dict[0]
@@ -197,7 +197,7 @@ class TestRelayController:
         """A mid-stream GPS speed update lowering duration must not cut short
         spray that was already promised (the field off-blip bug)."""
         rc = self._make_controller()
-        t = time.time()
+        t = time.monotonic()
         rc.receive(relay=0, time_stamp=t, delay=0, duration=5)
         rc.receive(relay=0, time_stamp=t + 0.1, delay=0, duration=0.05)
         schedule = rc.relay_schedule_dict[0]
@@ -207,7 +207,7 @@ class TestRelayController:
     def test_stale_window_ignored(self):
         """A detection whose whole window is already in the past schedules nothing."""
         rc = self._make_controller()
-        rc.receive(relay=0, time_stamp=time.time() - 10, delay=0, duration=1)
+        rc.receive(relay=0, time_stamp=time.monotonic() - 10, delay=0, duration=1)
         schedule = rc.relay_schedule_dict[0]
         assert schedule['off_at'] is None
         rc.stop()
@@ -219,7 +219,7 @@ class TestRelayController:
         events = self._record_switching(rc)
         last_t = None
         for _ in range(8):
-            last_t = time.time()
+            last_t = time.monotonic()
             rc.receive(relay=0, time_stamp=last_t, delay=0, duration=0.3)
             time.sleep(0.05)
         time.sleep(0.6)  # let the final window close
@@ -246,7 +246,7 @@ class TestRelayController:
         events = self._record_switching(rc)
         last_t = None
         for _ in range(6):
-            last_t = time.time()
+            last_t = time.monotonic()
             rc.receive(relay=0, time_stamp=last_t, delay=0.2, duration=0.05)
             time.sleep(0.1)
         time.sleep(0.6)  # let the final window close
@@ -264,11 +264,11 @@ class TestRelayController:
         promised has finished (the visible off-blip on the sprayer)."""
         rc = self._make_controller()
         events = self._record_switching(rc)
-        t = time.time()
+        t = time.monotonic()
         rc.receive(relay=0, time_stamp=t, delay=0, duration=0.6)
         time.sleep(0.1)
         # New detection arrives carrying a much smaller duration (speed rose)
-        rc.receive(relay=0, time_stamp=time.time(), delay=0, duration=0.05)
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=0.05)
         time.sleep(0.2)  # t+0.3: well inside the original 0.6s window
         assert not any(e[0] == 'off' and e[1] == 0 for e in events), (
             "duration drop cut short an active spray window"
@@ -282,7 +282,7 @@ class TestRelayController:
     def test_relay_turns_off_after_window(self):
         rc = self._make_controller()
         events = self._record_switching(rc)
-        rc.receive(relay=0, time_stamp=time.time(), delay=0, duration=0.15)
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=0.15)
         time.sleep(0.5)
         assert events, "relay never switched"
         assert events[-1][0] == 'off'
@@ -292,7 +292,7 @@ class TestRelayController:
     def test_delay_defers_activation(self):
         rc = self._make_controller()
         events = self._record_switching(rc)
-        t = time.time()
+        t = time.monotonic()
         rc.receive(relay=0, time_stamp=t, delay=0.3, duration=0.2)
         time.sleep(0.1)
         assert not any(e[0] == 'on' for e in events), "fired before delay elapsed"
@@ -306,7 +306,7 @@ class TestRelayController:
         """Two relays activated simultaneously should not interfere."""
         rc = self._make_controller()
         events = self._record_switching(rc)
-        t = time.time()
+        t = time.monotonic()
         rc.receive(relay=0, time_stamp=t, delay=0, duration=0.1)
         rc.receive(relay=1, time_stamp=t, delay=0, duration=0.1)
         time.sleep(0.4)
@@ -319,7 +319,7 @@ class TestRelayController:
         """stop() must never leave a nozzle on."""
         rc = self._make_controller()
         events = self._record_switching(rc)
-        rc.receive(relay=0, time_stamp=time.time(), delay=0, duration=5)
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=5)
         time.sleep(0.1)
         assert any(e[0] == 'on' for e in events)
         rc.stop()
@@ -573,3 +573,158 @@ class TestStorageWatchdogResilience:
         assert len(failures) == 1
         assert len(recoveries) == 1
         indicator.stop()
+
+
+@pytest.mark.unit
+class TestNozzleSwitchFailure:
+    """A switching failure must never leave a nozzle energised and unattended.
+
+    The consumer thread had no exception handling: a raise from the GPIO call
+    killed the thread, and if it happened while the nozzle was on it stayed on
+    until the process ended, silently, with the main loop still running.
+    """
+
+    def _make_controller(self):
+        from utils.output_manager import RelayController
+        return RelayController({0: 13}, vis=False)
+
+    def test_indicator_failure_does_not_strand_the_nozzle(self):
+        """An LED/visualiser fault must not stop the nozzle switching off."""
+        rc = self._make_controller()
+        events = []
+        rc.relay.relay_on = lambda relay, verbose=True: events.append(('on', relay))
+        rc.relay.relay_off = lambda relay, verbose=True: events.append(('off', relay))
+
+        class BrokenLED:
+            def blink(self, **kwargs):
+                raise RuntimeError('LED sysfs gone')
+
+        rc.status_led = BrokenLED()
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=0.1)
+        time.sleep(0.4)
+        rc.stop()
+        time.sleep(0.1)
+
+        assert ('on', 0) in events, 'nozzle never fired'
+        assert events[-1] == ('off', 0), f'nozzle not switched off: {events}'
+
+    def test_consumer_survives_a_raising_switch_and_still_turns_off(self):
+        """If switching ON raises, the thread must stay alive and force OFF."""
+        rc = self._make_controller()
+        events = []
+        state = {'fail_on': True}
+
+        def relay_on(relay, verbose=True):
+            events.append(('on', relay))
+            if state['fail_on']:
+                raise RuntimeError('lgpio busy')
+
+        rc.relay.relay_on = relay_on
+        rc.relay.relay_off = lambda relay, verbose=True: events.append(('off', relay))
+
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=0.1)
+        time.sleep(0.4)
+
+        # the thread must still be running its window, not dead
+        assert ('off', 0) in events, f'nozzle never turned off after a failure: {events}'
+        rc.stop()
+        time.sleep(0.1)
+
+    def test_stop_still_turns_off_after_an_earlier_failure(self):
+        rc = self._make_controller()
+        events = []
+        rc.relay.relay_on = lambda relay, verbose=True: events.append(('on', relay))
+        rc.relay.relay_off = lambda relay, verbose=True: events.append(('off', relay))
+
+        class BrokenVis:
+            def update(self, **kwargs):
+                raise RuntimeError('vis dead')
+
+        rc.vis = True
+        rc.relay_vis = BrokenVis()
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=5)
+        time.sleep(0.2)
+        rc.stop()
+        time.sleep(0.2)
+        assert events[-1] == ('off', 0), f'stop() left the nozzle on: {events}'
+
+    def test_failed_off_is_retried_not_left_energised(self):
+        """A failing off must be retried, not slept on with a live nozzle."""
+        rc = self._make_controller()
+        events = []
+        state = {'fail': True}
+
+        def relay_off(relay, verbose=True):
+            events.append(('off', relay))
+            if state['fail']:
+                raise RuntimeError('gpio busy')
+
+        rc.relay.relay_on = lambda relay, verbose=True: events.append(('on', relay))
+        rc.relay.relay_off = relay_off
+
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=0.1)
+        time.sleep(0.6)
+        first_attempts = [e for e in events if e[0] == 'off']
+        assert len(first_attempts) >= 2, (
+            f'off should be retried while it keeps failing, got {events}')
+
+        # once the hardware recovers, the nozzle actually goes off
+        state['fail'] = False
+        time.sleep(1.3)
+        rc.stop()
+        time.sleep(0.1)
+        assert events[-1] == ('off', 0)
+
+
+@pytest.mark.unit
+class TestStaleAnchorCost:
+    """What a timestamp taken earlier than the receive() call actually costs.
+
+    These pin down why owl.py stamps `actuation_time` AFTER detection rather
+    than at frame capture. Anchoring at capture reads as more principled, but
+    with delay = 0 - the normal OWL setting, because processing is only just
+    fast enough to open the nozzle in time - the nozzle cannot open any earlier
+    than this call whatever the stamp says. The earlier anchor only moves off_at
+    forward, so it shortens every spray by the processing time and eventually
+    cancels it outright.
+    """
+
+    def _committed_window_ms(self, lag_s, duration, delay=0.0):
+        """Milliseconds of spray the scheduler commits to, measured from now.
+
+        Returns None when the window is discarded entirely.
+        """
+        from utils.output_manager import RelayController
+        rc = RelayController({0: 13}, vis=False)
+        rc.running = False          # keep the consumer off the schedule
+        rc.relay.relay_on = lambda *a, **k: None
+        rc.relay.relay_off = lambda *a, **k: None
+        schedule = rc.relay_schedule_dict[0]
+        schedule['on_at'] = schedule['off_at'] = None
+        now = time.monotonic()
+        rc.receive(relay=0, time_stamp=now - lag_s, delay=delay, duration=duration)
+        rc.stop()
+        if schedule['off_at'] is None:
+            return None
+        return (schedule['off_at'] - now) * 1000
+
+    def test_fresh_anchor_commits_the_whole_duration(self):
+        assert self._committed_window_ms(0.0, 0.150) == pytest.approx(150, abs=5)
+
+    def test_stale_anchor_shortens_the_spray_by_exactly_the_lag(self):
+        """40 ms of processing lag costs 40 ms of spray."""
+        assert self._committed_window_ms(0.040, 0.150) == pytest.approx(110, abs=5)
+
+    def test_stale_anchor_cancels_a_short_spray_completely(self):
+        """The failure that matters: at speed the spray silently disappears.
+
+        The speed-adaptive calculation is duration = actuation_length_cm / speed.
+        At 12 km/h with the default 10 cm patch that is 30 ms. A Pi loop of 40 ms
+        would put the whole window in the past, receive()'s stale guard would
+        discard it, and the OWL would stop spraying with nothing logged.
+        """
+        assert self._committed_window_ms(0.040, 0.030) is None
+
+    def test_a_real_delay_still_schedules_into_the_future(self):
+        """With a genuine camera-to-nozzle delay the window is still ahead."""
+        assert self._committed_window_ms(0.040, 0.030, delay=0.20) == pytest.approx(190, abs=5)

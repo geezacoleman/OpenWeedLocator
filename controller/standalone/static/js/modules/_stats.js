@@ -38,6 +38,52 @@ function watchStorageWarning(data) {
     }
 }
 
+// Spray timing labels (farmer wording). Keys are the OWL's actuation_source.
+const SPRAY_TIMING_LABELS = {
+    'device-gps': 'OWL GPS timing',
+    controller: 'Controller timing',
+    config: 'Fixed timing'
+};
+
+// Last seen speed warning; notifications fire on transitions only
+let lastSpeedWarning = null;
+
+function updateSprayTiming(data) {
+    const line = document.getElementById('sprayTimingLine');
+    if (line) {
+        const parts = [];
+        if (typeof data.speed_kmh === 'number') parts.push(data.speed_kmh.toFixed(1) + ' km/h');
+        if (SPRAY_TIMING_LABELS[data.actuation_source]) parts.push(SPRAY_TIMING_LABELS[data.actuation_source]);
+        if (typeof data.latency_ms === 'number') parts.push('Processing ' + Math.round(data.latency_ms) + ' ms');
+        // Only worth a line once there is a speed or a measured processing time
+        const show = typeof data.speed_kmh === 'number' || typeof data.latency_ms === 'number';
+        line.textContent = show ? parts.join(' · ') : '';
+        line.classList.toggle('hidden', !show);
+    }
+
+    const warning = data.speed_warning || '';
+    let banner = document.getElementById('speedWarningBanner');
+    if (warning && !banner && line) {
+        banner = document.createElement('div');
+        banner.id = 'speedWarningBanner';
+        banner.className = 'algorithm-error-banner';
+        line.parentNode.insertBefore(banner, line.nextSibling);
+    }
+    if (banner) {
+        banner.textContent = warning;
+        banner.style.display = warning ? '' : 'none';
+    }
+
+    if (warning === lastSpeedWarning) return;
+    const previous = lastSpeedWarning;
+    lastSpeedWarning = warning;
+    if (warning) {
+        showNotification('Slow down', warning, 'warning', 8000);
+    } else if (previous) {
+        showNotification('Speed OK', 'Sprays are on target again', 'success');
+    }
+}
+
 /**
  * Update system stats from API
  */
@@ -139,6 +185,9 @@ function updateSystemStats() {
             // Storage warning transitions (internal/eMMC mode): notify once
             // per state change, never per poll
             watchStorageWarning(data);
+
+            // Spray timing line + forward-speed warning
+            updateSprayTiming(data);
 
             // Header online/offline
             const statusDot = document.getElementById('statusDot');

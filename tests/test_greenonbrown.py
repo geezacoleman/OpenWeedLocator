@@ -410,15 +410,17 @@ class TestCCARelayAssignment:
 
     @staticmethod
     def _run_actuation_logic(weed_centres, lane_width, relay_num, actuation_y_thresh=0):
-        """Simulate actuation logic from owl.py."""
+        """Lane assignment as owl.py runs it.
+
+        Was a second hand-copied replica (see tests/test_performance.py) that
+        had drifted to a one-sided threshold; now delegates to the shared
+        implementation owl.py calls.
+        """
+        from utils.geometry import assign_lanes
         if not weed_centres:
             return []
-        fired = set()
-        for centre in weed_centres:
-            if centre[1] >= actuation_y_thresh:
-                relay_id = min(int(centre[0] / lane_width), relay_num - 1)
-                fired.add(relay_id)
-        return sorted(fired)
+        return sorted(assign_lanes(weed_centres, lane_width, relay_num,
+                                   actuation_y_thresh, float('inf')))
 
     def test_same_relays_fired(self):
         """Both pipelines trigger the same relay set on a realistic scene."""

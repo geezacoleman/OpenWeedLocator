@@ -53,3 +53,27 @@ def compute_geometry(frame_w, frame_h, crop_left, crop_right, crop_top, crop_bot
         'y_bottom': int(cropped_height * a_bottom),
         'clamped_edges': (left, right, top, bottom),
     }
+
+
+def assign_lanes(weed_centres, lane_width, relay_num, y_top, y_bottom):
+    """Which relays a frame's detections should fire.
+
+    Lives here, beside compute_geometry, for the same reason: this is the one
+    piece of maths that decides where spray lands, and it was previously
+    duplicated in two test files and a benchmark. All three copies drifted —
+    they still filtered on a single lower threshold long after the product
+    moved to a top-and-bottom band — so twelve tests were validating behaviour
+    the OWL no longer had.
+
+    :param weed_centres: detection centres in CROPPED-frame pixels
+    :param lane_width: cropped width / relay_num (float; do not pre-round)
+    :param relay_num: number of relays across the boom
+    :param y_top: top of the actuation band, cropped-frame pixels
+    :param y_bottom: bottom of the actuation band, cropped-frame pixels
+    :return: set of relay ids to fire (deduplicated — one call per relay)
+    """
+    fired = set()
+    for centre in weed_centres:
+        if y_top <= centre[1] <= y_bottom:
+            fired.add(min(int(centre[0] / lane_width), relay_num - 1))
+    return fired

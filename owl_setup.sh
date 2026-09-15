@@ -20,14 +20,39 @@ fi
 # with the fixed setup hotspot (OWL-XXXX from the Pi serial, PSK owl-setup) —
 # and arms phone-app first-boot setup at the end. One command, zero prompts;
 # the customer's phone app makes all network/identity decisions later.
+#
+# `--ship-gps` is `--ship` plus the production CM5 carrier's nRF9151 GNSS:
+# serial-port access for the OWL user, ModemManager off (it probes every tty
+# with AT commands and holds the port) and [GPS] source/port/baudrate written
+# to CONTROLLER.ini after the dashboard step (setup.sh writes source = none).
 SHIP_MODE=0
-if [[ "$1" == "--ship" ]]; then
+SHIP_GPS=0
+case "${1:-}" in
+  --ship)
     SHIP_MODE=1
     echo -e "${GREEN}[INFO] Ship mode: non-interactive factory provisioning${NC}"
-elif [[ -n "$1" ]]; then
-    echo -e "${RED}[ERROR] Unknown option '$1' (only --ship is supported)${NC}"
+    ;;
+  --ship-gps)
+    SHIP_MODE=1
+    SHIP_GPS=1
+    echo -e "${GREEN}[INFO] Ship mode + nRF9151 GPS: non-interactive factory provisioning${NC}"
+    ;;
+  "")
+    ;;
+  *)
+    echo -e "${RED}[ERROR] Unknown option '$1' (supported: --ship, --ship-gps)${NC}"
     exit 1
-fi
+    ;;
+esac
+
+# nRF9151 GNSS link on the production CM5 carrier (used only by --ship-gps).
+# Confirmed on the bench 2026-09-13: Serial LTE Modem 2.9.1 firmware answers on
+# UART3 (GPIO 8/9, TX/RX only, no flow control) at 460800 baud once GPIO 26
+# (5G_ENABLE) powers the modem. install_firstboot.sh --gps-config owns that
+# boot config; tools/nrf9151_probe.sh is the bench diagnostic.
+NRF_GPS_SOURCE="nrf91"
+NRF_GPS_PORT="/dev/ttyAMA3"
+NRF_GPS_BAUD="460800"
 
 ship_ssid_suffix() {
   # Last 4 hex chars of the Pi serial (uppercase); random fallback.
@@ -79,6 +104,7 @@ STATUS_GLOBAL_NUMPY=""
 STATUS_NUMPY_COMPAT=""
 STATUS_GOG_DEPS=""
 STATUS_CONTROLLER=""
+STATUS_GPS=""
 
 ERROR_UPGRADE=""
 ERROR_SYS_DEPS=""
@@ -96,6 +122,7 @@ ERROR_GLOBAL_NUMPY=""
 ERROR_NUMPY_COMPAT=""
 ERROR_GOG_DEPS=""
 ERROR_CONTROLLER=""
+ERROR_GPS=""
 
 # Function to check the exit status of the last executed command
 check_status() {
@@ -306,6 +333,115 @@ EOF
     echo -e "${ORANGE}[INFO] For live logs, run: journalctl -u owl.service -f${NC}"
     STATUS_OWL_SERVICE="${CROSS}"
     ERROR_OWL_SERVICE="owl.service failed to start"
+    return 1
+  fi
+}
+
+setup_ship_gps() {
+  # --ship-gps only. Must run AFTER controller/shared/setup.sh, which writes
+  # [GPS] source = none into CONTROLLER.ini.
+  echo -e "${GREEN}[INFO] Configuring nRF9151 GPS...${NC}"
+  local ctrl_ini="${SCRIPT_DIR}/config/CONTROLLER.ini"
+
+  if [[ -z "$NRF_GPS_SOURCE" || -z "$NRF_GPS_PORT" ]]; then
+    echo -e "${CROSS} nRF9151 GPS source/port are not set in owl_setup.sh"
+    echo -e "        (NRF_GPS_SOURCE / NRF_GPS_PORT are pending bench discovery)."
+    STATUS_GPS="${CROSS}"
+    ERROR_GPS="nRF9151 GPS source/port not confirmed"
+    return 1
+  fi
+
+  # Serial-port access for owl.service (group applies from the next boot).
+  sudo usermod -aG dialout "$CURRENT_USER"
+
+  # OWL owns the nRF9151 port outright (GNSS only, no SIM). ModemManager
+  # would probe it with AT commands and hold it open.
+  if systemctl list-unit-files ModemManager.service 2>/dev/null | grep -q '^ModemManager.service'; then
+    echo -e "${GREEN}[INFO] Disabling ModemManager (it would claim the nRF9151 port)...${NC}"
+    sudo systemctl disable --now ModemManager.service
+  fi
+
+  # Boot config: UART3 overlay + modem power on GPIO 26, also applied now so
+  # the link check below works without a reboot. Exit 2 = config.txt changed.
+  sudo bash "${SCRIPT_DIR}/controller/setup/install_firstboot.sh" --gps-config
+  if [ $? -eq 1 ]; then
+    echo -e "${CROSS} nRF9151 boot config failed (see above)"
+    STATUS_GPS="${CROSS}"
+    ERROR_GPS="nRF9151 boot config failed"
+    return 1
+  fi
+
+  if [ ! -f "$ctrl_ini" ]; then
+    echo -e "${CROSS} CONTROLLER.ini not found at ${ctrl_ini}"
+    STATUS_GPS="${CROSS}"
+    ERROR_GPS="CONTROLLER.ini not found"
+    return 1
+  fi
+
+  # Update keys in place inside [GPS] only (index()==1 keeps nmea_port intact).
+  # CONTROLLER.ini holds the device token: the temp copy is created private
+  # (umask 077) and the result gets setup.sh's 0640, because the mv would
+  # otherwise leave the file readable by every local user.
+  ( umask 077
+    awk -v src="$NRF_GPS_SOURCE" -v port="$NRF_GPS_PORT" -v baud="$NRF_GPS_BAUD" '
+      /^\[/ { in_gps = ($0 == "[GPS]") }
+      in_gps && index($0, "source = ") == 1   { $0 = "source = " src }
+      in_gps && index($0, "port = ") == 1     { $0 = "port = " port }
+      in_gps && index($0, "baudrate = ") == 1 { $0 = "baudrate = " baud }
+      { print }
+    ' "$ctrl_ini" > "${ctrl_ini}.tmp"
+  ) && mv "${ctrl_ini}.tmp" "$ctrl_ini" && chmod 0640 "$ctrl_ini" \
+    || rm -f "${ctrl_ini}.tmp"
+
+  if ! awk -v want="source = $NRF_GPS_SOURCE" '
+      /^\[/ { g = ($0 == "[GPS]") }
+      g && $0 == want { found = 1 }
+      END { exit !found }' "$ctrl_ini"; then
+    echo -e "${CROSS} Writing [GPS] settings to CONTROLLER.ini failed"
+    STATUS_GPS="${CROSS}"
+    ERROR_GPS="[GPS] settings not written to CONTROLLER.ini"
+    return 1
+  fi
+  echo -e "${TICK} [GPS] source = ${NRF_GPS_SOURCE}, port = ${NRF_GPS_PORT}, baudrate = ${NRF_GPS_BAUD}"
+  STATUS_GPS="${TICK}"
+
+  # Link check (ship blocker). --gps-config above has powered the modem and
+  # loaded UART3 for this session, so a healthy unit answers AT within a few
+  # seconds. A boot-time ctsrts overlay or a first flash can need one reboot;
+  # re-running this script is safe.
+  #
+  # owl.service must not hold the port meanwhile: step 9 (re)started it, and on
+  # a re-run it reads the source = nrf91 written last time, so its GPS reader
+  # would swallow the modem's OK. It is stopped unconditionally (a unit with no
+  # camera sits in "activating", which is-active does not catch) and started
+  # again afterwards if enabled, when it picks up the new [GPS] and dialout.
+  sudo systemctl stop owl.service 2>/dev/null
+  local answered=0 attempt
+  for attempt in $(seq 1 10); do
+    if [ -e "$NRF_GPS_PORT" ] && sudo timeout 3 bash -c '
+        stty -F "$1" "$2" raw -echo -crtscts clocal || exit 1
+        exec 3<>"$1"
+        printf "AT\r\n" >&3
+        while IFS= read -r -t 2 line <&3; do
+          [[ "$line" == OK* ]] && exit 0
+        done
+        exit 1' _ "$NRF_GPS_PORT" "$NRF_GPS_BAUD"; then
+      answered=1
+      break
+    fi
+    sleep 1
+  done
+  if systemctl is-enabled --quiet owl.service 2>/dev/null; then
+    sudo systemctl start owl.service
+  fi
+  if [ "$answered" == "1" ]; then
+    echo -e "${TICK} nRF9151 answered AT on ${NRF_GPS_PORT} @ ${NRF_GPS_BAUD}"
+  else
+    echo -e "${CROSS} nRF9151 did not answer AT on ${NRF_GPS_PORT} @ ${NRF_GPS_BAUD}"
+    echo -e "        Reboot, then re-run 'bash owl_setup.sh --ship-gps' (re-runs are safe)."
+    echo -e "        Diagnose with: bash tools/nrf9151_probe.sh"
+    STATUS_GPS="${CROSS}"
+    ERROR_GPS="nRF9151 did not answer AT on ${NRF_GPS_PORT}"
     return 1
   fi
 }
@@ -700,6 +836,12 @@ case "$dashboard_choice" in
     ;;
 esac
 
+# Step 13b: nRF9151 GPS (--ship-gps only). Must run after the dashboard step
+# above, which writes [GPS] source = none into CONTROLLER.ini.
+if [[ "$SHIP_GPS" == "1" ]]; then
+    setup_ship_gps
+fi
+
 # Step 14: Final Summary
 echo -e "\n${GREEN}[INFO] Installation Summary:${NC}"
 echo -e "$STATUS_UPGRADE System Upgrade"
@@ -726,6 +868,9 @@ fi
 echo -e "$STATUS_OWL_SERVICE OWL Service (systemd) Started"
 echo -e "$STATUS_DESKTOP_ICON Desktop Icon Created"
 echo -e "$STATUS_CONTROLLER Hardware Controller Configured"
+if [[ "$SHIP_GPS" == "1" ]]; then
+    echo -e "$STATUS_GPS nRF9151 GPS Configured"
+fi
 
 if [[ "$STATUS_DASHBOARD" == "${TICK}" ]]; then
     echo -e "$STATUS_DASHBOARD_DEPS Dashboard Python dependencies installed"
@@ -756,10 +901,11 @@ if [[ "$SHIP_MODE" == "1" ]]; then
     [ -n "$ERROR_OWL_DEPS" ] && SHIP_BLOCKERS+="OWL dependencies; "
     [ -n "$ERROR_DASHBOARD_DEPS" ] && SHIP_BLOCKERS+="dashboard dependencies; "
     [ -n "$ERROR_DASHBOARD" ] && SHIP_BLOCKERS+="dashboard/first-boot setup; "
+    [ -n "$ERROR_GPS" ] && SHIP_BLOCKERS+="nRF9151 GPS setup; "
     if [ -n "$SHIP_BLOCKERS" ]; then
         echo -e ""
         echo -e "${RED}[NOT SHIP-READY] Critical failures: ${SHIP_BLOCKERS%??}${NC}"
-        echo -e "${RED}Fix the above and re-run 'bash owl_setup.sh --ship'. Dev cleanup was"
+        echo -e "${RED}Fix the above and re-run 'bash owl_setup.sh $1'. Dev cleanup was"
         echo -e "skipped so the unit remains reachable over your current network.${NC}"
         exit 1
     fi
@@ -772,6 +918,9 @@ if [[ "$SHIP_MODE" == "1" ]]; then
 
     echo -e "${GREEN}[SHIP-READY] Unit provisioned for shipping:${NC}"
     echo -e "  • Hotspot: ${SHIP_SSID:-OWL-XXXX} (setup password)"
+    if [[ "$SHIP_GPS" == "1" ]]; then
+        echo -e "  • GPS: nRF9151 on ${NRF_GPS_PORT} (source = ${NRF_GPS_SOURCE})"
+    fi
     echo -e "  • First-boot setup armed — the phone app takes over on next boot"
     echo -e "  • Focus the camera, then SHUT DOWN CLEANLY (sudo shutdown now)"
     echo -e "    before boxing — pulling power mid-write can un-arm the unit."

@@ -97,7 +97,7 @@ const CONFIG_FIELD_DEFS = {
         'sensitivity_pin': { type: 'number', min: 1, max: 40, help: 'BOARD pin for sensitivity switch' }
     },
     'GPS': {
-        'source': { type: 'select', options: ['none', 'dashboard', 'hat'], help: 'GPS data source for owl.py' },
+        'source': { type: 'select', options: ['none', 'serial', 'nrf91', 'tcp', 'gpsd'], help: 'GPS source: serial or nrf91 (CM5 carrier modem) on an OWL; serial, tcp or gpsd on the networked controller' },
         'port': { type: 'text', help: 'Serial GPS device path' },
         'baudrate': { type: 'select', options: ['4800', '9600', '19200', '38400', '57600', '115200'] },
         'enable': { type: 'boolean', help: 'Enable GPS server (networked controller)' },

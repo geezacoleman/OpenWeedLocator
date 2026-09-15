@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import os
 import sys
+import signal
 
 import logging
 import argparse
@@ -12,7 +13,7 @@ try:
     import serial
 except ImportError:
     serial = None
-from datetime import datetime
+from datetime import datetime, timezone
 from multiprocessing import Process, Value
 from pathlib import Path
 
@@ -71,6 +72,11 @@ except ImportError as e:
     logger.error(f"Python environment: {get_python_env()}")
     raise errors.OpenCVError(str(e)) from None
 
+# Imported before the guarded block below: the handler raises through it, and
+# it has no third-party dependencies of its own so it cannot be the import that
+# fails.
+import utils.error_manager as errors
+
 try:
     import numpy as np
     from utils.input_manager import UteController, AdvancedController, get_rpi_version
@@ -79,28 +85,42 @@ try:
     from utils.video_manager import VideoStream, StreamingHandler, ThreadedHTTPServer
     from utils.image_sampler import ImageRecorder
     from utils.algorithms import fft_blur
-    from utils.greenonbrown import GreenOnBrown
+    from utils.greenonbrown import GreenOnBrown, draw_boxes
     from utils.frame_reader import FrameReader
     from utils.config_manager import ConfigValidator, atomic_write_config
-    from utils.geometry import compute_geometry
+    from utils.geometry import compute_geometry, assign_lanes
     from utils.log_manager import LogManager, MQTTLogHandler
     from utils.shared_types import Sensitivity
-    import utils.error_manager as errors
-    from utils.gps_manager import GPSState, TrackRecorder, parse_sentence
+    from utils.gps_manager import GPSState, TrackRecorder, nrf91_command, nrf91_start_gps
+    from utils.actuation import SpeedAverager, ActuationCalculator, speed_warning
     from version import SystemInfo, VERSION
 
-except ImportError as e:
-    missing_module = str(e).split("'")[1]
+# DependencyError as well as ImportError: utils/image_sampler.py re-raises a
+# missing piexif as DependencyError, which does NOT subclass ImportError, so it
+# used to sail past this handler and reach the user as a bare traceback with no
+# hint of which package to install.
+except (ImportError, errors.DependencyError) as e:
+    # "No module named 'x'" and "cannot import name 'x' from 'y'" both quote the
+    # name, but DependencyError messages may not — never crash the error path.
+    parts = str(e).split("'")
+    missing_module = parts[1] if len(parts) > 1 else getattr(e, 'package', 'unknown')
     logger.error(f"Failed to import required module: {missing_module}")
     logger.error(f"Error details: {str(e)}")
     logger.error(f"Current virtual env: {os.environ.get('VIRTUAL_ENV', 'None')}")
     logger.error(f"Current working directory: {os.getcwd()}")
+    if isinstance(e, errors.DependencyError):
+        raise
     raise errors.DependencyError(missing_module, str(e)) from None
 
 logger.info("All required modules imported successfully")
 
 # The dashboard MJPEG stream consumes every Nth frame of the detection loop
 STREAM_FRAME_INTERVAL = 5
+
+# Consecutive empty reads tolerated from a live camera before giving up. A
+# dropped or late frame is common and used to end the whole job silently; a
+# genuine disconnect still stops the OWL, just loudly and after ~0.5 s.
+MAX_DROPPED_FRAMES = 10
 
 
 def nothing(x):
@@ -264,6 +284,11 @@ class Owl:
         self.camera_rotation = self.config.get('Camera', 'rotation',
                                                fallback='auto').strip().lower()
 
+        # BOARD pins this unit's own GPS hardware uses ([GPS] source = nrf91, or a
+        # serial GPS on the Pi UART). A relay, LED or switch configured on one is
+        # disabled with a loud error instead of fighting the modem or receiver.
+        self.protected_pins = ConfigValidator.protected_pins(self.config)
+
         # Relay Dict maps the reference relay number to a boardpin on the embedded device
         self.relay_dict = {}
 
@@ -273,7 +298,8 @@ class Owl:
 
         # instantiate the relay controller - successful start should beep the buzzer
         try:
-            self.relay_controller = RelayController(relay_dict=self.relay_dict)
+            self.relay_controller = RelayController(relay_dict=self.relay_dict,
+                                                    disabled_pins=self.protected_pins)
 
         except errors.OWLAlreadyRunningError:
             self.logger.critical("OWL initialization failed: GPIO pin conflict. Another OWL instance may be running.",
@@ -377,9 +403,13 @@ class Owl:
         # file lands inside the session dir so it ships in session ZIPs.
         self.track_recorder = TrackRecorder()
 
-        if self.gps_source == 'serial':
-            self.gps_port = self.config.get('GPS', 'port', fallback='/dev/ttyUSB1')
-            self.gps_baudrate = self.config.getint('GPS', 'baudrate', fallback=115200)
+        if self.gps_source in ('serial', 'nrf91'):
+            # nrf91 = the nRF9151 modem on the production CM5 carrier (UART3,
+            # Serial LTE Modem firmware); serial = any receiver streaming NMEA.
+            default_port, default_baud = (('/dev/ttyAMA3', 460800) if self.gps_source == 'nrf91'
+                                          else ('/dev/ttyUSB1', 115200))
+            self.gps_port = self.config.get('GPS', 'port', fallback=default_port)
+            self.gps_baudrate = self.config.getint('GPS', 'baudrate', fallback=default_baud)
 
             if serial is None:
                 self.logger.error("pyserial not installed; serial GPS disabled. Install with: pip install pyserial")
@@ -392,12 +422,12 @@ class Owl:
             else:
                 self._gps_state = GPSState()
                 self._gps_running = True
-                gps_led_raw = self.config.get('Controller', 'gps_led_pin', fallback='38').strip("'\" ").lower()
-                if gps_led_raw not in ('', 'none'):
-                    self.gps_status_led = GPSStatusLED(pin=f"BOARD{int(gps_led_raw)}")
+                gps_led_pin = self._allowed_board_pin('gps_led_pin', 38)
+                if gps_led_pin:
+                    self.gps_status_led = GPSStatusLED(pin=gps_led_pin)
                 self._gps_thread = threading.Thread(target=self._serial_gps_reader, daemon=True)
                 self._gps_thread.start()
-                self.logger.info(f"Serial GPS reader started on {self.gps_port} @ {self.gps_baudrate}")
+                self.logger.info(f"GPS reader started ({self.gps_source}) on {self.gps_port} @ {self.gps_baudrate}")
 
         elif self.gps_source != 'none':
             # Non-serial, non-none source (e.g. 'tcp') — fall back to dashboard GPS
@@ -410,9 +440,9 @@ class Owl:
         if self.gps_status_led is None:
             controller_type_check = self.config.get('Controller', 'controller_type', fallback='none').strip("'\" ").lower()
             if controller_type_check in ('ute', 'advanced'):
-                gps_led_raw = self.config.get('Controller', 'gps_led_pin', fallback='38').strip("'\" ").lower()
-                if gps_led_raw not in ('', 'none'):
-                    self.gps_status_led = GPSStatusLED(pin=f"BOARD{int(gps_led_raw)}")
+                gps_led_pin = self._allowed_board_pin('gps_led_pin', 38)
+                if gps_led_pin:
+                    self.gps_status_led = GPSStatusLED(pin=gps_led_pin)
 
         # if a controller is connected, sample images must be true to set up directories correctly
         self.controller_type = self.config.get('Controller', 'controller_type').strip("'\" ").lower()
@@ -425,8 +455,7 @@ class Owl:
         # Create status indicator EARLY so it can signal boot errors via LED.
         # save_directory is set to None for now; updated after storage setup succeeds.
         # status_led_pin can be 'none' or empty to disable the LED.
-        status_led_raw = self.config.get('Controller', 'status_led_pin', fallback='40').strip("'\" ").lower()
-        status_led_pin = f"BOARD{int(status_led_raw)}" if status_led_raw not in ('', 'none') else None
+        status_led_pin = self._allowed_board_pin('status_led_pin', 40)
         if self.controller_type == 'ute':
             self.status_indicator = UteStatusIndicator(save_directory=None,
                                                        status_led_pin=status_led_pin)
@@ -525,7 +554,7 @@ class Owl:
                 owl_instance=self,
                 status_indicator=self.status_indicator,
                 switch_purpose=self.config.get('Controller', 'switch_purpose', fallback='recording').strip("'\" ").lower(),
-                switch_board_pin=f"BOARD{self.config.getint('Controller', 'switch_pin', fallback=36)}"
+                switch_board_pin=self._allowed_board_pin('switch_pin', 36)
             )
             self.controller_process = Process(target=self.controller.run)
             self.controller_process.start()
@@ -543,10 +572,10 @@ class Owl:
                 owl_instance=self,
                 status_indicator=self.status_indicator,
                 sensitivity_manager=self.sensitivity_manager,
-                recording_bpin=f"BOARD{self.config.getint('Controller', 'recording_pin', fallback=38)}",
-                sensitivity_bpin=f"BOARD{self.config.getint('Controller', 'sensitivity_pin', fallback=40)}",
-                detection_mode_bpin_up=f"BOARD{self.config.getint('Controller', 'detection_mode_pin_up', fallback=36)}",
-                detection_mode_bpin_down=f"BOARD{self.config.getint('Controller', 'detection_mode_pin_down', fallback=35)}"
+                recording_bpin=self._allowed_board_pin('recording_pin', 38),
+                sensitivity_bpin=self._allowed_board_pin('sensitivity_pin', 40),
+                detection_mode_bpin_up=self._allowed_board_pin('detection_mode_pin_up', 36),
+                detection_mode_bpin_down=self._allowed_board_pin('detection_mode_pin_down', 35)
             )
             self.controller_process = Process(target=self.controller.run)
             self.controller_process.start()
@@ -566,10 +595,6 @@ class Owl:
                 self.image_sample_enable.value = False
             self.dash.set_image_sample_enable(False)
 
-        if self.dash or self.controller_type != 'none':
-            threading.Thread(target=self.update_state, daemon=True).start()
-            self.logger.info("State monitoring thread started")
-
         # Actuation timing — read from [Actuation] (CONTROLLER.ini), fall back to [System]
         if self.config.has_section('Actuation'):
             self.actuation_duration = self.config.getfloat('Actuation', 'actuation_duration',
@@ -580,9 +605,57 @@ class Owl:
             self.actuation_duration = self.config.getfloat('System', 'actuation_duration')
             self.delay = self.config.getfloat('System', 'delay')
 
+        # Same bounds the MQTT path applies. A hand-edited INI reached the
+        # relays unchecked, so a misplaced decimal point sprayed for minutes.
+        clamped_duration, clamped_delay = ConfigValidator.clamp_actuation(
+            self.actuation_duration, self.delay)
+        if (clamped_duration, clamped_delay) != (self.actuation_duration, self.delay):
+            self.logger.warning(
+                f'[CONFIG] actuation clamped to safety bounds: duration '
+                f'{self.actuation_duration}s -> {clamped_duration}s, '
+                f'delay {self.delay}s -> {clamped_delay}s')
+        self.actuation_duration, self.delay = clamped_duration, clamped_delay
+
         # Loop time tracking (30-frame rolling window)
         self._loop_times = deque(maxlen=30)
         self._avg_loop_time_ms = 0.0
+
+        # Spray timing from this OWL's own GPS (serial / nrf91). A fresh
+        # hardware fix always wins; without one the controller's broadcast
+        # applies (mqtt_manager._handle_set_actuation_params), and the
+        # configured values when there is no controller either. Phone or
+        # browser GPS never drives timing.
+        self.actuation_source = 'config'
+        self._config_actuation = (self.actuation_duration, self.delay)
+        self._device_timing = False
+        self._controller_timing_at = float('-inf')
+        self._controller_speed_kmh = None
+        self.speed_kmh = None
+        self.speed_warning = ''
+        self._speed_averager = SpeedAverager(
+            window_seconds=self.config.getfloat('Actuation', 'speed_avg_window', fallback=2.0))
+        self._actuation_calc = ActuationCalculator(
+            actuation_length_cm=self.config.getfloat('Actuation', 'actuation_length_cm', fallback=10.0),
+            offset_cm=self.config.getfloat('Actuation', 'offset_cm', fallback=30.0),
+            fallback_duration=self.actuation_duration,
+            fallback_delay=self.delay)
+        # Per detection frame: capture-to-relay time, and how far that ran past
+        # the camera-to-nozzle travel time (a spray that started late)
+        self._latency_s = deque(maxlen=30)
+        self._late_s = deque(maxlen=30)
+        self._last_timing_update = 0.0
+        # System stats are gathered in update_state every few seconds, never in
+        # the detection loop. Prime psutil so non-blocking reads are meaningful.
+        self._last_stats_at = time.monotonic()
+        try:
+            import psutil
+            psutil.cpu_percent(interval=None)
+        except ImportError:
+            pass
+
+        if self.dash or self.controller_type != 'none' or self._gps_state is not None:
+            threading.Thread(target=self.update_state, daemon=True).start()
+            self.logger.info("State monitoring thread started")
 
         self.relay_vis = None
 
@@ -728,6 +801,35 @@ class Owl:
         left, right, top, bottom = geo['clamped_edges']
         self.logger.info(f'[INFO] Crop edges L{left} R{right} T{top} B{bottom} '
                          f'-> {self.cropped_width}x{self.cropped_height}px')
+
+    def _detection_settings(self, algorithm):
+        """The settings that produced this frame's detections, for EXIF.
+
+        Only the algorithm NAME used to be recorded, which made a saved frame
+        unreproducible — you could not tell what thresholds found (or missed)
+        a weed. Returns only the keys that apply to the running algorithm, so
+        an hsv frame does not claim ExG bounds it never used.
+        """
+        settings = {
+            'min_detection_area_percent': self.min_detection_area_percent or None,
+            'sensitivity_level': getattr(self.sensitivity_level, 'value', None),
+        }
+        if algorithm in ('exg', 'exhsv'):
+            settings['exg_min'] = self.exg_min
+            settings['exg_max'] = self.exg_max
+        if algorithm in ('exhsv', 'hsv'):
+            settings.update(hue_min=self.hue_min, hue_max=self.hue_max,
+                            saturation_min=self.saturation_min,
+                            saturation_max=self.saturation_max,
+                            brightness_min=self.brightness_min,
+                            brightness_max=self.brightness_max,
+                            invert_hue=self.invert_hue)
+        if algorithm == 'lut':
+            settings['lut_profile'] = self.lut_profile or None
+            settings['lut_sensitivity'] = self.lut_sensitivity
+        if algorithm.startswith('gog'):
+            settings['confidence'] = getattr(self, '_gog_confidence', None)
+        return {k: v for k, v in settings.items() if v is not None}
 
     def _is_storage_fallback(self):
         """True when recording landed on internal storage only because no
@@ -906,16 +1008,42 @@ class Owl:
         prev_detection_enable = False
         prev_recording_enable = False
 
+        dropped_frames = 0
         try:
             while True:
                 loop_start = time.time()
                 frame, camera_metadata = self.cam.read_with_metadata()
                 self._last_camera_metadata = camera_metadata
+                capture_time = self._frame_capture_time(camera_metadata)
 
                 if frame is None:
-                    self.logger.info("[INFO] Frame is None. Stopped.")
+                    # Replaying a directory or video: None is the legitimate
+                    # end of input, so stop immediately.
+                    if self.input_file_or_directory:
+                        self.logger.info("[INFO] End of input. Stopped.")
+                        self.stop()
+                        break
+
+                    # Live camera: a single dropped or late frame used to end
+                    # the job on one quiet log line. Retry briefly, and if the
+                    # camera really is gone say so loudly.
+                    dropped_frames += 1
+                    if dropped_frames <= MAX_DROPPED_FRAMES:
+                        if dropped_frames == 1:
+                            self.logger.warning('[WARNING] No frame from camera - retrying')
+                        time.sleep(0.05)
+                        continue
+                    self.logger.error(
+                        f'[ERROR] No frame from camera after {MAX_DROPPED_FRAMES} '
+                        f'retries - camera disconnected? Stopping.')
+                    if self.status_indicator:
+                        self.status_indicator.error(3)
                     self.stop()
                     break
+                if dropped_frames:
+                    self.logger.info(f'[INFO] Camera recovered after {dropped_frames} '
+                                     f'dropped frame(s)')
+                    dropped_frames = 0
 
                 # Reset tracker when detection toggled off
                 if prev_detection_enable and not self._detection_enable:
@@ -924,6 +1052,8 @@ class Owl:
                     # of the (near-instant) empty loop rate.
                     self._loop_times.clear()
                     self._avg_loop_time_ms = 0.0
+                    self._latency_s.clear()
+                    self._late_s.clear()
                     if (self.tracking_enabled and weed_detector
                             and hasattr(weed_detector, 'reset_tracker')):
                         weed_detector.reset_tracker()
@@ -944,6 +1074,12 @@ class Owl:
                         date_dir = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
                         session_dir = os.path.join(date_dir, session_name)
                         os.makedirs(session_dir, exist_ok=True)
+                        # Stamped into every image's EXIF: the directory name is
+                        # the only other record, and it is lost the moment files
+                        # are copied out of the session folder.
+                        self._session_id = session_name
+                        self._session_start = datetime.now(timezone.utc).isoformat(
+                            timespec='seconds').replace('+00:00', 'Z')
 
                         # Stop old ImageRecorder, create new one for this session
                         if hasattr(self, 'image_recorder') and self.image_recorder:
@@ -1107,6 +1243,7 @@ class Owl:
                     return_image_out = self.show_display or (
                         bool(self.dash) and frame_count % STREAM_FRAME_INTERVAL == 0)
 
+                    persisted_boxes = []
                     if algorithm == 'gog':
                         cnts, boxes, weed_centres, image_out = weed_detector.inference(
                             cropped_frame,
@@ -1167,7 +1304,8 @@ class Owl:
                             saturation_max=self.saturation_max,
                             brightness_min=self.brightness_min,
                             brightness_max=self.brightness_max,
-                            show_display=return_image_out,
+                            # boxes are drawn after the relays are scheduled
+                            show_display=False,
                             algorithm=algorithm,
                             min_detection_area=min_detection_area,
                             invert_hue=self.invert_hue,
@@ -1200,8 +1338,67 @@ class Owl:
                                 'conf': lt['score'], 'cls_name': cls_name,
                             })
 
-                        # Draw persisted boxes on image_out with dimmed colour
-                        if persisted_boxes and image_out is not None and return_image_out:
+                    # Capture-to-relay time, measured on every detection frame.
+                    # self.delay is the camera-to-nozzle travel time counted
+                    # from capture; processing has already used part of it, so
+                    # the relays get only what is left (a nozzle 30 cm behind
+                    # the camera at 8 km/h has 135 ms; after 85 ms of capture
+                    # and inference, 50 ms remain). When processing took longer
+                    # than the travel time the nozzle opens at once and the
+                    # shortfall is recorded for the speed warning. Duration is
+                    # never shortened: see PROJECT_NOTES 2026-09-13 (2).
+                    actuation_time = time.monotonic()
+                    lag_s = actuation_time - capture_time
+                    delay_used = max(0.0, self.delay - lag_s)
+                    self._latency_s.append(lag_s)
+                    self._late_s.append(max(0.0, lag_s - self.delay))
+
+                    # Zone-based actuation (segmentation models with gog/gog-hybrid)
+                    if (algorithm.startswith('gog')
+                            and actuation_mode == 'zone'
+                            and hasattr(weed_detector, 'detection_mask')
+                            and weed_detector.detection_mask is not None):
+                        for i in range(self.relay_num):
+                            lane_start = self.lane_coords_int[i]
+                            lane_end = int(lane_start + self.lane_width)
+                            lane_pixels = np.count_nonzero(
+                                weed_detector.detection_mask[self.actuation_y_top:self.actuation_y_bottom,
+                                                             lane_start:lane_end]
+                            )
+                            if lane_pixels >= min_detection_pixels:
+                                self.relay_controller.receive(
+                                    relay=i,
+                                    delay=delay_used,
+                                    time_stamp=actuation_time,
+                                    duration=self.actuation_duration)
+                    else:
+                        # Centre-based actuation (default, works for all model types)
+                        # One timestamp per frame, deduplicated relay calls (at most relay_num)
+                        if weed_centres:
+                            fired = assign_lanes(weed_centres, self.lane_width,
+                                                 self.relay_num,
+                                                 self.actuation_y_top,
+                                                 self.actuation_y_bottom)
+                            for relay_id in fired:
+                                self.relay_controller.receive(
+                                    relay=relay_id,
+                                    delay=delay_used,
+                                    time_stamp=actuation_time,
+                                    duration=self.actuation_duration)
+
+                    # Side work only once the relays are scheduled, so it can
+                    # never delay a spray: weed indicators, then annotation.
+                    if len(weed_centres) > 0:
+                        if self.dash:
+                            self.dash.weed_detect_indicator()
+                        if self.controller:
+                            self.controller.weed_detect_indicator()
+
+                    if return_image_out:
+                        if algorithm not in ('gog', 'gog-hybrid'):
+                            image_out = draw_boxes(cropped_frame, boxes, label='WEED')
+                        # Kalman-persisted tracks, dimmed
+                        if image_out is not None:
                             for pb in persisted_boxes:
                                 cv2.rectangle(image_out,
                                               (pb['x'], pb['y']),
@@ -1214,57 +1411,8 @@ class Owl:
                                             cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                                             (0, 120, 0), 1)
 
-                    if len(weed_centres) > 0:
-                        if self.dash:
-                            self.dash.weed_detect_indicator()
-                        if self.controller:
-                            self.controller.weed_detect_indicator()
-
-                    # Zone-based actuation (segmentation models with gog/gog-hybrid)
-                    if (algorithm.startswith('gog')
-                            and actuation_mode == 'zone'
-                            and hasattr(weed_detector, 'detection_mask')
-                            and weed_detector.detection_mask is not None):
-                        actuation_time = time.time()
-                        for i in range(self.relay_num):
-                            lane_start = self.lane_coords_int[i]
-                            lane_end = int(lane_start + self.lane_width)
-                            lane_pixels = np.count_nonzero(
-                                weed_detector.detection_mask[self.actuation_y_top:self.actuation_y_bottom,
-                                                             lane_start:lane_end]
-                            )
-                            if lane_pixels >= min_detection_pixels:
-                                self.relay_controller.receive(
-                                    relay=i,
-                                    delay=self.delay,
-                                    time_stamp=actuation_time,
-                                    duration=self.actuation_duration)
-                    else:
-                        # Centre-based actuation (default, works for all model types)
-                        # One timestamp per frame, deduplicated relay calls (at most relay_num)
-                        if weed_centres:
-                            actuation_time = time.time()
-                            fired = set()
-                            for centre in weed_centres:
-                                if self.actuation_y_top <= centre[1] <= self.actuation_y_bottom:
-                                    relay_id = min(int(centre[0] / self.lane_width), self.relay_num - 1)
-                                    fired.add(relay_id)
-                            for relay_id in fired:
-                                self.relay_controller.receive(
-                                    relay=relay_id,
-                                    delay=self.delay,
-                                    time_stamp=actuation_time,
-                                    duration=self.actuation_duration)
-
                 ##### Update Dashboard Stream #####
-                if frame_count % 90 == 0:  # Every 90 frames (~3 seconds at 30fps)
-                    if self.dash and hasattr(self.dash, 'update_system_stats'):
-                        try:
-                            stats = self.get_system_stats()
-                            self.dash.update_system_stats(stats)
-                        except Exception as e:
-                            self.logger.debug(f"Error updating system stats: {e}")
-
+                # (system stats are gathered in update_state, off this loop)
                 if self.dash and frame_count % STREAM_FRAME_INTERVAL == 0:  # reduce streamer overhead
                     try:
                         if self._stream_full_frame:
@@ -1306,7 +1454,12 @@ class Owl:
                     if frame_count % self.sample_frequency == 0:
                         save_boxes = None
                         save_centres = None
-                        if self.sample_method != 'whole' and self._detection_enable:
+                        # detection_ran, not _detection_enable: boxes/weed_centres
+                        # are only bound when a detector actually ran. With
+                        # detection on but the detector failed to build, the
+                        # enable flag is True and both names are unbound, and the
+                        # NameError escapes the guarded block below and stops the OWL.
+                        if self.sample_method != 'whole' and detection_ran:
                             save_boxes = boxes
                             save_centres = weed_centres
 
@@ -1319,7 +1472,14 @@ class Owl:
                                 'model': Path(self._model_path).name if algorithm.startswith('gog') else None,
                                 'owl_version': str(VERSION),
                                 'camera_model': getattr(self.cam, 'camera_model', None),
+                                'session_id': getattr(self, '_session_id', None),
+                                'session_start': getattr(self, '_session_start', None),
+                                # Without this a clean miss and an empty paddock
+                                # look identical, which breaks any recall measure
+                                # taken from a recorded set.
+                                'detections': len(weed_centres) if detection_ran else None,
                             }
+                            context.update(self._detection_settings(algorithm))
                             if self.dash:
                                 context.update(self.dash.get_session_metadata())
 
@@ -1708,7 +1868,8 @@ class Owl:
                     self.logger.debug(f"Could not read fan RPM: {e}")
 
             # CPU, Memory, Disk
-            cpu_percent = psutil.cpu_percent(interval=0.1)
+            # Non-blocking: CPU use since the previous call (primed in __init__)
+            cpu_percent = psutil.cpu_percent(interval=None)
             memory = psutil.virtual_memory()
             disk = psutil.disk_usage('/')
 
@@ -1738,6 +1899,11 @@ class Owl:
         stats['avg_loop_time_ms'] = round(self._avg_loop_time_ms, 1)
         stats['actuation_duration'] = self.actuation_duration
         stats['delay'] = self.delay
+        stats['actuation_source'] = self.actuation_source
+        stats['speed_kmh'] = self.speed_kmh
+        stats['latency_ms'] = (round(sum(self._latency_s) / len(self._latency_s) * 1000, 1)
+                               if self._latency_s else None)
+        stats['speed_warning'] = self.speed_warning
 
         return stats
 
@@ -1849,6 +2015,20 @@ class Owl:
                     heading=self.gps_data.get('heading'),
                     altitude=self.gps_data.get('altitude'))
 
+            # Spray timing once a second; system stats every 3 s. Stats used to
+            # be gathered inside the detection loop, where psutil's sampling
+            # interval and the vcgencmd call froze detection for ~130 ms.
+            now = time.monotonic()
+            if now - self._last_timing_update >= 1.0:
+                self._last_timing_update = now
+                self._update_spray_timing()
+            if self.dash and now - self._last_stats_at >= 3.0:
+                self._last_stats_at = now
+                try:
+                    self.dash.update_system_stats(self.get_system_stats())
+                except Exception as e:
+                    self.logger.debug(f"Error updating system stats: {e}")
+
             # Storage watchdog readings → dashboard/app (change-guarded in
             # the setter, so this is cheap every cycle)
             if self.dash and hasattr(self, 'status_indicator'):
@@ -1862,6 +2042,79 @@ class Owl:
                     quota_gb=getattr(self, 'image_quota_gb', 12))
 
             time.sleep(self._STATE_CHECK_INTERVAL)
+
+    # Controller timing counts as live for this long after its last broadcast
+    # (it broadcasts once a second).
+    _CONTROLLER_TIMING_TIMEOUT_S = 3.0
+
+    def _update_spray_timing(self):
+        """Once a second: speed-adaptive timing from this OWL's own GPS fix,
+        handover when that fix is lost, and the farmer-facing speed warning."""
+        fix = self._gps_state.get_dict() if self._gps_state is not None else None
+        speed = fix.get('speed_kmh') if fix and fix.get('fix_valid') else None
+
+        if speed is not None:
+            if not self._device_timing:
+                if self.actuation_source == 'config':
+                    # Remember the configured timing to restore when the fix goes
+                    self._config_actuation = (self.actuation_duration, self.delay)
+                self.logger.info("Spray timing now from this OWL's GPS")
+            average = self._speed_averager.add_sample(speed)
+            result = self._actuation_calc.compute(average, self._avg_loop_time_ms)
+            self.actuation_duration, self.delay = ConfigValidator.clamp_actuation(
+                result['actuation_duration'], result['delay'])
+            self._device_timing = True
+            self.actuation_source = 'device-gps'
+            self.speed_kmh = round(average, 1)
+        else:
+            if self._device_timing:
+                self.logger.warning("GPS fix lost: spray timing handed to the controller, "
+                                    "or the configured values when there is none")
+            self._device_timing = False
+            if time.monotonic() - self._controller_timing_at <= self._CONTROLLER_TIMING_TIMEOUT_S:
+                self.actuation_source = 'controller'
+                self.speed_kmh = self._controller_speed_kmh
+            else:
+                if self.actuation_source != 'config':
+                    self.actuation_duration, self.delay = self._config_actuation
+                    self.actuation_source = 'config'
+                self.speed_kmh = None
+
+        lag_s = sum(self._latency_s) / len(self._latency_s) if self._latency_s else 0.0
+        late_s = sum(self._late_s) / len(self._late_s) if self._late_s else 0.0
+        self.speed_warning = speed_warning(
+            self.speed_kmh, self._actuation_calc.actuation_length_cm,
+            self._actuation_calc.offset_cm, self._avg_loop_time_ms, lag_s, late_s)
+
+    @staticmethod
+    def _frame_capture_time(camera_metadata):
+        """Monotonic time the frame was exposed.
+
+        picamera2's SensorTimestamp (ns, start of exposure) is used when it reads
+        as a plausible age on the monotonic clock (under a second old). Webcams,
+        replayed files and anything implausible use the hand-over time, which
+        misses the sensor and ISP delay (about one frame).
+        """
+        now = time.monotonic()
+        sensor_ns = camera_metadata.get('SensorTimestamp') if camera_metadata else None
+        if sensor_ns:
+            captured = sensor_ns / 1e9
+            if 0.0 <= now - captured < 1.0:
+                return captured
+        return now
+
+    def _allowed_board_pin(self, key, fallback):
+        """[Controller] pin as 'BOARDn', or None when it is unset ('none') or
+        claimed by this unit's own GPS hardware (logged loudly)."""
+        raw = self.config.get('Controller', key, fallback=str(fallback)).strip("'\" ").lower()
+        if raw in ('', 'none'):
+            return None
+        pin = int(raw)
+        if pin in self.protected_pins:
+            self.logger.error(f"[Controller] {key} on BOARD {pin} disabled: "
+                              f"{self.protected_pins[pin]}. Move it to a free pin.")
+            return None
+        return f"BOARD{pin}"
 
     # Dashboard GPS is stale if no update received for this many seconds.
     # Browser watchPosition fires every 1-5s when active; 3s gives fast LED feedback
@@ -1883,7 +2136,9 @@ class Owl:
                 return {
                     'latitude': snapshot['latitude'],
                     'longitude': snapshot['longitude'],
-                    'accuracy': snapshot.get('hdop'),
+                    # Metres from receivers that report it (nRF91), else HDOP
+                    'accuracy': (snapshot['accuracy_m'] if snapshot.get('accuracy_m') is not None
+                                 else snapshot.get('hdop')),
                     'hdop': snapshot.get('hdop'),
                     'altitude': snapshot.get('altitude'),
                     'speed_kmh': snapshot.get('speed_kmh'),
@@ -1919,8 +2174,19 @@ class Owl:
         return None
 
     def _serial_gps_reader(self):
-        """Background thread: read NMEA sentences from serial GPS, update self._gps_state."""
+        """Background thread: read a serial GPS receiver, update self._gps_state.
+
+        source = serial: the receiver streams NMEA on its own.
+        source = nrf91: the Nordic nRF9151 on the production CM5 carrier only
+        reports fixes after GPS is started with AT commands, and forgets that if
+        it resets or loses power. GPS is started on every connect; after a quiet
+        spell (normal while searching for satellites) the modem is pinged, and
+        no answer or a fresh 'Ready' banner means reconnect and start again.
+        """
         RECONNECT_DELAY = 5
+        NRF91_PING_AFTER_S = 30
+        nrf91 = self.gps_source == 'nrf91'
+        failure_logged = False
 
         while self._gps_running:
             try:
@@ -1929,7 +2195,13 @@ class Owl:
                     baudrate=self.gps_baudrate,
                     timeout=2
                 )
-                self.logger.info(f"Serial GPS connected: {self.gps_port}")
+                if nrf91 and nrf91_start_gps(self._gps_serial,
+                                             on_line=self._gps_state.update_from_line) is None:
+                    raise OSError(f"nRF91 modem did not start GPS on {self.gps_port} @ {self.gps_baudrate} "
+                                  f"(boot config needs dtoverlay=uart3-pi5 and gpio=26=op,dh)")
+                self.logger.info(f"GPS connected ({self.gps_source}): {self.gps_port}")
+                failure_logged = False
+                last_line_at = time.monotonic()
 
                 while self._gps_running:
                     try:
@@ -1941,21 +2213,21 @@ class Owl:
                         break
 
                     if not raw_line:
+                        if nrf91 and time.monotonic() - last_line_at > NRF91_PING_AFTER_S:
+                            if not nrf91_command(self._gps_serial, 'AT', timeout=3.0,
+                                                 on_line=self._gps_state.update_from_line):
+                                self.logger.warning("nRF91 modem stopped answering, restarting GPS")
+                                break
+                            last_line_at = time.monotonic()
                         continue
 
-                    parsed = parse_sentence(raw_line)
-                    if parsed is None:
-                        continue
+                    last_line_at = time.monotonic()
+                    if nrf91 and raw_line == 'Ready':
+                        self.logger.warning("nRF91 modem restarted, restarting GPS")
+                        break
 
-                    sentence_type = parsed.get('type')
-                    if sentence_type == 'RMC':
-                        self._gps_state.update_from_rmc(parsed)
-                    elif sentence_type == 'GGA':
-                        self._gps_state.update_from_gga(parsed)
-                    elif sentence_type == 'VTG':
-                        self._gps_state.update_from_vtg(parsed)
-                    elif sentence_type == 'GSV':
-                        self._gps_state.update_from_gsv(parsed)
+                    if self._gps_state.update_from_line(raw_line) is None:
+                        continue
 
                     # Update GPS LED state
                     if self.gps_status_led:
@@ -1966,7 +2238,11 @@ class Owl:
                             self.gps_status_led.set_state(GPSLEDState.ACQUIRING)
 
             except (OSError, FileNotFoundError) as e:
-                self.logger.warning(f"Serial GPS connection failed: {e}")
+                # First failure at WARNING, repeats (every RECONNECT_DELAY) at
+                # DEBUG so an absent receiver does not flood the journal.
+                log = self.logger.debug if failure_logged else self.logger.warning
+                log(f"Serial GPS connection failed: {e}")
+                failure_logged = True
                 if self.gps_status_led:
                     self.gps_status_led.set_state(GPSLEDState.ERROR)
             except Exception as e:
@@ -2081,6 +2357,17 @@ if __name__ == "__main__":
         show_display=args.show_display,
         input_file_or_directory=args.input
     )
+
+    # Ctrl-C was already handled inside hoot(), but SIGTERM was not: systemd
+    # sends it on `systemctl stop/restart owl.service`, and Python's default
+    # handler exits without running any cleanup, so the relays were left as
+    # they were. Raising KeyboardInterrupt hands control to the existing
+    # shutdown path, which turns every nozzle off.
+    def _terminate(signum, frame):
+        logger.info('[INFO] SIGTERM received - shutting down')
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _terminate)
 
     # start the targeting!
     owl.hoot()

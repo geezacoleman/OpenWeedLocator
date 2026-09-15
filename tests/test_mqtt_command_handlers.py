@@ -307,7 +307,9 @@ class TestSetActuationParams:
         })
         assert mqtt_publisher.state['actuation_duration'] == 0.5
         assert mqtt_publisher.state['delay'] == 0.2
-        assert mqtt_publisher.state['actuation_source'] == 'gps'
+        # actuation_source says who owns the timing (v3.17), not the
+        # controller's own speed source
+        assert mqtt_publisher.state['actuation_source'] == 'controller'
 
     def test_clamps_to_safety_bounds(self, mqtt_publisher, mock_owl):
         mqtt_publisher._handle_command({
@@ -439,14 +441,34 @@ class TestSetAlgorithm:
         assert mqtt_publisher.state['algorithm'] == 'exg'
 
     def test_valid_algorithm_queues_on_owl(self, mqtt_publisher, mock_owl):
-        mqtt_publisher._handle_command({'action': 'set_algorithm', 'value': 'maxg'})
-        assert mock_owl._pending_algorithm == 'maxg'
+        mqtt_publisher._handle_command({'action': 'set_algorithm', 'value': 'hsv'})
+        assert mock_owl._pending_algorithm == 'hsv'
 
     def test_all_valid_algorithms(self, mqtt_publisher, mock_owl):
-        """Every supported algorithm should be accepted."""
-        for algo in ('exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'gog', 'gog-hybrid'):
+        """Every supported algorithm should be accepted.
+
+        Driven off ConfigValidator rather than a hand-written list: the handler
+        itself calls get_valid_algorithms(), so a literal here would silently
+        drift the moment an algorithm is added or retired.
+        """
+        from utils.config_manager import ConfigValidator
+        algorithms = ConfigValidator.get_valid_algorithms()
+        assert algorithms, 'no valid algorithms reported'
+        for algo in algorithms:
             mqtt_publisher._handle_command({'action': 'set_algorithm', 'value': algo})
             assert mqtt_publisher.state['algorithm'] == algo
+
+    def test_retired_algorithms_rejected(self, mqtt_publisher, mock_owl):
+        """Algorithms deleted in v3.16 must not be selectable.
+
+        gndvi drew a window inside its per-frame maths (crashed headless units)
+        and maxg divided by the per-frame max with no guard. Both are gone, so
+        accepting the name would leave the OWL with no detector.
+        """
+        mqtt_publisher.state['algorithm'] = 'exhsv'
+        for algo in ('maxg', 'gndvi', 'exgr', 'nexg'):
+            mqtt_publisher._handle_command({'action': 'set_algorithm', 'value': algo})
+            assert mqtt_publisher.state['algorithm'] == 'exhsv'
 
     def test_invalid_algorithm_rejected(self, mqtt_publisher, mock_owl):
         mqtt_publisher.state['algorithm'] = 'exhsv'
@@ -562,9 +584,9 @@ class TestSetConfigSection:
         mqtt_publisher._handle_command({
             'action': 'set_config_section',
             'section': 'System',
-            'params': {'algorithm': 'gndvi'}
+            'params': {'algorithm': 'hsv'}
         })
-        assert mqtt_publisher.state['algorithm'] == 'gndvi'
+        assert mqtt_publisher.state['algorithm'] == 'hsv'
 
     def test_generic_attribute_type_conversion(self, mqtt_publisher, mock_owl):
         """Generic section params with int/float types auto-convert from strings."""

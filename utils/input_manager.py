@@ -31,12 +31,15 @@ class UteController:
                  owl_instance,
                  status_indicator,
                  switch_purpose='recording',
-                 switch_board_pin='BOARD37',
+                 switch_board_pin='BOARD36',
                  bounce_time=1.0):
 
         self.logger = logging.getLogger(__name__)
 
-        self.switch = Button(switch_board_pin, bounce_time=bounce_time) if not testing else None
+        # A None pin (unset, or claimed by on-device GPS hardware) leaves the
+        # switch out; every read below already treats a missing switch as off.
+        self.switch = (Button(switch_board_pin, bounce_time=bounce_time)
+                       if not testing and switch_board_pin else None)
         self.switch_purpose = switch_purpose
 
         self.detection_state = detection_state
@@ -142,11 +145,15 @@ class AdvancedController:
 
         self.logger = logging.getLogger(__name__)
 
-        self.recording_switch = Button(recording_bpin, bounce_time=bounce_time) if not testing else None
-        self.sensitivity_switch = Button(sensitivity_bpin, bounce_time=bounce_time) if not testing else None
-        self.detection_mode_switch_up = Button(detection_mode_bpin_up, bounce_time=bounce_time) if not testing else None
-        self.detection_mode_switch_down = Button(detection_mode_bpin_down,
-                                                 bounce_time=bounce_time) if not testing else None
+        # A None pin (unset, or claimed by on-device GPS hardware) leaves that
+        # switch out; the reads below already treat a missing switch as off.
+        def button(pin):
+            return Button(pin, bounce_time=bounce_time) if not testing and pin else None
+
+        self.recording_switch = button(recording_bpin)
+        self.sensitivity_switch = button(sensitivity_bpin)
+        self.detection_mode_switch_up = button(detection_mode_bpin_up)
+        self.detection_mode_switch_down = button(detection_mode_bpin_down)
 
         self.recording_state = recording_state
         self.sensitivity_level = sensitivity_level

@@ -98,6 +98,17 @@ Non-interactive: base install, standalone setup with hotspot `OWL-XXXX`
 (suffix from the Pi serial) and the fixed setup password, then arms
 first-boot.
 
+**Production carrier GPS:** `bash owl_setup.sh --ship-gps` does everything
+`--ship` does, then provisions the nRF9151 modem (Serial LTE Modem firmware):
+`dialout` for the OWL user, ModemManager off, `install_firstboot.sh
+--gps-config` (writes `dtoverlay=uart3-pi5` and `gpio=26=op,dh` to config.txt
+and applies both immediately), `[GPS] source = nrf91`, `port = /dev/ttyAMA3`,
+`baudrate = 460800` in `config/CONTROLLER.ini`, then an `AT` link check. A
+failed config write or no `AT` reply is NOT SHIP-READY (reboot and re-run; re-runs
+are safe). The OWL starts GPS over AT commands on every connect. For bench
+diagnosis run `bash tools/nrf9151_probe.sh` (power-cycles the modem, checks
+`AT`, tries for a fix, prints a verdict).
+
 **CM5 camera:** Compute Modules have **no camera autodetection** — the stock
 `camera_auto_detect=1` silently does nothing, so a fresh flash never loads
 the sensor overlay (no error, no I2C bus, no camera). Both `owl_setup.sh`

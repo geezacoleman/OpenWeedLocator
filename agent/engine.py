@@ -42,10 +42,9 @@ OWL is a camera-based weed detection system for precision agriculture. It runs o
 
 Detection algorithms:
 - exg: Excess Green (2g - r - b) — default, works in most conditions
-- maxg: Max Green (24g - 19r - 2b) — more aggressive green detection
 - exhsv: ExG + HSV combined — best all-round algorithm
 - hsv: Hue/Saturation/Value thresholding
-- gndvi: Green Normalized Difference Vegetation Index
+- lut: painted look-up table profile baked from operator weed/background strokes
 - gog: Green-on-Green — uses Ultralytics YOLO model (NCNN/PyTorch) for in-crop detection
 - gog-hybrid: Combines GoG model with colour thresholding
 
@@ -76,7 +75,7 @@ When creating algorithms, follow this pattern:
 - Returns grayscale image (uint8, HxW, values 0-255) — gets thresholded automatically by the system using exg_min/exg_max
 - OR returns (binary_image, True) if you do your own thresholding — WARNING: this bypasses the system's exg_min/exg_max clip entirely
 - Only import cv2, numpy, math
-- Use existing algorithms (exg, maxg, exhsv) as reference
+- Use existing algorithms (exg, exhsv, hsv) as reference
 - After creating, use run_algorithm_test to verify it works
 - Use deploy_algorithm to send it to connected OWL devices
 - Use set_algorithm to switch detection to the custom algorithm

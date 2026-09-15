@@ -1,7 +1,32 @@
-## IMPORTANT - for NON Raspberry Pi use. Only use this file if you are setting up an environment on a non Rasperry Pi device. ##
+## IMPORTANT - for NON Raspberry Pi use (laptop/desktop development and testing). ##
+# Use this file only when setting up an environment on something that is not a
+# Raspberry Pi. GPIO is mocked automatically on these platforms — see
+# utils/output_manager.py — so gpiozero/RPi.GPIO are deliberately absent.
+#
+# owl.py imports utils/image_sampler.py at module scope, and that module
+# hard-requires Pillow + piexif. Leaving them out (as this file did until
+# v3.16.0) means the detection loop cannot start at all, which defeats the
+# laptop workflow tests/test_basic_modes.py exists to protect.
+#
+# Lower bounds, not exact pins: the Pi has its own constraints in
+# requirements.txt (Pillow is pinned there for picamera2) and a dev machine
+# should not inherit them.
 
-glob2==0.7
-imutils==0.5.4
-numpy==1.23.4
-opencv-python==4.6.0.66
-pandas==1.5.1
+numpy>=1.24
+opencv-python>=4.8
+pandas>=2.0
+
+# Image saving + EXIF metadata (utils/image_sampler.py, utils/directory_manager.py)
+Pillow>=11.0
+piexif>=1.1.3
+
+# Dashboard + MQTT runtime (owl.py, controller/standalone)
+flask>=3.0
+paho-mqtt>=2.0
+psutil>=5.9
+
+# Focus mode plots and progress output
+matplotlib>=3.8
+tqdm>=4.60
+
+# Run the test suite with: pip install pytest

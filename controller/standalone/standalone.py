@@ -208,6 +208,13 @@ class OWLDashboard:
             self.logger.error(f"An unexpected Python error occurred in control_owl_service: {e}", exc_info=True)
             return False, f"An unexpected error occurred: {str(e)}"
 
+    def _device_protected_pins(self):
+        """BOARD pins this OWL's own GPS hardware uses, from CONTROLLER.ini as it
+        is now (owl.py reads [GPS] from the same file, so both agree)."""
+        cfg = configparser.ConfigParser()
+        cfg.read(Path(__file__).parent.parent.parent / 'config' / 'CONTROLLER.ini')
+        return ConfigValidator.protected_pins(cfg)
+
     def load_config(self):
         """Load CONTROLLER.ini for dashboard settings.
 
@@ -998,6 +1005,15 @@ class OWLDashboard:
                 'gps_latitude': mqtt_state.get('gps_best_lat') if mqtt_state.get('gps_fix') else None,
                 'gps_longitude': mqtt_state.get('gps_best_lon') if mqtt_state.get('gps_fix') else None,
                 'gps_accuracy': mqtt_state.get('gps_best_accuracy') if mqtt_state.get('gps_fix') else None,
+                # Spray timing (additive, v3.17): who owns the timing
+                # (device-gps | controller | config), the speed it uses,
+                # frame-capture-to-relay latency and the farmer-facing speed
+                # warning. None/'' on older OWLs.
+                'avg_loop_time_ms': mqtt_state.get('avg_loop_time_ms'),
+                'actuation_source': mqtt_state.get('actuation_source'),
+                'speed_kmh': mqtt_state.get('speed_kmh'),
+                'latency_ms': mqtt_state.get('latency_ms'),
+                'speed_warning': mqtt_state.get('speed_warning') or '',
                 # Camera resolution
                 'resolution_width': mqtt_state.get('resolution_width', 0),
                 'resolution_height': mqtt_state.get('resolution_height', 0),
@@ -1030,7 +1046,7 @@ class OWLDashboard:
             try:
                 data = request.get_json() or {}
                 algorithm = data.get('algorithm', '').lower()
-                valid = {'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'gog', 'gog-hybrid'}
+                valid = {'exg', 'exhsv', 'hsv', 'gog', 'gog-hybrid'}
                 if algorithm not in valid:
                     return jsonify({'success': False, 'error': f'Invalid algorithm: {algorithm}'}), 400
                 result = self.mqtt_client._send_command('set_algorithm', value=algorithm)
@@ -1695,6 +1711,12 @@ class OWLDashboard:
                 params = data.get('params') or {}
                 if not section or not params:
                     return jsonify({'success': False, 'error': 'section and params required'}), 400
+                blocked = ConfigValidator.protected_pin_errors(
+                    {section: params}, self._device_protected_pins())
+                if blocked:
+                    return jsonify({'success': False,
+                                    'error': ConfigValidator.format_protected_pin_errors(blocked),
+                                    'rejected': blocked}), 400
                 # Live camera keys are clamped/validated with the same rule
                 # the OWL applies, so what lands in the INI here is what the
                 # camera runs AND what the next boot's validator accepts (a
@@ -1892,6 +1914,14 @@ class OWLDashboard:
                 # Legacy px min-area key never round-trips into new files
                 new_config = strip_legacy_min_area(new_config)
                 new_config.pop('Meta', None)  # never round-trip [Meta]; re-stamped below
+                blocked = ConfigValidator.protected_pin_errors(
+                    new_config, self._device_protected_pins())
+                if blocked:
+                    return jsonify({
+                        'success': False,
+                        'error': ConfigValidator.format_protected_pin_errors(blocked),
+                        'rejected': blocked,
+                    }), 400
                 for section, options in new_config.items():
                     if not config.has_section(section):
                         config.add_section(section)

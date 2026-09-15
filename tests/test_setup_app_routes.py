@@ -587,6 +587,86 @@ class TestShipCleanup:
 
 
 @pytest.mark.unit
+class TestShipGps:
+    """--ship-gps = --ship + nRF9151 GNSS provisioning on the production CM5
+    carrier. It must write [GPS] after setup.sh (which writes source = none)
+    and must never mark a unit ship-ready with an unconfirmed port."""
+
+    @pytest.fixture
+    def owl_setup(self):
+        from pathlib import Path
+        return (Path(__file__).parent.parent
+                / 'owl_setup.sh').read_text(encoding='utf-8')
+
+    @pytest.fixture
+    def gps_fn(self, owl_setup):
+        return owl_setup.split('setup_ship_gps() {', 1)[1].split('\n}\n', 1)[0]
+
+    def test_flag_is_a_ship_superset(self, owl_setup):
+        block = owl_setup.split('--ship-gps)', 1)[1].split(';;', 1)[0]
+        assert 'SHIP_MODE=1' in block
+        assert 'SHIP_GPS=1' in block
+
+    def test_plain_ship_and_no_arg_still_parse(self, owl_setup):
+        assert '  --ship)\n' in owl_setup
+        assert '  "")\n' in owl_setup
+        assert 'supported: --ship, --ship-gps' in owl_setup
+
+    def test_gps_step_runs_after_dashboard_setup(self, owl_setup):
+        dashboard = owl_setup.index('controller/shared/setup.sh" --mode standalone')
+        call = owl_setup.index('\n    setup_ship_gps\n')
+        assert call > dashboard
+
+    def test_unconfirmed_port_blocks_ship(self, owl_setup, gps_fn):
+        assert '-z "$NRF_GPS_PORT"' in gps_fn
+        assert '[ -n "$ERROR_GPS" ] && SHIP_BLOCKERS+=' in owl_setup
+
+    def test_port_claimed_for_owl(self, gps_fn):
+        assert 'usermod -aG dialout' in gps_fn
+        assert 'disable --now ModemManager.service' in gps_fn
+
+    def test_gps_keys_written_only_inside_gps_section(self, gps_fn):
+        assert 'in_gps = ($0 == "[GPS]")' in gps_fn
+        # index()==1 anchoring keeps nmea_port from matching "port = "
+        assert 'index($0, "port = ") == 1' in gps_fn
+
+    def test_no_at_reply_blocks_ship(self, owl_setup, gps_fn):
+        probe = gps_fn.split('# Link check (ship blocker)', 1)[1]
+        assert 'ERROR_GPS="nRF9151 did not answer AT' in probe
+        assert '[ -n "$ERROR_GPS" ] && SHIP_BLOCKERS+=' in owl_setup
+
+    def test_boot_config_applied_before_link_probe(self, gps_fn):
+        assert (gps_fn.index('install_firstboot.sh" --gps-config')
+                < gps_fn.index('# Link check (ship blocker)'))
+
+    def test_probe_uses_configured_baud_without_flow_control(self, gps_fn):
+        probe = gps_fn.split('# Link check (ship blocker)', 1)[1]
+        assert '"$NRF_GPS_BAUD"' in probe
+        assert '-crtscts' in probe
+
+    def test_controller_ini_stays_private(self, gps_fn):
+        # CONTROLLER.ini holds the device token; the rewrite must not leave it
+        # world-readable (mv of a 0644 temp file did)
+        assert 'umask 077' in gps_fn
+        assert 'chmod 0640 "$ctrl_ini"' in gps_fn
+        assert 'rm -f "${ctrl_ini}.tmp"' in gps_fn
+
+    def test_owl_service_released_during_link_check(self, gps_fn):
+        # On a re-run owl.service already reads source = nrf91 and its reader
+        # would swallow the modem's OK; restarted afterwards when enabled
+        stop = gps_fn.index('sudo systemctl stop owl.service')
+        probe = gps_fn.index('for attempt in $(seq 1 10)')
+        start = gps_fn.index('sudo systemctl start owl.service')
+        assert stop < probe < start
+        assert 'systemctl is-enabled --quiet owl.service' in gps_fn
+
+    def test_plain_ship_does_not_provision_gps(self, owl_setup):
+        call = owl_setup.index('\n    setup_ship_gps\n')
+        guard = owl_setup.rindex('if [[ "$SHIP_GPS" == "1" ]]; then', 0, call)
+        assert call - guard < 60
+
+
+@pytest.mark.unit
 class TestFallbackServer:
     """The OnFailure error responder — stdlib only, must run without the
     venv, and must satisfy the app's CORS preflight or the phone never

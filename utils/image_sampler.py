@@ -23,6 +23,43 @@ logger = LogManager.get_logger(__name__)
 # (DateTimeOriginal, GPS, exposure) always fit and the save never fails on metadata.
 _MAX_EXIF_JSON = 8000
 
+# Keys that must survive a trim: the settings and provenance that make a frame
+# reproducible. Everything else is free text the operator typed.
+_ESSENTIAL_CONTEXT_KEYS = (
+    'device_id', 'algorithm', 'model', 'session_id', 'session_start',
+    'detections', 'source_width', 'source_height',
+    'roi_x', 'roi_y', 'roi_width', 'roi_height',
+    'exg_min', 'exg_max', 'hue_min', 'hue_max',
+    'saturation_min', 'saturation_max', 'brightness_min', 'brightness_max',
+    'min_detection_area_percent', 'sensitivity_level',
+    'lut_profile', 'lut_sensitivity', 'confidence', 'invert_hue',
+)
+
+
+def _fit_json(payload, keep=(), cap=_MAX_EXIF_JSON):
+    """Serialise a dict to JSON, dropping the least important keys until it fits.
+
+    Overflow used to drop the whole tag, which threw away the detection settings
+    along with whatever caused the overflow. Biggest non-essential values go
+    first, so one oversized field cannot cost twenty small ones, and keys in
+    `keep` are only sacrificed once nothing else is left.
+    """
+    payload = dict(payload)
+    text = json.dumps(payload, default=str)
+    if len(text) <= cap:
+        return text
+
+    droppable = sorted((k for k in payload if k not in keep),
+                       key=lambda k: len(str(payload[k])), reverse=True)
+    droppable += [k for k in payload if k in keep]
+    for key in droppable:
+        payload.pop(key, None)
+        payload['metadata_truncated'] = True
+        text = json.dumps(payload, default=str)
+        if len(text) <= cap:
+            return text
+    return None
+
 # Sensor model prefix -> real manufacturer. libcamera reports only the sensor model
 # (e.g. 'imx296', 'ar0234'); the model-number prefix encodes the maker, so we can fill
 # EXIF Make with a TRUE value derived from data we already pull — and omit it (never
@@ -135,12 +172,12 @@ def build_exif_bytes(gps_data=None, camera_metadata=None, context=None, capture_
         owl_version = context.pop('owl_version', None)
         if owl_version:
             zeroth[piexif.ImageIFD.Software] = f"OpenWeedLocator {owl_version}"
-        if context:  # device_id, algorithm, model, session metadata
-            desc = json.dumps(context)
-            if len(desc) <= _MAX_EXIF_JSON:
+        if context:  # device_id, algorithm, detection settings, ROI, session metadata
+            desc = _fit_json(context, keep=_ESSENTIAL_CONTEXT_KEYS)
+            if desc:
                 zeroth[piexif.ImageIFD.ImageDescription] = desc
             else:
-                logger.warning(f"EXIF ImageDescription too large ({len(desc)} bytes); omitted")
+                logger.warning('EXIF ImageDescription could not be trimmed to fit; omitted')
 
         if camera_metadata:
             exposure_us = camera_metadata.get('ExposureTime')
@@ -155,11 +192,11 @@ def build_exif_bytes(gps_data=None, camera_metadata=None, context=None, capture_
             if lens_position:  # dioptres -> metres
                 exif_ifd[piexif.ExifIFD.SubjectDistance] = (round(100 / lens_position), 100)
             # Complete raw metadata for scientific traceability (authoritative record)
-            meta_json = json.dumps(camera_metadata, default=str)
-            if len(meta_json) <= _MAX_EXIF_JSON:
+            meta_json = _fit_json(camera_metadata)
+            if meta_json:
                 exif_ifd[piexif.ExifIFD.UserComment] = piexif.helper.UserComment.dump(meta_json)
             else:
-                logger.warning(f"EXIF UserComment too large ({len(meta_json)} bytes); omitted")
+                logger.warning('EXIF UserComment could not be trimmed to fit; omitted')
 
         if gps_data and gps_data.get('latitude') is not None and gps_data.get('longitude') is not None:
             lat = float(gps_data['latitude'])
@@ -268,16 +305,32 @@ class ImageRecorder:
         if capture_time is None:
             capture_time = datetime.now(timezone.utc)
         timestamp = capture_time.strftime('%Y-%m-%dT%H%M%S.%f')[:-3] + 'Z'
-        exif_bytes = build_exif_bytes(gps_data=gps_data,
-                                      camera_metadata=camera_metadata,
-                                      context=context,
-                                      capture_time=capture_time)
+
+        source_height, source_width = frame.shape[:2]
+        base_context = dict(context or {})
+        base_context['source_width'] = source_width
+        base_context['source_height'] = source_height
+
+        def exif_for(x, y, width, height):
+            """EXIF for one saved region, carrying where it came from.
+
+            A bbox or square crop is otherwise untraceable: nothing in the file
+            says which part of which frame it is, so it cannot be re-labelled
+            against the original or checked for context.
+            """
+            region = dict(base_context, roi_x=x, roi_y=y,
+                          roi_width=width, roi_height=height)
+            return build_exif_bytes(gps_data=gps_data,
+                                    camera_metadata=camera_metadata,
+                                    context=region,
+                                    capture_time=capture_time)
+
         if self.mode == 'whole':
-            files = self.save_frame(frame, frame_id, timestamp, exif_bytes)
+            files = self.save_frame(frame, frame_id, timestamp, exif_for)
         elif self.mode == 'bbox':
-            files = self.save_bboxes(frame, frame_id, boxes, timestamp, exif_bytes)
+            files = self.save_bboxes(frame, frame_id, boxes, timestamp, exif_for)
         elif self.mode == 'square':
-            files = self.save_squares(frame, frame_id, centres, timestamp, exif_bytes)
+            files = self.save_squares(frame, frame_id, centres, timestamp, exif_for)
         else:
             files = []
 
@@ -315,16 +368,17 @@ class ImageRecorder:
             # Module logger: worker processes may hold a bare recorder
             logger.warning(f"Failed to append location sidecar entry: {e}")
 
-    def save_frame(self, frame, frame_id, timestamp, exif_bytes):
+    def save_frame(self, frame, frame_id, timestamp, exif_for):
+        height, width = frame.shape[:2]
         filename = f"{timestamp}_frame_{frame_id}.jpg"
         filepath = os.path.join(self.save_directory, filename)
         image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        image_bytes = encode_jpeg(image, exif_bytes)
+        image_bytes = encode_jpeg(image, exif_for(0, 0, width, height))
         with open(filepath, 'wb') as f:
             f.write(image_bytes)
         return [filename]
 
-    def save_bboxes(self, frame, frame_id, boxes, timestamp, exif_bytes):
+    def save_bboxes(self, frame, frame_id, boxes, timestamp, exif_for):
         filenames = []
         for contour_id, box in enumerate(boxes):
             startX, startY, width, height = box
@@ -332,30 +386,33 @@ class ImageRecorder:
             filename = f"{timestamp}_frame_{frame_id}_n_{str(contour_id)}.jpg"
             filepath = os.path.join(self.save_directory, filename)
             image = Image.fromarray(cv2.cvtColor(cropped_image, cv2.COLOR_BGR2RGB))
-            image_bytes = encode_jpeg(image, exif_bytes)
+            image_bytes = encode_jpeg(image, exif_for(startX, startY, width, height))
             with open(filepath, 'wb') as f:
                 f.write(image_bytes)
             filenames.append(filename)
         return filenames
 
-    def save_squares(self, frame, frame_id, centres, timestamp, exif_bytes):
+    def save_squares(self, frame, frame_id, centres, timestamp, exif_for):
         filenames = []
         side_length = min(200, frame.shape[0])
         halfLength = side_length // 2
         for contour_id, centre in enumerate(centres):
-            startX = max(centre[0] - np.random.randint(10, halfLength), 0)
-            startY = max(centre[1] - np.random.randint(10, halfLength), 0)
+            # Clamp the origin so the square always fits, then derive the end
+            # from it. The old code adjusted startX/startY on overflow but left
+            # endX/endY at their pre-clamp values, so the slice ran past the
+            # frame edge and numpy silently returned a differently-sized crop.
+            startX = min(max(centre[0] - np.random.randint(10, halfLength), 0),
+                         max(frame.shape[1] - side_length, 0))
+            startY = min(max(centre[1] - np.random.randint(10, halfLength), 0),
+                         max(frame.shape[0] - side_length, 0))
             endX = startX + side_length
             endY = startY + side_length
-            if endX > frame.shape[1]:
-                startX = frame.shape[1] - side_length
-            if endY > frame.shape[0]:
-                startY = frame.shape[0] - side_length
             square_image = frame[startY:endY, startX:endX]
             filename = f"{timestamp}_frame_{frame_id}_n_{str(contour_id)}.jpg"
             filepath = os.path.join(self.save_directory, filename)
             image = Image.fromarray(cv2.cvtColor(square_image, cv2.COLOR_BGR2RGB))
-            image_bytes = encode_jpeg(image, exif_bytes)
+            image_bytes = encode_jpeg(image, exif_for(startX, startY,
+                                                      endX - startX, endY - startY))
             with open(filepath, 'wb') as f:
                 f.write(image_bytes)
             filenames.append(filename)

@@ -1,11 +1,26 @@
 #!/usr/bin/env python
-from utils.algorithms import exg, exg_standardised, exg_standardised_hue, hsv, exgr, gndvi, maxg
+from utils.algorithms import exg, exg_standardised_hue, hsv
 from utils.lut_manager import apply_lut
 import numpy as np
 import cv2
 
 
 MAX_DETECTIONS = 50
+
+
+def draw_boxes(image, boxes, label='WEED'):
+    """Copy of `image` with detection boxes drawn.
+
+    Separate from inference so owl.py can draw after the relays are already
+    scheduled: annotation must never delay a spray.
+    """
+    image_out = image.copy()
+    for startX, startY, boxW, boxH in boxes:
+        endX = startX + boxW
+        endY = startY + boxH
+        cv2.putText(image_out, label, (startX, startY + 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
+        cv2.rectangle(image_out, (int(startX), int(startY)), (endX, endY), (0, 0, 255), 2)
+    return image_out
 
 class GreenOnBrown:
     def __init__(self, algorithm='exg', label_file='models/labels.txt', lut_table=None):
@@ -20,12 +35,8 @@ class GreenOnBrown:
         # Dictionary mapping algorithm names to functions
         self.algorithms = {
             'exg': exg,
-            'exgr': exgr,
-            'maxg': maxg,
-            'nexg': exg_standardised,
             'exhsv': exg_standardised_hue,
             'hsv': hsv,
-            'gndvi': gndvi,
             'lut': self._lut_inference,
         }
 
@@ -124,14 +135,6 @@ class GreenOnBrown:
             weed_centres.append([x + w // 2, y + h // 2])
 
         if show_display:
-            image_out = image.copy()
-            for box in boxes:
-                startX, startY, boxW, boxH = box
-                endX = startX + boxW
-                endY = startY + boxH
-                cv2.putText(image_out, label, (startX, startY + 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
-                cv2.rectangle(image_out, (int(startX), int(startY)), (endX, endY), (0, 0, 255), 2)
-
-            return contours, boxes, weed_centres, image_out
+            return contours, boxes, weed_centres, draw_boxes(image, boxes, label)
 
         return contours, boxes, weed_centres, image

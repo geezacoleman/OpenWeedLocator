@@ -828,6 +828,18 @@
     margin-top: 8px;
 }
 
+/* Spray timing line under the metric chips (speed · timing · processing) */
+.spray-timing-line {
+    margin: 6px 0 0;
+    padding: 0 2px;
+    font-size: 13px;
+    color: var(--text-light, #5a6b7b);
+}
+
+.spray-timing-line.hidden {
+    display: none;
+}
+
 /* --------------------------------------------------------------------------
    Controls - Responsive
    -------------------------------------------------------------------------- */

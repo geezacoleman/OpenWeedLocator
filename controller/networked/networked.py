@@ -37,8 +37,10 @@ from werkzeug.utils import secure_filename
 
 from utils.config_manager import (
     build_config_filename, parse_config_meta, strip_geometry_keys, GEOMETRY_FILE,
-    stamp_config_meta, atomic_write_config, strip_legacy_min_area,
+    stamp_config_meta, atomic_write_config, strip_legacy_min_area, ConfigValidator,
 )
+# Shared with OWLs that time themselves from their own GPS
+from utils.actuation import GPS_STALE_AFTER_S, SpeedAverager, ActuationCalculator
 try:
     from version import VERSION as _OWL_VERSION, APP_CONTRACT_VERSION
     CONTROLLER_VERSION = str(_OWL_VERSION)
@@ -143,126 +145,6 @@ def _validate_ncnn_zip(zip_path):
     return True, 'ok'
 
 
-class SpeedAverager:
-    """Time-windowed moving average of GPS speed."""
-
-    def __init__(self, window_seconds=5.0):
-        self.window_seconds = window_seconds
-        self._samples = deque()  # (timestamp, speed_kmh)
-        self._lock = threading.Lock()
-        self._last_valid_avg = None
-        self._last_sample_time = None
-
-    def add_sample(self, speed_kmh):
-        """Add a speed sample and return current average."""
-        now = time.time()
-        with self._lock:
-            self._samples.append((now, speed_kmh))
-            self._prune()
-            avg = self._compute_avg()
-            if avg is not None:
-                self._last_valid_avg = avg
-            self._last_sample_time = now
-            return avg
-
-    def get_average(self):
-        """Current window average without adding a sample."""
-        with self._lock:
-            self._prune()
-            return self._compute_avg()
-
-    def get_fallback_speed(self):
-        """Last known valid average for GPS dropout."""
-        with self._lock:
-            return self._last_valid_avg
-
-    def seconds_since_update(self):
-        """Time since last GPS sample."""
-        with self._lock:
-            if self._last_sample_time is None:
-                return None
-            return time.time() - self._last_sample_time
-
-    def _prune(self):
-        """Remove samples older than the window."""
-        cutoff = time.time() - self.window_seconds
-        while self._samples and self._samples[0][0] < cutoff:
-            self._samples.popleft()
-
-    def _compute_avg(self):
-        """Compute average from current window."""
-        if not self._samples:
-            return None
-        total = sum(s[1] for s in self._samples)
-        return total / len(self._samples)
-
-
-class ActuationCalculator:
-    """Pure math: converts speed + geometry into actuation timing."""
-
-    MIN_SPEED = 0.5   # km/h — below this, use fallback
-    MIN_DURATION = 0.01  # seconds floor
-    MAX_DURATION = 5.0   # seconds cap
-
-    def __init__(self, actuation_length_cm=10.0, offset_cm=30.0,
-                 fallback_duration=0.15, fallback_delay=0.0):
-        self.actuation_length_cm = actuation_length_cm
-        self.offset_cm = offset_cm
-        self.fallback_duration = fallback_duration
-        self.fallback_delay = fallback_delay
-
-    def compute(self, speed_kmh):
-        """Compute actuation params from speed.
-
-        Returns dict with actuation_duration, delay, source, speed_used.
-        """
-        if speed_kmh is None or speed_kmh < self.MIN_SPEED:
-            return {
-                'actuation_duration': self.fallback_duration,
-                'delay': self.fallback_delay,
-                'source': 'config',
-                'speed_used': 0.0
-            }
-
-        speed_m_s = speed_kmh / 3.6
-        duration = (self.actuation_length_cm / 100.0) / speed_m_s
-        delay = (self.offset_cm / 100.0) / speed_m_s
-
-        # Clamp to safety bounds
-        duration = max(self.MIN_DURATION, min(self.MAX_DURATION, duration))
-        delay = max(0.0, min(self.MAX_DURATION, delay))
-
-        return {
-            'actuation_duration': round(duration, 4),
-            'delay': round(delay, 4),
-            'source': 'gps',
-            'speed_used': round(speed_kmh, 2)
-        }
-
-    def check_coverage(self, speed_kmh, avg_loop_time_ms):
-        """Check if actuation length covers the gap between frames.
-
-        Returns dict with coverage_ok, min_gap_cm, message.
-        """
-        if speed_kmh is None or speed_kmh < self.MIN_SPEED or avg_loop_time_ms <= 0:
-            return {'coverage_ok': True, 'min_gap_cm': 0.0, 'message': ''}
-
-        # Distance travelled per frame (loop iteration)
-        min_gap_cm = (speed_kmh / 3.6) * (avg_loop_time_ms / 1000.0) * 100.0
-        coverage_ok = self.actuation_length_cm >= min_gap_cm
-
-        message = ''
-        if not coverage_ok:
-            message = (f"Coverage gap: actuation {self.actuation_length_cm}cm "
-                       f"< frame gap {min_gap_cm:.1f}cm at {speed_kmh:.1f} km/h")
-
-        return {
-            'coverage_ok': coverage_ok,
-            'min_gap_cm': round(min_gap_cm, 1),
-            'message': message
-        }
-
-
 class CentralController:
     """Central controller for managing multiple OWLs via MQTT"""
 
@@ -323,7 +205,7 @@ class CentralController:
 
         # Actuation calculator (speed-adaptive relay timing)
         self.speed_averager = SpeedAverager(
-            window_seconds=self.config.getfloat('Actuation', 'speed_avg_window', fallback=5.0)
+            window_seconds=self.config.getfloat('Actuation', 'speed_avg_window', fallback=2.0)
         )
         self.actuation_calculator = ActuationCalculator(
             actuation_length_cm=self.config.getfloat('Actuation', 'actuation_length_cm', fallback=10.0),
@@ -745,17 +627,16 @@ class CentralController:
                         speed_kmh = avg
                         gps_status = 'active'
                     else:
-                        # GPS connected but no valid fix
+                        # GPS connected but no valid fix. The last good average
+                        # is trustworthy only briefly; past the window the speed
+                        # is genuinely unknown and speed_kmh stays None so
+                        # compute() reverts to the configured duration/delay.
+                        # (Both branches here used to do the same thing, so the
+                        # last speed ever seen was reused indefinitely.)
                         ssu = self.speed_averager.seconds_since_update()
-                        if ssu is not None and ssu < 30:
+                        if ssu is not None and ssu < GPS_STALE_AFTER_S:
                             speed_kmh = self.speed_averager.get_fallback_speed()
                             gps_status = 'stale'
-                        elif self.speed_averager.get_fallback_speed() is not None:
-                            speed_kmh = self.speed_averager.get_fallback_speed()
-                            gps_status = 'stale'
-
-                # Compute actuation params
-                result = self.actuation_calculator.compute(speed_kmh)
 
                 # Compute avg loop time across all OWLs
                 loop_times = []
@@ -765,6 +646,10 @@ class CentralController:
                         if lt > 0:
                             loop_times.append(lt)
                 avg_loop_time = sum(loop_times) / len(loop_times) if loop_times else 0.0
+
+                # Compute actuation params (duration stretches to cover the
+                # ground travelled between frames)
+                result = self.actuation_calculator.compute(speed_kmh, avg_loop_time)
 
                 # Check coverage
                 coverage = self.actuation_calculator.check_coverage(
@@ -788,11 +673,17 @@ class CentralController:
 
                 # Broadcast to all connected OWLs
                 if self.mqtt_client and self.mqtt_connected:
+                    # Geometry and speed are additive: an OWL timing itself from
+                    # its own GPS keeps its duration/delay but adopts the
+                    # geometry set here, and uses the speed for its warning.
                     payload = json.dumps({
                         'action': 'set_actuation_params',
                         'actuation_duration': result['actuation_duration'],
                         'delay': result['delay'],
-                        'source': result['source']
+                        'source': result['source'],
+                        'actuation_length_cm': self.actuation_calculator.actuation_length_cm,
+                        'offset_cm': self.actuation_calculator.offset_cm,
+                        'speed_kmh': round(speed_kmh, 2) if speed_kmh is not None else None,
                     })
                     with self.mqtt_lock:
                         for owl_id, state in self.owls_state.items():
@@ -1771,6 +1662,28 @@ def get_device_config(device_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+def _protected_pin_rejection(device_id, section, params):
+    """400 response when `params` would put a relay, LED or switch on a pin
+    the target OWL's own GPS hardware uses (its published protected_pins).
+    None when the change is fine. The OWL refuses it too; checking here gives
+    the farmer the reason instead of a silent refusal."""
+    protected = {}
+    with controller.mqtt_lock:
+        if device_id == 'all':
+            states = [st for st in controller.owls_state.values() if st.get('connected')]
+        else:
+            states = [controller.owls_state.get(device_id) or {}]
+        for state in states:
+            for pin, why in (state.get('protected_pins') or {}).items():
+                protected[int(pin)] = why
+    blocked = ConfigValidator.protected_pin_errors({section: params}, protected)
+    if not blocked:
+        return None
+    return jsonify({'success': False,
+                    'error': ConfigValidator.format_protected_pin_errors(blocked),
+                    'rejected': blocked}), 400
+
+
 @app.route('/api/config/<device_id>', methods=['POST'])
 def push_device_config(device_id):
     """Push section changes to a device"""
@@ -1784,6 +1697,10 @@ def push_device_config(device_id):
 
         if not section or not params:
             return jsonify({'success': False, 'error': 'Missing section or params'}), 400
+
+        rejection = _protected_pin_rejection(device_id, section, params)
+        if rejection:
+            return rejection
 
         result = controller.send_command(device_id, 'set_config_section', {
             'section': section,
@@ -3542,6 +3459,10 @@ def set_config_param():
         section = data.get('section', 'GreenOnBrown') or 'GreenOnBrown'
         typed_value = _coerce_value(value)
 
+        rejection = _protected_pin_rejection('all', section, {param: typed_value})
+        if rejection:
+            return rejection
+
         # Always dispatch set_config_section: unlike the single-key set_config
         # action it auto-persists GreenOnBrown changes on the OWL (autosave),
         # so widget slider changes survive a reboot.
@@ -3571,7 +3492,15 @@ def init_app():
     actuation_thread.start()
 
 
-init_app()
+# Runs at import because gunicorn loads this module as `networked:app` and needs
+# the controller live before the first request — it never calls main(). The cost
+# is that ANY import starts a real broker connection, the GPS reader and three
+# background loops, which for the test suite meant they ran for the whole pytest
+# session and kept logging after pytest closed its capture streams.
+# OWL_SKIP_INIT lets tests import the app without side effects; nothing in
+# production sets it, so the behaviour there is unchanged.
+if not os.environ.get('OWL_SKIP_INIT'):
+    init_app()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000, debug=False, threaded=True)

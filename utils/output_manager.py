@@ -159,7 +159,12 @@ class BaseStatusIndicator:
         return True
 
     def start_storage_indicator(self):
-        self.thread = Thread(target=self.run_update)
+        # daemon: this is a background watchdog with a 10.5 s wait per cycle and
+        # no natural end. Non-daemon, it kept the interpreter alive after the
+        # main thread finished — including when Owl.__init__ raised part-way and
+        # left the indicator orphaned, which hung the test suite for minutes
+        # after it had finished. stop() is still the orderly way to end it.
+        self.thread = Thread(target=self.run_update, daemon=True)
         self.thread.start()
 
     def run_update(self):
@@ -240,7 +245,9 @@ class BaseStatusIndicator:
             return
         self.flash_event.clear()
         if self.flashing_thread is None or not self.flashing_thread.is_alive():
-            self.flashing_thread = Thread(target=self._flash_error_code)
+            # daemon: an error-flash loop must never outlive the process it
+            # is reporting on (see start_storage_indicator)
+            self.flashing_thread = Thread(target=self._flash_error_code, daemon=True)
             self.flashing_thread.start()
 
     def clear_error(self):
@@ -450,7 +457,9 @@ class AdvancedStatusIndicator(BaseStatusIndicator):
             return
         self.flash_event.clear()
         if self.flashing_thread is None or not self.flashing_thread.is_alive():
-            self.flashing_thread = Thread(target=self._flash_error_code)
+            # daemon: an error-flash loop must never outlive the process it
+            # is reporting on (see start_storage_indicator)
+            self.flashing_thread = Thread(target=self._flash_error_code, daemon=True)
             self.flashing_thread.start()
 
     def clear_error(self):
@@ -548,8 +557,19 @@ class GPSStatusLED:
 
 # control class for the relay board
 class RelayControl:
-    def __init__(self, relay_dict):
+    def __init__(self, relay_dict, disabled_pins=None):
+        """disabled_pins: {board_pin: reason} for pins on-device GPS hardware is
+        using. A relay on one of them keeps its slot (lane indexing and the
+        consumer threads depend on keys 0..n-1) but drives nothing."""
         self.logger = LogManager.get_logger(__name__)
+        disabled_pins = disabled_pins or {}
+        self.disabled_relays = {}
+        for relay, board_pin in relay_dict.items():
+            if board_pin in disabled_pins:
+                self.disabled_relays[relay] = board_pin
+                self.logger.error(
+                    f"Relay {relay} on BOARD {board_pin} disabled: {disabled_pins[board_pin]}. "
+                    f"Move it to a free pin in [Relays].")
 
         self.testing = True if testing else False
         self.relay_dict = relay_dict
@@ -574,7 +594,10 @@ class RelayControl:
                         raise
 
             for relay, board_pin in self.relay_dict.items():
-                self.relay_dict[relay] = OutputDevice(pin=f'BOARD{board_pin}')
+                if relay in self.disabled_relays:
+                    self.relay_dict[relay] = TestRelay(board_pin)
+                else:
+                    self.relay_dict[relay] = OutputDevice(pin=f'BOARD{board_pin}')
 
         else:
             self.buzzer = TestBuzzer()
@@ -620,7 +643,7 @@ class RelayControl:
 # spray window from its detection timestamp; overlapping windows from repeated detections of the same weed/patch merge
 # into one continuous activation, so the nozzle is only switched at the true start and end of spraying.
 class RelayController:
-    def __init__(self, relay_dict, vis=False, status_led=None):
+    def __init__(self, relay_dict, vis=False, status_led=None, disabled_pins=None):
         self.logger = LogManager.get_logger(__name__)
 
         self.relay_dict = relay_dict
@@ -628,7 +651,7 @@ class RelayController:
         self.status_led = status_led
         # instantiate relay control with supplied relay dictionary to map to correct board pins
         try:
-            self.relay = RelayControl(self.relay_dict)
+            self.relay = RelayControl(self.relay_dict, disabled_pins=disabled_pins)
         except OWLAlreadyRunningError:
             self.logger.error("Failed to initialize RelayControl: OWL is already running and using GPIO pin 7.")
             raise
@@ -655,8 +678,18 @@ class RelayController:
     def receive(self, relay, time_stamp, location=0, delay=0, duration=1):
         """
         Schedule a spray window for a relay. The window runs from time_stamp + delay
-        until time_stamp + delay + duration, anchored to the true detection time from
-        the main thread so processing lag never stretches the spray.
+        until time_stamp + delay + duration, anchored to a timestamp taken by the
+        main thread so a late consumer wake can never stretch the spray.
+
+        All times are time.monotonic(). Wall-clock time can step (the phone app's
+        time sync, NTP), which would hold a nozzle open or cut a spray short.
+
+        `time_stamp` is taken AFTER detection, not at frame capture. That is
+        deliberate. The caller (owl.py) has already subtracted the processing
+        time from `delay`, so the nozzle still opens where the weed is; with
+        delay = 0 nothing is left to subtract and the nozzle opens now. An
+        earlier anchor would only bring off_at forward, shortening the spray by
+        the processing time and, at speed, dropping it via the stale guard.
 
         If a window is already open or pending, the new one merges into it: on_at
         never moves later and off_at only ever extends. A continuously detected weed
@@ -675,7 +708,7 @@ class RelayController:
         off_at = on_at + duration
 
         with condition:
-            now = time.time()
+            now = time.monotonic()
             if off_at <= now:
                 # window already in the past (stale backlog) — nothing to spray
                 return
@@ -690,15 +723,22 @@ class RelayController:
             condition.notify()
 
     def _set_relay(self, relay, on):
+        """Switch one relay. Indicator work never runs before the relay is in
+        its requested state, and never propagates: a failing LED or visualiser
+        must not be able to strand an energised nozzle."""
         if on:
             self.relay.relay_on(relay, verbose=False)
-            if self.status_led:
-                self.status_led.blink(on_time=0.1, n=1, background=True)
         else:
             self.relay.relay_off(relay, verbose=False)
 
-        if self.vis:
-            self.relay_vis.update(relay=relay, status=on)
+        try:
+            if on and self.status_led:
+                self.status_led.blink(on_time=0.1, n=1, background=True)
+            if self.vis:
+                self.relay_vis.update(relay=relay, status=on)
+        except Exception as e:
+            self.logger.error(f"Relay {relay} indicator failed (relay itself is "
+                              f"{'on' if on else 'off'}): {e}")
 
     def consumer(self, relay):
         """
@@ -713,38 +753,62 @@ class RelayController:
         schedule = self.relay_schedule_dict[relay]
         relay_on = False
 
+        def switch(on):
+            """Drive the relay, surviving a switching failure.
+
+            An unhandled exception here would kill this thread, and if it landed
+            while the nozzle was energised that nozzle would stay on until the
+            process ended — silently, with the main loop running normally. On
+            failure we retry the off, because stuck-on is the costly direction.
+            """
+            nonlocal relay_on
+            try:
+                self._set_relay(relay, on=on)
+                relay_on = on
+            except Exception as e:
+                self.logger.error(f"Relay {relay} failed to switch "
+                                  f"{'on' if on else 'off'}: {e}")
+                if on:
+                    relay_on = True   # assume energised until proven otherwise
+                else:
+                    try:
+                        self.relay.relay_off(relay, verbose=False)
+                        relay_on = False
+                    except Exception as e2:
+                        self.logger.error(f"Relay {relay} STUCK ON - direct off "
+                                          f"also failed: {e2}")
+
         with condition:
             while self.running:
-                now = time.time()
+                now = time.monotonic()
                 off_at = schedule['off_at']
 
                 if off_at is None or off_at <= now:
                     # no window, or window just closed
                     if relay_on:
-                        self._set_relay(relay, on=False)
-                        relay_on = False
+                        switch(False)
                     schedule['on_at'] = None
                     schedule['off_at'] = None
-                    condition.wait()
+                    # If the off failed, keep retrying instead of sleeping
+                    # indefinitely with a nozzle still energised.
+                    condition.wait(timeout=1.0 if relay_on else None)
                     continue
 
                 on_at = schedule['on_at']
                 if on_at is not None and on_at > now:
                     # window scheduled but the camera-to-nozzle delay hasn't elapsed
                     if relay_on:
-                        self._set_relay(relay, on=False)
-                        relay_on = False
+                        switch(False)
                     condition.wait(timeout=on_at - now)
                     continue
 
                 if not relay_on:
-                    self._set_relay(relay, on=True)
-                    relay_on = True
+                    switch(True)
                 condition.wait(timeout=off_at - now)
 
             # never leave a nozzle on after shutdown
             if relay_on:
-                self._set_relay(relay, on=False)
+                switch(False)
 
     def stop(self):
         self.running = False

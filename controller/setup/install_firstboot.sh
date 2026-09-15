@@ -7,6 +7,9 @@
 #   sudo bash install_firstboot.sh --camera-config  # only write the CM camera
 #                                                   # overlay to config.txt
 #                                                   # (exit 2 = changed, reboot needed)
+#   sudo bash install_firstboot.sh --gps-config     # nRF9151 modem boot config
+#                                                   # (UART3 + power), also applied
+#                                                   # now (exit 2 = config changed)
 #
 # Arming:
 #   - installs + enables owl-firstboot.service (ConditionPathExists gated)
@@ -39,6 +42,14 @@ SETUP_PORT=8088
 # If the shipped sensor ever changes, update this AND CAMERA_SENSOR in
 # firstboot_state.py to match.
 CAMERA_OVERLAY="imx296"
+
+# nRF9151 modem on the production CM5 carrier: UART3 on GPIO 8/9 (TX/RX only,
+# /dev/ttyAMA3) and its power switch on GPIO 26 (5G_ENABLE, which drives the
+# load switches for the modem's VDD and VDD_GPIO rails). Never add ctsrts:
+# GPIO 10/11 are output channels on this carrier, not RTS/CTS.
+GPS_UART_OVERLAY="uart3-pi5"
+GPS_UART_DEV="/dev/ttyAMA3"
+GPS_POWER_GPIO=26
 BOOT_CONFIG="/boot/firmware/config.txt"
 SETUP_PSK="owl-setup"
 AVAHI_FILE="/etc/avahi/services/owl-setup.service"
@@ -147,6 +158,75 @@ configure_camera() {
         return 2
     fi
     echo -e "${TICK} CM camera config already present in ${BOOT_CONFIG}"
+    return 0
+}
+
+configure_gps_uart() {
+    # Write the nRF9151 modem boot config and apply it for this session.
+    # Idempotent: each line is added only if missing. Returns:
+    #   0  nothing to do (already configured, or not a CM5)
+    #   1  error (config.txt missing or unwritable)
+    #   2  config.txt changed (applied now as well; boot-time from next boot)
+    local model=""
+    if [[ -r /proc/device-tree/model ]]; then
+        model=$(tr -d '\0' < /proc/device-tree/model)
+    fi
+    if [[ "$model" != *"Compute Module 5"* ]]; then
+        echo -e "${ORANGE}[WARN] '${model:-unknown board}' is not a Compute Module 5 -"
+        echo -e "       skipping nRF9151 boot config (production CM5 carrier only).${NC}"
+        return 0
+    fi
+    if [[ ! -f "$BOOT_CONFIG" ]]; then
+        echo -e "${CROSS} ${BOOT_CONFIG} not found - cannot configure the nRF9151 modem."
+        return 1
+    fi
+
+    local changed=0
+
+    # A ctsrts variant grabs GPIO 10/11, which are output channels here.
+    if grep -qE "^dtoverlay=${GPS_UART_OVERLAY},ctsrts" "$BOOT_CONFIG"; then
+        if ! sed -i "s/^dtoverlay=${GPS_UART_OVERLAY},ctsrts.*/dtoverlay=${GPS_UART_OVERLAY}/" "$BOOT_CONFIG"; then
+            echo -e "${CROSS} Could not edit ${BOOT_CONFIG}."
+            return 1
+        fi
+        changed=1
+    fi
+
+    local need_overlay=1 need_power=1
+    grep -qE "^dtoverlay=${GPS_UART_OVERLAY}[[:space:]]*$" "$BOOT_CONFIG" && need_overlay=0
+    grep -qE "^gpio=${GPS_POWER_GPIO}=op,dh[[:space:]]*$" "$BOOT_CONFIG" && need_power=0
+
+    if [[ "$need_overlay" == "1" || "$need_power" == "1" ]]; then
+        {
+            echo ""
+            echo "[all]"
+            echo "# OWL nRF9151 modem (UART3 + power on GPIO ${GPS_POWER_GPIO}) - added by install_firstboot.sh"
+            if [[ "$need_overlay" == "1" ]]; then
+                echo "dtoverlay=${GPS_UART_OVERLAY}"
+            fi
+            if [[ "$need_power" == "1" ]]; then
+                echo "gpio=${GPS_POWER_GPIO}=op,dh"
+            fi
+        } >> "$BOOT_CONFIG"
+        if [[ $? -ne 0 ]]; then
+            echo -e "${CROSS} Could not append to ${BOOT_CONFIG}."
+            return 1
+        fi
+        changed=1
+    fi
+
+    # Apply now too, so the modem can be checked without a reboot. A boot-time
+    # ctsrts overlay can't be unloaded here; the edit above fixes it on reboot.
+    [[ -e "$GPS_UART_DEV" ]] || dtoverlay "$GPS_UART_OVERLAY" 2>/dev/null
+    if command -v pinctrl >/dev/null 2>&1; then
+        pinctrl set "$GPS_POWER_GPIO" op dh
+    fi
+
+    if [[ "$changed" == "1" ]]; then
+        echo -e "${TICK} nRF9151 boot config written to ${BOOT_CONFIG} (${GPS_UART_OVERLAY}, gpio=${GPS_POWER_GPIO}=op,dh)"
+        return 2
+    fi
+    echo -e "${TICK} nRF9151 boot config already present in ${BOOT_CONFIG}"
     return 0
 }
 
@@ -379,5 +459,7 @@ case "$MODE" in
     # Deliberately untouched by --disarm — the overlay is hardware truth,
     # not setup surface.
     --camera-config) configure_camera; exit $? ;;
-    *) echo -e "${CROSS} Unknown option '$MODE' (use --arm, --disarm or --camera-config)"; exit 1 ;;
+    # owl_setup.sh --ship-gps entry: nRF9151 modem UART + power boot config.
+    --gps-config) configure_gps_uart; exit $? ;;
+    *) echo -e "${CROSS} Unknown option '$MODE' (use --arm, --disarm, --camera-config or --gps-config)"; exit 1 ;;
 esac

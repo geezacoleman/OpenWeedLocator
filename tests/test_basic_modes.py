@@ -14,8 +14,10 @@ through hoot(); nothing about the detection path is mocked out.
 """
 
 import configparser
+import multiprocessing
 import os
 import sys
+import time
 import threading
 from pathlib import Path
 
@@ -167,8 +169,14 @@ def run_hoot(instance, frames=6):
 
     fired = []
     original_receive = instance.relay_controller.receive
-    instance.relay_controller.receive = lambda **kwargs: (
-        fired.append(kwargs), original_receive(**kwargs))[1]
+
+    def record(**kwargs):
+        # called_at lets tests check the window against the moment the relay
+        # controller was actually asked to spray, not just the arguments
+        fired.append(dict(kwargs, called_at=time.monotonic()))
+        return original_receive(**kwargs)
+
+    instance.relay_controller.receive = record
 
     try:
         instance.hoot()
@@ -309,6 +317,15 @@ def test_has_gui_support_reports_false_when_highgui_raises(monkeypatch):
 # 3. hardware controllers, no dashboard
 # --------------------------------------------------------------------------
 
+@pytest.mark.skipif(
+    multiprocessing.get_start_method() != 'fork',
+    reason="Owl starts the controller in a multiprocessing.Process, and the "
+           "controller holds owl_instance=self. Under 'spawn' (Windows, macOS) "
+           "that pickles the whole Owl, including RelayController's "
+           "threading.Condition objects, which cannot be pickled. The spawned "
+           "child is left waiting on a pipe that never gets data, so the test "
+           "not only fails, it stops the interpreter exiting. Runs normally on "
+           "Linux and the Pi, which fork and never pickle.")
 @pytest.mark.parametrize('controller_type', ['ute', 'advanced'])
 def test_hardware_controller_without_dashboard(owl_factory, config_factory, input_dir,
                                                controller_type):
@@ -468,3 +485,128 @@ def test_gps_status_led_thread_does_not_spin():
     finally:
         led.stop()
     assert led._thread.is_alive() is False
+
+
+# --------------------------------------------------------------------------
+# 6. which relay fires, not merely that one did
+# --------------------------------------------------------------------------
+
+class FixedFrameCamera(FakeCamera):
+    """FakeCamera that serves a caller-supplied frame."""
+
+    def __init__(self, frame, frames=4):
+        super().__init__(frames=frames)
+        self.frame = frame
+
+
+def _frame_with_blobs(instance, cropped_xs, blob=40):
+    """Green blobs centred at the given CROPPED-frame x positions.
+
+    Positions are converted to full-frame coordinates using the instance's own
+    crop slice, so the test states where the weed is on the ground and lets
+    production geometry decide the lane.
+    """
+    height, width = instance.frame_height, instance.frame_width
+    frame = np.full((height, width, 3), (40, 60, 90), dtype=np.uint8)
+    y_off, x_off = instance.crop_slice[0].start, instance.crop_slice[1].start
+    cy = y_off + instance.cropped_height // 2
+    for cx in cropped_xs:
+        x = x_off + int(cx)
+        cv2.rectangle(frame, (x - blob // 2, cy - blob // 2),
+                      (x + blob // 2, cy + blob // 2), (60, 180, 60), -1)
+    return frame
+
+
+def _fire_blobs_at(instance, cropped_xs):
+    instance.cam = FixedFrameCamera(_frame_with_blobs(instance, cropped_xs))
+    fired = []
+    original = instance.relay_controller.receive
+    instance.relay_controller.receive = lambda **kw: (fired.append(kw), original(**kw))[1]
+    try:
+        instance.hoot()
+    except SystemExit:
+        pass
+    return {f['relay'] for f in fired}
+
+
+def test_weed_position_selects_the_matching_relay(owl_factory, config_factory, input_dir):
+    """A weed in the first lane must fire the first relay, and so on.
+
+    The bounds check in test_laptop_no_dashboard_runs_detection_loop passes
+    even if the lane maths is inverted or off by one, because every relay id
+    is in range. Naming the lane is what catches it.
+    """
+    config = config_factory(overrides=[('DataCollection', 'detection_enable', 'True')])
+    instance = owl_factory(config, input_file_or_directory=str(input_dir))
+
+    lane_width = instance.lane_width
+    last = instance.relay_num - 1
+
+    # centre of the first lane, then the centre of the last
+    assert _fire_blobs_at(instance, [lane_width * 0.5]) == {0}
+
+    instance2 = owl_factory(config_factory(
+        overrides=[('DataCollection', 'detection_enable', 'True')]),
+        input_file_or_directory=str(input_dir))
+    assert _fire_blobs_at(instance2, [instance2.lane_width * (last + 0.5)]) == {last}
+
+
+def test_two_weeds_fire_exactly_their_two_relays(owl_factory, config_factory, input_dir):
+    """Lanes between two weeds must stay shut — no blanket firing."""
+    config = config_factory(overrides=[('DataCollection', 'detection_enable', 'True')])
+    instance = owl_factory(config, input_file_or_directory=str(input_dir))
+    if instance.relay_num < 4:
+        pytest.skip('needs at least 4 relays to have a gap in the middle')
+
+    lw, last = instance.lane_width, instance.relay_num - 1
+    fired = _fire_blobs_at(instance, [lw * 0.5, lw * (last + 0.5)])
+    assert fired == {0, last}, f'expected only the outer lanes, got {fired}'
+
+
+def test_delay_is_reduced_by_processing_time(owl_factory, config_factory, input_dir):
+    """The camera-to-nozzle delay counts from frame capture, so the relays get
+    what is left of it after processing; duration is never shortened."""
+    config = config_factory(overrides=[('DataCollection', 'detection_enable', 'True'),
+                                       ('System', 'actuation_duration', '0.15'),
+                                       ('System', 'delay', '0.2')])
+    instance = owl_factory(config, input_file_or_directory=str(input_dir))
+
+    fired = run_hoot(instance)
+    assert fired, 'a green blob should actuate a relay'
+    for call in fired:
+        assert 0.0 <= call['delay'] < 0.2
+        assert call['duration'] == pytest.approx(0.15, abs=1e-6)
+    assert instance._latency_s, 'capture-to-relay latency was not measured'
+
+
+def test_spray_window_delivers_the_full_configured_duration(owl_factory, config_factory,
+                                                            input_dir):
+    """delay and duration reach the relay controller unchanged, and the window
+    the scheduler commits to is the full configured duration.
+
+    NOTE: this cannot by itself catch an actuation timestamp anchored too far
+    back. The margin it measures is one loop time, which on a development
+    machine with small test frames is a couple of milliseconds - well inside any
+    sane tolerance. The decisive tests for that are
+    TestStaleAnchorCost in tests/test_output_manager.py, which drive receive()
+    with a known lag and are independent of how fast the machine is.
+    """
+    config = config_factory(overrides=[('DataCollection', 'detection_enable', 'True'),
+                                       ('System', 'actuation_duration', '0.15'),
+                                       ('System', 'delay', '0')])
+    instance = owl_factory(config, input_file_or_directory=str(input_dir))
+
+    fired = run_hoot(instance)
+    assert fired, 'a green blob should actuate a relay'
+
+    for call in fired:
+        assert call['delay'] == 0
+        assert call['duration'] == pytest.approx(0.15, abs=1e-6)
+        # The window the scheduler will commit to, measured from the moment
+        # receive() was called. Must be the whole duration, not duration minus
+        # however long detection took.
+        window_ms = (call['time_stamp'] + call['delay'] + call['duration']
+                     - call['called_at']) * 1000
+        assert window_ms == pytest.approx(150, abs=5), (
+            f'spray window is {window_ms:.1f} ms, expected ~150 ms - the '
+            f'actuation timestamp is lagging the receive() call')

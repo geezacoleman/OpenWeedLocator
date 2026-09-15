@@ -390,6 +390,19 @@ function buildOWLCard(deviceId, owl) {
         ? '<div class="owl-compact-config" title="Config loaded on this OWL">Running: ' + esc(cfgName) + '</div>'
         : '';
 
+    // Spray timing: speed and processing time, and the source only when the
+    // OWL times itself from its own GPS (controller timing is the default here)
+    const timingParts = [];
+    if (isOnline && typeof owl.speed_kmh === 'number') timingParts.push(owl.speed_kmh.toFixed(1) + ' km/h');
+    if (isOnline && owl.actuation_source === 'device-gps') timingParts.push('OWL GPS timing');
+    if (isOnline && typeof owl.latency_ms === 'number') timingParts.push('Processing ' + Math.round(owl.latency_ms) + ' ms');
+    const timingLine = timingParts.length
+        ? '<div class="owl-compact-config" title="Spray timing on this OWL">' + esc(timingParts.join(' · ')) + '</div>'
+        : '';
+    const speedWarning = (isOnline && owl.speed_warning)
+        ? '<div class="device-warning-badge">' + esc(owl.speed_warning) + '</div>'
+        : '';
+
     // friendly_name is user-typed via the fleet API — must be escaped.
     // deviceId comes from MQTT topic names (anonymous broker), so it is
     // just as untrusted.
@@ -408,6 +421,8 @@ function buildOWLCard(deviceId, owl) {
                 ${hwWarning}
             </div>
             ${cfgLine}
+            ${timingLine}
+            ${speedWarning}
             <div class="owl-mini-dials">
                 ${buildMiniDial({value: isOnline ? temp : null, min: 30, max: 90,
                                  amber: [60, 70], red: [70, 90], endLabels: ['C', 'H'],

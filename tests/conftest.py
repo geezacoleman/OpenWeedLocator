@@ -27,6 +27,14 @@ PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# controller/networked/networked.py calls init_app() at import time, because
+# gunicorn loads it as `networked:app` and never calls main(). Importing it from
+# a test therefore opened a real broker connection, started the GPS reader and
+# three background loops, and left them running for the whole session — which is
+# where the endless "MQTT reconnect failed" noise came from, logged after pytest
+# had closed the streams it was writing to. Set before any test imports it.
+os.environ.setdefault('OWL_SKIP_INIT', '1')
+
 # All 8 detection sections present in the OWL INI configs
 # (MQTT, WebDashboard, Network, GPS moved to CONTROLLER.ini)
 EXPECTED_SECTIONS = [

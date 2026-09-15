@@ -430,7 +430,25 @@ class ConfigValidator:
         'tracking_enabled': ('bool', None, None),
     }
 
-    VALID_ALGORITHMS = {'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'lut', 'gog', 'gog-hybrid'}
+    VALID_ALGORITHMS = {'exg', 'exhsv', 'hsv', 'lut', 'gog', 'gog-hybrid'}
+
+    # Spray timing bounds. The controller already clamped values arriving over
+    # MQTT; values read straight from an INI were not, so a misplaced decimal
+    # point ("15" instead of "1.5") produced a spray measured in minutes.
+    MIN_ACTUATION_DURATION = 0.01
+    MAX_ACTUATION_DURATION = 5.0
+
+    @classmethod
+    def clamp_actuation(cls, duration, delay):
+        """Clamp a spray duration/delay pair to the safety bounds.
+
+        Single source of truth for the MQTT handler and the config read, so the
+        two paths cannot drift into disagreeing about what is safe.
+        """
+        duration = max(cls.MIN_ACTUATION_DURATION,
+                       min(cls.MAX_ACTUATION_DURATION, float(duration)))
+        delay = max(0.0, min(cls.MAX_ACTUATION_DURATION, float(delay)))
+        return duration, delay
 
     @classmethod
     def get_valid_algorithms(cls):
@@ -494,6 +512,25 @@ class ConfigValidator:
         6: 'Ground', 9: 'Ground', 14: 'Ground', 20: 'Ground',
         25: 'Ground', 30: 'Ground', 34: 'Ground', 39: 'Ground',
         27: 'I2C EEPROM (ID_SD)', 28: 'I2C EEPROM (ID_SC)'
+    }
+
+    # BOARD pins claimed by on-device GPS hardware. Protected ONLY while that
+    # hardware is configured in [GPS]: a relay, LED or switch on one of them is
+    # disabled at startup (owl.py) and refused by every config write.
+    NRF91_PINS = {
+        37: 'GPIO26 powers the nRF9151 modem',
+        24: 'GPIO8 is the nRF9151 modem UART (TX)',
+        21: 'GPIO9 is the nRF9151 modem UART (RX)',
+    }
+    UART0_GPS_PINS = {
+        8: 'GPIO14 is the GPS UART (TX)',
+        10: 'GPIO15 is the GPS UART (RX)',
+    }
+    UART0_PORTS = {'/dev/ttyAMA0', '/dev/serial0'}
+    # [Controller] keys holding a BOARD pin (every [Relays] key is a pin too)
+    CONTROLLER_PIN_KEYS = {
+        'status_led_pin', 'gps_led_pin', 'switch_pin', 'detection_mode_pin_up',
+        'detection_mode_pin_down', 'recording_pin', 'sensitivity_pin',
     }
 
     # Sensitivity preset section keys
@@ -661,7 +698,7 @@ class ConfigValidator:
                 pass
 
         # For EXG-based algorithms, check EXG range
-        if algorithm in {'exg', 'exgr', 'maxg', 'nexg', 'exhsv'}:
+        if algorithm in {'exg', 'exhsv'}:
             try:
                 exg_range = range(config.getint('GreenOnBrown', 'exg_min'),
                                   config.getint('GreenOnBrown', 'exg_max'))
@@ -798,6 +835,56 @@ class ConfigValidator:
             }}
 
         return True, {}
+
+    @classmethod
+    def protected_pins(cls, config) -> Dict[int, str]:
+        """BOARD pins on-device GPS hardware is using, with the reason.
+
+        config: a ConfigParser holding [GPS] (the OWL's merged config or
+        CONTROLLER.ini). Empty when no such hardware is configured, so nothing
+        is protected on units without it.
+        """
+        if not config.has_section('GPS'):
+            return {}
+        source = config.get('GPS', 'source', fallback='none').strip().lower()
+        if source == 'nrf91':
+            return {pin: f'{why} ([GPS] source = nrf91)' for pin, why in cls.NRF91_PINS.items()}
+        port = config.get('GPS', 'port', fallback='').strip()
+        if source == 'serial' and port in cls.UART0_PORTS:
+            return {pin: f'{why} ([GPS] port = {port})' for pin, why in cls.UART0_GPS_PINS.items()}
+        return {}
+
+    @classmethod
+    def protected_pin_errors(cls, sections, protected) -> Dict[str, Dict[str, str]]:
+        """Pin keys in `sections` set to a pin in `protected`.
+
+        sections: a ConfigParser or any {section: {key: value}} mapping (a whole
+        posted config or a single section update). protected: {board_pin:
+        reason}, as returned by protected_pins(). Returns {section: {key:
+        message}}; non-numeric values such as 'none' are ignored.
+        """
+        found = {}
+        if not protected:
+            return found
+        for section, pin_keys in (('Relays', None), ('Controller', cls.CONTROLLER_PIN_KEYS)):
+            if section not in sections:
+                continue
+            for key, value in sections[section].items():
+                if pin_keys is not None and key not in pin_keys:
+                    continue
+                try:
+                    pin = int(str(value).strip("'\" "))
+                except ValueError:
+                    continue
+                if pin in protected:
+                    found.setdefault(section, {})[key] = (
+                        f"[{section}] {key} = {pin}: BOARD {pin} is in use. {protected[pin]}")
+        return found
+
+    @staticmethod
+    def format_protected_pin_errors(errors) -> str:
+        """One readable line for a protected_pin_errors() result."""
+        return '; '.join(message for keys in errors.values() for message in keys.values())
 
     @classmethod
     def validate_relay_pin_conflicts(cls, config: ConfigParser, used_pins: Set[int]) -> Tuple[bool, Dict[str, Dict[str, str]]]:

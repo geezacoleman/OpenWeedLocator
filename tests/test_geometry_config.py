@@ -165,11 +165,21 @@ class TestOwlGeometrySource:
     def test_init_calls_recompute(self):
         assert 'self.recompute_geometry()' in self._src()
 
-    def test_band_membership_logic(self):
+    def test_centre_mode_uses_the_shared_lane_assignment(self):
+        """owl.py must call assign_lanes, not re-implement the band check.
+
+        Band membership itself is now covered behaviourally in
+        TestLaneAssignment; this only pins that owl.py routes through the
+        shared function, so a future inline copy is caught here rather than
+        silently drifting the way the three old replicas did.
+        """
         src = self._src()
-        assert 'self.actuation_y_top <= centre[1] <= self.actuation_y_bottom' in src
+        assert 'from utils.geometry import compute_geometry, assign_lanes' in src
+        assert 'assign_lanes(weed_centres' in src
+
+    def test_zone_mode_slices_the_band(self):
         # Zone mode slices the band, not a single threshold
-        assert 'self.actuation_y_top:self.actuation_y_bottom' in src
+        assert 'self.actuation_y_top:self.actuation_y_bottom' in self._src()
 
     def test_per_edge_config_read(self):
         src = self._src()
@@ -429,3 +439,79 @@ class TestHotPathTiming:
         # Generous ceiling — the real op is microseconds; this only catches a
         # gross regression such as adding a per-pixel mask to the hot path.
         assert per_frame_ms < 1.0
+
+
+@pytest.mark.unit
+class TestLaneAssignment:
+    """Behavioural tests for the lane maths owl.py actually runs.
+
+    Until v3.16 this logic existed as three hand-copied replicas (two test
+    files and a benchmark), all of which had drifted to a one-sided lower
+    threshold while the product moved to a top-and-bottom band. The band's
+    UPPER edge — `actuation_bottom`, the "ignore weeds too close to the boom"
+    control — therefore had no behavioural test at all, and a lane-offset error
+    under an asymmetric crop would have shipped with a green suite.
+    """
+
+    def test_centre_maps_to_its_lane(self):
+        from utils.geometry import assign_lanes
+        # 4 relays across 400px -> 100px lanes
+        assert assign_lanes([[50, 10]], 100.0, 4, 0, 100) == {0}
+        assert assign_lanes([[150, 10]], 100.0, 4, 0, 100) == {1}
+        assert assign_lanes([[250, 10]], 100.0, 4, 0, 100) == {2}
+        assert assign_lanes([[350, 10]], 100.0, 4, 0, 100) == {3}
+
+    def test_lane_boundary_belongs_to_the_upper_lane(self):
+        from utils.geometry import assign_lanes
+        assert assign_lanes([[99, 10]], 100.0, 4, 0, 100) == {0}
+        assert assign_lanes([[100, 10]], 100.0, 4, 0, 100) == {1}
+
+    def test_right_edge_cannot_exceed_the_last_relay(self):
+        from utils.geometry import assign_lanes
+        assert assign_lanes([[400, 10]], 100.0, 4, 0, 100) == {3}
+        assert assign_lanes([[9999, 10]], 100.0, 4, 0, 100) == {3}
+
+    def test_weed_above_the_band_is_ignored(self):
+        from utils.geometry import assign_lanes
+        assert assign_lanes([[50, 19]], 100.0, 4, 20, 80) == set()
+
+    def test_weed_below_the_band_is_ignored(self):
+        """The upper edge (actuation_bottom) must actually filter.
+
+        A one-sided implementation passes every other test in this class and
+        fails only this one — which is exactly how the replicas drifted
+        unnoticed.
+        """
+        from utils.geometry import assign_lanes
+        assert assign_lanes([[50, 81]], 100.0, 4, 20, 80) == set()
+
+    def test_band_edges_are_inclusive(self):
+        from utils.geometry import assign_lanes
+        assert assign_lanes([[50, 20]], 100.0, 4, 20, 80) == {0}
+        assert assign_lanes([[50, 80]], 100.0, 4, 20, 80) == {0}
+
+    def test_one_relay_fires_once_for_many_weeds(self):
+        from utils.geometry import assign_lanes
+        fired = assign_lanes([[10, 10], [20, 10], [30, 10]], 100.0, 4, 0, 100)
+        assert fired == {0}
+
+    def test_asymmetric_crop_shifts_lanes_correctly(self):
+        """A weed at a known position must land in the right lane after an
+        uneven crop. Lane width comes from the CROPPED frame, and detection
+        centres are already in cropped coordinates, so the two must agree —
+        if they did not, the boom would spray the wrong row."""
+        from utils.geometry import compute_geometry, assign_lanes
+        geo = compute_geometry(frame_w=1000, frame_h=400,
+                               crop_left=0.10, crop_right=0.30,
+                               crop_top=0.0, crop_bottom=0.0, relay_num=4,
+                               actuation_top=0.0, actuation_bottom=1.0)
+        # 1000px wide, 10% off the left and 30% off the right -> 600px, 150px lanes
+        assert geo['cropped_width'] == 600
+        assert geo['lane_width'] == 150.0
+
+        lw, n = geo['lane_width'], 4
+        top, bottom = geo['y_top'], geo['y_bottom']
+        for cropped_x, expected in ((0, 0), (149, 0), (150, 1),
+                                    (300, 2), (450, 3), (599, 3)):
+            assert assign_lanes([[cropped_x, 10]], lw, n, top, bottom) == {expected}, \
+                f'cropped x={cropped_x} should fire relay {expected}'

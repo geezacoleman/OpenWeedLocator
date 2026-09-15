@@ -716,14 +716,14 @@ class TestOWLActuationHandler:
         assert mock_owl.delay == pytest.approx(result['delay'])
 
     def test_handler_state_reflects_source(self, mqtt_publisher, mock_owl):
-        """State dict shows 'gps' source after GPS-derived update."""
+        """State dict says the controller owns the timing after its update."""
         mqtt_publisher._handle_command({
             'action': 'set_actuation_params',
             'actuation_duration': 0.05,
             'delay': 0.1,
             'source': 'gps'
         })
-        assert mqtt_publisher.state['actuation_source'] == 'gps'
+        assert mqtt_publisher.state['actuation_source'] == 'controller'
         assert mqtt_publisher.state['actuation_duration'] == pytest.approx(0.05)
         assert mqtt_publisher.state['delay'] == pytest.approx(0.1)
 

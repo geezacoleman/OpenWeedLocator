@@ -474,7 +474,7 @@ def simulate_current_frame(frame, algorithm, detector, params,
 
     # Step 4: Deduplicated actuation with y-threshold
     if weed_centres:
-        actuation_time = time.time()
+        actuation_time = time.monotonic()  # RelayController runs on the monotonic clock
         fired = set()
         for centre in weed_centres:
             if centre[1] >= y_act:
@@ -764,7 +764,7 @@ def run_component_breakdown(algorithm, width, height, iterations=500):
     for _ in range(iterations):
         t0 = time.perf_counter()
         if fake_centres:
-            actuation_time = time.time()
+            actuation_time = time.monotonic()
             fired = set()
             for centre in fake_centres:
                 relay_id = min(int(centre[0] / curr_lane_width), nozzle_num - 1)

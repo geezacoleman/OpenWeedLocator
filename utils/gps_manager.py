@@ -4,6 +4,9 @@ GPS Manager for OWL Central Controller.
 Receives NMEA sentences from a Teltonika router via TCP push,
 parses GPS data, tracks sessions, and records GeoJSON tracks.
 
+Also parses the Nordic Serial LTE Modem '#XGPS' fix lines and holds the AT
+helpers owl.py uses for source = nrf91 (nRF9151 on the production CM5 carrier).
+
 Data flow:
     Teltonika RUTX14 --TCP--> GPSManager (port 8500)
         -> NMEA parsing -> GPSState (thread-safe current fix)
@@ -251,6 +254,115 @@ def _safe_int(s):
 
 
 # ---------------------------------------------------------------------------
+# Nordic Serial LTE Modem (nRF91, e.g. the nRF9151 on the production carrier)
+# ---------------------------------------------------------------------------
+# The modem does not stream NMEA. Once GPS is started with AT commands it sends
+# one '#XGPS:' line per fix, with speed in m/s and a "YYYY-MM-DD HH:MM:SS" UTC
+# stamp. Both are converted to the NMEA-shaped fields GPSState already holds, so
+# EXIF, tracks and the dashboard need no changes.
+
+MS_TO_KMH = 3.6
+NRF91_FIX_PREFIXES = ('#XGPS:', '#XGNSSPOS:')   # SLM app, Serial Modem add-on
+NRF91_GNSS_MODE = ('AT+CFUN=0', 'AT%XSYSTEMMODE=0,0,1,0', 'AT+CFUN=31')
+NRF91_START_COMMANDS = ('AT#XGPS', 'AT#XGNSS')  # SLM app, Serial Modem add-on
+
+
+def parse_xgps(line):
+    """Parse a Nordic Serial LTE Modem GNSS notification.
+
+    Fix:    #XGPS: <lat>,<lon>,<alt>,<accuracy m>,<speed m/s>,<heading>,"YYYY-MM-DD HH:MM:SS"
+    Status: #XGPS: <gnss_service>,<gnss_status>
+
+    Returns a dict (type 'XGPS' or 'XGPS_STATUS') or None when unrecognised.
+    """
+    line = line.strip()
+    body = None
+    for prefix in NRF91_FIX_PREFIXES:
+        if line.startswith(prefix):
+            body = line[len(prefix):]
+            break
+    if body is None:
+        return None
+
+    fields = [f.strip() for f in body.split(',')]
+    if len(fields) == 2:
+        status = _safe_int(fields[1])
+        return {'type': 'XGPS_STATUS', 'status': status} if status is not None else None
+    if len(fields) < 7:
+        return None
+
+    lat, lon = _safe_float(fields[0]), _safe_float(fields[1])
+    if lat is None or lon is None:
+        return None
+
+    time_utc = date = None
+    stamp = fields[6].strip('"').split('.')[0]
+    try:
+        moment = datetime.strptime(stamp, '%Y-%m-%d %H:%M:%S')
+        time_utc, date = moment.strftime('%H%M%S'), moment.strftime('%d%m%y')
+    except ValueError:
+        pass
+
+    speed_ms = _safe_float(fields[4])
+    return {
+        'type': 'XGPS',
+        'lat': lat,
+        'lon': lon,
+        'altitude': _safe_float(fields[2]),
+        'accuracy_m': _safe_float(fields[3]),
+        'speed_kmh': speed_ms * MS_TO_KMH if speed_ms is not None else None,
+        'heading': _safe_float(fields[5]),
+        'time_utc': time_utc,
+        'date': date,
+    }
+
+
+def nrf91_command(port, command, timeout=5.0, on_line=None):
+    """Send one AT command to the modem and wait for its final result.
+
+    port is a pyserial-like object (write, readline). Returns True on OK and
+    False on ERROR or timeout. Any other line (a '#XGPS' fix arriving mid
+    command, for example) is passed to on_line.
+    """
+    port.write(f'{command}\r\n'.encode('ascii'))
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        line = port.readline().decode('ascii', errors='replace').strip()
+        if not line or line == command:  # nothing yet, or command echo
+            continue
+        if line == 'OK':
+            return True
+        if line.startswith('ERROR') or 'CME ERROR' in line:
+            return False
+        if on_line:
+            on_line(line)
+    return False
+
+
+def nrf91_start_gps(port, on_line=None, ping_timeout=2.0):
+    """Put the modem in GNSS-only mode and start continuous 1 Hz fixes.
+
+    GNSS-only (CFUN=31) needs no SIM; it also keeps LTE off. Returns the start
+    command that worked ('AT#XGPS' or 'AT#XGNSS'), or None if the modem did not
+    answer or refused to start GPS.
+    """
+    if not any(nrf91_command(port, 'AT', ping_timeout, on_line) for _ in range(3)):
+        return None
+    # A restarted OWL finds GPS still running on the modem, and starting it
+    # again is refused, so stop it first. Errors here are expected and ignored.
+    for base in NRF91_START_COMMANDS:
+        nrf91_command(port, f'{base}=0', 3.0, on_line)
+    for command in NRF91_GNSS_MODE:
+        if not nrf91_command(port, command, 10.0, on_line):
+            logger.warning(f"nRF91 modem refused {command}")
+    for base in NRF91_START_COMMANDS:
+        if nrf91_command(port, f'{base}=1,0,1', 5.0, on_line):
+            logger.info(f"nRF91 GPS started ({base}=1,0,1)")
+            return base
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Haversine distance
 # ---------------------------------------------------------------------------
 
@@ -286,6 +398,7 @@ class GPSState:
         self.altitude = None
         self.utc_time = None
         self.utc_date = None
+        self.accuracy_m = None  # metres, from receivers that report it (nRF91)
         self.fix_valid = False
         self.last_fix_time = None
         self.connected = False
@@ -349,6 +462,49 @@ class GPSState:
         """
         _ = data  # reserved for future per-constellation breakdown
 
+    def update_from_xgps(self, data):
+        """Update state from a parsed nRF91 '#XGPS' fix.
+
+        The modem only sends these for a valid fix. It reports accuracy in
+        metres but no HDOP or satellite count, so those stay unset.
+        """
+        with self._lock:
+            self.latitude = data['lat']
+            self.longitude = data['lon']
+            if data.get('altitude') is not None:
+                self.altitude = data['altitude']
+            if data.get('accuracy_m') is not None:
+                self.accuracy_m = data['accuracy_m']
+            if data.get('speed_kmh') is not None:
+                self.speed_kmh = data['speed_kmh']
+            if data.get('heading') is not None:
+                self.heading = data['heading']
+            if data.get('time_utc') and data.get('date'):
+                self.utc_time = data['time_utc']
+                self.utc_date = data['date']
+            self.fix_valid = True
+            self.last_fix_time = time.time()
+
+    def update_from_line(self, line):
+        """Parse one receiver line (NMEA or nRF91 '#X...') and apply it.
+
+        Returns the parsed type ('RMC', 'GGA', 'VTG', 'GSV', 'XGPS',
+        'XGPS_STATUS') or None when the line is not recognised.
+        """
+        parsed = parse_xgps(line) if line.lstrip().startswith('#X') else parse_sentence(line)
+        if parsed is None:
+            return None
+        handler = {
+            'RMC': self.update_from_rmc,
+            'GGA': self.update_from_gga,
+            'VTG': self.update_from_vtg,
+            'GSV': self.update_from_gsv,
+            'XGPS': self.update_from_xgps,
+        }.get(parsed['type'])
+        if handler:
+            handler(parsed)
+        return parsed['type']
+
     def get_dict(self):
         """Return a snapshot of the current state as a dict."""
         with self._lock:
@@ -371,6 +527,7 @@ class GPSState:
                 'satellites': self.satellites,
                 'hdop': round(self.hdop, 1) if self.hdop is not None else None,
                 'altitude': round(self.altitude, 1) if self.altitude is not None else None,
+                'accuracy_m': round(self.accuracy_m, 1) if self.accuracy_m is not None else None,
                 'utc_time': self.utc_time,
                 'utc_date': self.utc_date,
                 'fix_valid': fix_valid,
@@ -924,20 +1081,9 @@ class GPSManager:
         }
 
     def _process_sentence(self, line):
-        """Parse a single NMEA sentence and update all state."""
-        parsed = parse_sentence(line)
-        if parsed is None:
+        """Parse a single receiver line and update all state."""
+        if self.state.update_from_line(line) is None:
             return
-
-        sentence_type = parsed.get('type')
-        if sentence_type == 'RMC':
-            self.state.update_from_rmc(parsed)
-        elif sentence_type == 'GGA':
-            self.state.update_from_gga(parsed)
-        elif sentence_type == 'VTG':
-            self.state.update_from_vtg(parsed)
-        elif sentence_type == 'GSV':
-            self.state.update_from_gsv(parsed)
 
         snapshot = self.state.get_dict()
         if snapshot['fix_valid'] and snapshot['latitude'] is not None:

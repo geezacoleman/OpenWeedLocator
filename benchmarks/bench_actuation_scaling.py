@@ -15,6 +15,8 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from utils.geometry import assign_lanes
+
 IMAGE_WIDTH = 640
 RELAY_NUM = 4
 LANE_WIDTH = IMAGE_WIDTH / RELAY_NUM
@@ -42,15 +44,19 @@ def old_actuation(weed_centres):
 
 
 def new_actuation(weed_centres):
-    """Set-deduplicated approach with single timestamp."""
+    """Set-deduplicated approach with single timestamp.
+
+    Calls the shipped implementation rather than a copy of it — this was the
+    third hand-maintained replica of the lane maths and, like the two in
+    tests/, it had drifted (no actuation band at all), so the benchmark was
+    timing code the OWL does not run. Band set to full height here so the
+    comparison against old_actuation stays like-for-like.
+    """
     if not weed_centres:
         return []
     _ = time.time()
-    fired = set()
-    for centre in weed_centres:
-        relay_id = min(int(centre[0] / LANE_WIDTH), RELAY_NUM - 1)
-        fired.add(relay_id)
-    return sorted(fired)
+    return sorted(assign_lanes(weed_centres, LANE_WIDTH, RELAY_NUM,
+                               0, float('inf')))
 
 
 def benchmark(func, centres, iterations=ITERATIONS):

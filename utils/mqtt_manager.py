@@ -270,6 +270,16 @@ class OWLMQTTPublisher:
             'actuation_duration': 0.15,
             'delay': 0.0,
             'actuation_source': 'config',
+            # Spray timing as owl.py runs it (additive): actuation_source is who
+            # owns the timing ('device-gps' | 'controller' | 'config'), plus the
+            # speed it uses, frame-capture-to-relay latency and the
+            # farmer-facing speed warning ('' when speed is not a problem).
+            'speed_kmh': None,
+            'latency_ms': None,
+            'speed_warning': '',
+            # BOARD pins this OWL's own GPS hardware uses ({'37': reason});
+            # dashboards refuse config changes that would drive them.
+            'protected_pins': {},
             # Camera resolution
             'resolution_width': 0,
             'resolution_height': 0,
@@ -393,6 +403,12 @@ class OWLMQTTPublisher:
         # Capture the config file path from the owl instance
         if hasattr(owl_instance, 'config_path'):
             self.config_file = owl_instance.config_path
+
+        config = getattr(owl_instance, 'config', None)
+        if config is not None and hasattr(config, 'has_section'):
+            with self.state_lock:
+                self.state['protected_pins'] = {
+                    str(pin): why for pin, why in ConfigValidator.protected_pins(config).items()}
 
         self.logger.info("OWL instance configured")
         if self.sensitivity_manager:
@@ -751,7 +767,7 @@ class OWLMQTTPublisher:
                     from utils.config_manager import ConfigValidator
                     valid = ConfigValidator.get_valid_algorithms()
                 except Exception:
-                    valid = {'exg', 'exgr', 'maxg', 'nexg', 'exhsv', 'hsv', 'gndvi', 'lut', 'gog', 'gog-hybrid'}
+                    valid = {'exg', 'exhsv', 'hsv', 'lut', 'gog', 'gog-hybrid'}
                 if value in valid:
                     self.state['algorithm'] = value
                     if self.owl_instance:
@@ -1189,6 +1205,17 @@ class OWLMQTTPublisher:
         """Update multiple parameters in a section on the live OWL instance"""
         if self.owl_instance is None:
             self.logger.warning("Cannot set config section - OWL instance not set")
+            return
+
+        # A relay, LED or switch on a pin this OWL's GPS hardware uses is refused
+        # whole, whichever interface sent it. The dashboards check first; this
+        # is the authority for the networked controller and the agent.
+        config = getattr(self.owl_instance, 'config', None)
+        protected = ConfigValidator.protected_pins(config) if config is not None else {}
+        blocked = ConfigValidator.protected_pin_errors({section: params or {}}, protected)
+        if blocked:
+            self.logger.warning(
+                f"Rejected config change: {ConfigValidator.format_protected_pin_errors(blocked)}")
             return
 
         try:
@@ -1739,32 +1766,54 @@ class OWLMQTTPublisher:
             self.logger.warning(f"Could not populate version info: {e}")
 
     def _handle_set_actuation_params(self, command):
-        """Handle actuation parameter updates from central controller"""
-        MIN_DURATION = 0.01
-        MAX_DURATION = 5.0
+        """Timing broadcast from the networked controller.
+
+        An OWL timing itself from its own fresh GPS fix keeps its duration and
+        delay (device GPS always wins) and only adopts the controller's ground
+        geometry. Otherwise the controller's timing applies, as before.
+        """
+        from utils.config_manager import ConfigValidator
 
         try:
             duration = float(command.get('actuation_duration', 0))
             delay = float(command.get('delay', 0))
-            source = command.get('source', 'controller')
+            speed = command.get('speed_kmh')
+            speed = float(speed) if speed is not None else None
 
-            # Clamp to safety bounds
-            duration = max(MIN_DURATION, min(MAX_DURATION, duration))
-            delay = max(0.0, min(MAX_DURATION, delay))
+            # Clamp to safety bounds — shared with the config-read path so the
+            # two cannot drift into disagreeing about what is safe
+            duration, delay = ConfigValidator.clamp_actuation(duration, delay)
 
-            if self.owl_instance:
-                self.owl_instance.actuation_duration = duration
-                self.owl_instance.delay = delay
+            owl = self.owl_instance
+            if owl is not None:
+                owl._controller_timing_at = time.monotonic()
+                owl._controller_speed_kmh = speed
+                calc = getattr(owl, '_actuation_calc', None)
+                if calc is not None:
+                    if command.get('actuation_length_cm') is not None:
+                        calc.actuation_length_cm = float(command['actuation_length_cm'])
+                    if command.get('offset_cm') is not None:
+                        calc.offset_cm = float(command['offset_cm'])
+                if getattr(owl, '_device_timing', False) is True:
+                    return
+                if getattr(owl, 'actuation_source', None) == 'config':
+                    # Remember the configured timing to restore if the
+                    # controller goes quiet
+                    owl._config_actuation = (owl.actuation_duration, owl.delay)
+                owl.actuation_duration = duration
+                owl.delay = delay
+                owl.actuation_source = 'controller'
 
             prev_duration = self.state.get('actuation_duration')
             prev_delay = self.state.get('delay')
 
             self.state['actuation_duration'] = duration
             self.state['delay'] = delay
-            self.state['actuation_source'] = source
+            self.state['actuation_source'] = 'controller'
 
             if duration != prev_duration or delay != prev_delay:
-                self.logger.info(f"Actuation params updated: duration={duration:.4f}s, delay={delay:.4f}s, source={source}")
+                self.logger.info(f"Actuation params updated: duration={duration:.4f}s, "
+                                 f"delay={delay:.4f}s, source=controller")
 
         except (ValueError, TypeError) as e:
             self.logger.error(f"Invalid actuation params: {e}")
@@ -3088,6 +3137,9 @@ class OWLMQTTPublisher:
             self.state['avg_loop_time_ms'] = stats_dict.get('avg_loop_time_ms', 0.0)
             self.state['actuation_duration'] = stats_dict.get('actuation_duration', self.state.get('actuation_duration', 0.15))
             self.state['delay'] = stats_dict.get('delay', self.state.get('delay', 0.0))
+            for key in ('actuation_source', 'speed_kmh', 'latency_ms', 'speed_warning'):
+                if key in stats_dict:
+                    self.state[key] = stats_dict[key]
             self.state['last_update'] = time.time()
 
 class DashMQTTSubscriber:
