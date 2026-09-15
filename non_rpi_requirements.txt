@@ -24,6 +24,9 @@ piexif>=1.1.3
 flask>=3.0
 paho-mqtt>=2.0
 psutil>=5.9
+# HTTP client: networked controller (model deploy, fleet) and the first-boot
+# integration tests, which drive the setup API over a real socket
+requests>=2.31
 
 # Focus mode plots and progress output
 matplotlib>=3.8
