@@ -874,24 +874,6 @@ class TestSetTracking:
 
 
 # ---------------------------------------------------------------------------
-# reboot (currently a no-op / future implementation)
-# ---------------------------------------------------------------------------
-
-@pytest.mark.unit
-class TestReboot:
-    """Tests for reboot command handler (currently no-op)."""
-
-    def test_reboot_doesnt_crash(self, mqtt_publisher, mock_owl):
-        mqtt_publisher._handle_command({'action': 'reboot'})
-        # No crash = pass (handler just logs a warning)
-
-    def test_reboot_still_publishes_state(self, mqtt_publisher, mock_owl):
-        mqtt_publisher.client.publish.reset_mock()
-        mqtt_publisher._handle_command({'action': 'reboot'})
-        assert mqtt_publisher.client.publish.called
-
-
-# ---------------------------------------------------------------------------
 # shutdown
 # ---------------------------------------------------------------------------
 
@@ -1048,6 +1030,13 @@ class TestRebootCommand:
         mock_run.assert_called_once()
         argv = mock_run.call_args[0][0]
         assert argv == ['sudo', '-n', '/usr/sbin/reboot']
+
+    def test_reboot_publishes_state(self, mqtt_publisher, mock_owl):
+        mqtt_publisher.client.publish.reset_mock()
+        with patch('subprocess.run',
+                   return_value=MagicMock(returncode=0, stdout='', stderr='')):
+            mqtt_publisher._handle_command({'action': 'reboot'})
+        assert mqtt_publisher.client.publish.called
 
     def test_reboot_handles_run_failure(self, mqtt_publisher, mock_owl):
         with patch('subprocess.run', side_effect=OSError('denied')):

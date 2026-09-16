@@ -359,6 +359,20 @@ class NetworkManager:
                 return address.split('/')[0] if address else None
         return None
 
+    def get_gateway4(self, device=None):
+        """Default IPv4 gateway on the device (on a phone hotspot join this
+        is the phone itself), or None."""
+        device = device or self.interface
+        result = self._run(['-t', '-f', 'IP4.GATEWAY', 'dev', 'show', device],
+                           check=False)
+        if result.returncode != 0:
+            return None
+        for line in (result.stdout or '').splitlines():
+            if line.startswith('IP4.GATEWAY'):
+                gateway = line.split(':', 1)[1].strip()
+                return gateway if gateway and gateway != '--' else None
+        return None
+
     def status(self):
         """Aggregate network status for /setup/api/status."""
         hotspot = self.get_hotspot_connection()

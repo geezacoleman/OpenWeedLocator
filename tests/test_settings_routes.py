@@ -56,6 +56,7 @@ def nm():
     manager = MagicMock()
     manager.is_supported.return_value = True
     manager.get_ip4.return_value = '10.42.0.1'
+    manager.get_gateway4.return_value = '10.134.76.213'
     manager.status.return_value = {'mode': 'hotspot', 'ssid': 'OWL-4b7d',
                                    'ip': '10.42.0.1', 'hotspot_profile': 'OWL-4b7d'}
     manager.scan.return_value = [
@@ -67,7 +68,8 @@ def nm():
 
 @pytest.fixture
 def mgr(nm):
-    return NetworkSettingsManager(nm, timer_factory=CapturingTimer)
+    return NetworkSettingsManager(nm, timer_factory=CapturingTimer,
+                                  beacon_sender=MagicMock())
 
 
 GIT_INFO = {'branch': 'main', 'commit': 'abc1234'}

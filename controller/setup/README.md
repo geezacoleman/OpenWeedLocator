@@ -98,6 +98,11 @@ Non-interactive: base install, standalone setup with hotspot `OWL-XXXX`
 (suffix from the Pi serial) and the fixed setup password, then arms
 first-boot.
 
+It first asks you to type `SHIP`, because it deletes WiFi profiles and SSH
+keys and keeps detection off until phone setup finishes. For factory
+automation pass `--yes` as the second argument (`bash owl_setup.sh --ship
+--yes`). Building your own OWL? Run `bash owl_setup.sh` with no options.
+
 **Production carrier GPS:** `bash owl_setup.sh --ship-gps` does everything
 `--ship` does, then provisions the nRF9151 modem (Serial LTE Modem firmware):
 `dialout` for the OWL user, ModemManager off, `install_firstboot.sh

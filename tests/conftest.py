@@ -35,6 +35,31 @@ if str(PROJECT_ROOT) not in sys.path:
 # had closed the streams it was writing to. Set before any test imports it.
 os.environ.setdefault('OWL_SKIP_INIT', '1')
 
+
+_POWER_COMMANDS = {'reboot', 'shutdown', 'poweroff', 'halt'}
+
+
+@pytest.fixture(autouse=True)
+def _block_real_power_commands(monkeypatch):
+    """Fail any test that would really reboot/shut down the machine.
+
+    CI runners have passwordless sudo, so an unmocked `sudo -n reboot` rebooted
+    the GitHub runner mid-suite (exit 143 at 46%, 2026-09-15). Tests that patch
+    subprocess themselves override this guard for their own scope.
+    """
+    import subprocess
+
+    def _guard(real):
+        def wrapper(args, *a, **kw):
+            argv = args.split() if isinstance(args, str) else list(args)
+            if any(os.path.basename(str(x)) in _POWER_COMMANDS for x in argv):
+                raise RuntimeError(f"test tried to run a real power command: {argv}")
+            return real(args, *a, **kw)
+        return wrapper
+
+    monkeypatch.setattr(subprocess, 'run', _guard(subprocess.run))
+    monkeypatch.setattr(subprocess, 'Popen', _guard(subprocess.Popen))
+
 # All 8 detection sections present in the OWL INI configs
 # (MQTT, WebDashboard, Network, GPS moved to CONTROLLER.ini)
 EXPECTED_SECTIONS = [

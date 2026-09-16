@@ -378,6 +378,32 @@ class TestStatus:
 
 
 @pytest.mark.unit
+class TestGateway:
+    def test_argv_and_value(self, manager, runner):
+        runner.queue(stdout='IP4.GATEWAY:10.134.76.213\n')
+        assert manager.get_gateway4() == '10.134.76.213'
+        assert runner.argv_history() == [
+            f'nmcli -t -f IP4.GATEWAY dev show {manager.interface}']
+
+    def test_explicit_device(self, manager, runner):
+        runner.queue(stdout='IP4.GATEWAY:10.0.0.1\n')
+        assert manager.get_gateway4('wlan1') == '10.0.0.1'
+        assert runner.calls[0][-1] == 'wlan1'
+
+    def test_empty_value(self, manager, runner):
+        runner.queue(stdout='IP4.GATEWAY:\n')
+        assert manager.get_gateway4() is None
+
+    def test_dashes(self, manager, runner):
+        runner.queue(stdout='IP4.GATEWAY:--\n')
+        assert manager.get_gateway4() is None
+
+    def test_nonzero_return(self, manager, runner):
+        runner.queue(returncode=10, stderr='Error: Device not found')
+        assert manager.get_gateway4() is None
+
+
+@pytest.mark.unit
 class TestPlatformSupport:
     def test_not_supported_on_windows(self):
         with patch('utils.network_manager.platform.system', return_value='Windows'):

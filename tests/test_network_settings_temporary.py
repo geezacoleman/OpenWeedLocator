@@ -6,13 +6,14 @@ test_network_settings_manager.py so the retry loop, watchdog and revert
 tail all run synchronously.
 """
 
+import json
 from unittest.mock import patch
 
 import pytest
 
 from controller.standalone import network_settings as ns
 from test_network_settings_manager import (   # noqa: F401 (fixtures)
-    CapturingTimer, clear_timers, no_sleep, nm, mgr,
+    CapturingTimer, clear_timers, no_sleep, nm, sender, mgr,
 )
 
 
@@ -220,3 +221,63 @@ class TestTemporaryJoin:
     def test_cleanup_stale_temporary_deletes_profile(self, mgr, nm):
         mgr.cleanup_stale_temporary()
         nm.delete_connection.assert_called_once_with(ns.TEMP_CON_NAME)
+
+
+@pytest.mark.unit
+class TestBeacon:
+    def test_sent_to_gateway_on_connect(self, mgr, nm, sender, clock):
+        connect(mgr)
+        sender.assert_called_once()
+        source_ip, gateway, port, payload = sender.call_args[0]
+        assert source_ip == '192.168.1.50'
+        assert gateway == '10.134.76.213'
+        assert port == ns.BEACON_PORT == 47931
+        assert json.loads(payload) == {'owl': 'phone-internet',
+                                       'ip': '192.168.1.50'}
+        assert mgr.gateway == '10.134.76.213'
+
+    def test_sent_again_on_alive_watchdog_tick(self, mgr, nm, sender, clock):
+        connect(mgr)
+        nm.connection_state.return_value = 'activated'
+        fire_one()
+        assert sender.call_count == 2
+        assert len(CapturingTimer.pending) == 1
+
+    def test_not_sent_after_session_ends(self, mgr, nm, sender, clock):
+        connect(mgr)
+        nm.connection_state.return_value = 'inactive'
+        fire_one()                                   # link lost
+        assert mgr.state == 'failed'
+        assert mgr.gateway is None
+        mgr._send_beacon()
+        assert sender.call_count == 1
+
+    def test_not_sent_after_revert(self, mgr, nm, sender, clock):
+        connect(mgr)
+        nm.connection_state.return_value = 'inactive'
+        mgr.revert()
+        CapturingTimer.fire_all()
+        mgr._send_beacon()
+        assert sender.call_count == 1
+
+    def test_sender_error_does_not_break_watchdog(self, mgr, nm, sender, clock):
+        sender.side_effect = OSError('network unreachable')
+        connect(mgr)
+        nm.connection_state.return_value = 'activated'
+        fire_one()
+        assert mgr.state == 'connected'
+        assert len(CapturingTimer.pending) == 1
+        assert sender.call_count == 2
+
+    def test_no_gateway_no_send(self, mgr, nm, sender, clock):
+        nm.get_gateway4.return_value = None
+        connect(mgr)
+        nm.connection_state.return_value = 'activated'
+        fire_one()
+        sender.assert_not_called()
+
+    def test_gateway_read_error_still_connects(self, mgr, nm, sender, clock):
+        nm.get_gateway4.side_effect = RuntimeError('nmcli gone')
+        connect(mgr)
+        assert mgr.gateway is None
+        sender.assert_not_called()

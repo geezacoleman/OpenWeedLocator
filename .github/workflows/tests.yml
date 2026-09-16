@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # The suite runs in a few minutes. A hang or a killed runner should fail
+    # fast instead of burning the default 6-hour limit.
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v5

@@ -59,6 +59,7 @@ def nm():
     manager = MagicMock()
     manager.is_supported.return_value = True
     manager.get_ip4.return_value = '192.168.1.50'
+    manager.get_gateway4.return_value = '10.134.76.213'
     manager.status.return_value = {'mode': 'hotspot', 'ssid': 'OWL-4b7d',
                                    'ip': '10.42.0.1', 'hotspot_profile': 'OWL-4b7d'}
     manager.scan.return_value = [
@@ -69,8 +70,15 @@ def nm():
 
 
 @pytest.fixture
-def mgr(nm):
-    return NetworkSettingsManager(nm, timer_factory=CapturingTimer)
+def sender():
+    """Stand-in for the UDP beacon so no test ever opens a real socket."""
+    return MagicMock()
+
+
+@pytest.fixture
+def mgr(nm, sender):
+    return NetworkSettingsManager(nm, timer_factory=CapturingTimer,
+                                  beacon_sender=sender)
 
 
 @pytest.mark.unit

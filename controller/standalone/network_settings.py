@@ -13,14 +13,18 @@ OWL joins with a throwaway profile (autoconnect off, fixed name), keeps
 retrying while the user turns their hotspot on, and a watchdog ends the
 session when the hotspot vanishes, the TTL expires, or the app says
 "revert". The profile is always deleted afterwards so the unit never
-auto-joins the phone again on its own.
+auto-joins the phone again on its own. While joined, the OWL sends a small
+UDP beacon to its gateway (the phone) on every watchdog tick so the app can
+learn the OWL's IP on the phone's randomised tether subnet.
 
 No JSON persistence: a mid-switch reboot self-resolves via NetworkManager
 autoconnect priorities (client profiles 200, hotspot 0). A single gunicorn
 worker (--workers 1 --threads 8) makes one in-process machine safe.
 """
 
+import json
 import logging
+import socket
 import threading
 import time
 from datetime import datetime, timezone, timedelta
@@ -43,6 +47,20 @@ TEMP_AUTH_FAILURES_TO_ABORT = 2        # one auth error can be a not-yet-visible
 TEMP_TTL_S = 1800                      # hard cap on a session
 TEMP_WATCHDOG_S = 5
 TEMP_REVERT_DELAY_S = 2                # lets the revert 202 reach the phone over the tether
+# The app listens here for the OWL's beacon; keep in step with owl-app OwlBridge
+BEACON_PORT = 47931
+
+
+def send_udp_beacon(source_ip, gateway, port, payload):
+    """Fire one UDP datagram at the gateway, from source_ip when given."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.settimeout(1)
+        if source_ip:
+            sock.bind((source_ip, 0))
+        sock.sendto(payload, (gateway, port))
+    finally:
+        sock.close()
 
 
 class NetworkSettingsManager:
@@ -53,9 +71,11 @@ class NetworkSettingsManager:
     timer_factory injection point makes the delayed transitions testable.
     """
 
-    def __init__(self, network_manager, timer_factory=threading.Timer):
+    def __init__(self, network_manager, timer_factory=threading.Timer,
+                 beacon_sender=None):
         self.nm = network_manager
         self._timer_factory = timer_factory
+        self._beacon_sender = beacon_sender or send_udp_beacon
         self._lock = threading.Lock()
         self._timer = None
         self._pending_password = None
@@ -63,6 +83,7 @@ class NetworkSettingsManager:
         self.state = 'idle'
         self.ssid = None
         self.ip = None
+        self.gateway = None    # the phone, while a temporary session is connected
         self.error = None      # auth | not_found | timeout | error | link_lost | ttl_expired | cancelled
         self.warning = None    # 'previous_unavailable' if the revert failed
         self.previous = None   # {'ssid', 'mode'} captured at request_join
@@ -77,6 +98,7 @@ class NetworkSettingsManager:
         self._watchdog = None
         self._end_requested = False
         self._ending = False
+        self._beacon_error_logged = False
 
         self.scan_cache = []
         self.scanned_at = None
@@ -234,13 +256,21 @@ class NetworkSettingsManager:
             while True:
                 if self.nm.activate_connection(TEMP_CON_NAME,
                                                timeout=TEMP_ACTIVATE_TIMEOUT_S):
+                    try:
+                        gateway = self.nm.get_gateway4()
+                    except Exception as e:
+                        logger.warning("Could not read gateway: %s", e)
+                        gateway = None
                     with self._lock:
                         self.state = 'connected'
                         self.ip = self.nm.get_ip4()
+                        self.gateway = gateway
+                        self._beacon_error_logged = False
                         self._ttl_deadline = time.monotonic() + TEMP_TTL_S
                         self.expires_at = (datetime.now(timezone.utc)
                                            + timedelta(seconds=TEMP_TTL_S)).isoformat()
                     self._arm_watchdog()
+                    self._send_beacon()
                     logger.info("Temporary join to '%s' (%s), TTL %d s",
                                 ssid, self.ip, TEMP_TTL_S)
                     return
@@ -335,7 +365,24 @@ class NetworkSettingsManager:
             # dropped the client link (and may have raised the AP itself)
             self._end_temporary('link_lost')
             return
+        self._send_beacon()
         self._arm_watchdog()
+
+    def _send_beacon(self):
+        """Tell the phone where the OWL is: the app listens on BEACON_PORT
+        and uses the datagram's source address. HTTPS checks in the app
+        remain the trust gate, so the payload is only a marker."""
+        with self._lock:
+            if not self.temporary or self.state != 'connected' or not self.gateway:
+                return
+            ip, gateway = self.ip, self.gateway
+        payload = json.dumps({'owl': 'phone-internet', 'ip': ip}).encode()
+        try:
+            self._beacon_sender(ip, gateway, BEACON_PORT, payload)
+        except Exception as e:
+            if not self._beacon_error_logged:
+                self._beacon_error_logged = True
+                logger.debug("Beacon to %s:%d failed: %s", gateway, BEACON_PORT, e)
 
     def _end_temporary(self, reason):
         """Tear the session down: delete the throwaway profile, make sure
@@ -380,6 +427,7 @@ class NetworkSettingsManager:
         with self._lock:
             self.ended_reason = reason
             self.ip = None
+            self.gateway = None
             self.expires_at = None
             self._ttl_deadline = None
             self._ending = False
@@ -436,6 +484,7 @@ class NetworkSettingsManager:
         self.state = 'idle'
         self.ssid = None
         self.ip = None
+        self.gateway = None
         self.error = None
         self.warning = None
         self.previous = None

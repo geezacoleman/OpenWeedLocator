@@ -45,6 +45,55 @@ case "${1:-}" in
     ;;
 esac
 
+# --ship is for units leaving the factory, not for your own build: it deletes
+# every WiFi profile except the OWL hotspot, SSH keys and shell history, sets
+# the shared setup password and locks detection until phone-app setup finishes.
+# A maker running it by mistake locks themselves out, so it asks for a typed
+# confirmation. Factory automation passes --yes as the second argument.
+if [[ "$SHIP_MODE" == "1" && -z "${OWL_SETUP_DETACHED:-}" ]]; then
+    case "${2:-}" in
+      --yes) ;;
+      "")
+        echo -e "${ORANGE}[WARN] Ship mode prepares a unit for a customer. It will:${NC}"
+        echo -e "${ORANGE}       - delete every WiFi profile except the OWL hotspot, plus SSH keys and shell history${NC}"
+        echo -e "${ORANGE}       - set the shared setup hotspot password (owl-setup)${NC}"
+        echo -e "${ORANGE}       - keep detection off until setup is finished in the phone app${NC}"
+        echo -e "${ORANGE}       Building your own OWL? Stop here and run: bash owl_setup.sh${NC}"
+        read -r -p "Type SHIP to continue: " ship_confirm
+        if [[ "$ship_confirm" != "SHIP" ]]; then
+            echo -e "${RED}[ERROR] Ship mode cancelled. Nothing was changed.${NC}"
+            exit 1
+        fi
+        ;;
+      *)
+        echo -e "${RED}[ERROR] Unknown option '$2' (only --yes may follow $1)${NC}"
+        exit 1
+        ;;
+    esac
+fi
+
+# Ship mode takes 20+ minutes and is usually run over SSH. A dropped session
+# sends SIGHUP and kills the install partway (a fresh CM5 was left un-renamed
+# and un-armed, 2026-09-15). Re-exec detached from the terminal, logging to a
+# file, and follow the log; if SSH drops, the install keeps going. Needs
+# passwordless sudo (the default for the first user on Raspberry Pi OS), since
+# a detached process cannot answer a password prompt.
+if [[ "$SHIP_MODE" == "1" && -z "${OWL_SETUP_DETACHED:-}" ]]; then
+    if ! sudo -n true 2>/dev/null; then
+        echo -e "${RED}[ERROR] Ship mode needs passwordless sudo for '$CURRENT_USER'.${NC}"
+        exit 1
+    fi
+    SETUP_LOG="$HOME/owl_setup.log"
+    OWL_SETUP_DETACHED=1 setsid nohup bash "$SCRIPT_DIR/owl_setup.sh" "$1" \
+        > "$SETUP_LOG" 2>&1 < /dev/null &
+    SETUP_PID=$!
+    echo -e "${GREEN}[INFO] Install running in the background (PID ${SETUP_PID}), so it survives an SSH drop.${NC}"
+    echo -e "${GREEN}[INFO] Log: ${SETUP_LOG}. If you get disconnected, reconnect and run: tail -f ${SETUP_LOG}${NC}"
+    tail -n +1 --pid="$SETUP_PID" -f "$SETUP_LOG"
+    wait "$SETUP_PID"
+    exit $?
+fi
+
 # nRF9151 GNSS link on the production CM5 carrier (used only by --ship-gps).
 # Confirmed on the bench 2026-09-13: Serial LTE Modem 2.9.1 firmware answers on
 # UART3 (GPIO 8/9, TX/RX only, no flow control) at 460800 baud once GPIO 26
@@ -813,6 +862,9 @@ case "$dashboard_choice" in
         fi
         SHIP_SSID="OWL-$(ship_ssid_suffix)"
         echo -e "${GREEN}[INFO] Ship hotspot: ${SHIP_SSID} (PSK: setup default)${NC}"
+        echo -e "${ORANGE}[WARN] wlan0 switches to hotspot mode now. An SSH session over Wi-Fi"
+        echo -e "       will drop here. The install carries on; join ${SHIP_SSID} or check"
+        echo -e "       ~/owl_setup.log to follow it.${NC}"
         sudo "${SCRIPT_DIR}/controller/shared/setup.sh" --mode standalone \
             --owl-id 1 --ssid "${SHIP_SSID}" --password owl-setup \
             --arm-firstboot --yes

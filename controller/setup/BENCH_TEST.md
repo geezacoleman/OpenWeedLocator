@@ -16,7 +16,8 @@ touching anything.
 
 ## Part 1 — Arm + boot into setup mode
 
-- [ ] Provision the unit: `bash owl_setup.sh --ship` (fresh image), or on an
+- [ ] Provision the unit: `bash owl_setup.sh --ship` (fresh image; type `SHIP`
+      at the prompt, or add `--yes`), or on an
       existing install `sudo bash controller/setup/install_firstboot.sh --arm`
 - [ ] **CM5 carriers only:** on a fresh flash the script reports it wrote the
       camera config and warns a reboot is needed (CMs have no camera

@@ -587,6 +587,31 @@ class TestShipCleanup:
 
 
 @pytest.mark.unit
+class TestShipGuard:
+    """--ship wipes WiFi profiles and SSH keys and locks detection until phone
+    setup, so a maker who runs it on their own build locks themselves out. It
+    must ask for a typed confirmation unless the factory passes --yes."""
+
+    @pytest.fixture
+    def owl_setup(self):
+        from pathlib import Path
+        return (Path(__file__).parent.parent
+                / 'owl_setup.sh').read_text(encoding='utf-8')
+
+    def test_ship_requires_typed_confirmation(self, owl_setup):
+        assert 'Type SHIP to continue' in owl_setup
+        assert '"$ship_confirm" != "SHIP"' in owl_setup
+
+    def test_yes_skips_the_prompt_for_factory_automation(self, owl_setup):
+        assert '      --yes) ;;\n' in owl_setup
+
+    def test_confirmation_happens_before_detaching(self, owl_setup):
+        # The detached re-exec has no terminal, so it cannot prompt
+        assert (owl_setup.index('Type SHIP to continue')
+                < owl_setup.index('setsid nohup bash'))
+
+
+@pytest.mark.unit
 class TestShipGps:
     """--ship-gps = --ship + nRF9151 GNSS provisioning on the production CM5
     carrier. It must write [GPS] after setup.sh (which writes source = none)
