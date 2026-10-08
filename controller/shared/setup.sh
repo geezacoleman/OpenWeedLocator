@@ -25,7 +25,7 @@ if [ "$CURRENT_USER" != "owl" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Non-interactive mode (factory provisioning — see owl_setup.sh --ship).
+# Non-interactive mode (factory provisioning — see owl_setup.sh --factory).
 # With no flags the script behaves exactly as before (interactive).
 # ---------------------------------------------------------------------------
 NONINTERACTIVE=0
@@ -233,7 +233,7 @@ test_mqtt_broker() {
     # Test 5: Check configuration file
     if [ -f "/etc/mosquitto/conf.d/owl.conf" ]; then
         if grep -q "allow_anonymous true" /etc/mosquitto/conf.d/owl.conf &&
-           grep -q "listener 1883 0.0.0.0" /etc/mosquitto/conf.d/owl.conf; then
+           grep -q "listener 1883 127.0.0.1" /etc/mosquitto/conf.d/owl.conf; then
             echo -e "${TICK} MQTT configuration file is correct"
         else
             echo -e "${CROSS} MQTT configuration file has issues"
@@ -733,6 +733,19 @@ update_owl_configs() {
     fi
     DEVICE_ID="${HOSTNAME}"
 
+    # Re-running setup must not disconnect the unit from Noktura or reset the
+    # phone app's device token (cross-repo review 2026-09-17, O-17): the bridge
+    # config in /etc/mosquitto survives a re-run, so dropping [Cloud] left a
+    # connected unit that reported cloud as off, and dropping [Security] turned
+    # the token guard off. Keep both sections verbatim.
+    PRESERVED_SECTIONS=""
+    if [[ -f "$CTRL_INI" ]]; then
+        PRESERVED_SECTIONS=$(awk '
+            /^\[/ { keep = ($0 == "[Cloud]" || $0 == "[Security]") }
+            keep { print }
+        ' "$CTRL_INI")
+    fi
+
     cat > "$CTRL_INI" <<EOF
 [MQTT]
 enable = True
@@ -772,6 +785,27 @@ actuation_length_cm = 10
 offset_cm = 30
 speed_avg_window = 2.0
 EOF
+
+    if [[ -n "$PRESERVED_SECTIONS" ]]; then
+        printf '\n%s\n' "$PRESERVED_SECTIONS" >> "$CTRL_INI"
+        echo -e "${GREEN}[INFO]   Kept existing [Cloud] / [Security] settings${NC}"
+    fi
+
+    # Every standalone unit gets a device token, not only phone-set-up ones: the
+    # dashboard's cloud route fails closed without one (O-10), and a maker's
+    # app re-earns the token with the hotspot password (POST /api/settings/token).
+    if [[ "$OWL_MODE" == "standalone" ]] && ! grep -q '^device_token[[:space:]]*=' "$CTRL_INI"; then
+        DEVICE_TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+        if grep -q '^\[Security\]' "$CTRL_INI"; then
+            awk -v tok="$DEVICE_TOKEN" '
+                { print }
+                $0 == "[Security]" && !done { print "device_token = " tok; done = 1 }
+            ' "$CTRL_INI" > "${CTRL_INI}.tmp" && mv "${CTRL_INI}.tmp" "$CTRL_INI"
+        else
+            printf '\n[Security]\ndevice_token = %s\n' "$DEVICE_TOKEN" >> "$CTRL_INI"
+        fi
+        echo -e "${GREEN}[INFO]   Device token created ([Security])${NC}"
+    fi
 
     # The owl/owl-dash services run as ${CURRENT_USER} and configparser
     # silently skips unreadable files - a root-owned CONTROLLER.ini disables
@@ -830,11 +864,14 @@ if [[ "$OWL_MODE" == "standalone" ]]; then
 # OWL MQTT Configuration
 # Extends the main mosquitto.conf settings
 
-# Allow anonymous connections (required for OWL dashboard)
+# Anonymous connections: only owl.py and the dashboard on this unit use
+# the broker, and they connect over loopback.
 allow_anonymous true
 
-# Listen on all interfaces so hotspot clients can connect
-listener 1883 0.0.0.0
+# Loopback only. The phone app and the kiosk reach the OWL through nginx
+# (HTTPS), never MQTT, so nothing off-unit needs this port. Open it and
+# anyone on the hotspot can publish owl/commands (spray, config, update).
+listener 1883 127.0.0.1
 EOF
 
     # Test configuration (may fail if service is running - that's OK)
@@ -968,7 +1005,8 @@ sudo ufw allow ssh
 sudo ufw allow 22/tcp
 sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
-sudo ufw allow 1883/tcp
+# 1883 stays closed: the standalone broker listens on loopback only, and a
+# networked OWL runs no broker (the in-cab controller opens its own port).
 sudo ufw allow 8500/tcp  # GPS NMEA forwarding from Teltonika router
 
 # Optional VNC (issue #208) — only when explicitly requested
@@ -1454,9 +1492,19 @@ if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "
         echo -e "  • MQTT broker will be running on port 1883"
         echo -e "  • owl.py and dashboard will launch if enabled"
 
+        FIRSTBOOT_SCRIPT="${SCRIPT_DIR}/../setup/install_firstboot.sh"
+
+        # Cloud helper on every standalone unit, armed or not: the phone app can
+        # connect a self-installed OWL to Noktura later from device settings.
+        if bash "${FIRSTBOOT_SCRIPT}" --cloud-helper; then
+            echo -e "${TICK} Noktura cloud helper installed (connect from the OWL app)"
+        else
+            echo -e "${ORANGE}[WARN] Cloud helper not installed; the app cannot connect this OWL to Noktura."
+            echo -e "       Retry with: sudo bash ${FIRSTBOOT_SCRIPT} --cloud-helper${NC}"
+        fi
+
         # First-boot arming — for units shipped to an end user, the phone
         # app takes over network/identity setup on their first boot.
-        FIRSTBOOT_SCRIPT="${SCRIPT_DIR}/../setup/install_firstboot.sh"
         if [[ "$ARM_FIRSTBOOT" == "1" ]]; then
             arm_choice="y"
         elif [[ "$ASSUME_YES" == "1" || "$NONINTERACTIVE" == "1" ]]; then

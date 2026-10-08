@@ -60,6 +60,14 @@ def nm():
     return manager
 
 
+
+def open_setup_session(client):
+    """Contract 5: mutating setup routes require X-Setup-Session. Open one
+    and make it the test client's default header."""
+    token = client.post('/setup/api/session').get_json()['session']
+    client.environ_base['HTTP_X_SETUP_SESSION'] = token
+    return client
+
 @pytest.fixture
 def state(nm, tmp_path):
     flag = tmp_path / 'owl-firstboot.flag'
@@ -78,7 +86,7 @@ def state(nm, tmp_path):
 def client(nm, state):
     app = create_app(network_manager=nm, state=state)
     app.config['TESTING'] = True
-    return app.test_client()
+    return open_setup_session(app.test_client())
 
 
 @pytest.mark.unit
@@ -110,9 +118,12 @@ class TestInfo:
         assert data['success'] is True
         assert data['camera']['ok'] is False
 
-    def test_first_request_marks_in_setup(self, client, state):
+    def test_first_request_marks_in_setup(self, nm, state):
+        # A client WITHOUT the fixture's session: opening one is a request too.
+        app = create_app(network_manager=nm, state=state)
+        app.config['TESTING'] = True
         assert state.state == 'await_phone'
-        client.get('/setup/api/info')
+        app.test_client().get('/setup/api/info')
         assert state.state == 'in_setup'
 
 
@@ -549,8 +560,8 @@ class TestCameraDiagnostics:
 
 
 @pytest.mark.unit
-class TestShipCleanup:
-    """--ship must strip dev residue (a dev phone-hotspot password shipped
+class TestFactoryCleanup:
+    """--factory must strip dev residue (a dev phone-hotspot password shipped
     on a bench unit, 2026-07-17) — dev/clean.sh wipes every WiFi profile
     except the OWL hotspot, so it must run non-interactively and LAST."""
 
@@ -574,7 +585,7 @@ class TestShipCleanup:
         assert 'systemctl start owl.service' in clean
         assert 'systemctl start owl-dash.service' in clean
 
-    def test_ship_invokes_clean_detached_as_final_step(self, owl_setup):
+    def test_factory_invokes_clean_detached_as_final_step(self, owl_setup):
         assert "dev/clean.sh' --yes" in owl_setup
         assert 'setsid' in owl_setup
         # Detached + last: the cleanup drops an SSH session running over a
@@ -587,10 +598,10 @@ class TestShipCleanup:
 
 
 @pytest.mark.unit
-class TestShipGuard:
-    """--ship wipes WiFi profiles and SSH keys and locks detection until phone
-    setup, so a maker who runs it on their own build locks themselves out. It
-    must ask for a typed confirmation unless the factory passes --yes."""
+class TestFactoryGuard:
+    """--factory wipes WiFi profiles and SSH keys and locks detection until
+    phone setup, so a maker who runs it on their own build locks themselves
+    out. It must ask for a typed confirmation unless the factory passes --yes."""
 
     @pytest.fixture
     def owl_setup(self):
@@ -598,24 +609,24 @@ class TestShipGuard:
         return (Path(__file__).parent.parent
                 / 'owl_setup.sh').read_text(encoding='utf-8')
 
-    def test_ship_requires_typed_confirmation(self, owl_setup):
-        assert 'Type SHIP to continue' in owl_setup
-        assert '"$ship_confirm" != "SHIP"' in owl_setup
+    def test_factory_requires_typed_confirmation(self, owl_setup):
+        assert 'Type FACTORY to continue' in owl_setup
+        assert '"$factory_confirm" != "FACTORY"' in owl_setup
 
     def test_yes_skips_the_prompt_for_factory_automation(self, owl_setup):
         assert '      --yes) ;;\n' in owl_setup
 
     def test_confirmation_happens_before_detaching(self, owl_setup):
         # The detached re-exec has no terminal, so it cannot prompt
-        assert (owl_setup.index('Type SHIP to continue')
+        assert (owl_setup.index('Type FACTORY to continue')
                 < owl_setup.index('setsid nohup bash'))
 
 
 @pytest.mark.unit
-class TestShipGps:
-    """--ship-gps = --ship + nRF9151 GNSS provisioning on the production CM5
-    carrier. It must write [GPS] after setup.sh (which writes source = none)
-    and must never mark a unit ship-ready with an unconfirmed port."""
+class TestFactoryFlag:
+    """One ship command (v3.19.0, cross-repo review 2026-09-17): --factory
+    replaces --ship and --ship-gps with no aliases, always provisions the
+    carrier's nRF9151 GNSS, and refuses a unit without its OTP identity."""
 
     @pytest.fixture
     def owl_setup(self):
@@ -625,22 +636,72 @@ class TestShipGps:
 
     @pytest.fixture
     def gps_fn(self, owl_setup):
-        return owl_setup.split('setup_ship_gps() {', 1)[1].split('\n}\n', 1)[0]
+        return owl_setup.split('setup_factory_gps() {', 1)[1].split('\n}\n', 1)[0]
 
-    def test_flag_is_a_ship_superset(self, owl_setup):
-        block = owl_setup.split('--ship-gps)', 1)[1].split(';;', 1)[0]
-        assert 'SHIP_MODE=1' in block
-        assert 'SHIP_GPS=1' in block
+    def test_only_factory_and_no_arg_parse(self, owl_setup):
+        parse = owl_setup.split('case "${1:-}" in', 1)[1].split('esac', 1)[0]
+        assert '  --factory)\n' in parse
+        assert '  "")\n' in parse
+        assert '--ship' not in parse
+        assert 'supported: --factory)' in parse
 
-    def test_plain_ship_and_no_arg_still_parse(self, owl_setup):
-        assert '  --ship)\n' in owl_setup
-        assert '  "")\n' in owl_setup
-        assert 'supported: --ship, --ship-gps' in owl_setup
+    def test_old_flags_are_gone_everywhere_but_the_history_note(self, owl_setup):
+        assert owl_setup.count('--ship') == 2   # "It replaces --ship and --ship-gps"
+        assert 'SHIP_MODE' not in owl_setup and 'SHIP_GPS' not in owl_setup
+
+    def test_identity_gate_runs_before_confirmation_and_install(self, owl_setup):
+        gate = owl_setup.index('[NOT SHIP-READY] No hardware identity')
+        assert gate < owl_setup.index('Type FACTORY to continue')
+        assert gate < owl_setup.index('setsid nohup bash')
+        block = owl_setup[owl_setup.rindex('if [[ "$FACTORY_MODE" == "1" ]]; then', 0, gate):gate]
+        assert '"${OWL_IDENTITY_DIR}/device.pub"' in block
+        assert '"$identity_tier" != "otp"' in block
+
+    def test_identity_gate_behaviour(self, tmp_path):
+        """Run the real gate: no identity / disk tier refuse, otp passes."""
+        import subprocess
+        import shutil
+        from pathlib import Path
+        bash = shutil.which('bash')
+        if not bash:
+            pytest.skip('bash not available')
+        script = (Path(__file__).parent.parent / 'owl_setup.sh').read_text(encoding='utf-8')
+        start = script.index('FACTORY_MODE=0')
+        end = script.index('# --factory is for units leaving the factory')
+        probe = tmp_path / 'gate.sh'
+        probe.write_text("RED=''; NC=''; GREEN=''\n" + script[start:end] + 'echo GATE-PASSED\n', newline='\n')
+        ident = tmp_path / 'identity'
+
+        def run():
+            env = {'PATH': '/usr/bin:/bin', 'OWL_IDENTITY_DIR': ident.as_posix()}
+            return subprocess.run([bash, probe.as_posix(), '--factory'], capture_output=True, text=True, env=env)
+
+        result = run()
+        assert result.returncode == 1 and 'No hardware identity' in result.stdout
+        ident.mkdir()
+        (ident / 'device.pub').write_text('-----BEGIN PUBLIC KEY-----\nx\n-----END PUBLIC KEY-----\n')
+        (ident / 'tier').write_text('disk\n')
+        result = run()
+        assert result.returncode == 1 and 'tier: disk' in result.stdout
+        (ident / 'tier').write_text('otp\n')
+        result = run()
+        assert result.returncode == 0 and 'GATE-PASSED' in result.stdout
+
+    def test_maker_install_offers_a_disk_identity_but_factory_never_asks(self, owl_setup):
+        step = owl_setup.split('# Step 13c: maker identity', 1)[1].split('# Step 14', 1)[0]
+        assert 'if [[ "$FACTORY_MODE" != "1" ]]; then' in step
+        assert 'owl_identity.sh" --disk' in step
+        assert '(y/N)' in step
 
     def test_gps_step_runs_after_dashboard_setup(self, owl_setup):
         dashboard = owl_setup.index('controller/shared/setup.sh" --mode standalone')
-        call = owl_setup.index('\n    setup_ship_gps\n')
+        call = owl_setup.index('\n    setup_factory_gps\n')
         assert call > dashboard
+
+    def test_factory_always_provisions_gps(self, owl_setup):
+        call = owl_setup.index('\n    setup_factory_gps\n')
+        guard = owl_setup.rindex('if [[ "$FACTORY_MODE" == "1" ]]; then', 0, call)
+        assert call - guard < 60
 
     def test_unconfirmed_port_blocks_ship(self, owl_setup, gps_fn):
         assert '-z "$NRF_GPS_PORT"' in gps_fn
@@ -685,11 +746,6 @@ class TestShipGps:
         assert stop < probe < start
         assert 'systemctl is-enabled --quiet owl.service' in gps_fn
 
-    def test_plain_ship_does_not_provision_gps(self, owl_setup):
-        call = owl_setup.index('\n    setup_ship_gps\n')
-        guard = owl_setup.rindex('if [[ "$SHIP_GPS" == "1" ]]; then', 0, call)
-        assert call - guard < 60
-
 
 @pytest.mark.unit
 class TestFallbackServer:
@@ -722,7 +778,9 @@ class TestFallbackServer:
                                 for alias in node.names)
             elif isinstance(node, ast.ImportFrom):
                 imported.add(node.module.split('.')[0])
-        assert imported <= {'json', 'subprocess', 'http'}, imported
+        # os + ssl (stdlib) serve the error over HTTPS like setup_app.py (contract 5);
+        # socket bounds the TLS handshake so one silent client can't freeze it
+        assert imported <= {'json', 'subprocess', 'http', 'os', 'ssl', 'socket'}, imported
 
     def test_get_returns_503_json_with_journal_detail(self, server):
         import urllib.error
@@ -838,7 +896,7 @@ def ctrl_state(nm, tmp_path):
 def ctrl_client(nm, ctrl_state):
     app = create_app(network_manager=nm, state=ctrl_state)
     app.config['TESTING'] = True
-    return app.test_client()
+    return open_setup_session(app.test_client())
 
 
 @pytest.mark.unit

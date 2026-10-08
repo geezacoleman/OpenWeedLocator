@@ -10,6 +10,9 @@
 #   sudo bash install_firstboot.sh --gps-config     # nRF9151 modem boot config
 #                                                   # (UART3 + power), also applied
 #                                                   # now (exit 2 = config changed)
+#   sudo bash install_firstboot.sh --cloud-helper   # only the root-owned cloud
+#                                                   # provisioning helper (also run
+#                                                   # by --arm and by setup.sh)
 #
 # Arming:
 #   - installs + enables owl-firstboot.service (ConditionPathExists gated)
@@ -57,6 +60,14 @@ UNIT_DEST="/etc/systemd/system/owl-firstboot.service"
 FALLBACK_UNIT_DEST="/etc/systemd/system/owl-firstboot-fallback.service"
 SUDOERS_FILE="/etc/sudoers.d/96-owl-firstboot"
 REARM_HELPER="/usr/local/sbin/owl-firstboot-arm"
+# Cloud provisioning from the phone app (OWL trust chain MVP): the setup API
+# and the dashboard hand the Noktura bridge credential to this root-owned
+# helper, which runs a ROOT-OWNED COPY of owl_cloud_provision.sh. Kept after
+# --disarm: the dashboard's /api/settings/cloud/provision uses it post-setup.
+CLOUD_HELPER="/usr/local/sbin/owl-cloud-provision"
+CLOUD_SUDOERS_FILE="/etc/sudoers.d/95-owl-cloud-provision"
+CLOUD_LIB_DIR="/usr/local/lib/owl"
+CLOUD_SCRIPT_COPY="${CLOUD_LIB_DIR}/owl_cloud_provision.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OWL_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -66,8 +77,12 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-# Detect the non-root user that owns the OWL install (for sudoers + venv)
-CURRENT_USER="${SUDO_USER:-$(logname 2>/dev/null || echo owl)}"
+# The non-root user that owns the OWL install (for sudoers + venv). The repo
+# owner is authoritative: setup.sh calls this as root with no SUDO_USER.
+CURRENT_USER="$(stat -c %U "${OWL_DIR}" 2>/dev/null || true)"
+if [[ -z "$CURRENT_USER" || "$CURRENT_USER" == "root" ]]; then
+    CURRENT_USER="${SUDO_USER:-$(logname 2>/dev/null || echo owl)}"
+fi
 VENV_BIN="/home/${CURRENT_USER}/.virtualenvs/owl/bin"
 
 MODE="${1:---arm}"
@@ -260,6 +275,72 @@ serial_ssid() {
     return 1
 }
 
+install_cloud_helper() {
+    # Root-owned cloud provisioning helper + sudoers entry. Security (cross-repo
+    # review 2026-09-17, O-1): sudoers may only ever reach root-owned files. The
+    # helper used to exec the REPO's owl_cloud_provision.sh, which the owl user
+    # owns, so editing that file gave root. It now runs a copy installed here,
+    # root:root 0755 in ${CLOUD_LIB_DIR}. Updates to the repo script reach the
+    # copy only when an administrator re-runs this (owl_update.sh cannot,
+    # deliberately: it runs as the owl user).
+    #
+    # The helper reads the credential on stdin (JSON line, then the password
+    # line) so the secret never appears in argv or the journal, validates every
+    # field with the shapes owl_cloud_provision.sh accepts, and passes
+    # OWL_USER / OWL_REPO_DIR so credentials and CONTROLLER.ini ownership belong
+    # to the install user even when the caller is the root setup service (O-16).
+    install -d -m 755 -o root -g root "${CLOUD_LIB_DIR}" || return 1
+    install -m 755 -o root -g root "${OWL_DIR}/owl_cloud_provision.sh" "${CLOUD_SCRIPT_COPY}" || return 1
+
+    # Unquoted heredoc: ${CURRENT_USER}, ${OWL_DIR}, ${CLOUD_SCRIPT_COPY} are
+    # baked in now; every \$ is the helper's own runtime variable.
+    cat > "${CLOUD_HELPER}" <<EOF || return 1
+#!/bin/bash
+# Created by install_firstboot.sh --cloud-helper. Connects this OWL to Noktura.
+# stdin: line 1 = JSON {"broker_host","broker_port","device_id","username","portal_url","storage_host"}
+#        line 2 = bridge password
+set -euo pipefail
+IFS= read -r meta || exit 2
+IFS= read -r password || exit 2
+[[ -n "\$password" && \${#password} -ge 16 && \${#password} -le 128 ]] || { echo "bad password length" >&2; exit 2; }
+field() { printf '%s' "\$meta" | python3 -c 'import json,sys; d=json.load(sys.stdin); v=d.get(sys.argv[1],""); print(v if isinstance(v,str) or (isinstance(v,int) and not isinstance(v,bool)) else "")' "\$1"; }
+host=\$(field broker_host); port=\$(field broker_port); dev=\$(field device_id); user=\$(field username)
+portal=\$(field portal_url); storage=\$(field storage_host)
+[[ "\$host" =~ ^[A-Za-z0-9.-]{3,253}\$ ]] || { echo "bad broker_host" >&2; exit 2; }
+[[ "\$port" =~ ^[0-9]{1,5}\$ ]] && (( port >= 1 && port <= 65535 )) || { echo "bad broker_port" >&2; exit 2; }
+[[ "\$dev" =~ ^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]\$ ]] || { echo "bad device_id" >&2; exit 2; }
+[[ "\$user" == "\$dev" ]] || { echo "username must equal device_id" >&2; exit 2; }
+[[ -z "\$portal" || "\$portal" =~ ^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._/-]*)?\$ ]] || { echo "bad portal_url" >&2; exit 2; }
+[[ -z "\$storage" || "\$storage" =~ ^[a-z0-9.-]{3,253}\$ ]] || { echo "bad storage_host" >&2; exit 2; }
+tmp=\$(mktemp /run/owl-cloud-pw.XXXXXX)
+# No exec below: the trap must run so the password file never outlives this call (O-7).
+trap 'rm -f "\$tmp"' EXIT
+chmod 600 "\$tmp"
+printf '%s' "\$password" > "\$tmp"
+args=(--host "\$host" --port "\$port" --device-id "\$dev" --username "\$user" --password-file "\$tmp" --system-ca)
+[[ -n "\$portal" ]] && args+=(--portal-url "\$portal")
+[[ -n "\$storage" ]] && args+=(--storage-host "\$storage")
+OWL_USER="${CURRENT_USER}" OWL_REPO_DIR="${OWL_DIR}" /bin/bash "${CLOUD_SCRIPT_COPY}" "\${args[@]}"
+EOF
+    chown root:root "${CLOUD_HELPER}" || return 1
+    chmod 755 "${CLOUD_HELPER}" || return 1
+
+    local sudoers_tmp
+    sudoers_tmp=$(mktemp)
+    cat > "${sudoers_tmp}" <<EOF
+# Allow the OWL setup service and dashboard to connect this unit to the cloud
+${CURRENT_USER} ALL=(root) NOPASSWD: ${CLOUD_HELPER}
+EOF
+    if ! visudo -cf "${sudoers_tmp}" >/dev/null 2>&1; then
+        rm -f "${sudoers_tmp}"
+        echo -e "${CROSS} generated cloud sudoers entry failed validation"
+        return 1
+    fi
+    install -m 440 -o root -g root "${sudoers_tmp}" "${CLOUD_SUDOERS_FILE}" || { rm -f "${sudoers_tmp}"; return 1; }
+    rm -f "${sudoers_tmp}"
+    echo -e "${TICK} root-owned cloud helper (${CLOUD_HELPER} -> ${CLOUD_SCRIPT_COPY}) + sudoers entry"
+}
+
 arm() {
     echo -e "${GREEN}[INFO] Arming first-boot setup mode...${NC}"
 
@@ -419,6 +500,12 @@ EOF
     chmod 440 "${SUDOERS_FILE}"
     echo -e "${TICK} root-owned re-arm helper (${REARM_HELPER}) + sudoers entry"
 
+    # 7b. Cloud provisioning helper (shared with setup.sh, see install_cloud_helper).
+    if ! install_cloud_helper; then
+        echo -e "${CROSS} Cloud provisioning helper not installed. Nothing was armed."
+        exit 1
+    fi
+
     # 8. State dir + flag — the actual arm, LAST so a failure anywhere above
     # leaves the unit un-armed rather than half-armed.
     mkdir -p /var/lib/owl
@@ -459,7 +546,10 @@ case "$MODE" in
     # Deliberately untouched by --disarm — the overlay is hardware truth,
     # not setup surface.
     --camera-config) configure_camera; exit $? ;;
-    # owl_setup.sh --ship-gps entry: nRF9151 modem UART + power boot config.
+    # owl_setup.sh --factory entry: nRF9151 modem UART + power boot config.
     --gps-config) configure_gps_uart; exit $? ;;
-    *) echo -e "${CROSS} Unknown option '$MODE' (use --arm, --disarm, --camera-config or --gps-config)"; exit 1 ;;
+    # controller/shared/setup.sh entry (every standalone unit): the phone app
+    # can connect a self-installed OWL to Noktura from device settings.
+    --cloud-helper) install_cloud_helper; exit $? ;;
+    *) echo -e "${CROSS} Unknown option '$MODE' (use --arm, --disarm, --camera-config, --gps-config or --cloud-helper)"; exit 1 ;;
 esac

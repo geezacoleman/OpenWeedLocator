@@ -1,10 +1,14 @@
 import cv2
 import json
+import math
 import os
+import time
 import numpy as np
+from collections import deque
 from datetime import datetime, timezone
 from multiprocessing import Process, Queue
 from multiprocessing.queues import Empty
+from utils.algorithms import fft_blur
 from utils.log_manager import LogManager
 from io import BytesIO
 from PIL import Image
@@ -262,16 +266,182 @@ def encode_jpeg(pil_image, exif_bytes=None, quality=95):
     return buf.getvalue()
 
 
+SAMPLE_MODES = ('frames', 'distance', 'time')
+# Below this speed a fresh GPS fix means the rig is parked: distance mode
+# saves nothing rather than hundreds of copies of the same patch of ground.
+STATIONARY_KMH = 0.5
+
+
+def _finite(value):
+    value = float(value)
+    if not math.isfinite(value):
+        raise ValueError(f"not a finite number: {value}")
+    return value
+
+
+class CaptureScheduler:
+    """Decides which frames the image sampler saves.
+
+    frames:   every `frequency`th frame (the original behaviour)
+    distance: every `distance_m` travelled, integrated from GPS speed x time.
+              With no fresh speed it falls back to every `interval_s`; with a
+              fresh speed below STATIONARY_KMH it saves nothing.
+    time:     every `interval_s`
+
+    Pure (no camera, no cv2) so the spacing rules are unit-testable.
+    """
+
+    def __init__(self, mode='frames', frequency=30, distance_m=1.0, interval_s=2.0):
+        self.configure(mode=mode, frequency=frequency, distance_m=distance_m,
+                       interval_s=interval_s)
+        self.reset()
+
+    def configure(self, mode=None, frequency=None, distance_m=None, interval_s=None):
+        if mode is not None:
+            self.mode = mode if mode in SAMPLE_MODES else 'frames'
+        if frequency is not None:
+            self.frequency = max(1, int(frequency))
+        # Same bounds as the config validator; inf/nan rejected outright.
+        if distance_m is not None:
+            self.distance_m = min(50.0, max(0.05, _finite(distance_m)))
+        if interval_s is not None:
+            self.interval_s = min(60.0, max(0.1, _finite(interval_s)))
+
+    def reset(self):
+        """Start of a session: the first eligible frame is saved straight away."""
+        self._travelled = None
+        self._last_tick = None
+        self._last_capture = None
+
+    def should_capture(self, frame_count, now=None, speed_kmh=None, frequency=None):
+        """True when this frame should be saved. `speed_kmh` is None when
+        there is no fresh GPS speed. `frequency` overrides the frame interval
+        (the live sample_frequency, which the dashboards still set directly)."""
+        if self.mode == 'frames':
+            return frame_count % max(1, int(frequency or self.frequency)) == 0
+
+        now = time.monotonic() if now is None else now
+        if self.mode == 'distance' and speed_kmh is not None:
+            dt = 0.0 if self._last_tick is None else min(max(now - self._last_tick, 0.0), 1.0)
+            self._last_tick = now
+            if speed_kmh < STATIONARY_KMH:
+                return False
+            if self._travelled is None:
+                self._travelled = 0.0
+                self._last_capture = now
+                return True
+            self._travelled += speed_kmh / 3.6 * dt
+            if self._travelled >= self.distance_m:
+                # Reset rather than subtract: after a stall the backlog would
+                # otherwise come out as a burst of near-identical frames.
+                self._travelled = 0.0
+                self._last_capture = now
+                return True
+            return False
+
+        # time mode, or distance mode without a fresh speed
+        self._last_tick = None
+        if self._last_capture is None or now - self._last_capture >= self.interval_s:
+            self._last_capture = now
+            return True
+        return False
+
+
+def image_quality(frame, width=320):
+    """Cheap per-image quality metrics on a small grey copy (a few ms).
+
+    sharpness  - fft_blur score; scene dependent, so it is only meaningful
+                 against the same session's baseline
+    brightness - mean 0-255
+    clipped    - % of pixels above 250
+    dark       - % of pixels below 10
+    """
+    h, w = frame.shape[:2]
+    if w > width:
+        frame = cv2.resize(frame, (width, max(1, int(h * width / w))), interpolation=cv2.INTER_AREA)
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+    total = float(gray.size)
+    with np.errstate(divide='ignore'):
+        sharpness = float(fft_blur(gray, size=min(30, min(gray.shape) // 4)))
+    if not np.isfinite(sharpness):  # a flat frame (lens cap) reconstructs to log(0)
+        sharpness = 0.0
+    return {
+        'sharpness': round(sharpness, 2),
+        'brightness': round(float(gray.mean()), 1),
+        'clipped': round(100.0 * np.count_nonzero(gray > 250) / total, 2),
+        'dark': round(100.0 * np.count_nonzero(gray < 10) / total, 2),
+    }
+
+
+class CaptureQC:
+    """Rolling image-quality summary for one session.
+
+    The baseline is the median of the session's first `baseline_n` images, so
+    "softer than at the start" works whatever the scene's absolute score is.
+    """
+
+    def __init__(self, window=10, baseline_n=10):
+        self._recent = deque(maxlen=window)
+        self._baseline_n = baseline_n
+        self._baseline_samples = []
+        self.baseline_sharpness = None
+        self.last = None
+
+    def add(self, metrics):
+        self.last = metrics
+        self._recent.append(metrics)
+        if self.baseline_sharpness is None:
+            self._baseline_samples.append(metrics['sharpness'])
+            if len(self._baseline_samples) >= self._baseline_n:
+                self.baseline_sharpness = round(float(np.median(self._baseline_samples)), 2)
+
+    def summary(self):
+        if not self._recent:
+            return None
+        recent = list(self._recent)
+        median = {k: round(float(np.median([m[k] for m in recent])), 2)
+                  for k in ('sharpness', 'brightness', 'clipped', 'dark')}
+        # Last 3 images, oldest first — the controller warns on 3 in a row.
+        return {'last': self.last, 'median': median, 'recent_sharpness': [m['sharpness'] for m in recent[-3:]],
+                'baseline_sharpness': self.baseline_sharpness, 'count': len(recent)}
+
+
+def make_thumbnail(frame, width=480, quality=80):
+    """Small JPEG of a frame for the controller's gallery, or None."""
+    h, w = frame.shape[:2]
+    if w > width:
+        frame = cv2.resize(frame, (width, max(1, int(h * width / w))), interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    return buf.tobytes() if ok else None
+
+
 class ImageRecorder:
-    def __init__(self, save_directory, mode='whole', max_queue=200, new_process_threshold=90, max_processes=4):
+    # Class default so recorders built without __init__ (tests, pickled
+    # worker copies) still save at the long-standing quality.
+    jpeg_quality = 95
+    # The gallery shows one thumbnail every couple of seconds, so encoding
+    # one per saved image would only cost main-loop time.
+    THUMB_INTERVAL_S = 2.0
+    _thumb_at = float('-inf')
+
+    def __init__(self, save_directory, mode='whole', max_queue=200, new_process_threshold=90, max_processes=4,
+                 jpeg_quality=95):
         self.save_directory = save_directory
         self.mode = mode
+        self.jpeg_quality = jpeg_quality
         self.queue = Queue(maxsize=max_queue)
         self.new_process_threshold = new_process_threshold
         self.max_processes = max_processes
         self.processes = []
         self.running = True
         self.logger = LogManager.get_logger(__name__)
+
+        # Main-process view of what was last queued for saving: the gallery
+        # thumbnail and the quality summary. Worker processes never touch these.
+        self.saved_count = 0
+        self.last_thumbnail = None
+        self.last_saved = None
+        self.qc = CaptureQC()
 
         self.start_new_process()
 
@@ -287,7 +457,7 @@ class ImageRecorder:
     def save_images(self):
         while self.running or not self.queue.empty():
             try:
-                frame, frame_id, boxes, centres, gps_data, camera_metadata, context, capture_time = \
+                frame, frame_id, boxes, centres, gps_data, camera_metadata, context, capture_time, quality = \
                     self.queue.get(timeout=3)
             except Empty:
                 if not self.running:
@@ -297,6 +467,9 @@ class ImageRecorder:
                 self.logger.info("[INFO] KeyboardInterrupt received in save_images. Exiting.")
                 break
 
+            # Workers hold the recorder as it was at fork time, so a live
+            # jpeg_quality change only reaches them with each frame.
+            self.jpeg_quality = quality
             self.process_frame(frame, frame_id, boxes, centres, gps_data,
                                camera_metadata, context, capture_time)
 
@@ -373,7 +546,7 @@ class ImageRecorder:
         filename = f"{timestamp}_frame_{frame_id}.jpg"
         filepath = os.path.join(self.save_directory, filename)
         image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        image_bytes = encode_jpeg(image, exif_for(0, 0, width, height))
+        image_bytes = encode_jpeg(image, exif_for(0, 0, width, height), quality=self.jpeg_quality)
         with open(filepath, 'wb') as f:
             f.write(image_bytes)
         return [filename]
@@ -386,7 +559,7 @@ class ImageRecorder:
             filename = f"{timestamp}_frame_{frame_id}_n_{str(contour_id)}.jpg"
             filepath = os.path.join(self.save_directory, filename)
             image = Image.fromarray(cv2.cvtColor(cropped_image, cv2.COLOR_BGR2RGB))
-            image_bytes = encode_jpeg(image, exif_for(startX, startY, width, height))
+            image_bytes = encode_jpeg(image, exif_for(startX, startY, width, height), quality=self.jpeg_quality)
             with open(filepath, 'wb') as f:
                 f.write(image_bytes)
             filenames.append(filename)
@@ -412,7 +585,8 @@ class ImageRecorder:
             filepath = os.path.join(self.save_directory, filename)
             image = Image.fromarray(cv2.cvtColor(square_image, cv2.COLOR_BGR2RGB))
             image_bytes = encode_jpeg(image, exif_for(startX, startY,
-                                                      endX - startX, endY - startY))
+                                                      endX - startX, endY - startY),
+                                      quality=self.jpeg_quality)
             with open(filepath, 'wb') as f:
                 f.write(image_bytes)
             filenames.append(filename)
@@ -424,12 +598,41 @@ class ImageRecorder:
         capture_time = datetime.now(timezone.utc)
         if not self.queue.full():
             self.queue.put((frame, frame_id, boxes, centres, gps_data,
-                            camera_metadata, context, capture_time))
+                            camera_metadata, context, capture_time, self.jpeg_quality))
+            now = time.monotonic()
+            thumbnail = now - self._thumb_at >= self.THUMB_INTERVAL_S
+            if thumbnail:
+                self._thumb_at = now
+            self.note_preview(frame, gps_data, capture_time, saved=True, thumbnail=thumbnail)
         else:
             self.logger.info("[INFO] Queue is full, spinning up new process. Frame skipped.")
 
         if self.queue.qsize() > self.new_process_threshold and len(self.processes) < self.max_processes:
             self.start_new_process()
+
+    def note_preview(self, frame, gps_data=None, capture_time=None, saved=False, thumbnail=True):
+        """Refresh the quality summary, and the gallery thumbnail when
+        `thumbnail` is set, from a frame.
+
+        Called for every queued image, and by video mode for frames that are
+        recorded into a clip rather than saved as files. Auxiliary: a failure
+        here must never cost the image.
+        """
+        try:
+            self.qc.add(image_quality(frame))
+            if thumbnail:
+                self.last_thumbnail = make_thumbnail(frame)
+            if saved:
+                self.saved_count += 1
+            capture_time = capture_time or datetime.now(timezone.utc)
+            info = {'count': self.saved_count,
+                    'ts': capture_time.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'}
+            if gps_data and gps_data.get('latitude') is not None and gps_data.get('longitude') is not None:
+                info['lat'] = float(gps_data['latitude'])
+                info['lon'] = float(gps_data['longitude'])
+            self.last_saved = info
+        except Exception as e:
+            self.logger.warning(f"Preview/quality update failed (image unaffected): {e}")
 
     def stop(self):
         """Stop image recording processes and clean up resources."""

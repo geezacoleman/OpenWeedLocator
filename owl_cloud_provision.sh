@@ -19,11 +19,28 @@
 #       --device-id <id issued at registration> \
 #       --username <bridge username> \
 #       (--password '<secret>' | --password-file <file>) \
-#       [--ca-file ca.crt | --system-ca]
+#       [--ca-file ca.crt | --system-ca] [--portal-url https://app.noktura.tech]
+#       [--storage-host hel1.your-objectstorage.com]
 #
 #   sudo bash owl_cloud_provision.sh --disable     # tear the bridge down
 #
 # Idempotent: re-run any time to rotate credentials or change the broker.
+#
+# Rules enforced (Noktura spec N12): --device-id is a lowercase site slug and
+# --username must equal it — the broker ACL `site/%u/owl/#` keys on the
+# username, so a mismatch silently drops every message.
+#
+# Cloud commands land on a SEPARATE local topic (standalone: owl/cloud_commands,
+# networked: owl/cloud/<id>/commands) so utils/mqtt_manager.py can apply an
+# allowlist to anything the cloud sends, instead of letting a stolen bridge
+# credential drive spraying and config. The remote topic (.../commands) is
+# unchanged, so Noktura needs no change.
+#
+# When the phone app provisions the unit, this script runs as a ROOT-OWNED
+# COPY in /usr/local/lib/owl/ through /usr/local/sbin/owl-cloud-provision
+# (controller/setup/install_firstboot.sh --cloud-helper). The helper sets
+# OWL_REPO_DIR and OWL_USER because the copy does not live in the repo and the
+# caller may be the root setup service (cross-repo review 2026-09-17, O-1/O-16).
 # =============================================================================
 set -euo pipefail
 
@@ -37,10 +54,12 @@ if [[ "$(id -u)" != "0" ]]; then
     exit 1
 fi
 
-CURRENT_USER="${SUDO_USER:-$(whoami)}"
+# OWL_USER / OWL_REPO_DIR come from the root helper; a manual sudo run uses
+# the invoking user and this script's own directory.
+CURRENT_USER="${OWL_USER:-${SUDO_USER:-$(whoami)}}"
 USER_HOME="$(getent passwd "$CURRENT_USER" | cut -d: -f6)"
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
-REPO_DIR="$SCRIPT_DIR"
+REPO_DIR="${OWL_REPO_DIR:-$SCRIPT_DIR}"
 CTRL_INI="$REPO_DIR/config/CONTROLLER.ini"
 BRIDGE_CONF="/etc/mosquitto/conf.d/owl-cloud.conf"
 CLOUD_DIR="$USER_HOME/.owl/cloud"
@@ -55,6 +74,8 @@ PASSWORD_FILE_SRC=""
 CA_FILE=""
 SYSTEM_CA=0
 DISABLE=0
+PORTAL_URL=""
+STORAGE_HOST=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -66,6 +87,8 @@ while [[ $# -gt 0 ]]; do
         --password-file) PASSWORD_FILE_SRC="$2"; shift 2 ;;
         --ca-file)       CA_FILE="$2"; shift 2 ;;
         --system-ca)     SYSTEM_CA=1; shift ;;
+        --portal-url)    PORTAL_URL="$2"; shift 2 ;;
+        --storage-host)  STORAGE_HOST="$2"; shift 2 ;;
         --disable)       DISABLE=1; shift ;;
         *) echo -e "${RED}[ERROR] Unknown option: $1${NC}" >&2; exit 2 ;;
     esac
@@ -144,8 +167,19 @@ fi
 if [[ -z "$PASSWORD" && -z "$PASSWORD_FILE_SRC" ]]; then
     echo -e "${RED}[ERROR] one of --password / --password-file is required${NC}" >&2; exit 2
 fi
-if ! [[ "$DEVICE_ID" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
-    echo -e "${RED}[ERROR] invalid --device-id (allowed: A-Z a-z 0-9 _ -)${NC}" >&2; exit 2
+# Site slug rule (matches Noktura fleet_sites.slug and the broker ACL).
+if ! [[ "$DEVICE_ID" =~ ^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$ ]]; then
+    echo -e "${RED}[ERROR] invalid --device-id '$DEVICE_ID': lowercase letters, digits and hyphens, 3-32 chars${NC}" >&2; exit 2
+fi
+if [[ "$USERNAME" != "$DEVICE_ID" ]]; then
+    echo -e "${RED}[ERROR] --username must equal --device-id (the cloud ACL keys on the username)${NC}" >&2; exit 2
+fi
+if [[ -n "$PORTAL_URL" ]] && ! [[ "$PORTAL_URL" =~ ^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._/-]*)?$ ]]; then
+    echo -e "${RED}[ERROR] --portal-url must be an https URL${NC}" >&2; exit 2
+fi
+# Upload host pin for transfer_session / upload_previews URLs (mqtt_manager.py).
+if [[ -n "$STORAGE_HOST" ]] && ! [[ "$STORAGE_HOST" =~ ^[a-z0-9.-]{3,253}$ ]]; then
+    echo -e "${RED}[ERROR] --storage-host must be a lowercase hostname${NC}" >&2; exit 2
 fi
 if ! [[ "$PORT" =~ ^[0-9]{1,5}$ ]] || [[ "$PORT" -lt 1 || "$PORT" -gt 65535 ]]; then
     echo -e "${RED}[ERROR] invalid --port${NC}" >&2; exit 2
@@ -195,9 +229,12 @@ if [[ "$NET_MODE" == "networked" ]]; then
 topic +/state out 1 ${LOCAL_PREFIX} ${REMOTE_PREFIX}
 topic +/status out 1 ${LOCAL_PREFIX} ${REMOTE_PREFIX}
 topic +/gps out 1 ${LOCAL_PREFIX} ${REMOTE_PREFIX}
-topic +/commands in 1 ${LOCAL_PREFIX} ${REMOTE_PREFIX}
+topic +/commands in 1 owl/cloud/ ${REMOTE_PREFIX}
 EOF
 )
+    # Inbound cloud commands land on owl/cloud/<id>/commands, where each OWL's
+    # mqtt_manager.py applies the cloud allowlist. They must never reach
+    # owl/<id>/commands, the controller's unrestricted command topic (O-4).
     echo -e "${GREEN}[INFO] Networked mode — bridging the fleet's owl/<id>/ topics to site/${DEVICE_ID}/owl/<id>/ on the cloud broker.${NC}"
 else
     # Standalone OWL: flat local topics; on the cloud side the unit appears
@@ -205,11 +242,14 @@ else
     # keeping the topic depth identical to networked fleets.
     LOCAL_PREFIX="owl/"
     REMOTE_PREFIX="site/${DEVICE_ID}/owl/${DEVICE_ID}/"
+    # Inbound: remote .../commands lands on LOCAL owl/cloud_commands (the
+    # pattern is shared, only the prefixes differ), where mqtt_manager.py
+    # applies the cloud allowlist. Never owl/commands.
     TOPIC_LINES=$(cat <<EOF
 topic state out 1 ${LOCAL_PREFIX} ${REMOTE_PREFIX}
 topic status out 1 ${LOCAL_PREFIX} ${REMOTE_PREFIX}
 topic gps out 1 ${LOCAL_PREFIX} ${REMOTE_PREFIX}
-topic commands in 1 ${LOCAL_PREFIX} ${REMOTE_PREFIX}
+topic commands in 1 owl/cloud_ ${REMOTE_PREFIX}
 EOF
 )
     echo -e "${GREEN}[INFO] Standalone mode — mapping owl/* to site/${DEVICE_ID}/owl/${DEVICE_ID}/* on the cloud broker.${NC}"
@@ -247,6 +287,15 @@ _update_ini_key "$CTRL_INI" "Cloud" "device_id" "$DEVICE_ID"
 _update_ini_key "$CTRL_INI" "Cloud" "username" "$USERNAME"
 _update_ini_key "$CTRL_INI" "Cloud" "ca_cert" "${CA_PATH:-/etc/ssl/certs}"
 _update_ini_key "$CTRL_INI" "Cloud" "password_file" "$PASSWORD_FILE"
+if [[ -n "$PORTAL_URL" ]]; then
+    _update_ini_key "$CTRL_INI" "Cloud" "portal_url" "$PORTAL_URL"
+fi
+if [[ -n "$STORAGE_HOST" ]]; then
+    _update_ini_key "$CTRL_INI" "Cloud" "storage_host" "$STORAGE_HOST"
+fi
+# The device token in [Security] must not be world-readable (dev/clean.sh
+# used to chmod -R 755 the repo). Owner + group only.
+chmod 640 "$CTRL_INI" 2>/dev/null || true
 
 # --- Sudoers for remote update / restart / reboot ---------------------------------------------------
 # SECURITY: the systemd-run command must be LITERAL up to the script's own

@@ -15,53 +15,67 @@ if [ "$SUDO_USER" ]; then
    exit 1
 fi
 
-# Factory provisioning: `bash owl_setup.sh --ship` runs the full install
-# non-interactively — GoG skipped, controller type none, standalone dashboard
-# with the fixed setup hotspot (OWL-XXXX from the Pi serial, PSK owl-setup) —
-# and arms phone-app first-boot setup at the end. One command, zero prompts;
-# the customer's phone app makes all network/identity decisions later.
+# Factory provisioning: `bash owl_setup.sh --factory` is the ONE command that
+# prepares a production OWL (CM5 on the production carrier) for a customer.
+# It runs the full install non-interactively: GoG skipped, controller type
+# none, standalone dashboard with the fixed setup hotspot (OWL-XXXX from the
+# Pi serial, PSK owl-setup), the carrier's nRF9151 GNSS (serial-port access,
+# ModemManager off, [GPS] written after the dashboard step), and arms
+# phone-app first-boot setup at the end. The customer's phone app makes all
+# network and cloud decisions later.
 #
-# `--ship-gps` is `--ship` plus the production CM5 carrier's nRF9151 GNSS:
-# serial-port access for the OWL user, ModemManager off (it probes every tty
-# with AT commands and holds the port) and [GPS] source/port/baudrate written
-# to CONTROLLER.ini after the dashboard step (setup.sh writes source = none).
-SHIP_MODE=0
-SHIP_GPS=0
+# It replaces --ship and --ship-gps (v3.19.0, cross-repo review 2026-09-17:
+# two ship commands had drifted apart in the docs). There are no aliases.
+#
+# The unit must already carry its hardware identity (sudo bash
+# owl_identity.sh --otp) and be registered with Noktura from the bench laptop
+# (tools/noktura_register.sh). The identity is checked up front, before 20
+# minutes of install; registration is not checked here (it needs internet and
+# the factory token, which never touch the unit).
+FACTORY_MODE=0
 case "${1:-}" in
-  --ship)
-    SHIP_MODE=1
-    echo -e "${GREEN}[INFO] Ship mode: non-interactive factory provisioning${NC}"
-    ;;
-  --ship-gps)
-    SHIP_MODE=1
-    SHIP_GPS=1
-    echo -e "${GREEN}[INFO] Ship mode + nRF9151 GPS: non-interactive factory provisioning${NC}"
+  --factory)
+    FACTORY_MODE=1
+    echo -e "${GREEN}[INFO] Factory mode: non-interactive production provisioning${NC}"
     ;;
   "")
     ;;
   *)
-    echo -e "${RED}[ERROR] Unknown option '$1' (supported: --ship, --ship-gps)${NC}"
+    echo -e "${RED}[ERROR] Unknown option '$1' (supported: --factory)${NC}"
     exit 1
     ;;
 esac
 
-# --ship is for units leaving the factory, not for your own build: it deletes
+# Identity gate (fail fast, before the confirmation and the long install).
+# A production unit without its OTP identity cannot be claimed in the app.
+OWL_IDENTITY_DIR="${OWL_IDENTITY_DIR:-/etc/owl-identity}"
+if [[ "$FACTORY_MODE" == "1" ]]; then
+    identity_tier=$(cat "${OWL_IDENTITY_DIR}/tier" 2>/dev/null || true)
+    if [[ ! -s "${OWL_IDENTITY_DIR}/device.pub" || "$identity_tier" != "otp" ]]; then
+        echo -e "${RED}[NOT SHIP-READY] No hardware identity on this unit (tier: ${identity_tier:-none}).${NC}"
+        echo -e "${RED}        Run: sudo bash owl_identity.sh --otp, register it from the laptop${NC}"
+        echo -e "${RED}        (tools/noktura_register.sh), then re-run bash owl_setup.sh --factory.${NC}"
+        exit 1
+    fi
+fi
+
+# --factory is for units leaving the factory, not for your own build: it deletes
 # every WiFi profile except the OWL hotspot, SSH keys and shell history, sets
 # the shared setup password and locks detection until phone-app setup finishes.
 # A maker running it by mistake locks themselves out, so it asks for a typed
 # confirmation. Factory automation passes --yes as the second argument.
-if [[ "$SHIP_MODE" == "1" && -z "${OWL_SETUP_DETACHED:-}" ]]; then
+if [[ "$FACTORY_MODE" == "1" && -z "${OWL_SETUP_DETACHED:-}" ]]; then
     case "${2:-}" in
       --yes) ;;
       "")
-        echo -e "${ORANGE}[WARN] Ship mode prepares a unit for a customer. It will:${NC}"
+        echo -e "${ORANGE}[WARN] Factory mode prepares a unit for a customer. It will:${NC}"
         echo -e "${ORANGE}       - delete every WiFi profile except the OWL hotspot, plus SSH keys and shell history${NC}"
         echo -e "${ORANGE}       - set the shared setup hotspot password (owl-setup)${NC}"
         echo -e "${ORANGE}       - keep detection off until setup is finished in the phone app${NC}"
         echo -e "${ORANGE}       Building your own OWL? Stop here and run: bash owl_setup.sh${NC}"
-        read -r -p "Type SHIP to continue: " ship_confirm
-        if [[ "$ship_confirm" != "SHIP" ]]; then
-            echo -e "${RED}[ERROR] Ship mode cancelled. Nothing was changed.${NC}"
+        read -r -p "Type FACTORY to continue: " factory_confirm
+        if [[ "$factory_confirm" != "FACTORY" ]]; then
+            echo -e "${RED}[ERROR] Factory mode cancelled. Nothing was changed.${NC}"
             exit 1
         fi
         ;;
@@ -72,15 +86,15 @@ if [[ "$SHIP_MODE" == "1" && -z "${OWL_SETUP_DETACHED:-}" ]]; then
     esac
 fi
 
-# Ship mode takes 20+ minutes and is usually run over SSH. A dropped session
+# Factory mode takes 20+ minutes and is usually run over SSH. A dropped session
 # sends SIGHUP and kills the install partway (a fresh CM5 was left un-renamed
 # and un-armed, 2026-09-15). Re-exec detached from the terminal, logging to a
 # file, and follow the log; if SSH drops, the install keeps going. Needs
 # passwordless sudo (the default for the first user on Raspberry Pi OS), since
 # a detached process cannot answer a password prompt.
-if [[ "$SHIP_MODE" == "1" && -z "${OWL_SETUP_DETACHED:-}" ]]; then
+if [[ "$FACTORY_MODE" == "1" && -z "${OWL_SETUP_DETACHED:-}" ]]; then
     if ! sudo -n true 2>/dev/null; then
-        echo -e "${RED}[ERROR] Ship mode needs passwordless sudo for '$CURRENT_USER'.${NC}"
+        echo -e "${RED}[ERROR] Factory mode needs passwordless sudo for '$CURRENT_USER'.${NC}"
         exit 1
     fi
     SETUP_LOG="$HOME/owl_setup.log"
@@ -94,7 +108,7 @@ if [[ "$SHIP_MODE" == "1" && -z "${OWL_SETUP_DETACHED:-}" ]]; then
     exit $?
 fi
 
-# nRF9151 GNSS link on the production CM5 carrier (used only by --ship-gps).
+# nRF9151 GNSS link on the production CM5 carrier (--factory).
 # Confirmed on the bench 2026-09-13: Serial LTE Modem 2.9.1 firmware answers on
 # UART3 (GPIO 8/9, TX/RX only, no flow control) at 460800 baud once GPIO 26
 # (5G_ENABLE) powers the modem. install_firstboot.sh --gps-config owns that
@@ -103,7 +117,7 @@ NRF_GPS_SOURCE="nrf91"
 NRF_GPS_PORT="/dev/ttyAMA3"
 NRF_GPS_BAUD="460800"
 
-ship_ssid_suffix() {
+factory_ssid_suffix() {
   # Last 4 hex chars of the Pi serial (uppercase); random fallback.
   # Gives every shipped unit a unique OWL-XXXX the phone app can find.
   local serial
@@ -117,7 +131,7 @@ ship_ssid_suffix() {
 
 if systemctl is-active --quiet owl.service; then
     echo -e "${ORANGE}[WARNING] The owl.service is currently running.${NC}"
-    if [[ "$SHIP_MODE" == "1" ]]; then
+    if [[ "$FACTORY_MODE" == "1" ]]; then
         stop_choice="y"
     else
         read -p "Do you want to stop the service to continue with the installation? (y/n): " stop_choice
@@ -386,8 +400,8 @@ EOF
   fi
 }
 
-setup_ship_gps() {
-  # --ship-gps only. Must run AFTER controller/shared/setup.sh, which writes
+setup_factory_gps() {
+  # --factory only. Must run AFTER controller/shared/setup.sh, which writes
   # [GPS] source = none into CONTROLLER.ini.
   echo -e "${GREEN}[INFO] Configuring nRF9151 GPS...${NC}"
   local ctrl_ini="${SCRIPT_DIR}/config/CONTROLLER.ini"
@@ -487,7 +501,7 @@ setup_ship_gps() {
     echo -e "${TICK} nRF9151 answered AT on ${NRF_GPS_PORT} @ ${NRF_GPS_BAUD}"
   else
     echo -e "${CROSS} nRF9151 did not answer AT on ${NRF_GPS_PORT} @ ${NRF_GPS_BAUD}"
-    echo -e "        Reboot, then re-run 'bash owl_setup.sh --ship-gps' (re-runs are safe)."
+    echo -e "        Reboot, then re-run 'bash owl_setup.sh --factory' (re-runs are safe)."
     echo -e "        Diagnose with: bash tools/nrf9151_probe.sh"
     STATUS_GPS="${CROSS}"
     ERROR_GPS="nRF9151 did not answer AT on ${NRF_GPS_PORT}"
@@ -711,9 +725,9 @@ check_status "Installing dependencies from requirements.txt" "OWL_DEPS"
 
 # Step 8b: Optional Green-on-Green (YOLO) support
 echo -e "${GREEN}[INFO] Green-on-Green (YOLO) support available...${NC}"
-if [[ "$SHIP_MODE" == "1" ]]; then
+if [[ "$FACTORY_MODE" == "1" ]]; then
     gog_choice="n"
-    echo -e "${GREEN}[INFO] Ship mode: skipping Green-on-Green${NC}"
+    echo -e "${GREEN}[INFO] Factory mode: skipping Green-on-Green${NC}"
 else
     read -p "Do you want to install Green-on-Green (YOLO) support? This requires ~2GB of additional packages. (y/n): " gog_choice
 fi
@@ -794,9 +808,9 @@ echo "    advanced - Multi-switch panel (recording, sensitivity, detection mode)
 echo "               Default pins: recording=BOARD38, sensitivity=BOARD40,"
 echo "               detection_up=BOARD36, detection_down=BOARD35"
 echo ""
-if [[ "$SHIP_MODE" == "1" ]]; then
+if [[ "$FACTORY_MODE" == "1" ]]; then
     ctrl_choice="none"
-    echo -e "${GREEN}[INFO] Ship mode: controller_type = none${NC}"
+    echo -e "${GREEN}[INFO] Factory mode: controller_type = none${NC}"
 else
     read -p "Enter controller type [none/ute/advanced] (default: none): " ctrl_choice
 fi
@@ -833,9 +847,9 @@ esac
 
 # Step 13: Dashboard Setup
 echo -e "${GREEN}[INFO] Dashboard setup available...${NC}"
-if [[ "$SHIP_MODE" == "1" ]]; then
+if [[ "$FACTORY_MODE" == "1" ]]; then
     dashboard_choice="y"
-    echo -e "${GREEN}[INFO] Ship mode: standalone dashboard with setup hotspot${NC}"
+    echo -e "${GREEN}[INFO] Factory mode: standalone dashboard with setup hotspot${NC}"
 else
     read -p "Do you want to add a web dashboard for remote control? (y/n): " dashboard_choice
 fi
@@ -846,7 +860,7 @@ case "$dashboard_choice" in
       install_dashboard_dependencies
       chmod +x "${SCRIPT_DIR}/controller/shared/setup.sh"
       cd "$SCRIPT_DIR"  # Ensure we're in the right directory
-      if [[ "$SHIP_MODE" == "1" ]]; then
+      if [[ "$FACTORY_MODE" == "1" ]]; then
         # Ship gate: arming first-boot on a broken venv ships a brick. Verify
         # the full import chain; one repair attempt, then hard abort — armed
         # units must never leave the bench with missing Python deps.
@@ -860,7 +874,7 @@ case "$dashboard_choice" in
                 exit 1
             fi
         fi
-        SHIP_SSID="OWL-$(ship_ssid_suffix)"
+        SHIP_SSID="OWL-$(factory_ssid_suffix)"
         echo -e "${GREEN}[INFO] Ship hotspot: ${SHIP_SSID} (PSK: setup default)${NC}"
         echo -e "${ORANGE}[WARN] wlan0 switches to hotspot mode now. An SSH session over Wi-Fi"
         echo -e "       will drop here. The install carries on; join ${SHIP_SSID} or check"
@@ -888,10 +902,29 @@ case "$dashboard_choice" in
     ;;
 esac
 
-# Step 13b: nRF9151 GPS (--ship-gps only). Must run after the dashboard step
+# Step 13b: nRF9151 GPS (--factory). Must run after the dashboard step
 # above, which writes [GPS] source = none into CONTROLLER.ini.
-if [[ "$SHIP_GPS" == "1" ]]; then
-    setup_ship_gps
+if [[ "$FACTORY_MODE" == "1" ]]; then
+    setup_factory_gps
+fi
+
+# Step 13c: maker identity (interactive installs only). A self-built OWL can
+# join Noktura from the phone app (community registration) once it has an
+# identity. A key file is the maker tier; a CM5 or Pi 5 with rpi-fw-crypto can
+# use the OTP tier instead (sudo bash owl_identity.sh --otp, permanent).
+if [[ "$FACTORY_MODE" != "1" ]]; then
+    if [[ -s "${OWL_IDENTITY_DIR}/device.pub" ]]; then
+        echo -e "${GREEN}[INFO] Device identity already present ($(cat "${OWL_IDENTITY_DIR}/tier" 2>/dev/null || echo unknown) tier).${NC}"
+    else
+        read -p "Create a device identity so this OWL can join Noktura from the phone app? (y/N): " identity_choice
+        if [[ "$identity_choice" =~ ^[Yy]$ ]]; then
+            if sudo bash "${SCRIPT_DIR}/owl_identity.sh" --disk; then
+                STATUS_IDENTITY="${TICK}"
+            else
+                STATUS_IDENTITY="${CROSS}"
+            fi
+        fi
+    fi
 fi
 
 # Step 14: Final Summary
@@ -920,8 +953,11 @@ fi
 echo -e "$STATUS_OWL_SERVICE OWL Service (systemd) Started"
 echo -e "$STATUS_DESKTOP_ICON Desktop Icon Created"
 echo -e "$STATUS_CONTROLLER Hardware Controller Configured"
-if [[ "$SHIP_GPS" == "1" ]]; then
+if [[ "$FACTORY_MODE" == "1" ]]; then
     echo -e "$STATUS_GPS nRF9151 GPS Configured"
+fi
+if [[ -n "$STATUS_IDENTITY" ]]; then
+    echo -e "$STATUS_IDENTITY Device Identity (key file) Created"
 fi
 
 if [[ "$STATUS_DASHBOARD" == "${TICK}" ]]; then
@@ -941,9 +977,9 @@ EOF
 
 echo -e "${GREEN}[COMPLETE] OWL version installed: ${OWL_VERSION}${NC}"
 
-# Step 15: Start OWL focusing (skipped in ship mode — the customer's phone
+# Step 15: Start OWL focusing (skipped in factory mode — the customer's phone
 # app runs the camera check on their first boot)
-if [[ "$SHIP_MODE" == "1" ]]; then
+if [[ "$FACTORY_MODE" == "1" ]]; then
     # Final ship gate: any critical failure above means this unit must not be
     # cleaned or boxed. Dev cleanup is deliberately skipped so the unit stays
     # reachable (WiFi profiles intact) for repair. owl.service is NOT gated
@@ -970,9 +1006,10 @@ if [[ "$SHIP_MODE" == "1" ]]; then
 
     echo -e "${GREEN}[SHIP-READY] Unit provisioned for shipping:${NC}"
     echo -e "  • Hotspot: ${SHIP_SSID:-OWL-XXXX} (setup password)"
-    if [[ "$SHIP_GPS" == "1" ]]; then
+    if [[ "$FACTORY_MODE" == "1" ]]; then
         echo -e "  • GPS: nRF9151 on ${NRF_GPS_PORT} (source = ${NRF_GPS_SOURCE})"
     fi
+    echo -e "  • Identity: $(cat "${OWL_IDENTITY_DIR}/tier") tier, fingerprint $(openssl pkey -pubin -in "${OWL_IDENTITY_DIR}/device.pub" -outform DER 2>/dev/null | sha256sum | cut -c1-16)…"
     echo -e "  • First-boot setup armed — the phone app takes over on next boot"
     echo -e "  • Focus the camera, then SHUT DOWN CLEANLY (sudo shutdown now)"
     echo -e "    before boxing — pulling power mid-write can un-arm the unit."

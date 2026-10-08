@@ -473,6 +473,39 @@ class PiCamera2Stream:
         self.logger.info("Live camera controls applied", extra=dict(**self._awb_state))
         return True
 
+    def set_exposure_override(self, exposure_us=None, gain=None) -> bool:
+        """Hold the shutter and/or gain (utils/exposure_governor.py), or hand
+        them back to auto exposure with None.
+
+        libcamera on Trixie has ExposureTimeMode/AnalogueGainMode; older
+        builds treat a non-zero ExposureTime/AnalogueGain as manual and 0 as
+        auto. Fixing only the shutter leaves the AGC free to raise the gain,
+        which is the point. Confirm on each sensor with tools/shutter_cap_probe.py.
+        """
+        available = self.camera.camera_controls
+        controls = {}
+        if 'ExposureTimeMode' in available:
+            modes = libcamera.controls.ExposureTimeModeEnum
+            controls['ExposureTimeMode'] = modes.Manual if exposure_us else modes.Auto
+            if exposure_us:
+                controls['ExposureTime'] = int(exposure_us)
+        else:
+            controls['ExposureTime'] = int(exposure_us or 0)
+        if 'AnalogueGainMode' in available:
+            modes = libcamera.controls.AnalogueGainModeEnum
+            controls['AnalogueGainMode'] = modes.Manual if gain else modes.Auto
+            if gain:
+                controls['AnalogueGain'] = float(gain)
+        else:
+            controls['AnalogueGain'] = float(gain or 0)
+        try:
+            self.camera.set_controls(controls)
+        except Exception as e:
+            self.logger.warning(f"Exposure override not applied: {e}")
+            return False
+        self.logger.info("Exposure override", extra=dict(exposure_us=exposure_us, gain=gain))
+        return True
+
     def stop(self):
         self.stopped.set()
         self.thread.join()
@@ -759,6 +792,12 @@ class VideoStream:
                                 "on this camera backend")
             return False
         return self.stream.set_camera_controls(params)
+
+    def set_exposure_override(self, exposure_us=None, gain=None) -> bool:
+        """Shutter cap / gain limit (PiCamera2 only). Returns False otherwise."""
+        if self.stream is None or not hasattr(self.stream, 'set_exposure_override'):
+            return False
+        return self.stream.set_exposure_override(exposure_us, gain)
 
     def stop(self):
         """Stop the thread and release any resources."""

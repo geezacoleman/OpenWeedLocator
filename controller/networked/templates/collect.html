@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OWL Controller</title>
+    <link rel="stylesheet" href="/shared/css/_variables.css" />
+    <link rel="stylesheet" href="/shared/css/_reset.css" />
+    <link rel="stylesheet" href="/shared/css/_toast.css" />
+    <link rel="stylesheet" href="/shared/css/numpad.css" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='lib/leaflet/leaflet.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/collect.css') }}" />
+</head>
+<body class="collect">
+<!-- Data collection screen (layout A, signed off 2026-10-08). Fits the 7"
+     EDATEC (1024x600) natively and grows on the 10" HMI3010 (1280x800). -->
+<header class="c-top">
+    <span class="c-brand">OWL Controller</span>
+    <nav class="c-tabs" role="tablist">
+        <button class="c-tab" role="tab" aria-selected="true" data-view="record" data-i18n="tab_record">Record</button>
+        <button class="c-tab" role="tab" aria-selected="false" data-view="map" data-i18n="tab_map">Map</button>
+        <button class="c-tab" role="tab" aria-selected="false" data-view="settings" data-i18n="tab_settings">Settings</button>
+    </nav>
+    <span class="c-spacer"></span>
+    <button class="c-pill" id="cloud-pill" type="button"><span class="c-dot" id="cloud-dot"></span><span id="cloud-text">Noktura</span></button>
+    <div class="c-lang" role="group" aria-label="Language">
+        <button type="button" data-lang="en" aria-pressed="true">EN</button>
+        <button type="button" data-lang="da" aria-pressed="false">DK</button>
+    </div>
+</header>
+
+<main class="c-main">
+    <!-- Record -->
+    <section class="c-view c-view--record is-on" id="view-record">
+        <button class="c-record" id="record-btn" type="button">
+            <span id="record-label">Start recording</span>
+            <small id="record-sub">Ready</small>
+        </button>
+        <div class="c-card c-status">
+            <div class="c-owl-table" id="owl-rows"></div>
+            <div class="c-chips" id="meta-chips"></div>
+            <div class="c-warnings" id="warnings"></div>
+        </div>
+        <div class="c-gallery" id="gallery"></div>
+    </section>
+
+    <!-- Map -->
+    <section class="c-view c-view--map" id="view-map">
+        <div class="c-card c-map"><div id="collect-map"></div><p class="c-map-empty" id="map-empty" data-i18n="map_none">Image locations appear here once recording starts with GPS.</p></div>
+        <div class="c-card c-map-side">
+            <div class="c-legend" id="map-legend"></div>
+            <div class="c-stat"><span data-i18n="map_images">Images this run</span><b class="c-num" id="map-count">0</b></div>
+            <div class="c-stat"><span data-i18n="map_spacing">Spacing</span><b class="c-num" id="map-spacing">-</b></div>
+            <button class="c-btn" id="map-centre" type="button" data-i18n="map_centre">Centre on images</button>
+        </div>
+    </section>
+
+    <!-- Settings -->
+    <section class="c-view c-view--settings" id="view-settings">
+        <nav class="c-card c-setnav" role="tablist">
+            <button type="button" aria-selected="true" data-pane="sessions" data-i18n="s_sessions">Sessions and upload</button>
+            <button type="button" aria-selected="false" data-pane="capture" data-i18n="s_capture">Capture</button>
+            <button type="button" aria-selected="false" data-pane="camera" data-i18n="s_camera">Camera</button>
+            <button type="button" aria-selected="false" data-pane="cloud" data-i18n="s_cloud">Noktura</button>
+            <button type="button" aria-selected="false" data-pane="full" data-i18n="s_full">Full dashboard</button>
+        </nav>
+        <div class="c-card c-setbody">
+            <div class="c-pane is-on" id="pane-sessions">
+                <div class="c-pane-head"><h2 data-i18n="s_sessions">Sessions and upload</h2><button class="c-btn c-btn--small" id="sessions-refresh" type="button" data-i18n="refresh">Refresh list</button></div>
+                <div class="c-table-wrap">
+                    <table class="c-sessions">
+                        <thead><tr><th></th><th>OWL</th><th data-i18n="session">Session</th><th data-i18n="images">Images</th><th data-i18n="size">Size</th><th data-i18n="status">Status</th></tr></thead>
+                        <tbody id="session-rows"></tbody>
+                    </table>
+                </div>
+                <div class="c-foot"><button class="c-btn c-btn--primary" id="upload-btn" type="button" disabled data-i18n="upload">Upload selected</button><span class="c-hint" id="upload-summary"></span></div>
+                <p class="c-hint" data-i18n="upload_hint">Uploads use the router's mobile data.</p>
+            </div>
+
+            <div class="c-pane" id="pane-capture">
+                <h2 data-i18n="s_capture">Capture</h2>
+                <div class="c-form">
+                    <div class="c-field"><span class="c-label" data-i18n="record_as">Record as</span>
+                        <div class="c-seg" data-setting="record_mode"><button type="button" data-value="images" data-i18n="stills">Still images</button><button type="button" data-value="video" data-i18n="video">Video clip</button></div></div>
+                    <div class="c-field"><span class="c-label" data-i18n="spacing_mode">Take images</span>
+                        <div class="c-seg" data-setting="sample_mode"><button type="button" data-value="distance" data-i18n="by_distance">By distance</button><button type="button" data-value="time" data-i18n="by_time">By time</button></div></div>
+                    <div class="c-field"><label class="c-label" for="set-distance" data-i18n="every_m">Every (metres)</label>
+                        <input class="c-input" id="set-distance" type="number" step="0.1" min="0.1" max="50" data-numpad data-setting="sample_distance_m" /></div>
+                    <div class="c-field"><label class="c-label" for="set-interval" data-i18n="every_s">Without GPS, every (seconds)</label>
+                        <input class="c-input" id="set-interval" type="number" step="0.1" min="0.2" max="60" data-numpad data-setting="sample_interval_s" /></div>
+                    <div class="c-field"><label class="c-label" for="set-quality" data-i18n="quality">Image quality (JPEG)</label>
+                        <input class="c-input" id="set-quality" type="number" step="1" min="50" max="100" data-numpad data-setting="jpeg_quality" /></div>
+                    <div class="c-field"><label class="c-label" for="set-video" data-i18n="video_len">Video clip length</label>
+                        <input class="c-input" id="set-video" type="number" step="1" min="5" max="60" data-numpad data-setting="video_max_s" /></div>
+                    <div class="c-field"><label class="c-label" for="set-smear" data-i18n="smear">Blur limit</label>
+                        <input class="c-input" id="set-smear" type="number" step="0.1" min="0.2" max="20" data-numpad data-setting="smear_limit_mm" /></div>
+                    <div class="c-field"><span class="c-label" data-i18n="shutter_cap">Limit shutter time for speed</span>
+                        <div class="c-seg" data-setting="shutter_cap"><button type="button" data-value="true" data-i18n="on">On</button><button type="button" data-value="false" data-i18n="off">Off</button></div></div>
+                </div>
+                <p class="c-hint" data-i18n="capture_hint"></p>
+            </div>
+
+            <div class="c-pane" id="pane-camera">
+                <div class="c-pane-head"><h2 data-i18n="s_camera">Camera</h2><span class="c-hint" data-i18n="cam_all">Applies to all OWLs</span></div>
+                <div class="c-live" id="camera-live"></div>
+                <p class="c-hint" id="camera-waiting" data-i18n="cam_waiting" hidden></p>
+                <div class="c-form">
+                    <div class="c-field"><span class="c-label" data-i18n="resolution">Resolution</span>
+                        <div class="c-seg" data-camera="resolution"><button type="button" data-value="728x544">728×544</button><button type="button" data-value="1456x1088">1456×1088</button></div></div>
+                    <div class="c-field"><span class="c-label" data-i18n="brightness">Brightness</span>
+                        <div class="c-stepper"><button type="button" id="ev-down" data-i18n-aria="darker" aria-label="Darker">−</button><span class="c-num" id="ev-value">-</span><button type="button" id="ev-up" aria-label="Brighter">+</button></div></div>
+                    <div class="c-field"><span class="c-label" data-i18n="wb">White balance</span>
+                        <div class="c-seg" data-camera="awb_mode"><button type="button" data-value="auto" data-i18n="wb_auto">Auto</button><button type="button" data-value="daylight" data-i18n="wb_daylight">Daylight</button><button type="button" data-value="cloudy" data-i18n="wb_cloudy">Cloudy</button><button type="button" data-value="manual" data-i18n="wb_manual">Locked</button></div></div>
+                    <div class="c-field"><span class="c-label" data-i18n="calibrate_hint">Point the cameras at the crop, then tap.</span>
+                        <button class="c-btn" type="button" id="calibrate-btn" data-i18n="calibrate">Calibrate white balance</button></div>
+                    <div class="c-field"><span class="c-label"><span data-i18n="gain_limit">Gain limit</span> <span class="c-tag" data-i18n="new_tag">New</span></span>
+                        <div class="c-seg" data-camera="max_gain"><button type="button" data-value="auto" data-i18n="auto">Auto</button><button type="button" data-value="8">8×</button><button type="button" data-value="16">16×</button></div></div>
+                    <div class="c-field"><span class="c-label" data-i18n="rotation">Rotation</span>
+                        <div class="c-seg" data-camera="rotation"><button type="button" data-value="auto" data-i18n="auto">Auto</button><button type="button" data-value="0">0°</button><button type="button" data-value="180">180°</button></div></div>
+                </div>
+                <div class="c-foot" id="restart-row" hidden><span class="c-hint" data-i18n="restart_needed"></span><button class="c-btn c-btn--primary" type="button" id="restart-btn" data-i18n="restart_owls">Restart OWLs</button></div>
+                <p class="c-hint" data-i18n="cam_hint"></p>
+            </div>
+
+            <div class="c-pane" id="pane-cloud">
+                <h2 data-i18n="s_cloud">Noktura</h2>
+                <div class="c-stat"><span data-i18n="cloud_status">Connection</span><b id="cloud-status">-</b></div>
+                <div class="c-stat"><span data-i18n="cloud_site">Site</span><b class="c-num" id="cloud-site">-</b></div>
+                <div class="c-stat"><span data-i18n="cloud_owls">Internet from each OWL</span><b id="cloud-owls">-</b></div>
+                <label class="c-label" for="paste-command" data-i18n="paste_label">Paste the command from Noktura's one-time link</label>
+                <textarea class="c-paste" id="paste-command" spellcheck="false" autocomplete="off"
+                          placeholder="sudo bash owl_cloud_provision.sh --host mqtt.noktura.tech ..."></textarea>
+                <div class="c-foot">
+                    <button class="c-btn c-btn--primary" id="connect-btn" type="button" data-i18n="connect">Connect</button>
+                    <label class="c-check" id="replace-row" hidden><input type="checkbox" id="replace-check" /> <span data-i18n="replace">Replace the current connection</span></label>
+                    <span class="c-hint" id="portal-link" hidden></span>
+                </div>
+                <p class="c-hint" data-i18n="paste_hint"></p>
+            </div>
+
+            <div class="c-pane" id="pane-full">
+                <h2 data-i18n="s_full">Full dashboard</h2>
+                <p class="c-hint" data-i18n="full_hint"></p>
+                <div class="c-foot"><a class="c-btn" href="/full" data-i18n="open_full">Open full dashboard</a></div>
+            </div>
+        </div>
+    </section>
+</main>
+
+<!-- Record modal: big tap rows -->
+<div class="c-scrim" id="record-modal" hidden>
+    <div class="c-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <h2 id="modal-title" data-i18n="m_title">What are you recording?</h2>
+        <div class="c-mrow"><span data-i18n="crop">Crop</span><div class="c-opts" data-pick="crop"></div></div>
+        <div class="c-mrow" id="season-row"><span data-i18n="season">Season</span><div class="c-opts" data-pick="crop_season"></div></div>
+        <div class="c-mrow"><span data-i18n="weather">Weather</span><div class="c-opts" data-pick="weather"></div></div>
+        <div class="c-mrow"><span data-i18n="lighting">Light</span><div class="c-opts" data-pick="lighting"></div></div>
+        <div class="c-mrow"><span data-i18n="purpose">Purpose</span><div class="c-opts" data-pick="purpose"></div></div>
+        <div class="c-mrow"><label for="meta-notes" data-i18n="notes">Notes</label>
+            <input class="c-input c-input--wide" id="meta-notes" type="text" maxlength="200" data-numpad data-i18n-ph="notes_ph" /></div>
+        <input type="text" id="meta-other-crop" data-numpad hidden maxlength="60" />
+        <div class="c-mfoot"><button class="c-btn" type="button" id="modal-cancel" data-i18n="cancel">Cancel</button><button class="c-btn c-btn--go" type="button" id="modal-start" data-i18n="start">Start recording</button></div>
+    </div>
+</div>
+
+<!-- Stop confirmation -->
+<div class="c-scrim" id="stop-modal" hidden>
+    <div class="c-modal c-modal--small" role="dialog" aria-modal="true">
+        <h2 data-i18n="confirm_stop">Stop recording on all OWLs?</h2>
+        <div class="c-mfoot"><button class="c-btn" type="button" id="stop-no" data-i18n="confirm_no">Keep recording</button><button class="c-btn c-btn--stop" type="button" id="stop-yes" data-i18n="confirm_yes">Stop</button></div>
+    </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="/shared/js/toast.js"></script>
+<script src="/shared/js/numpad.js"></script>
+<script src="{{ url_for('static', filename='lib/leaflet/leaflet.js') }}"></script>
+<script src="{{ url_for('static', filename='js/collect/i18n.js') }}"></script>
+<script src="{{ url_for('static', filename='js/collect/collect.js') }}"></script>
+</body>
+</html>

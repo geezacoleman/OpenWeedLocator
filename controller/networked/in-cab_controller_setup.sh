@@ -53,6 +53,7 @@ STATUS_UFW_CONFIG=""
 STATUS_SERVICES=""
 STATUS_CONTROLLER_INI=""
 STATUS_AGENT_DEPS=""
+STATUS_CLOUD_HELPER=""
 
 ERROR_PACKAGES=""
 ERROR_WIFI_CONNECT=""
@@ -327,6 +328,30 @@ collect_user_input() {
     read -p "Enable kiosk mode on boot? (y/n, default: y): " KIOSK_MODE
     KIOSK_MODE=${KIOSK_MODE:-y}
 
+    # Which screen opens on the controller ([WebDashboard] ui). Data
+    # collection is a simple record screen: detection stays off on every OWL.
+    echo ""
+    echo -e "${GREEN}[INFO] Select the dashboard this controller opens:${NC}"
+    echo "  1) Full control     (detection, spraying, config, AI — OWL default)"
+    echo "  2) Data collection  (one record button, images, map, upload; no spraying)"
+    echo ""
+    # A re-run keeps the current screen as the default, so pressing Enter
+    # never silently turns a collect rig back into a spraying dashboard.
+    local ui_default=1
+    if grep -qE '^ui[[:space:]]*=[[:space:]]*collect' "${SCRIPT_DIR}/../../config/CONTROLLER.ini" 2>/dev/null; then
+        ui_default=2
+    fi
+    DASHBOARD_UI="full"
+    while true; do
+        read -p "Select dashboard (1-2, default ${ui_default}): " ui_choice
+        ui_choice=${ui_choice:-$ui_default}
+        case "$ui_choice" in
+            1) DASHBOARD_UI="full"; break ;;
+            2) DASHBOARD_UI="collect"; break ;;
+            *) echo -e "${RED}[ERROR] Invalid selection.${NC}" ;;
+        esac
+    done
+
     # Display type, resolution and orientation (for kiosk display)
     SCREEN_WIDTH=1280
     SCREEN_HEIGHT=800
@@ -341,13 +366,16 @@ collect_user_input() {
         echo "  1) EDATEC HMI3010 10.1\"         (1280x800, landscape — OWL default)"
         echo "  2) Raspberry Pi Touch Display 2  (720x1280 panel — rotates to 1280x720 landscape)"
         echo "  3) Generic HDMI / other          (pick a resolution)"
+        echo "  4) EDATEC 7\"                    (1024x600, landscape)"
         echo ""
 
         while true; do
-            read -p "Select display (1-3, default 1): " display_choice
+            read -p "Select display (1-4, default 1): " display_choice
             display_choice=${display_choice:-1}
             case "$display_choice" in
                 1) DISPLAY_TYPE="edatec"; DSI_TOUCH2="no"; SCREEN_WIDTH=1280; SCREEN_HEIGHT=800
+                   DISPLAY_ROTATION=0; DISPLAY_ORIENTATION="landscape"; break ;;
+                4) DISPLAY_TYPE="edatec7"; DSI_TOUCH2="no"; SCREEN_WIDTH=1024; SCREEN_HEIGHT=600
                    DISPLAY_ROTATION=0; DISPLAY_ORIENTATION="landscape"; break ;;
                 2) DISPLAY_TYPE="rpi_touch2"; DSI_TOUCH2="yes"; break ;;
                 3) DISPLAY_TYPE="generic"; DSI_TOUCH2="no"; DISPLAY_ROTATION=0; DISPLAY_ORIENTATION="landscape"
@@ -506,6 +534,11 @@ collect_user_input() {
     echo -e "Gateway: ${GATEWAY_IP}"
     echo -e "Hostname: ${HOSTNAME}"
     echo -e "Kiosk Mode: ${KIOSK_MODE}"
+    if [[ "$DASHBOARD_UI" == "collect" ]]; then
+        echo -e "Dashboard: Data collection (detection off)"
+    else
+        echo -e "Dashboard: Full control"
+    fi
     if [[ "$KIOSK_MODE" =~ ^[Yy]$ ]]; then
         echo -e "Display: ${DISPLAY_TYPE} (${SCREEN_WIDTH}x${SCREEN_HEIGHT}, ${DISPLAY_ORIENTATION})"
     fi
@@ -1099,6 +1132,18 @@ create_controller_ini() {
         return 1
     fi
 
+    # Re-running setup (for example to switch the dashboard) must not unpair
+    # the rig from Noktura or reset the collect screen's settings: the bridge
+    # config in /etc/mosquitto survives a re-run, so keep [Cloud] and
+    # [Collect] verbatim (same rule as controller/shared/setup.sh, O-17).
+    PRESERVED_SECTIONS=""
+    if [[ -f "$CTRL_INI" ]]; then
+        PRESERVED_SECTIONS=$(awk '
+            /^\[/ { keep = ($0 == "[Cloud]" || $0 == "[Collect]") }
+            keep { print }
+        ' "$CTRL_INI")
+    fi
+
     cat > "$CTRL_INI" <<EOF
 [MQTT]
 enable = True
@@ -1108,6 +1153,10 @@ device_id = auto
 
 [WebDashboard]
 port = 8000
+# Screen the kiosk opens: full (detection + config) or collect (data
+# collection only, detection held off). Both stay reachable at /full and
+# /collect. Restart owl-controller after changing.
+ui = ${DASHBOARD_UI}
 
 [Network]
 mode = networked
@@ -1138,9 +1187,15 @@ offset_cm = 30
 speed_avg_window = 2.0
 EOF
 
+    if [[ -n "$PRESERVED_SECTIONS" ]]; then
+        printf '\n%s\n' "$PRESERVED_SECTIONS" >> "$CTRL_INI"
+        echo -e "${GREEN}[INFO]   Kept existing [Cloud] / [Collect] settings${NC}"
+    fi
+
     chown "${CURRENT_USER}:${CURRENT_USER}" "$CTRL_INI"
 
     echo -e "${TICK} CONTROLLER.ini written to ${CTRL_INI}"
+    echo -e "${GREEN}[INFO]   Dashboard: ${DASHBOARD_UI}${NC}"
     echo -e "${GREEN}[INFO]   MQTT: broker=localhost:1883 (this controller IS the broker)${NC}"
     echo -e "${GREEN}[INFO]   Network: mode=networked, static_ip=${STATIC_IP}${NC}"
     case "$GPS_SOURCE" in
@@ -1303,6 +1358,26 @@ final_validation() {
     fi
 }
 
+# Step 11d: root-owned helper behind "Connect to Noktura" on the collect
+# screen (POST /api/collect/cloud/provision). Same helper and sudoers rule the
+# OWLs get, installed by controller/setup/install_firstboot.sh --cloud-helper.
+install_cloud_helper() {
+    local installer
+    installer="$(realpath "${SCRIPT_DIR}/../..")/controller/setup/install_firstboot.sh"
+    if [[ ! -f "$installer" ]]; then
+        echo -e "${ORANGE}[WARNING] ${installer} not found; Connect to Noktura will not work${NC}"
+        STATUS_CLOUD_HELPER="${CROSS}"
+        return
+    fi
+    if bash "$installer" --cloud-helper; then
+        echo -e "${TICK} Noktura cloud helper installed"
+        STATUS_CLOUD_HELPER="${TICK}"
+    else
+        echo -e "${ORANGE}[WARNING] Cloud helper install failed; connect to Noktura by running owl_cloud_provision.sh by hand${NC}"
+        STATUS_CLOUD_HELPER="${CROSS}"
+    fi
+}
+
 # Main execution flow
 main() {
     # Step 1: Collect user input
@@ -1347,6 +1422,9 @@ main() {
     # Step 11c-pre: Grant dialout group for serial GPS access
     grant_serial_access
 
+    # Step 11d: Noktura cloud helper (Connect to Noktura on the collect screen)
+    install_cloud_helper
+
     # Step 11c: Configure gpsd (only when source = gpsd)
     configure_gpsd
 
@@ -1375,6 +1453,7 @@ main() {
     echo -e "$STATUS_PACKAGES System Packages"
     echo -e "$STATUS_PYTHON_VENV Python Environment"
     echo -e "$STATUS_AGENT_DEPS AI Agent Dependencies"
+    echo -e "$STATUS_CLOUD_HELPER Noktura Cloud Helper"
     echo -e "$STATUS_MQTT_BROKER MQTT Broker Configuration"
     echo -e "$STATUS_SSL_CERT SSL Certificate"
     echo -e "$STATUS_NGINX_CONFIG Nginx Configuration"

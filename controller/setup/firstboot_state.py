@@ -32,6 +32,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from utils import cloud_provision
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_FLAG_PATH = '/boot/firmware/owl-firstboot.flag'
@@ -134,8 +136,11 @@ class FirstBootState:
 
     def __init__(self, network_manager, flag_path=None, state_file=None,
                  timer_factory=threading.Timer, system_runner=None,
-                 exit_fn=None, controller_ini=None, hostname_getter=None):
+                 exit_fn=None, controller_ini=None, hostname_getter=None,
+                 cloud_runner=subprocess.run):
         self.nm = network_manager
+        # subprocess.run-shaped: the cloud helper takes the credential on stdin
+        self._cloud_runner = cloud_runner
         self.flag_path = Path(flag_path or os.environ.get('OWL_FIRSTBOOT_FLAG',
                                                           DEFAULT_FLAG_PATH))
         self.state_file = Path(state_file or os.environ.get('OWL_FIRSTBOOT_STATE',
@@ -166,6 +171,9 @@ class FirstBootState:
         self._pending_password = None
         self._pending_join = None     # controller mode: full join params
         self.device_token = None      # minted at finish(), any mode
+        # Cloud provisioning result — persisted so the app can see it after
+        # a mid-setup reboot: {'device_id', 'portal_url', 'provisioned_at'}
+        self.cloud = None
         self._load_persisted()
 
     @property
@@ -193,6 +201,8 @@ class FirstBootState:
         self.join_device_id = data.get('join_device_id')
         self.join_static_ip = data.get('join_static_ip')
         self.prior_hostname = data.get('prior_hostname')
+        cloud = data.get('cloud')
+        self.cloud = cloud if isinstance(cloud, dict) else None
         # A reboot mid-switch means the outcome is unknown; startup() re-checks
         if self.wifi_state in ('pending', 'switching'):
             self.wifi_state = 'idle'
@@ -205,6 +215,7 @@ class FirstBootState:
                 'join_device_id': self.join_device_id,
                 'join_static_ip': self.join_static_ip,
                 'prior_hostname': self.prior_hostname,
+                'cloud': self.cloud,
                 'updated_at': datetime.now(timezone.utc).isoformat()}
         try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -645,6 +656,38 @@ class FirstBootState:
         """Module-level camera_diagnostics with this instance's runner
         (tests inject a fake system_runner)."""
         return camera_diagnostics(self._system_runner)
+
+    # ------------------------------------------------------------------
+    # Cloud provisioning (Noktura bridge credential from the app)
+    # ------------------------------------------------------------------
+    def cloud_status(self):
+        """What the app sees in /setup/api/info: None until provisioned.
+
+        Read from CONTROLLER.ini [Cloud], the source of truth: the persisted
+        state file survives re-arming and used to report a site the unit had
+        since left (O-18). provisioned_at comes from this setup run when it
+        provisioned the same site."""
+        cloud = cloud_provision.read_cloud_config(self.controller_ini)
+        if not cloud['enabled'] or not cloud['device_id']:
+            return None
+        provisioned_at = None
+        if self.cloud and self.cloud.get('device_id') == cloud['device_id']:
+            provisioned_at = self.cloud.get('provisioned_at')
+        return {'device_id': cloud['device_id'], 'portal_url': cloud['portal_url'],
+                'provisioned_at': provisioned_at}
+
+    def provision_cloud(self, data):
+        """Hand the bridge credential from the app to the root helper
+        (utils.cloud_provision). Raises ValueError (bad payload -> 400) or
+        CloudProvisionError (helper missing or failed -> 500). The result
+        is persisted so /setup/api/info shows it after a reboot.
+        CloudSiteConflict (-> 409) when the unit is connected to another site
+        and the app did not ask to replace it."""
+        cloud_provision.refuse_networked_owl(self.controller_ini)
+        self.cloud = cloud_provision.provision(self._cloud_runner, data,
+                                               controller_ini=self.controller_ini)
+        self._persist()
+        return self.cloud_status()
 
     # ------------------------------------------------------------------
     # Finish + teardown

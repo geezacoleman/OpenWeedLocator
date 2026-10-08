@@ -15,6 +15,8 @@ GB = 1024 ** 3
 
 # Shared constants for session scanning
 IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png')
+# Video-mode data collection records clips into the session folder
+VIDEO_EXTENSIONS = ('.mp4',)
 _DATE_PATTERN = re.compile(r'^\d{8}$')
 _SESSION_PATTERN = re.compile(r'^session_\d{6}$')
 
@@ -34,7 +36,8 @@ def scan_sessions(save_dir):
     - Legacy: save_dir/YYYYMMDD/ (flat, all images in date dir)
 
     Returns list of session dicts sorted newest-first, each with:
-        session_id, date, time, image_count, total_size
+        session_id, date, time, image_count, video_count, image_size,
+        total_size (images + video clips)
     """
     if not save_dir or not os.path.isdir(save_dir):
         return []
@@ -55,17 +58,21 @@ def scan_sessions(save_dir):
                 sess_path = os.path.join(date_path, sess)
                 image_files = [f for f in os.listdir(sess_path)
                                if f.lower().endswith(IMAGE_EXTENSIONS)]
+                video_files = [f for f in os.listdir(sess_path)
+                               if f.lower().endswith(VIDEO_EXTENSIONS)]
                 image_size = sum(
                     os.path.getsize(os.path.join(sess_path, f))
                     for f in image_files
                 )
+                video_size = sum(os.path.getsize(os.path.join(sess_path, f)) for f in video_files)
                 sessions.append({
                     'session_id': f"{date_entry}/{sess}",
                     'date': date_entry,
                     'time': sess.replace('session_', ''),
                     'image_count': len(image_files),
+                    'video_count': len(video_files),
                     'image_size': image_size,
-                    'total_size': image_size,
+                    'total_size': image_size + video_size,
                 })
         else:
             # Legacy structure: images directly in YYYYMMDD dir
@@ -81,6 +88,7 @@ def scan_sessions(save_dir):
                     'date': date_entry,
                     'time': '',
                     'image_count': len(image_files),
+                    'video_count': 0,
                     'image_size': image_size,
                     'total_size': image_size,
                 })
@@ -89,7 +97,7 @@ def scan_sessions(save_dir):
 
 
 def collect_session_files(save_dir, session_id):
-    """Collect all image files for a session, ready for zipping.
+    """Collect all image and video clip files for a session, ready for zipping.
 
     session_id can be:
     - "YYYYMMDD" — all images under that date (legacy flat + all session subdirs)
@@ -111,7 +119,8 @@ def collect_session_files(save_dir, session_id):
     files = []
 
     def _wanted(name):
-        return name.lower().endswith(IMAGE_EXTENSIONS) or _is_session_metadata_file(name)
+        return (name.lower().endswith(IMAGE_EXTENSIONS + VIDEO_EXTENSIONS)
+                or _is_session_metadata_file(name))
 
     if '/' in session_id:
         # Specific session: YYYYMMDD/session_HHMMSS

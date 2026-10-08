@@ -83,7 +83,8 @@ try:
     from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator, GPSStatusLED, GPSLEDState
     from utils.directory_manager import DirectorySetup
     from utils.video_manager import VideoStream, StreamingHandler, ThreadedHTTPServer
-    from utils.image_sampler import ImageRecorder
+    from utils.image_sampler import ImageRecorder, CaptureScheduler
+    from utils.exposure_governor import ExposureGovernor, ground_smear_mm, parse_max_gain
     from utils.algorithms import fft_blur
     from utils.greenonbrown import GreenOnBrown, draw_boxes
     from utils.frame_reader import FrameReader
@@ -279,6 +280,10 @@ class Owl:
         # Lux, ...) for dashboard state and the calibrate_awb command. Written
         # by the main loop only; other threads read the reference.
         self._last_camera_metadata = None
+        # Shutter cap / gain limit for data collection at speed
+        # (utils/exposure_governor.py). Off unless enabled in config or by
+        # the controller's collect screen (set_capture_params).
+        self._load_capture_settings()
         # auto: upright for GS (imx296) OWL 3.0 mounts, 180 for the classic
         # enclosure (HQ/CM3 mounted upside down); 0|180 overrides per unit
         self.camera_rotation = self.config.get('Camera', 'rotation',
@@ -510,7 +515,8 @@ class Owl:
                     min_free_gb=self.min_free_gb)
                 self.save_directory, self.save_subdirectory = self.directory_manager.setup_directories()
 
-                self.image_recorder = ImageRecorder(save_directory=self.save_subdirectory, mode=self.sample_method)
+                self.image_recorder = ImageRecorder(save_directory=self.save_subdirectory, mode=self.sample_method,
+                                                    jpeg_quality=self.jpeg_quality)
 
                 # Update status indicator with the resolved save_directory for storage monitoring
                 self.status_indicator.save_directory = self.save_directory
@@ -870,7 +876,8 @@ class Owl:
                 internal_save_directory=getattr(self, 'internal_save_directory', None),
                 min_free_gb=getattr(self, 'min_free_gb', 0))
             self.save_directory, self.save_subdirectory = self.directory_manager.setup_directories(max_retries=1)
-            self.image_recorder = ImageRecorder(save_directory=self.save_subdirectory, mode=self.sample_method)
+            self.image_recorder = ImageRecorder(save_directory=self.save_subdirectory, mode=self.sample_method,
+                                                    jpeg_quality=self.jpeg_quality)
             self.status_indicator.save_directory = self.save_directory
             self.status_indicator.storage_location = self.directory_manager.resolved_location
             self.status_indicator.clear_error()
@@ -1014,6 +1021,8 @@ class Owl:
                 loop_start = time.time()
                 frame, camera_metadata = self.cam.read_with_metadata()
                 self._last_camera_metadata = camera_metadata
+                if camera_metadata:
+                    self._govern_exposure(camera_metadata)
                 capture_time = self._frame_capture_time(camera_metadata)
 
                 if frame is None:
@@ -1085,7 +1094,12 @@ class Owl:
                         if hasattr(self, 'image_recorder') and self.image_recorder:
                             self.image_recorder.stop()
                         self.image_recorder = ImageRecorder(
-                            save_directory=session_dir, mode=self.sample_method)
+                            save_directory=session_dir, mode=self.sample_method,
+                            jpeg_quality=self.jpeg_quality)
+                        self.capture_scheduler.reset()
+                        self._close_video_clip()
+                        self._video_started_at = None
+                        self._recording_stopped_reason = None
                         self.logger.info(f"New recording session: {session_dir}")
                         # GPS track alongside the images (flush any previous
                         # session's tail first — start() resets buffers)
@@ -1114,6 +1128,7 @@ class Owl:
                 if prev_recording_enable and not self._image_sample_enable:
                     if self.track_recorder.recording:
                         self.track_recorder.stop()
+                    self._close_video_clip()
                 prev_recording_enable = self._image_sample_enable
 
                 # Drain queued trackbar updates from MQTT thread (thread-safe)
@@ -1449,9 +1464,24 @@ class Owl:
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often
                 if self._image_sample_enable:
-                    # only record every sampleFreq number of frames.
-                    # If sample_frequency = 60, this will activate every 60th frame
-                    if frame_count % self.sample_frequency == 0:
+                    # Video mode records every frame into a clip instead.
+                    # Never while detecting: encoding every frame in the loop
+                    # would cost spray latency, so save stills instead.
+                    record_video = self.record_mode == 'video'
+                    if record_video and self._detection_enable:
+                        record_video = False
+                        if self._video_writer_clip is not None or not self._video_fallback_logged:
+                            self.logger.warning("Video recording is not available while detecting "
+                                                "- saving still images instead")
+                            self._video_fallback_logged = True
+                            self._close_video_clip()
+                    if record_video:
+                        self._write_video_frame(frame)
+                    # Which frames to save: every Nth frame, every X metres
+                    # of GPS travel, or every X seconds (CaptureScheduler).
+                    elif self.capture_scheduler.should_capture(
+                            frame_count, speed_kmh=self._fresh_speed_kmh(),
+                            frequency=self.sample_frequency):
                         save_boxes = None
                         save_centres = None
                         # detection_ran, not _detection_enable: boxes/weed_centres
@@ -1495,26 +1525,29 @@ class Owl:
                                 self.status_indicator.image_write_indicator()
                             if self.dash:
                                 self.dash.image_write_indicator()
+                                self.dash.publish_capture(self.image_recorder)
                         except Exception as e:
                             self.logger.error(f"Image sampling error (detection continues): {e}",
                                               exc_info=True)
 
-                        if self.status_indicator.DRIVE_FULL:
-                            if self.dash:
-                                self.dash.set_image_sample_enable(False)
-                                self.dash.set_recording_blocked('storage_full')
-                                self.dash.drive_full_indicator()
-                                self.logger.info("Drive full: Image sampling disabled via MQTT")
-                            else:
-                                with self.image_sample_enable.get_lock():
-                                    self.image_sample_enable.value = False
-                                self.logger.info("Drive full: Image sampling disabled locally")
+                    # Checked every recording frame, stills or video clip
+                    if self.status_indicator.DRIVE_FULL:
+                        if self.dash:
+                            self.dash.set_image_sample_enable(False)
+                            self.dash.set_recording_blocked('storage_full')
+                            self.dash.drive_full_indicator()
+                            self.logger.info("Drive full: Image sampling disabled via MQTT")
+                        else:
+                            with self.image_sample_enable.get_lock():
+                                self.image_sample_enable.value = False
+                            self.logger.info("Drive full: Image sampling disabled locally")
 
-                            self._image_sample_enable = False
+                        self._image_sample_enable = False
 
-                            self.image_recorder.stop()
-                            self.status_indicator.error(5)
-                            self.logger.info("Drive full: image sampling disabled until space is freed")
+                        self._close_video_clip()
+                        self.image_recorder.stop()
+                        self.status_indicator.error(5)
+                        self.logger.info("Drive full: image sampling disabled until space is freed")
 
                 frame_count += 1
 
@@ -1627,6 +1660,7 @@ class Owl:
             # Stop image recorder
             if hasattr(self, 'image_recorder') and self.image_recorder:
                 safe_stop(self.image_recorder, 'image recorder')
+            self._close_video_clip()
 
             # Flush the session GPS track
             if hasattr(self, 'track_recorder') and self.track_recorder.recording:
@@ -1807,6 +1841,219 @@ class Owl:
         except Exception as e:
             self.logger.error(f"An unexpected error occurred while starting MJPEG streaming server: {e}", exc_info=True)
             raise errors.MJPEGStreamError(host=host, port=port, original_error=e) from e
+
+    # ------------------------------------------------------------------
+    # Data collection: capture spacing, video clips, shutter cap
+    # ------------------------------------------------------------------
+
+    def _load_capture_settings(self):
+        """[DataCollection] capture keys + [Camera] max_gain. Missing or
+        blank keys keep the old behaviour: every Nth frame, JPEG 95, stills,
+        no shutter cap."""
+        cfg = self.config
+
+        def get(section, key, fallback):
+            value = cfg.get(section, key, fallback='').strip() if cfg.has_section(section) else ''
+            return value or fallback
+
+        self.sample_mode = get('DataCollection', 'sample_mode', 'frames').lower()
+        self.jpeg_quality = min(100, max(50, int(float(get('DataCollection', 'jpeg_quality', 95)))))
+        self.record_mode = 'video' if get('DataCollection', 'record_mode', 'images').lower() == 'video' else 'images'
+        self.video_max_s = min(60, max(5, int(float(get('DataCollection', 'video_max_s', 60)))))
+        self.capture_scheduler = CaptureScheduler(
+            mode=self.sample_mode,
+            frequency=int(float(get('DataCollection', 'sample_frequency', 30))),
+            distance_m=float(get('DataCollection', 'sample_distance_m', 1.0)),
+            interval_s=float(get('DataCollection', 'sample_interval_s', 2.0)))
+        try:
+            max_gain = parse_max_gain(get('Camera', 'max_gain', 'auto'))
+        except ValueError:
+            # A bad hand edit must not crash-loop owl.service
+            self.logger.warning(f"[Camera] max_gain {get('Camera', 'max_gain', '')!r} "
+                                f"is not auto or a number - using auto")
+            max_gain = None
+        self.exposure_governor = ExposureGovernor(
+            smear_limit_mm=float(get('DataCollection', 'smear_limit_mm', 2.0)),
+            cap_enabled=get('DataCollection', 'shutter_cap', 'False').lower() in ('true', '1', 'yes'),
+            max_gain=max_gain)
+        self._video_writer_clip = None
+        self._video_started_at = None
+        self._video_clip_path = None
+        self._video_last_t = None
+        self._video_dts = []
+        self._video_preview_at = 0.0
+        self._recording_stopped_reason = None
+        self._video_fallback_logged = False
+
+    def apply_capture_params(self, params):
+        """Live update from the controller (MQTT set_capture_params). Returns
+        the dict of values actually applied. Not persisted: the controller
+        keeps them and re-sends on every connect and Record."""
+        applied = {}
+        if 'sample_mode' in params:
+            self.sample_mode = str(params['sample_mode']).lower()
+            self.capture_scheduler.configure(mode=self.sample_mode)
+            applied['sample_mode'] = self.capture_scheduler.mode
+        if 'sample_distance_m' in params:
+            self.capture_scheduler.configure(distance_m=params['sample_distance_m'])
+            applied['sample_distance_m'] = self.capture_scheduler.distance_m
+        if 'sample_interval_s' in params:
+            self.capture_scheduler.configure(interval_s=params['sample_interval_s'])
+            applied['sample_interval_s'] = self.capture_scheduler.interval_s
+        if 'jpeg_quality' in params:
+            self.jpeg_quality = min(100, max(50, int(float(params['jpeg_quality']))))
+            if getattr(self, 'image_recorder', None):
+                self.image_recorder.jpeg_quality = self.jpeg_quality
+            applied['jpeg_quality'] = self.jpeg_quality
+        if 'record_mode' in params:
+            self.record_mode = 'video' if str(params['record_mode']).lower() == 'video' else 'images'
+            applied['record_mode'] = self.record_mode
+        if 'video_max_s' in params:
+            self.video_max_s = min(60, max(5, int(float(params['video_max_s']))))
+            applied['video_max_s'] = self.video_max_s
+        if 'smear_limit_mm' in params:
+            self.exposure_governor.configure(smear_limit_mm=params['smear_limit_mm'])
+            applied['smear_limit_mm'] = self.exposure_governor.smear_limit_mm
+        if 'shutter_cap' in params:
+            enabled = str(params['shutter_cap']).lower() in ('true', '1', 'yes')
+            self.exposure_governor.configure(cap_enabled=enabled)
+            applied['shutter_cap'] = enabled
+        if 'max_gain' in params:
+            max_gain = parse_max_gain(params['max_gain'])
+            if max_gain is None:
+                self.exposure_governor.configure(clear_max_gain=True)
+                applied['max_gain'] = 'auto'
+            else:
+                self.exposure_governor.configure(max_gain=max_gain)
+                # '8', not '8.0': matches the Config tab's select options
+                applied['max_gain'] = f"{self.exposure_governor.max_gain:g}"
+        return applied
+
+    def _fresh_speed_kmh(self):
+        """GPS speed when the fix is fresh (gps_data is None once stale)."""
+        gps = self.gps_data
+        if not gps or gps.get('speed_kmh') is None:
+            return None
+        try:
+            return float(gps['speed_kmh'])
+        except (TypeError, ValueError):
+            return None
+
+    def _govern_exposure(self, camera_metadata):
+        governor = self.exposure_governor
+        if not (governor.cap_enabled or governor.max_gain or governor.active):
+            return
+        # The shutter cap is for collecting only (recording, not detecting);
+        # the gain limit is a general camera setting and always applies.
+        collecting = self._image_sample_enable and not self._detection_enable
+        override = governor.update(camera_metadata, self._fresh_speed_kmh(),
+                                   cap_allowed=collecting)
+        if override is not None and hasattr(self.cam, 'set_exposure_override'):
+            self.cam.set_exposure_override(**override)
+
+    def _write_video_frame(self, frame):
+        """Video mode: append the frame to the session's clip; stop the
+        recording when the clip reaches video_max_s."""
+        recorder = getattr(self, 'image_recorder', None)
+        if recorder is None:
+            return
+        now = time.monotonic()
+        try:
+            if self._video_writer_clip is None:
+                # Measure the real frame rate over ~10 frames first: the clip
+                # plays back at the wrong speed if the header rate is guessed.
+                if self._video_last_t is not None:
+                    self._video_dts.append(now - self._video_last_t)
+                self._video_last_t = now
+                if len(self._video_dts) < 10:
+                    return
+                dts = sorted(self._video_dts)
+                fps = min(60.0, max(1.0, 1.0 / max(dts[len(dts) // 2], 1e-3)))
+                name = f"clip_{datetime.now().strftime('%H%M%S')}.mp4"
+                self._video_clip_path = os.path.join(recorder.save_directory, name)
+                height, width = frame.shape[:2]
+                self._video_writer_clip = cv2.VideoWriter(
+                    self._video_clip_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+                if not self._video_writer_clip.isOpened():
+                    # write() on an unopened writer silently does nothing
+                    self.logger.error(f"Could not open video clip {self._video_clip_path} "
+                                      f"(mp4v encoder unavailable?) - recording stopped")
+                    self._close_video_clip()
+                    self._stop_recording('video_error')
+                    return
+                self._video_started_at = now
+                self.logger.info(f"Video clip started: {self._video_clip_path} at {fps:.1f} fps")
+
+            self._video_writer_clip.write(frame)
+            if now - self._video_preview_at >= 2.0:
+                self._video_preview_at = now
+                recorder.note_preview(frame, self.gps_data)
+                if self.dash:
+                    self.dash.publish_capture(recorder)
+
+            if now - self._video_started_at >= self.video_max_s:
+                self.logger.info(f"Video clip reached {self.video_max_s} s - recording stopped")
+                self._close_video_clip()
+                self._stop_recording('video_limit')
+        except Exception as e:
+            self.logger.error(f"Video recording error: {e}", exc_info=True)
+            self._close_video_clip()
+            self._stop_recording('video_error')
+
+    def _close_video_clip(self):
+        writer = getattr(self, '_video_writer_clip', None)
+        if writer is not None:
+            try:
+                writer.release()
+            except Exception as e:
+                self.logger.warning(f"Could not close video clip: {e}")
+        self._video_writer_clip = None
+        self._video_last_t = None
+        self._video_dts = []
+
+    def _stop_recording(self, reason):
+        """Turn recording off from inside the loop and say why."""
+        self._recording_stopped_reason = reason
+        if self.dash:
+            self.dash.set_image_sample_enable(False)
+        if hasattr(self, 'image_sample_enable'):
+            with self.image_sample_enable.get_lock():
+                self.image_sample_enable.value = False
+        self._image_sample_enable = False
+
+    def capture_state(self):
+        """What the controller's collect screen shows: capture settings,
+        last saved image, quality summary, shutter cap. JSON-safe."""
+        recorder = getattr(self, 'image_recorder', None)
+        governor = self.exposure_governor
+        meta = self._last_camera_metadata or {}
+        speed = self._fresh_speed_kmh()
+        exposure = meta.get('ExposureTime')
+        video_s = (round(time.monotonic() - self._video_started_at, 1)
+                   if self._video_writer_clip is not None and self._video_started_at else None)
+        return {
+            'sample_mode': self.capture_scheduler.mode,
+            'sample_distance_m': self.capture_scheduler.distance_m,
+            'sample_interval_s': self.capture_scheduler.interval_s,
+            'jpeg_quality': self.jpeg_quality,
+            'record_mode': self.record_mode,
+            'video_max_s': self.video_max_s,
+            'video_seconds': video_s,
+            'session_id': getattr(self, '_session_id', None),
+            'saved_count': recorder.saved_count if recorder else 0,
+            'last_saved': recorder.last_saved if recorder else None,
+            'qc': recorder.qc.summary() if recorder else None,
+            'exposure_time_us': exposure,
+            'analogue_gain': round(meta['AnalogueGain'], 2) if meta.get('AnalogueGain') else None,
+            'speed_kmh': speed,
+            'ground_smear_mm': ground_smear_mm(speed, exposure),
+            'shutter_cap': governor.cap_enabled,
+            'smear_limit_mm': governor.smear_limit_mm,
+            'max_gain': governor.max_gain,
+            'shutter_capped': governor.exposure_us is not None,
+            'gain_limited': governor.gain is not None,
+            'stopped_reason': self._recording_stopped_reason,
+        }
 
     def set_latest_stream_frame(self, frame):
         """Thread-safe method to update the frame for the stream."""

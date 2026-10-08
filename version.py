@@ -10,8 +10,8 @@ from typing import Optional
 @dataclass
 class Version:
     major: int = 3
-    minor: int = 17
-    patch: int = 1
+    minor: int = 20
+    patch: int = 0
     tag: Optional[str] = None
 
     def __str__(self) -> str:
@@ -32,7 +32,20 @@ VERSION = Version()
 #    /api/settings/network/revert + temporary joins, /api/config/factory-reset)
 #    and system_stats carries version/git_branch/git_commit. Gates the app's
 #    Maintenance card.
-APP_CONTRACT_VERSION = 4
+# (3.18.0 identity + cloud claim: `identity` on info/system_stats, GET
+#    /api/identity, POST /setup/api/cloud/provision and
+#    /api/settings/cloud/provision are ADDITIVE — the app feature-detects
+#    `identity` and stays at 4.)
+# 5 (3.19.0, cross-repo review 2026-09-17): the setup API is served over
+#    HTTPS on :8088; POST /setup/api/session opens a setup session and the
+#    mutating setup routes (wifi/join, controller/join, hotspot/restore,
+#    finish, cloud/provision) require X-Setup-Session (403 without, 409 when
+#    another phone holds it). Cloud provisioning returns 409
+#    cloud_site_conflict unless "replace": true when re-pointing a connected
+#    unit, and /api/settings/cloud/provision needs a device token (403
+#    device_token_missing). The app talks https first and falls back to http
+#    for contract <= 4 firmware.
+APP_CONTRACT_VERSION = 5
 
 class SystemInfo:
     logger = logging.getLogger("SystemInfo")

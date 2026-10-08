@@ -54,6 +54,10 @@
     <button class="view-tab" id="tab-config" onclick="switchToConfigTab()">Config</button>
     <button class="view-tab" id="tab-downloads" onclick="window.location.href='/downloads'">Downloads</button>
     <button class="view-tab" id="tab-agent" onclick="switchToAgentTab()">Agent</button>
+    {% if ui_mode == 'collect' %}
+    <!-- Data collection rig: the kiosk's way back to its main screen -->
+    <button class="view-tab" id="tab-collect" onclick="window.location.href='/collect'">Collect screen</button>
+    {% endif %}
 </div>
 
 <!-- Main Container -->

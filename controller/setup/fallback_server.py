@@ -12,11 +12,16 @@ allow-list (the app runs from file://, which sends Origin: null).
 """
 
 import json
+import os
+import socket
+import ssl
 import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SETUP_PORT = 8088
 ALLOWED_ORIGINS = {'null', 'http://localhost:4180'}
+TLS_CERT = '/etc/ssl/certs/owl.crt'
+TLS_KEY = '/etc/ssl/private/owl.key'
 FAILED_UNIT = 'owl-firstboot.service'
 
 
@@ -38,7 +43,7 @@ class FallbackHandler(BaseHTTPRequestHandler):
         origin = self.headers.get('Origin')
         if origin in ALLOWED_ORIGINS:
             self.send_header('Access-Control-Allow-Origin', origin)
-            self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Setup-Session')
             self.send_header('Access-Control-Allow-Methods',
                              'GET, POST, OPTIONS')
 
@@ -78,8 +83,20 @@ class FallbackHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    ThreadingHTTPServer(('0.0.0.0', SETUP_PORT),
-                        FallbackHandler).serve_forever()
+    # The TLS handshake runs inside accept(): bound it so one silent client
+    # cannot freeze the responder (same reason as setup_app.main).
+    socket.setdefaulttimeout(10)
+    server = ThreadingHTTPServer(('0.0.0.0', SETUP_PORT), FallbackHandler)
+    # HTTPS like setup_app.py (contract 5), so the app can read the error.
+    if os.path.exists(TLS_CERT) and os.path.exists(TLS_KEY):
+        try:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(TLS_CERT, TLS_KEY)
+            server.socket = ctx.wrap_socket(server.socket, server_side=True)
+        except (OSError, ssl.SSLError):
+            # Last-resort responder: plain HTTP beats no answer at all.
+            pass
+    server.serve_forever()
 
 
 if __name__ == '__main__':

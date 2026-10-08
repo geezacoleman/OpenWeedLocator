@@ -41,6 +41,7 @@ from utils.config_manager import (
 )
 # Shared with OWLs that time themselves from their own GPS
 from utils.actuation import GPS_STALE_AFTER_S, SpeedAverager, ActuationCalculator
+from utils.session_metadata import clean_session_metadata, CAPTURE_PARAM_KEYS
 try:
     from version import VERSION as _OWL_VERSION, APP_CONTRACT_VERSION
     CONTROLLER_VERSION = str(_OWL_VERSION)
@@ -48,6 +49,9 @@ except Exception:
     CONTROLLER_VERSION = 'unknown'
     APP_CONTRACT_VERSION = 1
 
+from controller.networked.collect import (CollectSession, collect_warnings, presets_from_config,
+                                          thresholds_from_config, update_ini_text,
+                                          parse_provision_command)
 from controller.networked.fleet_roster import (FleetRosterError,
                                                FleetPersistenceError,
                                                RESERVATION_TTL_S)
@@ -58,6 +62,15 @@ from controller.networked.fleet_roster import (FleetRosterError,
 CONTROLLER_DEVICE_ID = 'owl-controller'
 CONTROLLER_STATUS_TOPIC = f'owl/{CONTROLLER_DEVICE_ID}/status'
 CONTROLLER_STATE_TOPIC = f'owl/{CONTROLLER_DEVICE_ID}/state'
+# Cloud commands for the controller itself land here through the bridge
+# (owl_cloud_provision.sh networked mode: +/commands -> owl/cloud/<id>/commands).
+# Only CONTROLLER_CLOUD_ACTIONS are acted on.
+CONTROLLER_CLOUD_COMMANDS_TOPIC = f'owl/cloud/{CONTROLLER_DEVICE_ID}/commands'
+CONTROLLER_CLOUD_ACTIONS = frozenset({'upload_request_ack'})
+# Retained: the rig's Noktura upload host for networked OWLs (they have no
+# [Cloud] section of their own). Read by utils/mqtt_manager.py.
+CLOUD_POLICY_TOPIC = 'owl/cloud/policy'
+DASHBOARD_UIS = ('full', 'collect')
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -151,7 +164,14 @@ class CentralController:
     def __init__(self, config_file=None):
         if config_file is None:
             config_file = Path(__file__).parent.parent.parent / 'config' / 'CONTROLLER.ini'
+        self.config_file = Path(config_file)
         self.config = self._load_config(config_file)
+
+        # Which screen the kiosk opens: the full dashboard, or the simple
+        # data-collection screen chosen in in-cab_controller_setup.sh.
+        ui = self.config.get('WebDashboard', 'ui', fallback='full').strip().lower()
+        self.ui_mode = ui if ui in DASHBOARD_UIS else 'full'
+        self.collect = CollectSession()
 
         # MQTT Configuration from config file
         self.broker_host = self.config.get('MQTT', 'broker_ip', fallback='localhost')
@@ -167,14 +187,9 @@ class CentralController:
 
         # Cloud (Noktura) link — fleet-level, one bridge mirrors the whole fleet.
         # Bridge state comes from a retained $SYS topic on this local broker.
-        self.cloud_enable = self.config.getboolean('Cloud', 'enable', fallback=False)
-        self.cloud_device_id = self.config.get('Cloud', 'device_id', fallback='').strip()
-        self.cloud_portal_url = self.config.get('Cloud', 'portal_url', fallback='').strip().rstrip('/')
         self.cloud_connected = None  # None = unknown/not configured
-        self.cloud_state_topic = (
-            f'$SYS/broker/connection/owl-bridge-{self.cloud_device_id}/state'
-            if (self.cloud_enable and self.cloud_device_id) else None
-        )
+        self.cloud_state_topic = None
+        self._apply_cloud_config(self.config)
 
         # Allow 7 missed 2s heartbeats before marking offline
         self.offline_timeout = 15.0  # seconds
@@ -267,6 +282,53 @@ class CentralController:
 
         logger.info(f"Central Controller initialized (broker: {self.broker_host}:{self.broker_port})")
 
+    def _apply_cloud_config(self, config):
+        self.cloud_enable = config.getboolean('Cloud', 'enable', fallback=False)
+        self.cloud_device_id = config.get('Cloud', 'device_id', fallback='').strip()
+        self.cloud_portal_url = config.get('Cloud', 'portal_url', fallback='').strip().rstrip('/')
+        self.cloud_storage_host = config.get('Cloud', 'storage_host', fallback='').strip().lower()
+        self.cloud_state_topic = (
+            f'$SYS/broker/connection/owl-bridge-{self.cloud_device_id}/state'
+            if (self.cloud_enable and self.cloud_device_id) else None
+        )
+
+    def reload_cloud_config(self):
+        """Re-read [Cloud] after provisioning from the collect screen, so the
+        Noktura status appears without a controller restart."""
+        old_topic = self.cloud_state_topic
+        fresh = self._load_config(self.config_file)
+        self._apply_cloud_config(fresh)
+        self.cloud_connected = None
+        if self.mqtt_client and self.mqtt_connected:
+            if old_topic and old_topic != self.cloud_state_topic:
+                self.mqtt_client.unsubscribe(old_topic)
+            if self.cloud_state_topic:
+                self.mqtt_client.subscribe(self.cloud_state_topic)
+            self._publish_cloud_policy()
+
+    def _publish_cloud_policy(self):
+        """Retained upload-host policy for the networked OWLs."""
+        if not self.mqtt_client:
+            return
+        policy = {}
+        if self.cloud_enable and self.cloud_storage_host:
+            policy['storage_host'] = self.cloud_storage_host
+        if self.cloud_enable and self.cloud_portal_url:
+            policy['portal_url'] = self.cloud_portal_url
+        self.mqtt_client.publish(CLOUD_POLICY_TOPIC, json.dumps(policy), qos=1, retain=True)
+
+    def _handle_controller_cloud_command(self, payload):
+        """Commands Noktura sends to the controller itself. Allowlisted: a
+        stolen bridge credential must not be able to drive the fleet."""
+        action = payload.get('action') if isinstance(payload, dict) else None
+        if action not in CONTROLLER_CLOUD_ACTIONS:
+            logger.warning(f"Controller cloud command dropped: {action!r}")
+            return
+        if action == 'upload_request_ack':
+            if self.collect.ack_upload(payload.get('id'), payload.get('status'), payload.get('reason')):
+                logger.info(f"Upload request {payload.get('id')}: {payload.get('status')} "
+                            f"{payload.get('reason') or ''}")
+
     def _load_config(self, config_file):
         """Load configuration from file"""
         config_path = Path(config_file)
@@ -354,8 +416,13 @@ class CentralController:
                 ("owl/+/config", 0),
                 ("owl/+/system", 0),
             ]
+            # Data collection (local only): capture events, gallery thumbnails,
+            # and Noktura's replies to the controller's upload requests.
+            topics += [("owl/+/capture", 0), ("owl/+/thumb", 0),
+                       (CONTROLLER_CLOUD_COMMANDS_TOPIC, 1)]
             client.subscribe(topics)
             logger.info(f"Subscribed to {len(topics)} topic patterns")
+            self._publish_cloud_policy()
 
             # Cloud bridge link state (retained) — only when cloud is configured
             if self.cloud_state_topic:
@@ -389,12 +456,31 @@ class CentralController:
                 self.cloud_connected = (msg.payload.decode(errors='ignore').strip() == '1')
                 return
 
+            if msg.topic == CONTROLLER_CLOUD_COMMANDS_TOPIC:
+                try:
+                    self._handle_controller_cloud_command(json.loads(msg.payload.decode()))
+                except (ValueError, UnicodeDecodeError):
+                    logger.warning("Controller cloud command was not JSON")
+                return
+
             topic_parts = msg.topic.split('/')
             if len(topic_parts) < 3:
                 return
 
             device_id = topic_parts[1]
             topic_type = topic_parts[2]
+
+            # Gallery thumbnails are raw JPEG and capture events are high
+            # rate: neither belongs in owls_state or counts as a heartbeat.
+            if topic_type == 'thumb':
+                self.collect.add_thumb(device_id, msg.payload)
+                return
+            if topic_type == 'capture':
+                try:
+                    self.collect.add_capture(device_id, json.loads(msg.payload.decode()))
+                except (ValueError, UnicodeDecodeError):
+                    pass
+                return
 
             # Ignore our own controller presence (we publish it for the cloud
             # bridge / Noktura) so it never appears as an OWL in the dashboard.
@@ -478,6 +564,10 @@ class CentralController:
             # Skip if device was marked offline by LWT within 5s — that's a
             # stale in-flight heartbeat, not a real reconnect (Pi boot takes 10-30s)
             if is_reconnect:
+                # Back after a restart: camera changes made before it now apply
+                collect = getattr(self, 'collect', None)
+                if collect is not None:
+                    collect.camera_restart.discard(device_id)
                 lwt_time = self.lwt_timestamps.get(device_id, 0)
                 if current_time - lwt_time > 5:
                     self._push_desired_state(device_id)
@@ -509,6 +599,9 @@ class CentralController:
                 'connected': True,
                 'owl_count': len(self.owls_state),
                 'timestamp': now,
+                # Farmer-requested uploads; Noktura turns each into a
+                # transfer_session for that OWL and acks on our commands topic.
+                'upload_requests': self.collect.bridged_upload_requests(),
             }), retain=False)
         except Exception as e:
             logger.error(f"Error publishing controller presence: {e}")
@@ -546,11 +639,12 @@ class CentralController:
                 time.sleep(5)
 
     def _update_session_state(self):
-        """Auto-start/stop GPS session when any OWL detection state changes."""
+        """Auto-start/stop the GPS session while any OWL is detecting or
+        recording (recording-only rigs need the track and distance too)."""
         if not self.gps_manager:
             return
         any_detecting = any(
-            s.get('detection_enable', False)
+            s.get('detection_enable', False) or s.get('image_sample_enable', False)
             for s in self.owls_state.values()
             if s.get('connected', False)
         )
@@ -574,6 +668,18 @@ class CentralController:
             payload = json.dumps({'action': 'set_detection_enable', 'value': merged['detection_enable']})
             self.mqtt_client.publish(topic, payload)
             logger.info(f"Pushed detection_enable={merged['detection_enable']} to {device_id}")
+
+        # Capture settings and the run's labels go before recording, so a
+        # rejoining OWL's first image already carries them.
+        if merged.get('capture_params'):
+            payload = json.dumps({'action': 'set_capture_params', 'params': merged['capture_params']})
+            self.mqtt_client.publish(topic, payload)
+            logger.info(f"Pushed capture params to {device_id}")
+
+        if merged.get('session_metadata'):
+            payload = json.dumps({'action': 'set_session_metadata', **merged['session_metadata']})
+            self.mqtt_client.publish(topic, payload)
+            logger.info(f"Pushed session metadata to {device_id}")
 
         if 'image_sample_enable' in merged:
             payload = json.dumps({'action': 'set_image_sample_enable', 'value': merged['image_sample_enable']})
@@ -1037,15 +1143,16 @@ class CentralController:
                 'params': value.get('params')
             }
 
+        elif action == 'set_capture_params':
+            params = {k: v for k, v in (value or {}).items() if k in CAPTURE_PARAM_KEYS}
+            payload = {'action': 'set_capture_params', 'params': params}
+            # Reconnecting OWLs get the same capture settings as the rest.
+            self.desired_state.setdefault('all', {}).setdefault('capture_params', {}).update(params)
+
         elif action == 'set_session_metadata':
-            md = value or {}
-            payload = {
-                'action': 'set_session_metadata',
-                'field_name': str(md.get('field_name', '')),
-                'crop':       str(md.get('crop', '')),
-                'weather':    str(md.get('weather', '')),
-                'vehicle':    str(md.get('vehicle', '')),
-            }
+            # Fields spread flat into the payload: the OWL handler reads
+            # them from the command itself, not from a nested value.
+            payload = {'action': 'set_session_metadata', **clean_session_metadata(value)}
 
         elif action == 'save_config':
             value = value or {}
@@ -1362,7 +1469,425 @@ def shared_static(filename):
 # Flask routes
 @app.route('/')
 def index():
-    return render_template('index.html')
+    # The kiosk opens whichever screen in-cab_controller_setup.sh chose
+    # ([WebDashboard] ui). Both stay reachable: /full and /collect.
+    if controller.ui_mode == 'collect':
+        return render_template('collect.html')
+    return render_template('index.html', ui_mode=controller.ui_mode)
+
+
+@app.route('/full')
+def index_full():
+    return render_template('index.html', ui_mode=controller.ui_mode)
+
+
+@app.route('/collect')
+def collect_page():
+    return render_template('collect.html')
+
+
+# ---------------------------------------------------------------------------
+# Data collection screen (templates/collect.html, controller/networked/collect.py)
+# ---------------------------------------------------------------------------
+
+# [Collect] capture defaults: what the collect screen pushes to every OWL.
+# Distance spacing and the shutter cap are on here; on a bare OWL they are
+# off unless set in its own config.
+COLLECT_CAPTURE_DEFAULTS = {
+    'sample_mode': 'distance',
+    'sample_distance_m': 1.0,
+    'sample_interval_s': 2.0,
+    'jpeg_quality': 95,
+    'record_mode': 'images',
+    'video_max_s': 60,
+    # Off until tools/shutter_cap_probe.py has passed on the rig's camera.
+    'shutter_cap': False,
+    'smear_limit_mm': 2.0,
+    'max_gain': 'auto',
+}
+COLLECT_LANGUAGES = ('en', 'da')
+# Camera keys the collect screen may change on every OWL ([Camera] section).
+COLLECT_CAMERA_KEYS = ('exp_compensation', 'awb_mode', 'rotation',
+                       'resolution_width', 'resolution_height')
+# Record modal choices remembered as [Collect] last_<key>
+COLLECT_LAST_PICK_KEYS = ('crop', 'crop_season', 'weather', 'lighting', 'purpose')
+
+
+def _collect_capture_settings():
+    cfg = controller.config
+    out = dict(COLLECT_CAPTURE_DEFAULTS)
+    if cfg.has_section('Collect'):
+        for key, default in COLLECT_CAPTURE_DEFAULTS.items():
+            raw = cfg.get('Collect', key, fallback='').strip()
+            if not raw:
+                continue
+            try:
+                out[key] = _coerce_capture_value(key, raw)
+            except ValueError:
+                logger.warning(f"[Collect] {key}={raw!r} ignored")
+    return out
+
+
+def _coerce_capture_value(key, value):
+    """Validate one capture setting; raises ValueError."""
+    text = str(value).strip().lower()
+    if key == 'sample_mode':
+        if text not in ('frames', 'distance', 'time'):
+            raise ValueError('sample_mode must be frames, distance or time')
+        return text
+    if key == 'record_mode':
+        if text not in ('images', 'video'):
+            raise ValueError('record_mode must be images or video')
+        return text
+    if key == 'shutter_cap':
+        if text in ('true', '1', 'yes', 'on'):
+            return True
+        if text in ('false', '0', 'no', 'off'):
+            return False
+        raise ValueError('shutter_cap must be true or false')
+    if key == 'max_gain':
+        if text in ('auto', ''):
+            return 'auto'
+        gain = float(text)
+        if not 1.0 <= gain <= 64.0:
+            raise ValueError('max_gain must be auto or 1-64')
+        return gain
+    limits = {'sample_distance_m': (0.1, 50.0), 'sample_interval_s': (0.2, 60.0),
+              'jpeg_quality': (50, 100), 'video_max_s': (5, 60), 'smear_limit_mm': (0.2, 20.0)}
+    lo, hi = limits[key]
+    number = float(text)
+    if not lo <= number <= hi:
+        raise ValueError(f'{key} must be between {lo} and {hi}')
+    return int(number) if key in ('jpeg_quality', 'video_max_s') else number
+
+
+def _write_collect_section(values):
+    """Save [Collect] keys into CONTROLLER.ini without losing its comments."""
+    path = controller.config_file
+    text = path.read_text(encoding='utf-8') if path.exists() else ''
+    new_text = update_ini_text(text, 'Collect', {k: str(v) for k, v in values.items()})
+    atomic_write_config(path, lambda f: f.write(new_text))
+    if not controller.config.has_section('Collect'):
+        controller.config.add_section('Collect')
+    for key, value in values.items():
+        controller.config.set('Collect', key, str(value))
+
+
+def _push_capture_settings():
+    return controller.send_command('all', 'set_capture_params', _collect_capture_settings())
+
+
+def _collect_owls_snapshot():
+    """Per-OWL rows for the screen, plus the raw states for the warnings."""
+    with controller.mqtt_lock:
+        states = {oid: dict(s) for oid, s in controller.owls_state.items()}
+    capture_times = dict(controller.collect.last_capture_at)
+    camera_restart = set(controller.collect.camera_restart)
+    rows, for_warnings = [], {}
+    for oid in sorted(states):
+        s = states[oid]
+        capture = s.get('capture') or {}
+        camera = s.get('camera') or {}
+        s['last_capture_at'] = capture_times.get(oid)
+        for_warnings[oid] = s
+        rows.append({
+            'id': oid,
+            'connected': bool(s.get('connected')),
+            'recording': bool(s.get('image_sample_enable')),
+            'detection': bool(s.get('detection_enable')),
+            'saved_count': capture.get('saved_count', 0),
+            'session_id': capture.get('session_id'),
+            'record_mode': capture.get('record_mode'),
+            'video_seconds': capture.get('video_seconds'),
+            'speed_kmh': capture.get('speed_kmh'),
+            'exposure_time_us': capture.get('exposure_time_us') or camera.get('exposure_time_us'),
+            'analogue_gain': capture.get('analogue_gain') or camera.get('analogue_gain'),
+            'colour_temperature': camera.get('colour_temperature'),
+            'ground_smear_mm': capture.get('ground_smear_mm'),
+            'shutter_capped': capture.get('shutter_capped'),
+            'storage_free_mb': s.get('storage_free_mb'),
+            'internet_ok': s.get('internet_ok'),
+            'data_sessions': s.get('data_sessions') or [],
+            'data_transfer': s.get('data_transfer') or {},
+            'restart_required': s.get('restart_required') or (
+                'rotation' if oid in camera_restart else ''),
+        })
+    return rows, for_warnings
+
+
+@app.route('/api/collect/state')
+def collect_state():
+    rows, for_warnings = _collect_owls_snapshot()
+    gps_fix, gps_speed = None, None
+    if controller.gps_manager:
+        fix = controller.gps_manager.get_state().get('fix') or {}
+        gps_fix = bool(fix.get('fix_valid'))
+        gps_speed = fix.get('speed_kmh')
+    warnings = collect_warnings(
+        for_warnings, time.monotonic(), thresholds_from_config(controller.config),
+        cloud_configured=bool(controller.cloud_enable),
+        gps_fix=True if gps_fix is None else gps_fix,
+        run_started_at=controller.collect.started_mono,
+        capture_settings=_collect_capture_settings())
+    transfers = [r['data_transfer'] for r in rows
+                 if (r['data_transfer'] or {}).get('status') not in (None, '', 'idle', 'complete', 'error')]
+    upload_pct = (round(sum(t.get('progress', 0) for t in transfers) / len(transfers))
+                  if transfers else None)
+    collect = controller.collect
+    return jsonify({
+        'ui_mode': controller.ui_mode,
+        'recording': any(r['recording'] for r in rows if r['connected']),
+        'run': {'run_id': collect.run_id, 'started_at': collect.started_at,
+                'metadata': collect.metadata},
+        'owls': rows,
+        'warnings': warnings,
+        'gps': {'enabled': controller.gps_manager is not None, 'fix': gps_fix, 'speed_kmh': gps_speed},
+        'cloud': {'configured': bool(controller.cloud_enable),
+                  'connected': controller.cloud_connected,
+                  'site': controller.cloud_device_id or None,
+                  'portal_url': controller.cloud_portal_url or None,
+                  'uploading_pct': upload_pct},
+        'uploads': collect.upload_list(),
+        'thumbs': collect.thumb_index(),
+    })
+
+
+@app.route('/api/collect/config')
+def collect_config():
+    """Presets, capture settings and language for the screen."""
+    presets = presets_from_config(controller.config)
+    language = controller.config.get('Collect', 'language', fallback='en').strip().lower()
+    last = {key: controller.config.get('Collect', 'last_' + key, fallback='').strip()
+            for key in COLLECT_LAST_PICK_KEYS}
+    return jsonify({
+        'presets': {k: list(v) for k, v in presets.items()},
+        'capture': _collect_capture_settings(),
+        'language': language if language in COLLECT_LANGUAGES else 'en',
+        'last_pick': {k: v for k, v in last.items() if v},
+    })
+
+
+@app.route('/api/collect/settings', methods=['POST'])
+def collect_settings():
+    """Save capture settings (and language) to [Collect] and push them live."""
+    data = request.get_json(silent=True) or {}
+    values = {}
+    for key, raw in (data.get('capture') or {}).items():
+        if key not in COLLECT_CAPTURE_DEFAULTS:
+            continue
+        try:
+            values[key] = _coerce_capture_value(key, raw)
+        except (TypeError, ValueError) as e:
+            return jsonify({'success': False, 'error': str(e)}), 400
+    if 'language' in data:
+        language = str(data['language']).strip().lower()
+        if language not in COLLECT_LANGUAGES:
+            return jsonify({'success': False, 'error': 'language must be en or da'}), 400
+        values['language'] = language
+    if not values:
+        return jsonify({'success': False, 'error': 'No settings given'}), 400
+    try:
+        _write_collect_section({k: (str(v).lower() if isinstance(v, bool) else v)
+                                for k, v in values.items()})
+    except OSError as e:
+        logger.error(f"Could not save [Collect]: {e}")
+        return jsonify({'success': False, 'error': 'Could not save settings on the controller'}), 500
+    if any(k in COLLECT_CAPTURE_DEFAULTS for k in values):
+        _push_capture_settings()
+    return jsonify({'success': True, 'capture': _collect_capture_settings()})
+
+
+def _save_last_pick(metadata):
+    """Remember the record modal's choices as [Collect] last_* keys (the
+    kiosk browser runs incognito and forgets everything at each boot).
+    Only plain values are kept: CONTROLLER.ini is hand-edited and read
+    with % interpolation."""
+    values = {}
+    for key in COLLECT_LAST_PICK_KEYS:
+        value = metadata.get(key, '')
+        values['last_' + key] = value if re.fullmatch(r'[\w .,/()-]{0,60}', value) else ''
+    try:
+        _write_collect_section(values)
+    except OSError as e:
+        logger.warning(f"Could not save the last record choices: {e}")
+
+
+@app.route('/api/collect/start', methods=['POST'])
+def collect_start():
+    """One press of Record: detection off, capture settings, metadata
+    (with a run id shared by every OWL), then recording on."""
+    data = request.get_json(silent=True) or {}
+    metadata = clean_session_metadata(data.get('metadata'))
+    result = controller.send_command('all', 'toggle_detection', False)
+    if not result.get('success'):
+        return jsonify({'success': False, 'error': result.get('error') or 'Could not reach the OWLs'}), 503
+    run_id = controller.collect.start(metadata)
+    metadata['run_id'] = run_id
+    _save_last_pick(metadata)
+    # Kept so an OWL that reboots mid-run gets the same labels when it rejoins
+    controller.desired_state.setdefault('all', {})['session_metadata'] = dict(metadata)
+    _push_capture_settings()
+    controller.send_command('all', 'set_session_metadata', metadata)
+    result = controller.send_command('all', 'toggle_recording', True)
+    if not result.get('success'):
+        controller.collect.stop()
+        controller.desired_state['all'].pop('session_metadata', None)
+        return jsonify({'success': False, 'error': result.get('error') or 'Could not start recording'}), 503
+    return jsonify({'success': True, 'run_id': run_id, 'message': result.get('message')})
+
+
+@app.route('/api/collect/stop', methods=['POST'])
+def collect_stop():
+    result = controller.send_command('all', 'toggle_recording', False)
+    if not result.get('success'):
+        # The run carries on: the OWLs never heard the stop
+        return jsonify({'success': False, 'error': result.get('error') or 'Could not stop recording'}), 503
+    controller.collect.stop()
+    controller.desired_state.setdefault('all', {}).pop('session_metadata', None)
+    # Refresh each OWL's session list (also updates Noktura's manifest)
+    controller.send_command('all', 'list_data_sessions')
+    return jsonify({'success': True})
+
+
+@app.route('/api/collect/thumb/<device_id>/<int:index>')
+def collect_thumb(device_id, index):
+    found = controller.collect.thumb(device_id, index)
+    if not found:
+        return '', 404
+    seq, data = found
+    response = Response(data, mimetype='image/jpeg')
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['X-Thumb-Seq'] = str(seq)
+    return response
+
+
+@app.route('/api/collect/points')
+def collect_points():
+    try:
+        after = int(request.args.get('after', 0))
+    except ValueError:
+        after = 0
+    return jsonify(controller.collect.points_after(after))
+
+
+@app.route('/api/collect/sessions/refresh', methods=['POST'])
+def collect_sessions_refresh():
+    return jsonify(controller.send_command('all', 'list_data_sessions'))
+
+
+@app.route('/api/collect/upload', methods=['POST'])
+def collect_upload():
+    """Farmer-requested upload of chosen sessions to Noktura. Explicit by
+    design: uploads use the rig's mobile data."""
+    if not controller.cloud_enable:
+        return jsonify({'success': False, 'error': 'Connect to Noktura first'}), 409
+    items = (request.get_json(silent=True) or {}).get('items') or []
+    if not isinstance(items, list) or not items:
+        return jsonify({'success': False, 'error': 'Choose at least one session'}), 400
+    with controller.mqtt_lock:
+        known = {oid: {d.get('session_id') for d in (s.get('data_sessions') or [])}
+                 for oid, s in controller.owls_state.items()}
+    valid = [i for i in items if isinstance(i, dict)
+             and i.get('session_id') in known.get(str(i.get('owl')), set())]
+    if not valid:
+        return jsonify({'success': False, 'error': 'Those sessions are not on the OWLs'}), 400
+    # Make sure Noktura's manifest has these sessions before it sees the request
+    controller.send_command('all', 'list_data_sessions')
+    created = controller.collect.request_uploads(valid)
+    if not created:
+        return jsonify({'success': True, 'requested': [], 'reason': 'already_requested'})
+    controller._publish_controller_presence()
+    return jsonify({'success': True, 'requested': created})
+
+
+@app.route('/api/collect/camera', methods=['GET'])
+def collect_camera_get():
+    """Current [Camera] values from the first connected OWL that has
+    reported its config (asks every OWL to report it again)."""
+    controller.send_command('all', 'get_config')
+    with controller.mqtt_lock:
+        for oid in sorted(controller.owls_state):
+            s = controller.owls_state[oid]
+            camera = ((s.get('config') or {}).get('config') or {}).get('Camera')
+            if s.get('connected') and camera:
+                return jsonify({'source': oid,
+                                'camera': {k: camera.get(k) for k in COLLECT_CAMERA_KEYS + ('max_gain',)}})
+    return jsonify({'source': None, 'camera': None})
+
+
+@app.route('/api/collect/camera', methods=['POST'])
+def collect_camera_set():
+    """Camera settings for every OWL. Brightness and white balance apply
+    live; resolution and rotation need an OWL restart (reported back as
+    restart_required in each OWL's state)."""
+    data = request.get_json(silent=True) or {}
+    if data.get('action') == 'calibrate_awb':
+        return jsonify(controller.send_command('all', 'calibrate_awb'))
+    params = {}
+    for key, raw in (data.get('params') or {}).items():
+        if key not in COLLECT_CAMERA_KEYS:
+            continue
+        text = str(raw).strip().lower()
+        try:
+            if key == 'awb_mode':
+                ConfigValidator.coerce_camera_live_value('awb_mode', text)
+            elif key == 'exp_compensation':
+                text = str(ConfigValidator.coerce_camera_live_value('exp_compensation', text))
+            elif key == 'rotation':
+                if text not in ConfigValidator.VALID_ROTATIONS:
+                    raise ValueError('rotation must be auto, 0 or 180')
+            else:
+                if not 64 <= int(text) <= 4096:
+                    raise ValueError(f'{key} out of range')
+        except (TypeError, ValueError) as e:
+            return jsonify({'success': False, 'error': str(e)}), 400
+        params[key] = text
+    if 'max_gain' in (data.get('params') or {}):
+        try:
+            gain = _coerce_capture_value('max_gain', data['params']['max_gain'])
+        except (TypeError, ValueError) as e:
+            return jsonify({'success': False, 'error': str(e)}), 400
+        _write_collect_section({'max_gain': gain})
+        _push_capture_settings()
+    restart_required = []
+    if params:
+        result = controller.send_command('all', 'set_config_section', {'section': 'Camera', 'params': params})
+        if not result.get('success'):
+            return jsonify({'success': False, 'error': result.get('error') or 'Could not reach the OWLs'}), 503
+        if 'rotation' in params:
+            # The OWL reads rotation only at start-up and does not flag it
+            # itself: mark each OWL that had another value until it rejoins.
+            with controller.mqtt_lock:
+                for oid, s in controller.owls_state.items():
+                    camera = ((s.get('config') or {}).get('config') or {}).get('Camera') or {}
+                    current = str(camera.get('rotation', '')).strip().lower()
+                    if s.get('connected') and current != params['rotation']:
+                        controller.collect.camera_restart.add(oid)
+                        restart_required = ['rotation']
+    return jsonify({'success': True, 'applied': params, 'restart_required': restart_required})
+
+
+@app.route('/api/collect/cloud/provision', methods=['POST'])
+def collect_cloud_provision():
+    """Connect the rig to Noktura: paste the command from the one-time
+    credential page (Noktura /admin/fleet, path A). Runs the root helper."""
+    from utils import cloud_provision
+    data = request.get_json(silent=True) or {}
+    try:
+        payload = parse_provision_command(data.get('command', ''))
+        cloud_provision.require_noktura_broker(payload)
+        payload['replace'] = data.get('replace') is True
+        result = cloud_provision.provision(subprocess.run, payload,
+                                           controller_ini=controller.config_file)
+    except cloud_provision.CloudSiteConflict as e:
+        return jsonify({'success': False, 'error': str(e), 'code': 'cloud_site_conflict',
+                        'existing_site': e.existing_site}), 409
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except cloud_provision.CloudProvisionError as e:
+        return jsonify({'success': False, 'error': str(e), 'detail': e.detail}), 500
+    controller.reload_cloud_config()
+    return jsonify({'success': True, **result})
 
 
 @app.route("/api/owls")
@@ -3477,6 +4002,13 @@ def set_config_param():
 # Initialize on startup
 def init_app():
     logger.info("OWL Central Controller Starting")
+    if controller.ui_mode == 'collect':
+        # Data collection only: detection (and so spraying) stays off on
+        # every OWL, and each OWL that connects gets the capture settings.
+        all_desired = controller.desired_state.setdefault('all', {})
+        all_desired['detection_enable'] = False
+        all_desired['capture_params'] = _collect_capture_settings()
+        logger.info("Collect mode: detection held off on all OWLs")
     controller.setup_mqtt()
 
     # Start GPS manager if configured

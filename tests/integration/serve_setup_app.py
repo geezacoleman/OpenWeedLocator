@@ -14,6 +14,10 @@ Behaviour knobs are baked in and deterministic:
   - timings are shortened (switch 0.5 s) so wizard runs stay fast
   - finish() re-arms instead of exiting, so one server instance survives a
     whole Playwright suite
+  - contract 5 setup session: every Playwright test is a new "phone", so the
+    TEST-ONLY route POST /__test__/new-phone releases the previous test's
+    session (a real unit frees it on service restart or after 10 idle
+    minutes). This route exists only in this harness, never in setup_app.
 """
 
 import argparse
@@ -29,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fakes import FakeNmcli, FakeSystem  # noqa: E402
 from controller.setup import firstboot_state as fbs  # noqa: E402
-from controller.setup.setup_app import create_app  # noqa: E402
+from controller.setup.setup_app import SetupSession, create_app  # noqa: E402
 from utils.network_manager import NetworkManager  # noqa: E402
 
 
@@ -99,7 +103,14 @@ def main():
         hostname_getter=lambda: system.hostname,
         exit_fn=rearm)
 
-    app = create_app(network_manager=nm, state=fb)
+    session = SetupSession()
+    app = create_app(network_manager=nm, state=fb, session=session)
+
+    @app.route('/__test__/new-phone', methods=['POST'])
+    def new_phone():
+        with session._lock:
+            session._token = None
+        return {'success': True}
     fb.startup()
     print(f'Contract setup API on http://127.0.0.1:{args.port} '
           f'(workdir {workdir})', flush=True)

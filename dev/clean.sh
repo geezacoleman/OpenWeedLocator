@@ -5,7 +5,7 @@
 #
 # Usage:
 #   sudo bash clean.sh          # interactive (asks before cleaning)
-#   sudo bash clean.sh --yes    # non-interactive (owl_setup.sh --ship uses this)
+#   sudo bash clean.sh --yes    # non-interactive (owl_setup.sh --factory uses this)
 
 set -euo pipefail  # Exit on error, undefined vars, pipe failures
 
@@ -210,6 +210,8 @@ rm -rvf /home/owl/.config/gcloud 2>/dev/null || true
 echo -e "${GREEN}[INFO] Resetting OWL file permissions${NC}"
 chown -R owl:owl /home/owl/owl /home/owl/.virtualenvs 2>/dev/null || true
 chmod -R 755 /home/owl/owl 2>/dev/null || true
+# CONTROLLER.ini holds the [Security] device_token: never world-readable.
+chmod 640 /home/owl/owl/config/CONTROLLER.ini 2>/dev/null || true
 
 # Ensure home directory has correct permissions
 chmod 750 /home/owl

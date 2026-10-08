@@ -9,11 +9,15 @@ import time
 import threading
 import logging
 import os
+import re
+import ssl
 import sys
 import configparser
+import ipaddress
 import tempfile
 from pathlib import Path
 import socket
+from urllib.parse import urlparse
 
 from collections import deque
 from utils.config_manager import (
@@ -24,6 +28,7 @@ from utils.config_manager import (
 )
 from utils.directory_manager import scan_sessions, collect_session_files, select_preview_images
 from utils import software_update
+from utils.session_metadata import clean_session_metadata, CAPTURE_PARAM_KEYS
 
 # Config keys whose live change requires re-deriving crop/lane/actuation geometry.
 # When any of these change via set_config_section we call owl.recompute_geometry()
@@ -37,6 +42,167 @@ GEOMETRY_KEYS = set(MOUNT_GEOMETRY_KEYS) | {
 RESTART_REQUIRED_KEYS = {
     'resolution_width', 'resolution_height', 'relay_num',
 }
+
+# ---------------------------------------------------------------------------
+# Cloud command allowlist (OWL trust chain, Noktura spec §6 / design D7).
+# owl_cloud_provision.sh remaps the cloud's inbound `.../commands` onto a
+# SEPARATE local topic so nothing arriving from the bridge can reach the
+# dashboard command set (spraying, config, install_algorithm). Only these
+# actions pass.
+#
+# The set is exactly what the Noktura portal sends (apps/worker
+# command-publisher.ts and transfer-orchestrator.ts). v3.18.0 allowed only the
+# first four, so the portal's reboot/restart buttons, model deployment and the
+# automatic delete after a verified upload were silently dropped (cross-repo
+# review 2026-09-17, O-2; decided by Guy: allow all portal commands).
+# ---------------------------------------------------------------------------
+CLOUD_ALLOWED_ACTIONS = frozenset({
+    'list_data_sessions', 'transfer_session', 'delete_session', 'upload_previews',
+    'update_software', 'download_model', 'set_model', 'reboot', 'restart_service',
+})
+# fullmatch, not match: `$` also matches before a trailing newline, so
+# "v1.2.3\n" passed the old check (O-6).
+CLOUD_RELEASE_TAG_RE = re.compile(r'v\d+\.\d+\.\d+')
+
+
+def cloud_command_topic(networked_mode, device_id):
+    """Local topic the bridge delivers cloud commands to (see
+    owl_cloud_provision.sh: standalone `topic commands in 1 owl/cloud_ ...`,
+    networked `topic +/commands in 1 owl/cloud/ ...`)."""
+    if networked_mode:
+        return f'owl/cloud/{device_id}/commands'
+    return 'owl/cloud_commands'
+
+
+def _url_host(url):
+    try:
+        return (urlparse(str(url)).hostname or '').lower()
+    except ValueError:
+        return ''
+
+
+def is_private_host(host):
+    """True only for a literal private or loopback IP, or an mDNS `.local`
+    name: a LAN controller that legitimately runs a self-signed certificate.
+
+    Deliberately NOT "any name without a dot" (O-8): urlparse leaves
+    `https://16843009/` and `https://0x01010101/` as dotless names that the
+    resolver turns into public addresses, and single-label names follow DNS
+    search domains anywhere.
+    """
+    if not host:
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return host.endswith('.local')
+    return address.is_private or address.is_loopback
+
+
+def ssl_context_for_url(url):
+    """Verified TLS by default. Certificate checks are relaxed ONLY for
+    private/LAN hosts (the in-cab controller's self-signed dashboard); any
+    public host (Noktura storage, GitHub) is verified against the system CAs.
+    Design finding M4: presigned upload URLs and models used to be fetched
+    with verification off on every host."""
+    ctx = ssl.create_default_context()
+    if is_private_host(_url_host(url)):
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+CLOUD_POLICY_TOPIC = 'owl/cloud/policy'
+CONNECTIVITY_INTERVAL_S = 60
+
+
+def parse_cloud_policy(payload):
+    """{'storage_host', 'portal_host'} from the controller's retained policy,
+    keeping only well-formed host names."""
+    policy = {}
+    if not isinstance(payload, dict):
+        return policy
+    storage = str(payload.get('storage_host') or '').strip().lower()
+    if re.fullmatch(r'[a-z0-9.-]{3,253}', storage):
+        policy['storage_host'] = storage
+    portal = _url_host(payload.get('portal_url') or '')
+    if portal:
+        policy['portal_host'] = portal
+    return policy
+
+
+def internet_reachable(host, port=443, timeout=5.0):
+    """True when a TCP connection to host:port opens. A cheap check that
+    DNS and the route out through the router work; not an HTTPS request."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def cloud_storage_host(controller_ini=None):
+    """[Cloud] storage_host from CONTROLLER.ini, or '' (accept any host).
+
+    Read per command, not once at start: the phone app provisions the cloud
+    while owl.py is already running, and a value cached at startup stayed empty
+    until the next restart.
+    """
+    path = controller_ini or (Path(__file__).resolve().parents[1] / 'config' / 'CONTROLLER.ini')
+    config = configparser.ConfigParser()
+    try:
+        config.read(str(path))
+    except configparser.Error:
+        return ''
+    return config.get('Cloud', 'storage_host', fallback='').strip().lower()
+
+
+def cloud_command_urls(command):
+    """Every URL a cloud command would make the unit fetch or upload to, in
+    the shapes Noktura actually sends (O-3: the old check read `part_urls` and
+    `uploads[]`, which nothing sends, so real uploads were never checked)."""
+    urls = []
+    action = command.get('action')
+    if action == 'transfer_session':
+        if command.get('upload_url'):
+            urls.append(command['upload_url'])
+        upload = command.get('upload')
+        if isinstance(upload, dict):
+            for part in upload.get('parts') or []:
+                if isinstance(part, dict) and part.get('url'):
+                    urls.append(part['url'])
+    elif action == 'upload_previews':
+        urls.extend(u for u in (command.get('upload_urls') or []) if u)
+    elif action == 'download_model':
+        if command.get('url'):
+            urls.append(command['url'])
+    return urls
+
+
+def cloud_command_rejection(command, storage_host=''):
+    """Why a cloud-origin command must be dropped, or None if it may run.
+
+    Pure function so the rule is unit-testable without a broker.
+    """
+    if not isinstance(command, dict):
+        return 'not an object'
+    action = command.get('action')
+    if action not in CLOUD_ALLOWED_ACTIONS:
+        return f'action not allowed from cloud: {action!r}'
+    if action == 'update_software':
+        ref = command.get('ref')
+        if not isinstance(ref, str) or not CLOUD_RELEASE_TAG_RE.fullmatch(ref):
+            return f'cloud updates must target a release tag vX.Y.Z, got {ref!r}'
+    if action == 'transfer_session' and str(command.get('method', 'POST')).upper() != 'PUT':
+        # POST is the LAN controller's upload endpoint; the cloud only issues
+        # presigned PUT URLs (Noktura spec §6.3).
+        return 'cloud transfers must use presigned PUT'
+    for url in cloud_command_urls(command):
+        if urlparse(str(url)).scheme != 'https':
+            return f'cloud URLs must be https, got {url!r}'
+        if storage_host and _url_host(url) != storage_host:
+            return f'host {_url_host(url)!r} is not the configured storage_host'
+    return None
 
 # [Camera] keys hot-applied to the running camera via set_camera_controls
 # (picamera2 backend). Must be checked BEFORE the generic setattr fallback in
@@ -172,7 +338,12 @@ class OWLMQTTPublisher:
                 'config': f'owl/{device_id}/config',
                 'indicators': f'owl/{device_id}/indicators',
                 'errors': f'owl/{device_id}/errors',
-                'gps': f'owl/{device_id}/gps'
+                'gps': f'owl/{device_id}/gps',
+                # Data collection, local broker only (the cloud bridge does
+                # not forward these): one event per saved image, and a small
+                # JPEG of the latest one for the controller's gallery.
+                'capture': f'owl/{device_id}/capture',
+                'thumb': f'owl/{device_id}/thumb'
             }
         else:
             # Standalone mode: simple topics for backward compatibility
@@ -184,8 +355,17 @@ class OWLMQTTPublisher:
                 'config': 'owl/config',
                 'indicators': 'owl/indicators',
                 'errors': 'owl/errors',
-                'gps': 'owl/gps'
+                'gps': 'owl/gps',
+                'capture': 'owl/capture',
+                'thumb': 'owl/thumb'
             }
+        # Cloud-origin commands arrive on their own topic and pass an allowlist
+        self.topics['cloud_commands'] = cloud_command_topic(self.networked_mode, device_id)
+        # Networked OWLs hold no [Cloud] section of their own: the controller
+        # publishes the rig's upload host here (retained) so transfer URLs are
+        # still pinned to Noktura storage.
+        self.topics['cloud_policy'] = CLOUD_POLICY_TOPIC
+        self._cloud_policy = {}
 
         # Current state
         self.state = {
@@ -336,12 +516,13 @@ class OWLMQTTPublisher:
             # Storage
             'save_directory': '',
             # Session metadata (filled by farmer via dashboard)
-            'session_metadata': {
-                'field_name': '',
-                'crop': '',
-                'weather': '',
-                'vehicle': '',
-            },
+            'session_metadata': clean_session_metadata({}),
+            # Data collection: capture settings, last saved image, image
+            # quality, shutter cap (owl.capture_state, refreshed each heartbeat)
+            'capture': None,
+            # Connectivity (_connectivity_loop): None = not checked / unknown
+            'clock_synced': None,
+            'internet_ok': None,
             # Data sessions and transfer state
             'data_sessions': [],
             'data_transfer': _data_transfer_state(),
@@ -572,6 +753,9 @@ class OWLMQTTPublisher:
         self.monitoring_thread = threading.Thread(target=self._monitor_states, daemon=True)
         self.monitoring_thread.start()
 
+        self.connectivity_thread = threading.Thread(target=self._connectivity_loop, daemon=True)
+        self.connectivity_thread.start()
+
         # Try to connect to broker
         try:
             self.logger.info(f"Attempting to connect to MQTT broker at {self.broker_host}:{self.broker_port}")
@@ -661,9 +845,13 @@ class OWLMQTTPublisher:
 
             # Subscribe to command topics
             client.subscribe(self.topics['commands'])
+            client.subscribe(self.topics['cloud_commands'])
             client.subscribe(self.topics['gps'])
+            if self.networked_mode:
+                client.subscribe(self.topics['cloud_policy'])
 
-            self.logger.info(f"Subscribed to: {self.topics['commands']}, {self.topics['gps']}")
+            self.logger.info(f"Subscribed to: {self.topics['commands']}, "
+                             f"{self.topics['cloud_commands']}, {self.topics['gps']}")
 
             # Publish connection status
             client.publish(self.topics['status'], json.dumps({
@@ -701,12 +889,30 @@ class OWLMQTTPublisher:
 
             if topic == self.topics['commands']:
                 self._handle_command(payload)
+            elif topic == self.topics['cloud_commands']:
+                self._handle_cloud_command(payload)
             elif topic == self.topics['gps']:
                 self._handle_gps_update(payload)
+            elif topic == self.topics['cloud_policy']:
+                self._cloud_policy = parse_cloud_policy(payload)
 
         except Exception as e:
             self.logger.error(f"Error processing MQTT message on topic {msg.topic}: {e}", exc_info=True)
             print(f"[OWL MQTT ERROR] {msg.topic}: {e}", file=sys.stderr)
+
+    def _handle_cloud_command(self, command):
+        """Commands that arrived through the cloud bridge. Allowlisted
+        (CLOUD_ALLOWED_ACTIONS), release-tag-only updates, https URLs only on
+        [Cloud] storage_host when set. Anything else is logged and dropped —
+        a stolen bridge credential must not be able to spray or reconfigure."""
+        storage_host = cloud_storage_host() or self._cloud_policy.get('storage_host', '')
+        reason = cloud_command_rejection(command, storage_host)
+        if reason:
+            action = command.get('action') if isinstance(command, dict) else None
+            self.logger.warning(f"cloud command dropped ({reason}): {action!r}")
+            return
+        self.logger.info(f"Cloud command accepted: {command.get('action')}")
+        self._handle_command(command)
 
     # Commands broadcast on a ~1 Hz cadence (e.g. the controller's speed-adaptive
     # actuation loop) log at DEBUG; their handlers log real changes at INFO.
@@ -1053,12 +1259,7 @@ class OWLMQTTPublisher:
                 self._publish_state()
 
             elif action == 'set_session_metadata':
-                metadata = {
-                    'field_name': str(command.get('field_name', '')).strip(),
-                    'crop': str(command.get('crop', '')).strip(),
-                    'weather': str(command.get('weather', '')).strip(),
-                    'vehicle': str(command.get('vehicle', '')).strip(),
-                }
+                metadata = clean_session_metadata(command)
                 self.state['session_metadata'] = metadata
                 # The app sends metadata BEFORE it enables recording, so no
                 # session directory exists yet — the copy held in state is
@@ -1071,6 +1272,9 @@ class OWLMQTTPublisher:
                     self.logger.info(
                         f"Session metadata buffered until recording starts: "
                         f"{metadata}")
+
+            elif action == 'set_capture_params':
+                self._handle_set_capture_params(command.get('params') or {})
 
             elif action == 'list_data_sessions':
                 threading.Thread(
@@ -1909,10 +2113,8 @@ class OWLMQTTPublisher:
                 }
             self._publish_state()
 
-            # SSL context for self-signed certs
-            ssl_ctx = ssl.create_default_context()
-            ssl_ctx.check_hostname = False
-            ssl_ctx.verify_mode = ssl.CERT_NONE
+            # Verified TLS unless the host is the LAN controller (self-signed)
+            ssl_ctx = ssl_context_for_url(url)
 
             req = urllib.request.Request(url)
             response = urllib.request.urlopen(req, context=ssl_ctx)
@@ -2062,10 +2264,8 @@ class OWLMQTTPublisher:
                     'status': 'downloading', 'profile': filename, 'error': ''}
             self._publish_state()
 
-            # SSL context for self-signed certs (same trust model as models)
-            ssl_ctx = ssl.create_default_context()
-            ssl_ctx.check_hostname = False
-            ssl_ctx.verify_mode = ssl.CERT_NONE
+            # Verified TLS unless the host is the LAN controller (same rule as models)
+            ssl_ctx = ssl_context_for_url(url)
 
             response = urllib.request.urlopen(
                 urllib.request.Request(url), context=ssl_ctx)
@@ -2363,12 +2563,9 @@ class OWLMQTTPublisher:
         import urllib.request
         import ssl
 
-        ssl_ctx = ssl.create_default_context()
-        if method == 'POST':
-            # Controller endpoint uses a self-signed certificate
-            ssl_ctx.check_hostname = False
-            ssl_ctx.verify_mode = ssl.CERT_NONE
-        # PUT (presigned URL): keep full verification — public CA host
+        # Verified unless the host is a LAN controller (self-signed): a POST to a
+        # public host used to skip verification entirely (O-9).
+        ssl_ctx = ssl_context_for_url(upload_url)
 
         if method == 'PUT':
             headers = {
@@ -2845,6 +3042,7 @@ class OWLMQTTPublisher:
                 if self.connected:
                     self._refresh_ai_state()
                     self._refresh_camera_state()
+                    self._refresh_capture_state()
                     self._read_update_status()
                     with self.state_lock:
                         self._publish_state()
@@ -2877,12 +3075,75 @@ class OWLMQTTPublisher:
                 camera['colour_gains'] = [round(float(gains[0]), 3),
                                           round(float(gains[1]), 3)]
             for src_key, dst_key in (('ColourTemperature', 'colour_temperature'),
-                                     ('Lux', 'lux')):
+                                     ('Lux', 'lux'),
+                                     ('ExposureTime', 'exposure_time_us'),
+                                     ('AnalogueGain', 'analogue_gain')):
                 value = metadata.get(src_key)
                 if isinstance(value, (int, float)):
                     camera[dst_key] = round(float(value), 1)
         with self.state_lock:
             self.state['camera'] = camera
+
+    def _connectivity_loop(self):
+        """Every minute: is the clock NTP-synced, and can this unit reach
+        the internet? Uploads go straight from each OWL to Noktura storage,
+        so a rig where only the controller has a route out fails silently
+        without this. internet_ok stays None until a cloud host is known."""
+        from utils.cloud_provision import clock_synced
+        while self.running:
+            try:
+                host = (cloud_storage_host() or self._cloud_policy.get('storage_host')
+                        or self._cloud_policy.get('portal_host'))
+                synced = clock_synced()
+                reachable = internet_reachable(host) if host else None
+                with self.state_lock:
+                    self.state['clock_synced'] = synced
+                    self.state['internet_ok'] = reachable
+            except Exception as e:
+                self.logger.debug(f"connectivity check failed: {e}")
+            for _ in range(CONNECTIVITY_INTERVAL_S):
+                if not self.running:
+                    return
+                time.sleep(1)
+
+    def _refresh_capture_state(self):
+        """state['capture'] from the OWL's capture_state(). Called every heartbeat."""
+        owl = self.owl_instance
+        if owl is None or not hasattr(owl, 'capture_state'):
+            return
+        try:
+            capture = owl.capture_state()
+        except Exception as e:
+            self.logger.debug(f"capture state unavailable: {e}")
+            return
+        with self.state_lock:
+            self.state['capture'] = capture
+
+    def _handle_set_capture_params(self, params):
+        """Apply capture settings live. Deliberately not saved to the active
+        config: the controller keeps them in its own [Collect] section and
+        re-sends them on every connect and Record, and saving them here would
+        carry collect settings (shutter cap, sample mode) into spraying.
+
+        Unknown keys are ignored; a value that fails to convert is rejected
+        on its own without blocking the others.
+        """
+        owl = self.owl_instance
+        if owl is None or not hasattr(owl, 'apply_capture_params'):
+            return
+        wanted = {k: v for k, v in params.items() if k in CAPTURE_PARAM_KEYS}
+        applied = {}
+        for key, value in wanted.items():
+            try:
+                applied.update(owl.apply_capture_params({key: value}))
+            except (TypeError, ValueError, OverflowError) as e:
+                self.logger.warning(f"Rejected capture param {key}={value!r}: {e}")
+        if not applied:
+            return
+        self.logger.info(f"Capture params applied: {applied}")
+        self._refresh_capture_state()
+        with self.state_lock:
+            self._publish_state()
 
     def _refresh_ai_state(self):
         """Refresh AI tab state from live OWL detector. Called every heartbeat."""
@@ -3056,6 +3317,26 @@ class OWLMQTTPublisher:
                 'timestamp': time.time()
             })
             self.client.publish(self.topics['indicators'], indicator_msg, qos=0)
+
+    THUMB_INTERVAL_S = 2.0
+
+    def publish_capture(self, recorder):
+        """After an image is queued (or a video preview taken): publish the
+        capture event for the controller's map and, at most every
+        THUMB_INTERVAL_S, the thumbnail for its gallery. Local broker only."""
+        if not self.connected or recorder is None:
+            return
+        try:
+            if recorder.last_saved:
+                self.client.publish(self.topics['capture'], json.dumps(
+                    dict(recorder.last_saved, session_id=getattr(self.owl_instance, '_session_id', None))),
+                    qos=0)
+            now = time.monotonic()
+            if recorder.last_thumbnail and now - getattr(self, '_thumb_sent_at', 0.0) >= self.THUMB_INTERVAL_S:
+                self._thumb_sent_at = now
+                self.client.publish(self.topics['thumb'], recorder.last_thumbnail, qos=0)
+        except Exception as e:
+            self.logger.debug(f"capture publish failed: {e}")
 
     def drive_full_indicator(self):
         """Send drive full indicator to dashboard"""

@@ -16,8 +16,9 @@ touching anything.
 
 ## Part 1 — Arm + boot into setup mode
 
-- [ ] Provision the unit: `bash owl_setup.sh --ship` (fresh image; type `SHIP`
-      at the prompt, or add `--yes`), or on an
+- [ ] Provision the unit: `bash owl_setup.sh --factory` (fresh image with its
+      identity already created, Part 14 steps 1 to 3; type `FACTORY` at the
+      prompt, or add `--yes`), or on an
       existing install `sudo bash controller/setup/install_firstboot.sh --arm`
 - [ ] **CM5 carriers only:** on a fresh flash the script reports it wrote the
       camera config and warns a reboot is needed (CMs have no camera
@@ -29,7 +30,7 @@ touching anything.
 - [ ] On a Pi 4/5 (non-CM) the same command **skips** with a warning and
       leaves config.txt untouched
 - [ ] If the camera is missing:
-      `curl http://10.42.0.1:8088/setup/api/camera/diagnostics` distinguishes
+      `curl -k https://10.42.0.1:8088/setup/api/camera/diagnostics` distinguishes
       `overlay_missing` (config.txt problem) from `probe_failed` (-121 I2C
       NACK: unpowered / wrong CSI port / hardware)
 - [ ] Arming with **no hotspot profile** refuses with a clear message and
@@ -38,7 +39,7 @@ touching anything.
 - [ ] Reboot. Within ~60 s the `OWL-XXXX` hotspot broadcasts
 - [ ] `sudo systemctl status owl-firstboot` → active, no restart loop
 - [ ] Join the hotspot from a laptop (password `owl-setup`):
-      `curl http://10.42.0.1:8088/setup/api/info` → JSON with camera + hotspot
+      `curl -k https://10.42.0.1:8088/setup/api/info` → JSON with camera + hotspot
 - [ ] owl.py is running but **detection is off**: flip the hardware detection
       switch (if fitted) ON — relays must stay silent while the flag exists
 
@@ -50,7 +51,7 @@ touching anything.
 - [ ] Choose Standalone → set a permanent password → done screen shows the
       QR; scan it with a second phone and confirm it joins the hotspot with
       the NEW password
-- [ ] `curl http://10.42.0.1:8088/` now refuses — the setup service exited
+- [ ] `curl -k https://10.42.0.1:8088/` now refuses — the setup service exited
 - [ ] Reboot: hotspot uses the new password, owl-firstboot does NOT start,
       detection behaves normally (switch works)
 - [ ] Dashboard → Config → "Reset network setup" → reboot → unit is back in
@@ -66,7 +67,7 @@ touching anything.
 - [ ] Retry with the right password → wizard verifies and finishes
 - [ ] If your router blocks mDNS: confirm the wizard offers the manual-IP
       entry and it works
-- [ ] From a laptop on the router: `curl http://<owl-ip>:8088/...` fails
+- [ ] From a laptop on the router: `curl -k https://<owl-ip>:8088/...` fails
       (service gone) but `https://<owl-hostname>.local/video_feed` serves
 
 ## Part 4 — Rig flow (controller + OWL + router)
@@ -275,7 +276,7 @@ App Config tab:
 CONTROLLER.ini ownership (the root cause of the 2026-08-15 bench failures —
 a root-owned file silently disabled MQTT and the token guard):
 
-- [ ] Fresh `--ship` provision + app finish: `ls -l ~/owl/config/CONTROLLER.ini`
+- [ ] Fresh `--factory` provision + app finish: `ls -l ~/owl/config/CONTROLLER.ini`
       shows `owl:owl` and mode 640 (firstboot now chowns after every write)
 - [ ] `mosquitto_sub -v -t 'owl/#' -W 8` shows LIVE owl/state traffic
       (not just a stale retained owl/status)
@@ -326,9 +327,9 @@ Video + rotation:
       from GENERAL_CONFIG.ini), WB card still works, saves work
 
 Power-cut durability (2026-08-15 field find — an unsynced power-off after
---ship un-armed the unit AND zero-filled the /etc/hosts tail, breaking sudo):
+--ship, now --factory, un-armed the unit AND zero-filled the /etc/hosts tail, breaking sudo):
 
-- [ ] `--ship` → wait for SHIP-READY → immediately PULL POWER (no shutdown) →
+- [ ] `--factory` → wait for SHIP-READY → immediately PULL POWER (no shutdown) →
       on next boot the flag still exists, owl-firstboot starts, hostname
       resolves (`sudo true` prints no resolve warning)
 - [ ] `sudo /usr/local/sbin/owl-firstboot-arm` → pull power → flag survives
@@ -539,11 +540,11 @@ Findings so far (2026-09-13, owl-1):
   `AT#XSLMVER` 2.9.1 (NCS 2.9.0). %XSYSTEMMODE already 0,0,1,0 (persisted),
   CFUN=31 and `AT#XGPS=1,0,1` OK. Boot config lines written by the probe.
   Fix/no-fix not captured yet (nRF GPS pin 42 no-connect still open).
-- [ ] Fresh unit: `bash owl_setup.sh --ship-gps` -> SHIP-READY; re-run and
+- [ ] Fresh unit: `bash owl_setup.sh --factory` -> SHIP-READY; re-run and
       `grep -c 'dtoverlay=uart3-pi5$\|gpio=26=op,dh' /boot/firmware/config.txt` = 2.
       After reboot: `groups owl` has dialout, ModemManager inactive, `[GPS]` is
       nrf91 / /dev/ttyAMA3 / 460800, `journalctl -u owl -f` shows `nRF91 GPS started`.
-- [ ] Negative: remove `gpio=26=op,dh`, reboot, `--ship-gps` -> NOT SHIP-READY
+- [ ] Negative: remove `gpio=26=op,dh`, reboot, `--factory` -> NOT SHIP-READY
       naming the nRF9151, dev cleanup skipped.
 - [ ] With sky view: app/dashboard line shows `OWL GPS timing` and a speed;
       saved images carry GPS EXIF with HPositioningError. Pull the antenna:
@@ -575,3 +576,186 @@ Next steps:
       and record whether `#XGPS:`/`#XGNSSPOS:` lines or `$G...` NMEA arrive,
       and the time to first fix. Stop with `AT#XGPS=0` and `AT+CFUN=0`.
 
+
+## Part 14 — v3.19.0 identity, claim and cloud: the ship gate
+
+Rewritten 2026-09-17 after the cross-repo review (`Noktura/docs/owl/OWL_CLAIM_MVP_REVIEW-2026-09-17.md`).
+This part is the ship gate for the prototype: every box ticked on the unit that
+ships, with a Google-only tester account. Record results (dates, versions,
+anything odd) inline.
+
+### A. Before the bench (Guy, once)
+
+- [ ] **Broker certificate.** From the laptop:
+      `openssl s_client -connect mqtt.noktura.tech:8883 -servername mqtt.noktura.tech </dev/null 2>/dev/null | openssl x509 -noout -dates -issuer`.
+      `notAfter` is more than 30 days away. On the CX33, confirm renewal is automatic
+      (`systemctl list-timers | grep -i certbot`, or the renewal cron) and that
+      mosquitto reloads the renewed certificate.
+- [ ] **Supabase.** Authentication → URL Configuration → Redirect URLs contains
+      `owlapp://auth-callback`. Google provider enabled.
+- [ ] **Migration 112.** Locally: `cd Noktura/apps/web && bash scripts/test-db/reset-local-db.sh && pnpm test:db`
+      (26 pass). Then paste `packages/database/migrations/112_owl_identity_claim_mvp.sql` into the
+      Supabase SQL Editor and run the verification query at the bottom (`t,t,f,f,f,f,f`).
+- [ ] **Deploy Noktura** (`feat/owl-claim-mvp` merged, Vercel green) and **rebuild the worker** on the
+      CX33: `git pull && docker compose build && docker compose up -d`, then
+      `docker logs noktura-worker --tail 50` shows the MQTT service connected.
+- [ ] **Factory token.** `cd Noktura/apps/web && pnpm tsx scripts/mint-factory-token.ts --name guy-laptop --scopes devices:provision`.
+      Save the printed `nkt_factory_…` in the password manager and in a 0600 file on the laptop.
+- [ ] **APK.** `cd owl-app/android && ./gradlew assembleRelease -PnokturaAnonKey=<publishable key>`
+      (or `assembleDebug` for the bench phone). App version 0.4.0.
+- [ ] **Accounts.** A tester account that exists only through **Google** (never set a password),
+      and your admin account.
+
+### B. The unit (production CM5 carrier)
+
+1. [ ] **OTP spike first.** `rpi-fw-crypto --help` works. Record the package version.
+       `echo hi > p.bin; sudo bash owl_identity.sh --otp` → type `GENKEY` (permanent, once per board).
+       Expect `tier: otp`, a 64-hex fingerprint, `lock_device_private_key=1` in
+       `/boot/firmware/config.txt`. Then
+       `sudo bash owl_identity.sh --sign p.bin > sig.der && openssl dgst -sha256 -verify /etc/owl-identity/device.pub -signature sig.der p.bin`
+       → `Verified OK`.
+2. [ ] **Identity to the laptop.** `sudo bash owl_identity.sh --show > identity.json`, copy it over.
+3. [ ] **Register.** On the laptop:
+       `bash tools/noktura_register.sh --identity identity.json --batch PROTO-2026-09 --token-file ~/.noktura_factory_token --ready`
+       → serial, claim code, `claim_card_<serial>.html`. Print the card. `/admin/fleet` shows the
+       unit under **Awaiting claim** with tier otp and origin factory.
+       Run the same command again: same serial, `state=ready_to_ship`, **no** code (N13).
+4. [ ] **Ship build.** On the unit (SSH, not sudo): `bash owl_setup.sh --factory --yes`, follow
+       `~/owl_setup.log`. Expect `[SHIP-READY]` with `Identity: otp tier, fingerprint <16 hex>…`
+       matching the first 16 characters of the fingerprint in `identity.json`.
+       Checks after it finishes: `ls -l /usr/local/lib/owl/owl_cloud_provision.sh` is `root root`
+       755; `sudo cat /usr/local/sbin/owl-cloud-provision` references
+       `/usr/local/lib/owl/` and nothing under `~/owl` as the script it runs;
+       `/etc/sudoers.d/95-owl-cloud-provision` is 440; `ss -tln` shows `127.0.0.1:1883` only.
+5. [ ] **Gate negative (spare board or before OTP on a dev board):** with no `device.pub`,
+       `bash owl_setup.sh --factory --yes` stops immediately with `[NOT SHIP-READY] No hardware
+       identity`, nothing installed.
+6. [ ] Focus the camera. `sudo shutdown now`. Power on again: the `OWL-XXXX` hotspot appears.
+
+### C. Dry run as the farmer (tester phone, Google account)
+
+7. [ ] **Sign in with Google.** App → Account → Continue with Google → browser → back in the app
+       signed in. Kill and reopen the app: still signed in (Keystore session).
+8. [ ] **Setup and claim.** Add OWL → join the hotspot → check screen → claim step shows the
+       serial found by fingerprint, "Matches Noktura record", not yet claimed. Type the code from
+       the card (dashes and lower case are fine). Claim → "Connecting to Noktura" → cloud card
+       shows the site. If it says **Waiting for the clock**, continue; it clears once the unit is
+       on the internet.
+9. [ ] **Second phone refused.** While the tester phone is mid-setup, open the app on another phone
+       and join the same hotspot: it shows "Setup is in progress on another phone" (409).
+10. [ ] **Wi-Fi or standalone finish.** Finish setup as the farmer would. Within about 60 s of the
+       unit reaching the internet: `/devices` for the tester shows it **online**; `/admin/fleet`
+       shows it in its site table, no longer under Claimed, not connected; the device row state is
+       `active` (N-1).
+11. [ ] **Portal commands** from the tester's `/devices/<id>`: session list refreshes; transfer a
+       session (completes, then auto `delete_session`); previews appear; `set_model` and
+       `download_model` succeed (if a model is configured); `restart_service` and `reboot`
+       both come back online. Updates tab: typing `main` is refused in the UI; a `vX.Y.Z` tag
+       update completes.
+12. [ ] **Cloud command filter.** Journal on the unit (`journalctl -u owl -f`) while an admin
+       publishes `{"action":"set_detection_enable","value":true}` to the unit's command topic:
+       logged as dropped, detection unchanged.
+13. [ ] **Credential already issued.** App → device settings → Cloud → reconnect: `credential_already_issued`,
+       Rotate offered; Rotate → bridge reconnects (`journalctl -u mosquitto | grep -i bridge`).
+14. [ ] **Wrong codes.** On a second registered unit (or after release, step 16): 5 wrong codes →
+       the app shows "try again in N minutes". Another account's wrong codes do not block the
+       tester.
+15. [ ] **LAN broker closed.** From a laptop on the same network:
+       `mosquitto_pub -h <unit ip> -p 1883 -t owl/commands -m x` → connection refused.
+
+### D. Release and reclaim (proves the unit can be handed on)
+
+16. [ ] `/admin/fleet` → Release on the unit. If it refuses because of history, tick **Also delete
+       history** (bench unit only). Copy the new code shown once.
+       Within about 60 s: the unit's bridge login is refused
+       (`journalctl -u mosquitto | grep -i "not authorised\|connection refused"`), `/devices` for the
+       tester no longer lists it, the unit is back under **Awaiting claim**.
+17. [ ] Reclaim with the new code from the tester app (device settings → Cloud → claim). The same
+       site (`owl-2026-…`) is re-issued with a new password (Noktura N-18) and the bridge comes
+       back; no `replace` prompt, because the site name is unchanged.
+18. [ ] Print a fresh card with the new code for the box (`noktura_register.sh` only returns the
+       code while the unit is `provisioned`, so write the new code on the card by hand or reprint
+       from the admin dialog value).
+
+### E. Maker path (Pi 5, optional before ship, required before announcing DIY support)
+
+19. [ ] `bash owl_setup.sh` → answer `y` to "Create a device identity" → tier disk.
+20. [ ] App (third account) → device settings → Cloud → **Add this OWL to my account** → registered as
+       community, cloud connects. `/admin/fleet` shows the Community badge.
+21. [ ] Release it in admin: the record is deleted; the same Pi can register again.
+
+### F. Box it
+
+22. [ ] Re-run step 16 so the shipped unit is unclaimed with a code only on the printed card, or
+       leave it claimed to the farmer's real account if they have signed in with you.
+23. [ ] `sudo shutdown now` (never pull power), box with the card.
+
+---
+
+## Part 15 — v3.20.0 networked data-collection rig (RUT951 + controller + 2 OWLs)
+
+Fresh clones of `field-3.20` (push the branch first: `git ls-remote --heads origin field-3.20`).
+Never run on the rig: `owl_setup.sh --factory`, `install_firstboot.sh --arm`, `dev/clean.sh`,
+`owl_identity.sh --otp`, `tools/noktura_register.sh`.
+
+### A. Before you start
+
+1. [ ] Controller: Raspberry Pi OS Trixie **Desktop** (the kiosk needs labwc). OWLs: Trixie Lite or
+       Desktop. User `owl`, internet during setup. Prefer Ethernet into the RUT951 LAN ports
+       (default 192.168.1.1/24, DHCP from .100, so .2/.11/.12 are free).
+2. [ ] Run every setup inside `tmux` (or on a local console): the network switch drops SSH and
+       would kill the script half way.
+3. [ ] Reused OWL Pis only: `ls /boot/firmware/owl-firstboot.flag` must fail. If it exists:
+       `sudo bash owl/controller/setup/install_firstboot.sh --disarm` (an armed unit locks
+       detection and brings its hotspot back).
+4. [ ] Clone into `~/owl` exactly (the OWL scripts expect that path).
+
+### B. Controller
+
+```
+sudo apt install -y git tmux && tmux
+git clone -b field-3.20 https://github.com/geezacoleman/OpenWeedLocator owl
+sudo bash owl/controller/networked/in-cab_controller_setup.sh
+```
+5. [ ] Connection `2` (Ethernet) · static IP Enter (192.168.1.2) · gateway Enter · hostname Enter ·
+       kiosk `y` · **dashboard `2` (Data collection)** · display `1` (HMI3010) or `4` (EDATEC 7") ·
+       GPS `2` with a USB GNSS (else `1`: capture falls back to time spacing) · boom width ·
+       continue `y` · reboot `y`.
+
+### C. Each OWL (owl-1 = .11, owl-2 = .12)
+
+```
+sudo apt install -y git tmux && tmux
+git clone -b field-3.20 https://github.com/geezacoleman/OpenWeedLocator owl
+bash owl/owl_setup.sh          # not sudo
+```
+6. [ ] GoG `n` · controller type Enter (`none`: a Ute switch would override the collect hold) ·
+       web dashboard **`y`** · mode **`2` (Networked)** · OWL ID **`1` then `2`** · Ethernet ·
+       static IP `.11` / `.12` · gateway and controller IP Enter · VNC `n` · continue `y` ·
+       **Reboot now `n`** · device identity `N` · focus `n`. Then `sudo reboot`.
+
+### D. Verify on the bench
+
+7. [ ] Controller: `mosquitto_sub -h localhost -t 'owl/+/state' -C 2` shows `owl-1` and `owl-2`.
+8. [ ] Kiosk opens the collect screen; both OWLs listed; no `not_recording` warning before Start.
+9. [ ] Record modal: no crop preselected, Start disabled until a crop is tapped. Start → both OWLs
+       record, detection stays off (`detection_enable` false in state), thumbnails and map points
+       arrive. Reboot owl-2 mid-run → it rejoins recording **with the run's labels** (check the
+       new session's `session_metadata.json`).
+10. [ ] Unplug owl-2's camera or stop `owl.service` mid-run → a red warning within ~10 s.
+11. [ ] Stop → the next Start pre-fills the last crop/weather/light/purpose (they live in
+        `CONTROLLER.ini [Collect] last_*`), also after a controller reboot.
+12. [ ] "Full control" tab (from the collect screen) and the "Collect screen" tab back both work.
+13. [ ] Shutter cap is **off** by default. Only turn it on after `tools/shutter_cap_probe.py` passes
+        on one OWL and a 2-minute drive shows no brightness pumping in the gallery.
+
+### E. Optional: Noktura
+
+Needs migration 114 applied and the rig-upload worker deployed; otherwise upload requests sit at
+"Requested" for 24 h.
+14. [ ] Pair from a laptop on the RUT951 LAN (the kiosk has no keyboard): open
+        `https://192.168.1.2/collect` → Settings → Connect, paste the command from the one-time
+        credential page. Only a `*.noktura.tech` broker is accepted.
+15. [ ] Pull the RUT951 WAN mid-run: detection toggles and heartbeats must stay instant (checks the
+        bridge's DNS retry does not stall the local broker).
+16. [ ] Note 4G use for one hour of running (bridged state is the main cost).

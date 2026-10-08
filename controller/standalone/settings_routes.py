@@ -31,6 +31,8 @@ from flask import Blueprint, jsonify, request
 
 from utils.network_manager import NetworkManagerError
 from utils import software_update
+from utils import cloud_provision
+from utils.device_identity import read_identity
 from utils.internet_probe import probe_internet
 from controller.standalone.network_settings import (
     SWITCH_DELAY_S, TEMP_CON_NAME, TEMP_REVERT_DELAY_S, TEMP_TTL_S)
@@ -191,6 +193,48 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
         except NetworkManagerError as e:
             return {'mode': 'unknown', 'ssid': None, 'ip': None,
                     'error': str(e)}
+
+    # ------------------------------------------------------------------
+    # Identity + cloud (OWL trust chain MVP)
+    # ------------------------------------------------------------------
+    @bp.route('/api/identity')
+    def identity():
+        # Public by design: the serial is on the label and in the hotspot
+        # name, the public key is public. The app compares the fingerprint
+        # with Noktura's record for this serial.
+        return jsonify({'success': True, 'identity': read_identity(include_pem=True)})
+
+    @bp.route('/api/settings/cloud/provision', methods=['POST'])
+    @guard
+    def cloud_provision_route():
+        # Same payload the first-boot API takes at /setup/api/cloud/provision;
+        # this one serves units that were set up before claiming, or that
+        # need a rotated credential. Token-guarded like every mutating route,
+        # and unlike the others it FAILS CLOSED on a unit with no token: the
+        # legacy allow would let anyone on the network re-point the bridge
+        # (cross-repo review 2026-09-17, O-10). setup.sh gives every
+        # standalone unit a token; the app re-earns it via /api/settings/token.
+        if not (token_reader() if token_reader else None):
+            return jsonify({'success': False, 'error': 'device_token_missing',
+                            'detail': 'This OWL has no device token. Re-run '
+                                      'controller/shared/setup.sh or finish '
+                                      'setup in the OWL app.'}), 403
+        data = request.get_json(silent=True) or {}
+        try:
+            cloud_provision.refuse_networked_owl(controller_ini_path)
+            result = cloud_provision.provision(runner, data,
+                                               controller_ini=controller_ini_path)
+        except cloud_provision.NetworkedOwlRefused as e:
+            return jsonify({'success': False, 'error': e.code, 'detail': str(e)}), 409
+        except cloud_provision.CloudSiteConflict as e:
+            return jsonify({'success': False, 'error': 'cloud_site_conflict',
+                            'detail': str(e), 'existing_site': e.existing_site}), 409
+        except ValueError as e:
+            return jsonify({'success': False, 'error': str(e)}), 400
+        except cloud_provision.CloudProvisionError as e:
+            return jsonify({'success': False, 'error': str(e),
+                            'detail': e.detail}), 500
+        return jsonify({'success': True, 'cloud': result})
 
     # ------------------------------------------------------------------
     # Network

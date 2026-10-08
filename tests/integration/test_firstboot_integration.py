@@ -86,8 +86,14 @@ def env(tmp_path, monkeypatch):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 
+    base = f'http://127.0.0.1:{server.server_port}/setup/api'
+    # Contract 5: mutating setup routes need the setup session header.
+    http = requests.Session()
+    token = http.post(f'{base}/session', timeout=5).json()['session']
+    http.headers['X-Setup-Session'] = token
+
     yield SimpleNamespace(
-        base=f'http://127.0.0.1:{server.server_port}/setup/api',
+        base=base, http=http,
         fake=fake, system=system, fb=fb, nm=nm, flag=flag,
         controller_ini=controller_ini, exits=exits)
 
@@ -112,7 +118,7 @@ class TestStartupAndScan:
         # Hotspot back up with the fixed setup PSK
         assert env.fake.hotspot_active()
         assert env.fake.profiles[HOTSPOT]['psk'] == SETUP_HOTSPOT_PSK
-        response = requests.get(f'{env.base}/wifi/scan', timeout=5)
+        response = env.http.get(f'{env.base}/wifi/scan', timeout=5)
         assert response.json()['networks'][0]['ssid'] == 'FarmWiFi'
 
     def test_startup_without_hotspot_profile_does_not_crash_loop(self, env):
@@ -142,14 +148,14 @@ class TestStartupAndScan:
 class TestWifiJoinHandoff:
     def test_join_success_over_real_timers(self, env):
         env.fb.startup()
-        response = requests.post(f'{env.base}/wifi/join',
+        response = env.http.post(f'{env.base}/wifi/join',
                                  json={'ssid': 'FarmWiFi',
                                        'password': 'sunflower1'}, timeout=5)
         assert response.status_code == 202
         assert response.json()['verify']['service_type'] == '_owl-setup._tcp'
 
         def connected():
-            result = requests.get(f'{env.base}/wifi/result', timeout=5).json()
+            result = env.http.get(f'{env.base}/wifi/result', timeout=5).json()
             return result if result['state'] == 'connected' else None
         result = wait_until(connected)
         assert result['ssid'] == 'FarmWiFi'
@@ -163,12 +169,12 @@ class TestWifiJoinHandoff:
     def test_auth_failure_reverts_to_hotspot(self, env):
         env.fb.startup()
         env.fake.join_outcome['FarmWiFi'] = 'auth'
-        requests.post(f'{env.base}/wifi/join',
+        env.http.post(f'{env.base}/wifi/join',
                       json={'ssid': 'FarmWiFi', 'password': 'wrongpass1'},
                       timeout=5)
 
         def failed():
-            result = requests.get(f'{env.base}/wifi/result', timeout=5).json()
+            result = env.http.get(f'{env.base}/wifi/result', timeout=5).json()
             return result if result['state'] == 'failed' else None
         result = wait_until(failed)
         assert result['error'] == 'auth'
@@ -182,12 +188,12 @@ class TestWifiJoinHandoff:
         env.fb.startup()
         env.fake.join_outcome['FarmWiFi'] = 'auth'
         env.fake.hotspot_up_failures = 3
-        requests.post(f'{env.base}/wifi/join',
+        env.http.post(f'{env.base}/wifi/join',
                       json={'ssid': 'FarmWiFi', 'password': 'wrongpass1'},
                       timeout=5)
 
         def failed_no_ap():
-            result = requests.get(f'{env.base}/wifi/result', timeout=5).json()
+            result = env.http.get(f'{env.base}/wifi/result', timeout=5).json()
             return result if result.get('warning') == 'hotspot_unavailable' \
                 else None
         wait_until(failed_no_ap)
@@ -196,10 +202,10 @@ class TestWifiJoinHandoff:
 
     def test_second_join_while_pending_is_409(self, env):
         env.fb.startup()
-        first = requests.post(f'{env.base}/wifi/join',
+        first = env.http.post(f'{env.base}/wifi/join',
                               json={'ssid': 'FarmWiFi',
                                     'password': 'sunflower1'}, timeout=5)
-        second = requests.post(f'{env.base}/wifi/join',
+        second = env.http.post(f'{env.base}/wifi/join',
                                json={'ssid': 'Shed', 'password': 'sunflower1'},
                                timeout=5)
         assert first.status_code == 202
@@ -209,13 +215,13 @@ class TestWifiJoinHandoff:
 class TestControllerJoin:
     def test_full_rig_join(self, env):
         env.fb.startup()
-        response = requests.post(f'{env.base}/controller/join',
+        response = env.http.post(f'{env.base}/controller/join',
                                  json=controller_join_payload(), timeout=5)
         assert response.status_code == 202
         assert response.json()['verify']['static_ip'] == '192.168.1.13'
 
         def connected():
-            result = requests.get(f'{env.base}/wifi/result', timeout=5).json()
+            result = env.http.get(f'{env.base}/wifi/result', timeout=5).json()
             return result if result['state'] == 'connected' else None
         result = wait_until(connected)
         assert result['device_id'] == 'owl-3'
@@ -243,11 +249,11 @@ class TestControllerJoin:
         # report a clean success while the rig never saw a heartbeat.
         env.fb.startup()
         env.system.fail_owl_restart = True
-        requests.post(f'{env.base}/controller/join',
+        env.http.post(f'{env.base}/controller/join',
                       json=controller_join_payload(), timeout=5)
 
         def connected():
-            result = requests.get(f'{env.base}/wifi/result', timeout=5).json()
+            result = env.http.get(f'{env.base}/wifi/result', timeout=5).json()
             return result if result['state'] == 'connected' else None
         result = wait_until(connected)
         assert result['warning'] == 'owl_restart_failed'
@@ -255,7 +261,7 @@ class TestControllerJoin:
     def test_failed_radio_keeps_target_config_and_retry_succeeds(self, env):
         env.fb.startup()
         env.fake.join_outcome['RigNet'] = 'auth'
-        requests.post(f'{env.base}/controller/join',
+        env.http.post(f'{env.base}/controller/join',
                       json=controller_join_payload(), timeout=5)
         wait_until(lambda: env.fb.wifi_state == 'failed')
 
@@ -266,7 +272,7 @@ class TestControllerJoin:
         assert config.get('Network', 'mode') == 'networked'
 
         env.fake.join_outcome['RigNet'] = 'ok'
-        response = requests.post(f'{env.base}/controller/join',
+        response = env.http.post(f'{env.base}/controller/join',
                                  json=controller_join_payload(), timeout=5)
         assert response.status_code == 202
         wait_until(lambda: env.fb.wifi_state == 'connected')
@@ -276,11 +282,11 @@ class TestControllerJoin:
         # mode=networked + the rig broker + an owl-N hostname forever.
         env.fb.startup()
         env.fake.join_outcome['RigNet'] = 'auth'
-        requests.post(f'{env.base}/controller/join',
+        env.http.post(f'{env.base}/controller/join',
                       json=controller_join_payload(), timeout=5)
         wait_until(lambda: env.fb.wifi_state == 'failed')
 
-        response = requests.post(f'{env.base}/hotspot/restore', timeout=5)
+        response = env.http.post(f'{env.base}/hotspot/restore', timeout=5)
         assert response.status_code == 200
         assert env.system.hostname == 'owl-fresh'
         config = configparser.ConfigParser()
@@ -294,7 +300,7 @@ class TestControllerJoin:
 class TestFinish:
     def test_standalone_finish_applies_password_and_tears_down(self, env):
         env.fb.startup()
-        response = requests.post(f'{env.base}/finish',
+        response = env.http.post(f'{env.base}/finish',
                                  json={'mode': 'standalone',
                                        'new_password': 'paddock99'}, timeout=5)
         assert response.status_code == 200
@@ -307,14 +313,14 @@ class TestFinish:
 
     def test_wifi_finish_requires_connected(self, env):
         env.fb.startup()
-        response = requests.post(f'{env.base}/finish',
+        response = env.http.post(f'{env.base}/finish',
                                  json={'mode': 'wifi'}, timeout=5)
         assert response.status_code == 409
         assert env.flag.exists()
 
     def test_rearm_after_finish(self, env):
         env.fb.startup()
-        requests.post(f'{env.base}/finish',
+        env.http.post(f'{env.base}/finish',
                       json={'mode': 'standalone', 'new_password': 'paddock99'},
                       timeout=5)
         wait_until(lambda: env.exits)

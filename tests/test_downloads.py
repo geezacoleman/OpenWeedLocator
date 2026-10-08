@@ -1170,7 +1170,7 @@ class TestUploadSessionMethod:
             f.write(b'\xff\xd8' * 100)
         mqtt_publisher.owl_instance.save_directory = save_dir
 
-    def _capture_upload(self, mqtt_publisher, tmp_path, method):
+    def _capture_upload(self, mqtt_publisher, tmp_path, method, url='https://example.com/upload'):
         self._make_session(mqtt_publisher, tmp_path)
         captured = {}
 
@@ -1186,7 +1186,7 @@ class TestUploadSessionMethod:
 
         with patch('urllib.request.urlopen', side_effect=mock_urlopen):
             mqtt_publisher._upload_session(
-                '20260611', ['images'], 'https://example.com/upload', method
+                '20260611', ['images'], url, method
             )
         return captured
 
@@ -1218,12 +1218,22 @@ class TestUploadSessionMethod:
         assert req.has_header('X-owl-device-id')
         assert req.has_header('X-owl-session-date')
 
-    def test_post_keeps_self_signed_tls(self, mqtt_publisher, tmp_path):
+    def test_post_to_lan_controller_accepts_its_self_signed_tls(self, mqtt_publisher, tmp_path):
         import ssl
-        captured = self._capture_upload(mqtt_publisher, tmp_path, 'POST')
+        captured = self._capture_upload(mqtt_publisher, tmp_path, 'POST',
+                                        url='https://192.168.1.2/api/sessions/upload')
         ctx = captured['context']
         assert ctx.verify_mode == ssl.CERT_NONE
         assert ctx.check_hostname is False
+
+    def test_post_to_a_public_host_is_verified(self, mqtt_publisher, tmp_path):
+        # O-9 (cross-repo review 2026-09-17): POST used to skip verification on
+        # every host, including public ones reachable from a cloud command.
+        import ssl
+        captured = self._capture_upload(mqtt_publisher, tmp_path, 'POST')
+        ctx = captured['context']
+        assert ctx.verify_mode == ssl.CERT_REQUIRED
+        assert ctx.check_hostname is True
 
     def test_put_accepts_204_no_content(self, mqtt_publisher, tmp_path):
         self._make_session(mqtt_publisher, tmp_path)

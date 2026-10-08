@@ -53,7 +53,7 @@ class TestVersionFields:
         for key in ('version', 'git_branch', 'git_commit'):
             assert key in data, key
         assert data['version'] == dashboard.version_info['version']
-        assert data['contract_version'] == 4
+        assert data['contract_version'] == 5
 
 
 @pytest.mark.unit

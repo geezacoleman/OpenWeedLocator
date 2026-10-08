@@ -12,6 +12,8 @@
  * Usage from other modules:
  *   Numpad.open(inputEl)   — programmatic open
  *   Numpad.close()         — dismiss without applying
+ *   Numpad.setLocale(lang, labels) — 'da' adds æ ø å to the keyboard;
+ *                            labels = {cancel, ok} for the action buttons
  */
 
 const Numpad = (() => {
@@ -25,6 +27,8 @@ const Numpad = (() => {
     let activeInput = null;
     let value = '';
     let _isOpen = false;
+    let _danish = false;
+    let _labels = { cancel: 'Cancel', ok: 'OK' };
 
     // ── Build DOM ──────────────────────────────────────────────
 
@@ -60,8 +64,8 @@ const Numpad = (() => {
                 '</div>' +
                 // ── Shared actions ──
                 '<div class="numpad-actions">' +
-                    '<button class="numpad-cancel">Cancel</button>' +
-                    '<button class="numpad-ok">OK</button>' +
+                    '<button class="numpad-cancel">' + _labels.cancel + '</button>' +
+                    '<button class="numpad-ok">' + _labels.ok + '</button>' +
                 '</div>' +
             '</div>';
 
@@ -89,8 +93,9 @@ const Numpad = (() => {
     function _buildKeyboardRows() {
         var rows = [
             { keys: '1234567890'.split(''), cls: '' },
-            { keys: 'qwertyuiop'.split(''), cls: '' },
-            { keys: 'asdfghjkl'.split(''), cls: 'keyboard-row--offset' },
+            // Danish layout puts å after p and æ ø after l
+            { keys: ('qwertyuiop' + (_danish ? 'å' : '')).split(''), cls: '' },
+            { keys: ('asdfghjkl' + (_danish ? 'æø' : '')).split(''), cls: 'keyboard-row--offset' },
             { keys: 'zxcvbnm'.split(''), cls: 'keyboard-row--offset2',
               extra: '<button class="kb-btn kb-btn--wide" data-action="backspace">&larr;</button>' },
             { special: true }
@@ -283,5 +288,14 @@ const Numpad = (() => {
         });
     }
 
-    return { init: init, open: open, close: close };
+    function setLocale(lang, labels) {
+        _danish = lang === 'da';
+        if (labels) _labels = Object.assign({}, _labels, labels);
+        if (!overlay) return;
+        keyboardGrid.innerHTML = _buildKeyboardRows();
+        overlay.querySelector('.numpad-cancel').textContent = _labels.cancel;
+        overlay.querySelector('.numpad-ok').textContent = _labels.ok;
+    }
+
+    return { init: init, open: open, close: close, setLocale: setLocale };
 })();

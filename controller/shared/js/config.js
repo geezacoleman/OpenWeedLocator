@@ -46,7 +46,8 @@ const CONFIG_FIELD_DEFS = {
         'crop_top': { type: 'number', step: 0.01, min: 0, max: 0.49, help: 'Crop inset from top edge (fraction)' },
         'crop_bottom': { type: 'number', step: 0.01, min: 0, max: 0.49, help: 'Crop inset from bottom edge (fraction)' },
         'camera_type': { type: 'select', options: ['auto', 'rpi', 'usb'], help: 'Camera type (auto detects Pi camera or USB webcam)' },
-        'allow_high_resolution': { type: 'boolean', help: 'Bypass the 832x640 safety clamp on Pi 3/4. Only enable if you have verified your hardware handles the target resolution.' }
+        'allow_high_resolution': { type: 'boolean', help: 'Bypass the 832x640 safety clamp on Pi 3/4. Only enable if you have verified your hardware handles the target resolution.' },
+        'max_gain': { type: 'select', options: ['auto', '4', '8', '16'], help: 'Gain limit while the shutter cap is active. Lower = less noise but darker images in poor light.' }
     },
     'GreenOnBrown': {
         'exg_min': { type: 'number', min: 0, max: 255 },
@@ -83,7 +84,15 @@ const CONFIG_FIELD_DEFS = {
         'storage_location': { type: 'select', options: ['auto', 'usb', 'internal'], help: 'Where recordings go: auto (default; USB if present, else internal with the free-space floor), usb (drive in /media required), internal (eMMC/SD, sealed units)' },
         'internal_save_directory': { type: 'text', help: 'Recording path for internal storage mode' },
         'min_free_gb': { type: 'number', min: 1, max: 100, help: 'Internal mode: recording stops when free disk space falls below this (GB)' },
-        'image_quota_gb': { type: 'number', min: 1, max: 1000, help: 'Image allowance shown on the storage bar (GB, display only)' }
+        'image_quota_gb': { type: 'number', min: 1, max: 1000, help: 'Image allowance shown on the storage bar (GB, display only)' },
+        'sample_mode': { type: 'select', options: ['frames', 'distance', 'time'], help: 'Which frames are saved: every sample_frequency frames, every sample_distance_m of GPS travel, or every sample_interval_s' },
+        'sample_distance_m': { type: 'number', step: 0.1, min: 0.05, max: 50, help: 'Distance mode: metres travelled between images (GPS speed x time)' },
+        'sample_interval_s': { type: 'number', step: 0.1, min: 0.1, max: 60, help: 'Time mode, and distance mode without a fresh GPS speed: seconds between images' },
+        'jpeg_quality': { type: 'number', min: 50, max: 100, help: 'JPEG quality of saved images' },
+        'record_mode': { type: 'select', options: ['images', 'video'], help: 'images, or one video clip per recording that stops at video_max_s' },
+        'video_max_s': { type: 'number', min: 5, max: 60, help: 'Video clip length limit (seconds)' },
+        'shutter_cap': { type: 'boolean', help: 'Limit the shutter time so ground movement during one exposure stays under smear_limit_mm; gain rises instead. Released when GPS speed is missing.' },
+        'smear_limit_mm': { type: 'number', step: 0.1, min: 0.1, max: 20, help: 'Blur limit: millimetres of ground movement per image (GPS speed x exposure)' }
     },
     'Controller': {
         'controller_type': { type: 'select', options: ['none', 'ute', 'advanced', 'networked'] },
@@ -131,7 +140,8 @@ const CONFIG_FIELD_DEFS = {
         'username': { type: 'text', help: 'Cloud bridge username (managed by owl_cloud_provision.sh)' },
         'ca_cert': { type: 'text', help: 'CA certificate path for the cloud broker' },
         'password_file': { type: 'text', help: 'Path to bridge password file (mode 600)' },
-        'portal_url': { type: 'text', help: 'Noktura web portal base URL (optional). Enables a manage link + QR to <portal_url>/d/<device_id>' }
+        'portal_url': { type: 'text', help: 'Noktura web portal base URL (optional). Enables a manage link + QR to <portal_url>/d/<device_id>' },
+        'storage_host': { type: 'text', help: 'Uploads requested by the cloud are only sent to this host (blank = accept the host in the command)' }
     },
     'Tracking': {
         'tracking_enabled': { type: 'boolean', help: 'Enable weed tracking (class smoothing + crop mask persistence)' },

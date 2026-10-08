@@ -704,24 +704,24 @@ class TestSessionMetadataFlow:
             assert input_id in js, f"JS does not reference input #{input_id}"
 
     def test_networked_send_command_has_metadata_case(self):
-        """networked.py send_command must explicitly spread the four fields
-        into the MQTT payload — the fallback handler nests value={} which
-        the OWL handler won't read."""
+        """networked.py send_command must spread the fields flat into the MQTT
+        payload (the fallback handler nests value={}, which the OWL handler
+        won't read), using the shared field list."""
         py = (PROJECT_ROOT / 'controller' / 'networked' / 'networked.py').read_text(encoding='utf-8')
         assert "action == 'set_session_metadata'" in py, (
             "networked.py send_command missing explicit set_session_metadata branch"
         )
-        for key in self.METADATA_KEYS:
-            assert f"'{key}'" in py, f"networked.py metadata payload missing key {key!r}"
+        assert "'action': 'set_session_metadata', **clean_session_metadata(value)" in py
 
     def test_owl_handler_reads_same_keys(self):
-        """utils/mqtt_manager.py must read the same four keys it's sent."""
+        """utils/mqtt_manager.py reads the shared field list, which must keep
+        every key the full dashboard's modal sends."""
         py = (PROJECT_ROOT / 'utils' / 'mqtt_manager.py').read_text(encoding='utf-8')
         assert "action == 'set_session_metadata'" in py
+        assert 'clean_session_metadata(command)' in py
+        from utils.session_metadata import SESSION_METADATA_FIELDS
         for key in self.METADATA_KEYS:
-            assert f"command.get('{key}'" in py, (
-                f"mqtt_manager.py handler does not read key {key!r} from command"
-            )
+            assert key in SESSION_METADATA_FIELDS, f"shared metadata fields missing {key!r}"
 
 
 @pytest.mark.unit

@@ -25,8 +25,10 @@ import urllib.error
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from utils.mqtt_manager import DashMQTTSubscriber
+from utils.session_metadata import clean_session_metadata
 from utils.input_manager import get_rpi_version
-from utils.device_identity import get_device_serial
+from utils.device_identity import get_device_serial, read_identity
+from utils import cloud_provision
 from utils.directory_manager import (scan_sessions, stream_zip,
                                      read_session_locations,
                                      scan_exif_locations, read_session_tracks)
@@ -383,7 +385,13 @@ class OWLDashboard:
             never at repo files the dashboard user can edit). The helper
             just touches the first-boot flag; the setup service restores
             the rest itself at startup.
+
+            Token-guarded (cross-repo review 2026-09-17, O-19): re-arming resets
+            the hotspot to the public setup password on the next boot.
             """
+            denied = self._check_device_token()
+            if denied is not None:
+                return denied
             helper = '/usr/local/sbin/owl-firstboot-arm'
             if not os.path.exists(helper):
                 return jsonify({'success': False,
@@ -965,6 +973,7 @@ class OWLDashboard:
             if not stats['owl_running'] and mqtt_state.get('owl_running', False):
                 stats['owl_running'] = True
 
+            cloud = cloud_provision.read_cloud_config(self.controller_ini_path)
             stats.update({
                 'detection_mode': mqtt_state.get('detection_mode', 1),  # 0=spot, 1=off, 2=blanket
                 'algorithm': mqtt_state.get('algorithm', 'exhsv'),
@@ -1023,17 +1032,26 @@ class OWLDashboard:
                 'allow_high_resolution': mqtt_state.get('allow_high_resolution', False),
                 # Hardware
                 'rpi_version': mqtt_state.get('rpi_version', 'unknown'),
-                # Cloud (Noktura) link — for the connectivity indicator
-                'cloud_enabled': self.cloud_enable,
+                # Cloud (Noktura) link — for the connectivity indicator.
+                # Read from [Cloud] per request: the app provisions the
+                # cloud while the dashboard is running.
+                'cloud_enabled': cloud['enabled'],
                 'cloud_connected': self.mqtt_client.get_cloud_connected() if self.mqtt_client else None,
-                'cloud_device_id': self.cloud_device_id,
-                'cloud_portal_url': self.cloud_portal_url,
+                'cloud_device_id': cloud['device_id'] or '',
+                'cloud_portal_url': cloud['portal_url'] or '',
+                # False = NTP has not set the clock, so the bridge's TLS
+                # cannot connect yet (no RTC on the Pi). None = unknown.
+                'clock_synced': cloud_provision.clock_synced() if cloud['enabled'] else None,
                 # Device identity — the phone app dedupes saved OWLs on
                 # these (additive fields, no contract bump). The serial is
                 # the strong key; hostname defaults (owl-1) collide across
                 # self-installed units.
                 'hostname': socket.gethostname(),
                 'device_serial': get_device_serial(),
+                # Trust-chain identity (additive): tier, key fingerprint,
+                # Noktura serial. The app's Cloud card compares the
+                # fingerprint with Noktura's record for this serial.
+                'identity': read_identity(),
             })
 
             return jsonify(stats)
@@ -1502,11 +1520,9 @@ class OWLDashboard:
         def get_session_metadata():
             """Get current session metadata from MQTT state."""
             if not self.mqtt_client:
-                return jsonify({'field_name': '', 'crop': '', 'weather': '', 'vehicle': ''})
+                return jsonify(clean_session_metadata({}))
             state = self.mqtt_client.get_state()
-            return jsonify(state.get('session_metadata', {
-                'field_name': '', 'crop': '', 'weather': '', 'vehicle': ''
-            }))
+            return jsonify(clean_session_metadata(state.get('session_metadata')))
 
         @self.app.route('/api/session/metadata', methods=['POST'])
         def set_session_metadata():
@@ -1516,11 +1532,7 @@ class OWLDashboard:
             try:
                 data = request.get_json() or {}
                 result = self.mqtt_client._send_command('set_session_metadata',
-                    field_name=data.get('field_name', ''),
-                    crop=data.get('crop', ''),
-                    weather=data.get('weather', ''),
-                    vehicle=data.get('vehicle', ''),
-                )
+                                                        **clean_session_metadata(data))
                 return jsonify(result)
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)}), 500

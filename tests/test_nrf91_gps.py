@@ -220,12 +220,12 @@ class TestNrf91Wiring:
         fn = script.split('configure_gps_uart() {', 1)[1].split('\n}\n', 1)[0]
         assert "tr -d '\\0' < /proc/device-tree/model" in fn
 
-    def test_ship_gps_uses_bench_values_and_boot_config(self):
+    def test_factory_gps_uses_bench_values_and_boot_config(self):
         script = (REPO / 'owl_setup.sh').read_text(encoding='utf-8')
         assert 'NRF_GPS_SOURCE="nrf91"' in script
         assert 'NRF_GPS_PORT="/dev/ttyAMA3"' in script
         assert 'NRF_GPS_BAUD="460800"' in script
-        fn = script.split('setup_ship_gps() {', 1)[1].split('\n}\n', 1)[0]
+        fn = script.split('setup_factory_gps() {', 1)[1].split('\n}\n', 1)[0]
         assert 'install_firstboot.sh" --gps-config' in fn
         assert '-crtscts' in fn
 

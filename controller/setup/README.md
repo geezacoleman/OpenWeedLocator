@@ -8,6 +8,13 @@ This directory is **not** the standalone controller — it is a small,
 self-terminating Flask API (`setup_app.py`, port 8088) that only exists while
 the first-boot flag is present.
 
+> **v3.19.0 (2026-09-17):** the ship command is `bash owl_setup.sh --factory`,
+> the setup API is served over HTTPS with a setup session, and the phone app can
+> claim the unit in Noktura and connect it to the cloud during setup. These
+> changes come from the cross-repo review of 2026-09-17 (Noktura session, decisions
+> by Guy); finding IDs such as `O-1` refer to `Noktura/docs/owl/OWL_CLAIM_MVP_REVIEW-2026-09-17.md`.
+> See "Scripts and lifecycle" below.
+
 ## Lifecycle
 
 ```
@@ -33,6 +40,19 @@ All endpoints are JSON under `/setup/api/`; errors are
 `{"success": false, "error": "..."}`. See the `API.md` contract in the
 owl-app repo for full request/response shapes.
 
+**Transport (contract 5, O-5):** `https://10.42.0.1:8088` with the dashboard's
+self-signed certificate (`/etc/ssl/certs/owl.crt`, written by
+`controller/shared/setup.sh`). A dev machine without the certificate falls back
+to plain HTTP and logs an error.
+
+**Setup session (contract 5, O-5):** the first phone to `POST /setup/api/session`
+gets a token (201; the same phone re-opening gets 200). Every route that changes
+the unit (`wifi/join`, `controller/join`, `hotspot/restore`, `finish`,
+`cloud/provision`) needs it in `X-Setup-Session`, else `403
+setup_session_required`. Another phone gets `409 setup_in_use` until the session
+has been idle for 10 minutes or the service restarts. `GET` routes stay open so
+the app can identify the unit first.
+
 **Contract versioning:** `info` (and the fleet controller descriptor, and
 the standalone dashboard's `system_stats`) carry `contract_version`
 (`APP_CONTRACT_VERSION` in `version.py`). The phone app checks it on first
@@ -42,7 +62,9 @@ fields don't bump; old servers without the field are treated as version 1.
 
 | Endpoint | Method | Purpose |
 |---|---|---|
-| `/setup/api/info` | GET | device id, version, `contract_version`, hotspot, camera check, owl.service state |
+| `/setup/api/session` | POST | open or re-open the setup session → `{session}` (201 new, 200 same phone), 409 `setup_in_use` |
+| `/setup/api/info` | GET | device id, version, `contract_version`, hotspot, camera check, owl.service state, `identity` (`hw_id`, `tier` otp\|disk\|none, key `fingerprint`, `noktura_serial`), `cloud` (read from `[Cloud]` in `CONTROLLER.ini`, O-18; null until provisioned) and `clock_synced` (NTP state from `timedatectl`) |
+| `/setup/api/identity` | GET | identity plus the public key PEM (`public_key`); the app sends it to Noktura when a maker registers a unit Noktura has never seen |
 | `/setup/api/camera/frame` | GET | single JPEG (proxy of owl.py :8001) |
 | `/setup/api/camera/stream` | GET | MJPEG stream proxy |
 | `/setup/api/camera/diagnostics` | GET | sensor-level triage when no frames arrive: `status` is `ok` \| `overlay_missing` (dtoverlay not in config.txt) \| `probe_failed` (kernel saw the sensor but it didn't come up; `-121` in `detail` = I2C NACK) \| `no_rpicam` |
@@ -53,6 +75,7 @@ fields don't bump; old servers without the field are treated as version 1.
 | `/setup/api/hotspot/restore` | POST | abandon client attempt, re-raise the AP |
 | `/setup/api/controller/join` | POST | join a rig: `{ssid, password, device_id, static_ip, gateway, subnet_prefix, broker_ip, broker_port, dns?}` (identity assigned by the controller's `/api/fleet/reserve`; IPs and int ranges validated) → 202, switch 5 s later |
 | `/setup/api/finish` | POST | `{mode: standalone\|wifi\|controller, new_password?}` → teardown |
+| `/setup/api/cloud/provision` | POST | session required. The bridge credential the app received from Noktura (`{broker_host, broker_port, device_id, username, password, portal_url, storage_host, replace?}`) → root helper `/usr/local/sbin/owl-cloud-provision`, which runs the root-owned copy `/usr/local/lib/owl/owl_cloud_provision.sh` (O-1; password on stdin, never argv). Can take up to ~120 s (mosquitto install/restart). 400 bad payload, 409 `cloud_site_conflict` when the unit is already on a different Noktura site and `replace` is not true, 500 helper failure with `detail` |
 
 ## Controller join (networked rigs)
 
@@ -68,7 +91,7 @@ still held, and a retry re-runs only the switch. An **abandoned** join is
 different: `POST /setup/api/hotspot/restore` rolls the identity back
 (pre-join `CONTROLLER.ini` backup + hostname), so a cancelled wizard never
 leaves the OWL pointed at a rig it never joined.
-Verification polls `http://<static_ip>:8088/setup/api/wifi/result`.
+Verification polls `https://<static_ip>:8088/setup/api/wifi/result`.
 
 ## If the setup service can't start
 
@@ -86,25 +109,107 @@ The Pi's radio cannot scan while it is an access point. `startup()` scans once
 before raising the AP (no phone is connected yet, so nothing drops).
 `?rescan=true` knowingly cycles the AP; the app warns the user and reconnects.
 
+## Scripts and lifecycle
+
+Added 2026-09-17 (cross-repo review, O-16 to O-21 and the "one ship path"
+decision). Which script does what, who runs it, and where state lives.
+
+| Script | Run by | As | Does |
+|---|---|---|---|
+| `owl_setup.sh` | person | user (never sudo) | Full install. No option: maker install (interactive). `--factory [--yes]`: the only ship command. |
+| `owl_identity.sh` | person | root | Device identity in `/etc/owl-identity/`. `--otp` (CM5/Pi 5 OTP key, permanent, type `GENKEY`), `--disk` (key file, makers), `--show` (JSON), `--serial OWL-…` (optional local label), `--sign FILE` (bench spike). No other script writes identity. |
+| `controller/shared/setup.sh` | `owl_setup.sh` (or a person re-running network setup) | root | Hotspot/network, dashboard, nginx certificate, device token, and for every standalone unit the cloud helper. Preserves `[Cloud]` and `[Security]` when it rewrites `CONTROLLER.ini` (O-17). |
+| `controller/setup/install_firstboot.sh` | `owl_setup.sh` / `setup.sh` | root | `--arm` / `--disarm` first boot, `--camera-config`, `--gps-config`, `--cloud-helper`. |
+| `owl_cloud_provision.sh` | the root helper (phone app), or a person for manual rigs | root | Mosquitto bridge to Noktura, `[Cloud]`, credentials in `~/.owl/cloud`. |
+| `owl_update.sh` | dashboard / cloud `update_software` | user (systemd-run) | git + pip update with rollback. Does **not** refresh the root helper copy (O-23): after an update that changes `owl_cloud_provision.sh`, run `sudo bash controller/setup/install_firstboot.sh --cloud-helper`. |
+| `tools/noktura_register.sh` | Guy / factory, **laptop only** | laptop user | Registers an identity with Noktura using the factory token; prints the serial, claim code and a claim card. |
+| `dev/clean.sh` | `owl_setup.sh --factory` (last step, detached) | root | Strips dev residue before boxing. |
+
+```mermaid
+flowchart TB
+  subgraph FACTORY["Factory / bench (production CM5 carrier)"]
+    F1["1. sudo bash owl_identity.sh --otp"]
+    F2["2. sudo bash owl_identity.sh --show &gt; identity.json"]
+    F3["3. laptop: tools/noktura_register.sh --identity identity.json --ready"]
+    F4["4. bash owl_setup.sh --factory --yes<br/>identity gate, GPS, first boot armed, SHIP-READY, clean"]
+    F1 --> F2 --> F3 --> F4
+  end
+  subgraph MAKER["Maker (Pi 4/5 or CM5)"]
+    M1["bash owl_setup.sh"]
+    M2["prompt: create a device identity? -&gt; owl_identity.sh --disk"]
+    M3["setup.sh standalone: device token + cloud helper"]
+    M1 --> M2 --> M3
+  end
+  subgraph APP["Phone app (setup wizard, or device settings later)"]
+    A1["sign in to Noktura (Google or password)"]
+    A2["read identity from the unit"]
+    A3["Noktura: look up the serial by fingerprint"]
+    A4["factory unit: type the claim code"]
+    A5["unknown unit: Add this OWL to my account (community)"]
+    A6["Noktura: cloud credential"]
+    A7["unit: POST /setup/api/cloud/provision (session)<br/>or /api/settings/cloud/provision (device token)"]
+    A1 --> A2 --> A3
+    A3 --> A4 --> A6
+    A3 --> A5 --> A6
+    A6 --> A7
+  end
+  F4 --> A2
+  M3 --> A2
+  A7 --> H["/usr/local/sbin/owl-cloud-provision (root)<br/>-&gt; /usr/local/lib/owl/owl_cloud_provision.sh"]
+  H --> B["mosquitto bridge once NTP has synced -&gt; Noktura marks the unit active"]
+```
+
+**Where state lives on the unit:**
+- Identity: `/etc/owl-identity/` (`device.pub`, `tier`, `device.key` for the disk tier only, optional `noktura_serial`).
+- Cloud: `/etc/mosquitto/conf.d/owl-cloud.conf`, `[Cloud]` in `config/CONTROLLER.ini`, `~/.owl/cloud/`.
+- Setup armed: `/boot/firmware/owl-firstboot.flag`.
+- Root helpers: `/usr/local/sbin/owl-firstboot-arm`, `/usr/local/sbin/owl-cloud-provision`; the provision script they run: `/usr/local/lib/owl/` (root-owned, so the OWL user cannot edit what root runs, O-1).
+
+**Where the serial comes from.** Noktura issues it when the unit is registered.
+Nothing needs typing back onto the unit: the phone app reads the key fingerprint
+and asks Noktura for the serial. `owl_identity.sh --serial` only writes a local
+label; if it disagrees with Noktura, Noktura wins and the app says so. With no
+signal at setup the farmer skips the claim and does it later from device
+settings (signing in needs internet anyway).
+
+**Makers (DIY).** Answer `y` to the identity prompt in `bash owl_setup.sh`. In the
+app, sign in and choose "Add this OWL to my account": Noktura registers the unit
+as a community device owned by you (no claim code), then the same cloud step
+runs. A maker unit that skipped the prompt can run `sudo bash owl_identity.sh --disk`
+later.
+
+**Clock.** The Pi has no RTC. The bridge needs a correct clock for TLS, so the
+dashboard and the setup API report `clock_synced` and the app shows "Waiting for
+the clock" until NTP syncs. The unit does not fake the time (no `fake-hwclock`;
+decided 2026-09-17).
+
 ## Shipping / demo-image prep
 
-One command on a fresh image:
+One command, on a unit that already has its identity and is registered
+(steps 1 to 3 above):
 
 ```
-bash owl_setup.sh --ship
+bash owl_setup.sh --factory
 ```
 
 Non-interactive: base install, standalone setup with hotspot `OWL-XXXX`
-(suffix from the Pi serial) and the fixed setup password, then arms
-first-boot.
+(suffix from the Pi serial) and the fixed setup password, nRF9151 GPS, then
+arms first-boot. `--ship` and `--ship-gps` were removed in v3.19.0 with no
+aliases.
 
-It first asks you to type `SHIP`, because it deletes WiFi profiles and SSH
+**Identity gate.** Before anything is installed it checks
+`/etc/owl-identity/device.pub` exists and `tier` is `otp`; otherwise it prints
+`[NOT SHIP-READY] No hardware identity` and stops. SHIP-READY prints the
+identity tier and fingerprint prefix so you can match it to the claim card.
+
+It first asks you to type `FACTORY`, because it deletes WiFi profiles and SSH
 keys and keeps detection off until phone setup finishes. For factory
-automation pass `--yes` as the second argument (`bash owl_setup.sh --ship
---yes`). Building your own OWL? Run `bash owl_setup.sh` with no options.
+automation pass `--yes` as the second argument (`bash owl_setup.sh --factory
+--yes`). Never run it with sudo, and never on a development machine. It needs
+passwordless sudo and re-runs itself detached, logging to `~/owl_setup.log`.
+Building your own OWL? Run `bash owl_setup.sh` with no options.
 
-**Production carrier GPS:** `bash owl_setup.sh --ship-gps` does everything
-`--ship` does, then provisions the nRF9151 modem (Serial LTE Modem firmware):
+**Production carrier GPS:** `--factory` also provisions the nRF9151 modem (Serial LTE Modem firmware):
 `dialout` for the OWL user, ModemManager off, `install_firstboot.sh
 --gps-config` (writes `dtoverlay=uart3-pi5` and `gpio=26=op,dh` to config.txt
 and applies both immediately), `[GPS] source = nrf91`, `port = /dev/ttyAMA3`,
@@ -162,13 +267,18 @@ the flag was absent at boot, nothing is ever checked).
 
 ## Security posture (deliberate, revisit before mass rollout)
 
-The setup API has no authentication: the only barrier is the hotspot PSK,
-which is fixed and public (`owl-setup`). That is acceptable for a
-setup-window-only surface on demo units — anyone in radio range during the
-minutes of setup could interfere, nothing more. Before this becomes the
-out-of-box experience for every shipped unit (or gains cloud/Noktura
-integration) it needs a real story: per-unit setup secrets (QR on the
-chassis) or a pairing confirmation on the device.
+Since v3.19.0 (O-5): the setup API is HTTPS and one phone holds the setup
+session, so a second phone in radio range cannot join Wi-Fi, finish setup or
+overwrite the cloud credential. `cloud/provision` also refuses to move a unit to
+a different Noktura site without `replace: true`.
+
+Still open: the hotspot PSK is fixed and public (`owl-setup`) and the app accepts
+the self-signed certificate for private hosts, so an active man-in-the-middle on
+the hotspot during first boot can still intercept. Closed by certificate pinning
+in the full trust chain (OWL-DES-014). Deferred hardening (log only, not needed
+for the prototype): O-12 (identity script edge cases), O-13 (register script
+temp file and token in `ps`), O-22 (root copy writes into user-owned paths).
+Reset-setup on the dashboard is token-guarded (O-19).
 
 ## Tests
 

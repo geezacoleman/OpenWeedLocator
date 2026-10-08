@@ -328,7 +328,9 @@ class ConfigValidator:
             'optional_keys': {'exp_compensation', 'crop_factor_horizontal', 'crop_factor_vertical', 'camera_type',
                               'allow_high_resolution',
                               'crop_left', 'crop_right', 'crop_top', 'crop_bottom',
-                              'awb_mode', 'awb_red_gain', 'awb_blue_gain', 'rotation'}
+                              'awb_mode', 'awb_red_gain', 'awb_blue_gain', 'rotation',
+                              # 'auto' or a number - string key, optional_keys only
+                              'max_gain'}
         },
         'GreenOnGreen': {
             'required_keys': {'model_path', 'confidence'},
@@ -353,7 +355,13 @@ class ConfigValidator:
             # the display allowance shown in the UI, not enforced.
             'optional_keys': {'sample_frequency', 'detection_enable', 'log_fps', 'camera_name',
                               'storage_location', 'internal_save_directory',
-                              'min_free_gb', 'image_quota_gb'}
+                              'min_free_gb', 'image_quota_gb',
+                              # Data collection (owl.py _load_capture_settings).
+                              # sample_mode / record_mode / shutter_cap are
+                              # string keys - optional_keys only.
+                              'sample_mode', 'sample_distance_m', 'sample_interval_s',
+                              'jpeg_quality', 'record_mode', 'video_max_s',
+                              'shutter_cap', 'smear_limit_mm'}
         },
         'Relays': {
             'required_keys': set(),
@@ -394,6 +402,12 @@ class ConfigValidator:
         # (storage_location/internal_save_directory are string keys — optional_keys only)
         'min_free_gb': ('int', 1, None),
         'image_quota_gb': ('int', 1, None),
+        # Data collection capture spacing / quality
+        'sample_distance_m': ('float', 0.05, 50),
+        'sample_interval_s': ('float', 0.1, 60),
+        'jpeg_quality': ('int', 50, 100),
+        'video_max_s': ('int', 5, 60),
+        'smear_limit_mm': ('float', 0.1, 20),
         # Min weed size as % of the detection (cropped) frame area.
         # 0 disables it (legacy min_detection_area px value applies instead).
         'min_detection_area_percent': ('float', 0, 5),
@@ -562,7 +576,8 @@ class ConfigValidator:
         # Optional: un-provisioned devices have no [Cloud] section at all.
         'Cloud': {
             'optional_keys': {'enable', 'broker_host', 'broker_port', 'device_id',
-                              'ca_cert', 'username', 'password_file', 'portal_url'}
+                              'ca_cert', 'username', 'password_file', 'portal_url',
+                              'storage_host'}
         },
         # Human-readable config metadata written when a named config is saved.
         # Ignored by the detection pipeline; present so the controller can show
