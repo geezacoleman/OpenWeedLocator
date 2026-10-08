@@ -820,6 +820,27 @@ EOF
     return 0
 }
 
+# Step 0: a reused Pi may still be armed for phone-app setup (factory build,
+# app reset, claim bench). Armed, it locks detection off and restarts the setup
+# hotspot on every boot, which undoes a hand setup, networked mode included.
+# Factory runs (--mode/--arm-firstboot) arm it on purpose and skip this.
+# owl_setup.sh asks the same question first, so normally the flag is gone here.
+FIRSTBOOT_FLAG="/boot/firmware/owl-firstboot.flag"
+if [[ "$NONINTERACTIVE" != "1" && "$ARM_FIRSTBOOT" != "1" && -e "$FIRSTBOOT_FLAG" ]]; then
+    echo -e "${ORANGE}[WARN] This OWL is armed for phone-app setup (${FIRSTBOOT_FLAG}).${NC}"
+    echo -e "${ORANGE}       Left armed, it keeps detection off and brings its setup hotspot back on boot.${NC}"
+    read -r -p "Disarm it and set up by hand? [Y/n]: " disarm_choice
+    if [[ ! "$disarm_choice" =~ ^[Nn]$ ]]; then
+        if bash "${SCRIPT_DIR}/../setup/install_firstboot.sh" --disarm; then
+            echo -e "${TICK} Phone-app setup disarmed"
+        else
+            echo -e "${ORANGE}[WARN] Disarm failed. Run: sudo bash ${SCRIPT_DIR}/../setup/install_firstboot.sh --disarm${NC}"
+        fi
+    else
+        echo -e "${ORANGE}[WARN] Left armed: the phone app takes over on the next boot.${NC}"
+    fi
+fi
+
 # Step 1: Collect configuration from user
 collect_user_input
 

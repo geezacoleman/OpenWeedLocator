@@ -108,6 +108,26 @@ if [[ "$FACTORY_MODE" == "1" && -z "${OWL_SETUP_DETACHED:-}" ]]; then
     exit $?
 fi
 
+# A Pi reused from a factory build, an app reset or the claim bench still
+# carries the first-boot flag: on every boot it locks detection off and brings
+# the setup hotspot back, which breaks a hand-built (and any networked) OWL.
+# Factory mode arms it again as its last step, so it is left alone there.
+FIRSTBOOT_FLAG="/boot/firmware/owl-firstboot.flag"
+if [[ "$FACTORY_MODE" != "1" && -e "$FIRSTBOOT_FLAG" ]]; then
+    echo -e "${ORANGE}[WARN] This OWL is armed for phone-app setup (${FIRSTBOOT_FLAG}).${NC}"
+    echo -e "${ORANGE}       Left armed, it keeps detection off and brings its setup hotspot back on boot.${NC}"
+    read -r -p "Disarm it and set up by hand? [Y/n]: " disarm_choice
+    if [[ ! "$disarm_choice" =~ ^[Nn]$ ]]; then
+        if sudo bash "${SCRIPT_DIR}/controller/setup/install_firstboot.sh" --disarm; then
+            echo -e "${TICK} Phone-app setup disarmed"
+        else
+            echo -e "${ORANGE}[WARN] Disarm failed. Run: sudo bash ${SCRIPT_DIR}/controller/setup/install_firstboot.sh --disarm${NC}"
+        fi
+    else
+        echo -e "${ORANGE}[WARN] Left armed: the phone app takes over on the next boot.${NC}"
+    fi
+fi
+
 # nRF9151 GNSS link on the production CM5 carrier (--factory).
 # Confirmed on the bench 2026-09-13: Serial LTE Modem 2.9.1 firmware answers on
 # UART3 (GPIO 8/9, TX/RX only, no flow control) at 460800 baud once GPIO 26

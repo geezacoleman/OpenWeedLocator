@@ -618,3 +618,53 @@ class TestUpdateSudoersRule:
     def test_dashboard_restart_is_permitted(self):
         content = self._read('controller/shared/setup.sh')
         assert 'restart owl-dash.service' in content
+
+# ---------------------------------------------------------------------------
+# Reused Pis: a leftover first-boot flag locks detection off and restarts the
+# setup hotspot on every boot. Hand setups offer to disarm it; factory runs,
+# which arm it on purpose, must never touch it.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestLeftoverFirstbootFlag:
+
+    PROJECT_ROOT = os.path.join(os.path.dirname(__file__), '..')
+    FLAG = '/boot/firmware/owl-firstboot.flag'
+
+    def _read(self, relpath):
+        with open(os.path.join(self.PROJECT_ROOT, relpath), encoding='utf-8') as f:
+            return f.read().replace('\r\n', '\n')
+
+    def _check_block(self, content):
+        start = content.index('FIRSTBOOT_FLAG="')
+        return content[start:content.index('\nfi\n', start)]
+
+    def test_owl_setup_offers_disarm_outside_factory(self):
+        content = self._read('owl_setup.sh')
+        assert f'FIRSTBOOT_FLAG="{self.FLAG}"' in content
+        block = self._check_block(content)
+        assert '"$FACTORY_MODE" != "1"' in block
+        assert 'install_firstboot.sh" --disarm' in block
+        # Default is disarm: only an explicit n keeps it armed
+        assert '[Y/n]' in block and '^[Nn]$' in block
+
+    def test_owl_setup_checks_before_the_install(self):
+        content = self._read('owl_setup.sh')
+        assert content.index('FIRSTBOOT_FLAG="') < content.index('controller/shared/setup.sh')
+        # After the detached factory re-exec, so the background copy never asks
+        assert content.index('OWL_SETUP_DETACHED=1 setsid') < content.index('FIRSTBOOT_FLAG="')
+
+    def test_shared_setup_offers_disarm_for_hand_setups_only(self):
+        content = self._read('controller/shared/setup.sh')
+        assert f'FIRSTBOOT_FLAG="{self.FLAG}"' in content
+        block = self._check_block(content)
+        assert '"$NONINTERACTIVE" != "1"' in block
+        assert '"$ARM_FIRSTBOOT" != "1"' in block
+        assert '../setup/install_firstboot.sh" --disarm' in block
+        assert '[Y/n]' in block and '^[Nn]$' in block
+        # Asked before the network questions, so the answer can't be lost
+        assert content.index('FIRSTBOOT_FLAG="') < content.index('\ncollect_user_input\n')
+
+    def test_flag_path_matches_install_firstboot(self):
+        content = self._read('controller/setup/install_firstboot.sh')
+        assert f'FLAG_PATH="{self.FLAG}"' in content

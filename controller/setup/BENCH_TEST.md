@@ -705,9 +705,10 @@ Never run on the rig: `owl_setup.sh --factory`, `install_firstboot.sh --arm`, `d
        (default 192.168.1.1/24, DHCP from .100, so .2/.11/.12 are free).
 2. [ ] Run every setup inside `tmux` (or on a local console): the network switch drops SSH and
        would kill the script half way.
-3. [ ] Reused OWL Pis only: `ls /boot/firmware/owl-firstboot.flag` must fail. If it exists:
-       `sudo bash owl/controller/setup/install_firstboot.sh --disarm` (an armed unit locks
-       detection and brings its hotspot back).
+3. [ ] Reused OWL Pis only: if the Pi is still armed for phone-app setup, `owl_setup.sh` stops
+       first with "Disarm it and set up by hand? [Y/n]". Press Enter (an armed unit locks
+       detection and brings its hotspot back). Check afterwards:
+       `ls /boot/firmware/owl-firstboot.flag` must fail.
 4. [ ] Clone into `~/owl` exactly (the OWL scripts expect that path).
 
 ### B. Controller
