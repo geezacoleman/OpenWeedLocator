@@ -754,9 +754,16 @@ bash owl/owl_setup.sh          # not sudo
 
 Needs migration 114 applied and the rig-upload worker deployed; otherwise upload requests sit at
 "Requested" for 24 h.
+
+**Mobile data:** until the slim cloud feed ships (planned: changes-only status, no bridged GPS),
+a connected rig sends ~20 MB of status per running hour (2 OWLs). Connect only to test pairing and
+one upload, then disconnect over SSH on the controller: `sudo bash ~/owl/owl_cloud_provision.sh --disable`
+(the collect screen has no Disconnect button). To reconnect, paste the same command again (keep a
+copy of it somewhere safe; it holds the password) or reissue the credential in Noktura.
 14. [ ] Pair from a laptop on the RUT951 LAN (the kiosk has no keyboard): open
         `https://192.168.1.2/collect` → Settings → Connect, paste the command from the one-time
         credential page. Only a `*.noktura.tech` broker is accepted.
 15. [ ] Pull the RUT951 WAN mid-run: detection toggles and heartbeats must stay instant (checks the
         bridge's DNS retry does not stall the local broker).
-16. [ ] Note 4G use for one hour of running (bridged state is the main cost).
+16. [ ] Note 4G use (RUT951 mobile data counter) for one idle running hour with Noktura connected.
+        Today's expectation ~20 MB; target after the slim feed < 1 MB.
