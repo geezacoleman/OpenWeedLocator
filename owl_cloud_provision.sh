@@ -223,12 +223,16 @@ if [[ "$NET_MODE" == "networked" ]]; then
     # Remote topics carry the site prefix (site/<device-id>/owl/<local-id>/...)
     # so the cloud broker can isolate fleets with a single pattern ACL even
     # when local OWL ids collide between sites.
+    #
+    # State comes from cloud_out/<id>/state, the slim cloud copy (23 fields, on
+    # change plus a 20 s keepalive), not the full 2 s dashboard state on
+    # owl/<id>/state. GPS is not bridged: the position rides in the slim state.
+    # This keeps a rig at about 0.5 MB per running hour on 4G instead of 20 MB.
     LOCAL_PREFIX="owl/"
     REMOTE_PREFIX="site/${DEVICE_ID}/owl/"
     TOPIC_LINES=$(cat <<EOF
-topic +/state out 1 ${LOCAL_PREFIX} ${REMOTE_PREFIX}
+topic +/state out 1 cloud_out/ ${REMOTE_PREFIX}
 topic +/status out 1 ${LOCAL_PREFIX} ${REMOTE_PREFIX}
-topic +/gps out 1 ${LOCAL_PREFIX} ${REMOTE_PREFIX}
 topic +/commands in 1 owl/cloud/ ${REMOTE_PREFIX}
 EOF
 )
@@ -245,10 +249,10 @@ else
     # Inbound: remote .../commands lands on LOCAL owl/cloud_commands (the
     # pattern is shared, only the prefixes differ), where mqtt_manager.py
     # applies the cloud allowlist. Never owl/commands.
+    # State: the slim cloud copy on cloud_out/state (see networked above).
     TOPIC_LINES=$(cat <<EOF
-topic state out 1 ${LOCAL_PREFIX} ${REMOTE_PREFIX}
+topic state out 1 cloud_out/ ${REMOTE_PREFIX}
 topic status out 1 ${LOCAL_PREFIX} ${REMOTE_PREFIX}
-topic gps out 1 ${LOCAL_PREFIX} ${REMOTE_PREFIX}
 topic commands in 1 owl/cloud_ ${REMOTE_PREFIX}
 EOF
 )
@@ -259,6 +263,10 @@ fi
 echo -e "${GREEN}[INFO] Writing $BRIDGE_CONF...${NC}"
 {
     echo "# OWL cloud bridge — managed by owl_cloud_provision.sh, do not edit"
+    # Broker-wide cap on queued messages per client. While 4G is down only the
+    # QoS 1 change messages queue (keepalives are QoS 0), so this bounds the
+    # catch-up burst. It must come before the connection block.
+    echo "max_queued_messages 200"
     echo "connection noktura"
     echo "address ${HOST}:${PORT}"
     if [[ "$SYSTEM_CA" == "1" || -z "$CA_PATH" ]]; then

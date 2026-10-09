@@ -42,6 +42,7 @@ from utils.config_manager import (
 # Shared with OWLs that time themselves from their own GPS
 from utils.actuation import GPS_STALE_AFTER_S, SpeedAverager, ActuationCalculator
 from utils.session_metadata import clean_session_metadata, CAPTURE_PARAM_KEYS
+from utils.mqtt_manager import CloudFeed, cloud_state_out_topic
 try:
     from version import VERSION as _OWL_VERSION, APP_CONTRACT_VERSION
     CONTROLLER_VERSION = str(_OWL_VERSION)
@@ -58,10 +59,11 @@ from controller.networked.fleet_roster import (FleetRosterError,
 
 # Device id the controller publishes its own presence under (matches the
 # 'owl-controller' device Noktura expects). The cloud bridge forwards
-# owl/<id>/status and owl/<id>/state, so this needs no bridge change.
+# owl/<id>/status and cloud_out/<id>/state (the slim cloud state).
 CONTROLLER_DEVICE_ID = 'owl-controller'
 CONTROLLER_STATUS_TOPIC = f'owl/{CONTROLLER_DEVICE_ID}/status'
-CONTROLLER_STATE_TOPIC = f'owl/{CONTROLLER_DEVICE_ID}/state'
+# Cloud-only (the bridge forwards cloud_out/ to Noktura); nothing local reads it.
+CONTROLLER_STATE_TOPIC = cloud_state_out_topic(True, CONTROLLER_DEVICE_ID)
 # Cloud commands for the controller itself land here through the bridge
 # (owl_cloud_provision.sh networked mode: +/commands -> owl/cloud/<id>/commands).
 # Only CONTROLLER_CLOUD_ACTIONS are acted on.
@@ -189,6 +191,7 @@ class CentralController:
         # Bridge state comes from a retained $SYS topic on this local broker.
         self.cloud_connected = None  # None = unknown/not configured
         self.cloud_state_topic = None
+        self._cloud_feed = CloudFeed()
         self._apply_cloud_config(self.config)
 
         # Allow 7 missed 2s heartbeats before marking offline
@@ -431,6 +434,13 @@ class CentralController:
 
             # Publish our own presence so the cloud bridge forwards it and Noktura
             # shows the controller (owl-controller) online with version.
+            # Retained status once per connect (the LWT covers going away).
+            self.mqtt_client.publish(CONTROLLER_STATUS_TOPIC, json.dumps({
+                'device_id': CONTROLLER_DEVICE_ID,
+                'connected': True,
+                'timestamp': time.time(),
+            }), qos=1, retain=True)
+            self._cloud_feed.reset()
             self._publish_controller_presence()
 
             logger.info("Clearing potential ghost OWL retained messages...")
@@ -580,29 +590,26 @@ class CentralController:
             logger.error(f"Error processing message on {msg.topic}: {e}")
 
     def _publish_controller_presence(self):
-        """Publish the controller's own presence (owl-controller) so the cloud
-        bridge forwards it and Noktura shows the controller online with version.
-        Mirrors the OWL OWLMQTTPublisher status/state shape."""
+        """Publish the controller's own state (owl-controller) for the cloud
+        bridge, so Noktura shows the controller online with version. Called
+        every 2 s; CloudFeed sends it on change or as a 20 s keepalive."""
         if not self.mqtt_client:
             return
         try:
-            now = time.time()
-            self.mqtt_client.publish(CONTROLLER_STATUS_TOPIC, json.dumps({
-                'device_id': CONTROLLER_DEVICE_ID,
-                'connected': True,
-                'timestamp': now,
-            }), qos=1, retain=True)
-            self.mqtt_client.publish(CONTROLLER_STATE_TOPIC, json.dumps({
+            message = self._cloud_feed.next_message({
                 'device_id': CONTROLLER_DEVICE_ID,
                 'type': 'controller',
                 'version': CONTROLLER_VERSION,
                 'connected': True,
                 'owl_count': len(self.owls_state),
-                'timestamp': now,
+                'timestamp': time.time(),
                 # Farmer-requested uploads; Noktura turns each into a
                 # transfer_session for that OWL and acks on our commands topic.
                 'upload_requests': self.collect.bridged_upload_requests(),
-            }), retain=False)
+            })
+            if message:
+                payload, qos = message
+                self.mqtt_client.publish(CONTROLLER_STATE_TOPIC, json.dumps(payload), qos=qos, retain=False)
         except Exception as e:
             logger.error(f"Error publishing controller presence: {e}")
 
@@ -628,7 +635,7 @@ class CentralController:
 
                 self._update_session_state()
 
-                # Refresh our own presence each cycle (keeps Noktura's view fresh).
+                # Cloud presence: CloudFeed decides whether this cycle sends.
                 if self.mqtt_connected:
                     self._publish_controller_presence()
 

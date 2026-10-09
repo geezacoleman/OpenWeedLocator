@@ -131,6 +131,108 @@ def parse_cloud_policy(payload):
     return policy
 
 
+# ---------------------------------------------------------------------------
+# Slim cloud feed. The mosquitto bridge forwards cloud_out/... to Noktura
+# over 4G in place of the full dashboard state (88 keys every 2 s, about
+# 20 MB per running hour for a 2-OWL rig). Only these fields leave the unit.
+# They must match Noktura's OwlStatePayload (apps/worker/src/mqtt/state-cache.ts);
+# upload_requests is the controller's own. A new local state field stays
+# local unless it is added here on purpose.
+# See docs/handover/CLOUD_DATA_BUDGET_HANDOVER-2026-10-08.md.
+# ---------------------------------------------------------------------------
+CLOUD_STATE_FIELDS = (
+    'device_id', 'owl_running', 'detection_enable',
+    'cpu_percent', 'cpu_temp', 'memory_percent', 'disk_percent',
+    'gps_latitude', 'gps_longitude', 'gps_available',
+    'version', 'git_branch', 'git_commit', 'pi_model', 'os_pretty',
+    'software_update', 'data_transfer', 'preview_upload',
+    'available_models', 'current_model', 'model_download',
+)
+# Telemetry rides along but never counts as a change by itself.
+CLOUD_VOLATILE_FIELDS = frozenset({
+    'cpu_percent', 'cpu_temp', 'memory_percent', 'disk_percent',
+    'gps_latitude', 'gps_longitude', 'gps_available', 'timestamp',
+})
+# In-progress objects: a status change goes out at once, counters are throttled.
+CLOUD_PROGRESS_FIELDS = ('data_transfer', 'software_update', 'model_download', 'preview_upload')
+# The keys Noktura's manifest reconcile reads from each data_sessions entry.
+CLOUD_SESSION_KEYS = ('session_id', 'date', 'time', 'image_count', 'image_size', 'total_size')
+# Keepalive under Noktura's 30 s offline timeout (MQTT_STALENESS_MS).
+CLOUD_KEEPALIVE_S = 20
+CLOUD_PROGRESS_THROTTLE_S = 5
+# Resend the session list now and then so a restarted worker re-syncs.
+CLOUD_SESSIONS_REFRESH_S = 600
+
+
+def cloud_state_out_topic(networked_mode, device_id):
+    """Local topic for the slim cloud state. Outside owl/ so the controller's
+    owl/+/state subscription never mistakes it for a full state."""
+    return f'cloud_out/{device_id}/state' if networked_mode else 'cloud_out/state'
+
+
+def trim_sessions(sessions):
+    """data_sessions reduced to the keys Noktura uses. Always the full list:
+    Noktura treats a missing session as deleted from the device."""
+    return [{k: s[k] for k in CLOUD_SESSION_KEYS if k in s} for s in sessions]
+
+
+def _cloud_sig(value):
+    return json.dumps(value, sort_keys=True, default=str)
+
+
+class CloudFeed:
+    """Decides when the slim cloud state is published: at once when a field
+    Noktura acts on changes, progress counters at most every 5 s, otherwise a
+    20 s keepalive. Keepalives are QoS 0 so a 4G outage queues nothing stale;
+    changes are QoS 1."""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        """Forget what was sent, so the next message is a full one."""
+        self._sent_at = None
+        self._status_sig = None
+        self._full_sig = None
+        self._sessions_sig = None
+        self._sessions_sent_at = None
+
+    def next_message(self, snapshot, sessions=None, now=None):
+        """(payload, qos) to publish now, or None. sessions is the complete
+        trimmed list, or None while the device has not scanned its storage
+        (an empty list would tell Noktura every session is gone)."""
+        now = time.monotonic() if now is None else now
+        triggers = {k: v for k, v in snapshot.items() if k not in CLOUD_VOLATILE_FIELDS}
+        status = {k: (v.get('status') if k in CLOUD_PROGRESS_FIELDS and isinstance(v, dict) else v)
+                  for k, v in triggers.items()}
+        status_sig, full_sig = _cloud_sig(status), _cloud_sig(triggers)
+        since = float('inf') if self._sent_at is None else now - self._sent_at
+
+        send_sessions = False
+        if sessions is not None:
+            sessions_sig = _cloud_sig(sessions)
+            send_sessions = (sessions_sig != self._sessions_sig or self._sessions_sent_at is None
+                             or now - self._sessions_sent_at >= CLOUD_SESSIONS_REFRESH_S)
+
+        if status_sig != self._status_sig or send_sessions:
+            qos = 1
+        elif full_sig != self._full_sig and since >= CLOUD_PROGRESS_THROTTLE_S:
+            qos = 1
+        elif since >= CLOUD_KEEPALIVE_S:
+            qos = 0
+        else:
+            return None
+
+        payload = dict(snapshot)
+        if send_sessions:
+            payload['data_sessions'] = sessions
+            self._sessions_sig = sessions_sig
+            self._sessions_sent_at = now
+        self._sent_at = now
+        self._status_sig, self._full_sig = status_sig, full_sig
+        return payload, qos
+
+
 def internet_reachable(host, port=443, timeout=5.0):
     """True when a TCP connection to host:port opens. A cheap check that
     DNS and the route out through the router work; not an HTTPS request."""
@@ -366,6 +468,13 @@ class OWLMQTTPublisher:
         # still pinned to Noktura storage.
         self.topics['cloud_policy'] = CLOUD_POLICY_TOPIC
         self._cloud_policy = {}
+        # Slim state for the cloud bridge (local broker only; the bridge
+        # decides whether it leaves the unit).
+        self.topics['cloud_state'] = cloud_state_out_topic(self.networked_mode, device_id)
+        self._cloud_feed = CloudFeed()
+        # Trimmed session list from the last successful storage scan; None
+        # until then, so the cloud never sees an unscanned empty list.
+        self._cloud_sessions = None
 
         # Current state
         self.state = {
@@ -864,6 +973,8 @@ class OWLMQTTPublisher:
             # Publish full state immediately so controller sees everything
             # (don't wait for next 2s heartbeat cycle)
             self._publish_state()
+            # First cloud message after (re)connecting is a full one.
+            self._cloud_feed.reset()
 
         else:
             self.connected = False
@@ -2416,12 +2527,16 @@ class OWLMQTTPublisher:
 
             with self.state_lock:
                 self.state['data_sessions'] = sessions
+            # Missing storage is "unknown", not "no sessions". The heartbeat
+            # sends the change to the cloud within 2 s.
+            self._cloud_sessions = trim_sessions(sessions) if save_dir and os.path.isdir(save_dir) else None
             self._publish_state()
 
         except Exception as e:
             self.logger.error(f"Error listing data sessions: {e}")
             with self.state_lock:
                 self.state['data_sessions'] = []
+            self._cloud_sessions = None
             self._publish_state()
 
     def _upload_session(self, session_date, data_types, upload_url, method='POST',
@@ -3046,6 +3161,7 @@ class OWLMQTTPublisher:
                     self._read_update_status()
                     with self.state_lock:
                         self._publish_state()
+                    self._publish_cloud_state()
                 time.sleep(heartbeat_interval)
             except Exception as e:
                 self.logger.error(f"Error in heartbeat loop: {e}")
@@ -3186,6 +3302,32 @@ class OWLMQTTPublisher:
                 self.client.publish(self.topics['state'], json.dumps(state_copy), retain=False)
             except Exception as e:
                 self.logger.error(f"Error publishing state: {e}")
+
+    def _cloud_state(self):
+        """The CLOUD_STATE_FIELDS subset of state, telemetry rounded so jitter
+        never reads as a change. Absent fields are omitted, not defaulted."""
+        with self.state_lock:
+            snap = {k: self.state[k] for k in CLOUD_STATE_FIELDS if k in self.state}
+            snap = json.loads(json.dumps(snap, default=str))  # deep copy outside the lock
+        for key in ('cpu_percent', 'cpu_temp', 'memory_percent', 'disk_percent'):
+            if isinstance(snap.get(key), (int, float)):
+                snap[key] = int(round(snap[key]))
+        for key in ('gps_latitude', 'gps_longitude'):
+            if isinstance(snap.get(key), (int, float)):
+                snap[key] = round(snap[key], 5)
+        return snap
+
+    def _publish_cloud_state(self):
+        """Publish the slim cloud state when CloudFeed says it is due."""
+        if not self.connected:
+            return
+        try:
+            message = self._cloud_feed.next_message(self._cloud_state(), self._cloud_sessions)
+            if message:
+                payload, qos = message
+                self.client.publish(self.topics['cloud_state'], json.dumps(payload), qos=qos, retain=False)
+        except Exception as e:
+            self.logger.error(f"Error publishing cloud state: {e}")
 
     # State update methods for owl.py to call
     def set_detection_enable(self, value):

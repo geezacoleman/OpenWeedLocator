@@ -615,6 +615,7 @@ class TestControllerCloudCommands:
         import controller.networked.networked as nw
         ctrl = nw.CentralController.__new__(nw.CentralController)
         ctrl.collect = CollectSession()
+        ctrl._cloud_feed = nw.CloudFeed()
         return nw, ctrl
 
     def test_upload_ack_applied(self):

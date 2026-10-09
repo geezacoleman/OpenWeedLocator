@@ -24,7 +24,8 @@ class TestControllerHeartbeat:
     def test_device_id_and_topics(self):
         assert "CONTROLLER_DEVICE_ID = 'owl-controller'" in NET
         assert "CONTROLLER_STATUS_TOPIC = f'owl/{CONTROLLER_DEVICE_ID}/status'" in NET
-        assert "CONTROLLER_STATE_TOPIC = f'owl/{CONTROLLER_DEVICE_ID}/state'" in NET
+        # Slim cloud state lives outside owl/ (cloud data budget, v3.21.0)
+        assert "CONTROLLER_STATE_TOPIC = cloud_state_out_topic(True, CONTROLLER_DEVICE_ID)" in NET
 
     def test_lwt_set_before_connect(self):
         # Last-Will on the controller status topic (connected:False).
@@ -40,6 +41,16 @@ class TestControllerHeartbeat:
         assert "'type': 'controller'" in NET
         assert "'version': CONTROLLER_VERSION" in NET
         assert 'retain=True' in NET
+
+    def test_status_not_republished_every_cycle(self):
+        # Retained status goes out once per connect (bridged at QoS 1, so a
+        # 2 s republish cost 4G data); the periodic presence is state only.
+        fn = next(n for n in ast.walk(TREE)
+                  if isinstance(n, ast.FunctionDef) and n.name == '_publish_controller_presence')
+        assert 'CONTROLLER_STATUS_TOPIC' not in ast.get_source_segment(NET, fn)
+        on_connect = next(n for n in ast.walk(TREE)
+                          if isinstance(n, ast.FunctionDef) and n.name == '_on_connect')
+        assert 'CONTROLLER_STATUS_TOPIC' in ast.get_source_segment(NET, on_connect)
 
     def test_on_connect_publishes_presence(self):
         assert 'self._publish_controller_presence()' in NET

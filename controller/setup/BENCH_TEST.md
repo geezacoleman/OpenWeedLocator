@@ -755,15 +755,27 @@ bash owl/owl_setup.sh          # not sudo
 Needs migration 114 applied and the rig-upload worker deployed; otherwise upload requests sit at
 "Requested" for 24 h.
 
-**Mobile data:** until the slim cloud feed ships (planned: changes-only status, no bridged GPS),
-a connected rig sends ~20 MB of status per running hour (2 OWLs). Connect only to test pairing and
-one upload, then disconnect over SSH on the controller: `sudo bash ~/owl/owl_cloud_provision.sh --disable`
+**Mobile data:** v3.21.0 sends only a slim status to Noktura: a change message when something
+Noktura acts on changes, otherwise one keepalive per device every 20 s, and no bridged GPS. Target
+is < 1 MB per idle running hour for the rig (was ~20 MB). Uploads still cost their image bytes.
+To disconnect, run over SSH on the controller: `sudo bash ~/owl/owl_cloud_provision.sh --disable`
 (the collect screen has no Disconnect button). To reconnect, paste the same command again (keep a
 copy of it somewhere safe; it holds the password) or reissue the credential in Noktura.
+
+**Rig already paired before v3.21.0:** the bridge config only changes when the rig is provisioned,
+and Connect runs a root-owned copy of the provisioning script that `owl_update.sh` cannot refresh.
+Over SSH on the controller, refresh it first, then Connect again with the same command:
+`sudo bash ~/owl/controller/setup/install_firstboot.sh --cloud-helper`. Check:
+`grep '^topic' /etc/mosquitto/conf.d/*.conf` shows `cloud_out/` for state and no `gps` line.
 14. [ ] Pair from a laptop on the RUT951 LAN (the kiosk has no keyboard): open
         `https://192.168.1.2/collect` → Settings → Connect, paste the command from the one-time
         credential page. Only a `*.noktura.tech` broker is accepted.
 15. [ ] Pull the RUT951 WAN mid-run: detection toggles and heartbeats must stay instant (checks the
         bridge's DNS retry does not stall the local broker).
-16. [ ] Note 4G use (RUT951 mobile data counter) for one idle running hour with Noktura connected.
-        Today's expectation ~20 MB; target after the slim feed < 1 MB.
+16. [ ] Slim feed cadence: on the controller, `mosquitto_sub -h localhost -t 'cloud_out/#' -v`.
+        Idle: one message per device about every 20 s (no `data_sessions`, under 1 KB each).
+        Toggle detection on an OWL: its message arrives within 2 s. Noktura shows all three
+        devices online throughout.
+17. [ ] Note 4G use (RUT951 mobile data counter) for one idle running hour with Noktura connected.
+        Pass: < 1 MB. (Before v3.21.0 it was ~20 MB.) One upload still shows progress in the portal
+        and completes.
