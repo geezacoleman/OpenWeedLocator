@@ -281,6 +281,26 @@ def cloud_command_urls(command):
     return urls
 
 
+def model_path_in(models_dir, name):
+    """Absolute path of model `name` inside `models_dir`, or None if `name` is
+    not a plain file name that stays there.
+
+    Model names come from commands (cloud or LAN). They are joined into
+    models/ and then overwritten or rmtree'd, so `../owl.py` would replace the
+    unit's own code. Only bare names are valid: models are listed one level
+    deep (_list_available_models).
+    """
+    if not isinstance(name, str) or not name or name.startswith('.'):
+        return None
+    if '\x00' in name or os.path.basename(name) != name or '\\' in name:
+        return None
+    root = os.path.realpath(models_dir)
+    path = os.path.realpath(os.path.join(root, name))
+    if os.path.dirname(path) != root:
+        return None
+    return path
+
+
 def cloud_command_rejection(command, storage_host=''):
     """Why a cloud-origin command must be dropped, or None if it may run.
 
@@ -1153,7 +1173,10 @@ class OWLMQTTPublisher:
 
             elif action == 'set_model':
                 model_name = command.get('value', '')
-                if model_name and self.owl_instance:
+                models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')
+                if model_name and model_path_in(models_dir, model_name) is None:
+                    self.logger.error(f"set_model refused: not a model name: {model_name!r}")
+                elif model_name and self.owl_instance:
                     # Resolve to models/ directory path so GreenOnGreen can find it
                     model_path = os.path.join('models', str(model_name))
                     self.owl_instance._pending_model = model_path
@@ -2224,6 +2247,15 @@ class OWLMQTTPublisher:
                 }
             self._publish_state()
 
+            # Where it lands, checked before anything is fetched or deleted
+            if is_archive:
+                dir_name = filename.rsplit('.', 1)[0] if '.' in filename else filename
+                target = model_path_in(models_dir, dir_name)
+            else:
+                target = model_path_in(models_dir, filename)
+            if target is None:
+                raise ValueError(f'not a model file name: {filename!r}')
+
             # Verified TLS unless the host is the LAN controller (self-signed)
             ssl_ctx = ssl_context_for_url(url)
 
@@ -2256,8 +2288,7 @@ class OWLMQTTPublisher:
             if is_archive:
                 # Extract zip to a directory
                 import zipfile
-                dir_name = filename.rsplit('.', 1)[0] if '.' in filename else filename
-                extract_dir = os.path.join(models_dir, dir_name)
+                extract_dir = target
                 if os.path.isdir(extract_dir):
                     import shutil
                     shutil.rmtree(extract_dir)
@@ -2308,7 +2339,7 @@ class OWLMQTTPublisher:
                         )
 
                 # Atomic rename
-                final_path = os.path.join(models_dir, filename)
+                final_path = target
                 if os.path.exists(final_path):
                     os.unlink(final_path)
                 os.rename(tmp_path, final_path)

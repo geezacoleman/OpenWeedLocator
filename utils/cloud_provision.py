@@ -45,9 +45,12 @@ HOST_RE = re.compile(r'^[A-Za-z0-9.-]{3,253}$')
 PORTAL_RE = re.compile(r'^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._/-]*)?$')
 STORAGE_HOST_RE = re.compile(r'^[a-z0-9.-]{3,253}$')
 PASSWORD_MIN, PASSWORD_MAX = 16, 128
-# The rig's pairing route is reachable from the whole rig LAN, so it only
-# accepts Noktura's own broker: nobody on the LAN can re-point the bridge
-# elsewhere. Other brokers (staging, self-hosted) go through
+# Every route into provision() is reachable by someone who is not the owner:
+# the rig's pairing route from the whole rig LAN, the first-boot setup API
+# from anyone on the hotspot (its PSK is printed on the card), the dashboard
+# route from anyone holding the device token. So provision() only accepts
+# Noktura's own broker: none of them can re-point the bridge (and so the
+# unit's command channel) elsewhere. Other brokers (staging, self-hosted) go through
 # owl_cloud_provision.sh by hand. Storage is not pinned: it lives with a
 # storage provider, and upload URLs only ever arrive through this broker.
 NOKTURA_BROKER_DOMAIN = 'noktura.tech'
@@ -211,6 +214,7 @@ def provision(runner, data, controller_ini=None):
     the password.
     """
     cred = validate_payload(data)
+    require_noktura_broker(cred)
     if controller_ini is not None:
         existing = current_cloud_site(controller_ini)
         if existing and existing != cred['device_id'] and data.get('replace') is not True:
