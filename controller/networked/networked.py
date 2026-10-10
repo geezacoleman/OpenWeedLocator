@@ -1807,6 +1807,54 @@ def collect_upload():
     return jsonify({'success': True, 'requested': created})
 
 
+def _session_delete_block(owl_state, session_id, pending):
+    """Why the collect screen must not delete this session now, or ''.
+    The OWL refuses recording/uploading sessions itself; checking here too
+    lets the screen say why instead of the row silently staying."""
+    if not owl_state or session_id not in {d.get('session_id') for d in (owl_state.get('data_sessions') or [])}:
+        return 'not_on_owl'
+    current = (owl_state.get('capture') or {}).get('session_id')
+    if owl_state.get('image_sample_enable') and current and (
+            session_id == current or session_id.endswith('/' + current)):
+        return 'recording'
+    transfer = owl_state.get('data_transfer') or {}
+    if (transfer.get('session_date') == session_id
+            and transfer.get('status') not in (None, 'idle', 'complete', 'error')):
+        return 'uploading'
+    if session_id in pending:
+        return 'upload_pending'
+    return ''
+
+
+@app.route('/api/collect/sessions/delete', methods=['POST'])
+def collect_sessions_delete():
+    """Delete chosen sessions from the OWLs, usually after uploading them,
+    to free space. Sends delete_session to each OWL."""
+    items = (request.get_json(silent=True) or {}).get('items') or []
+    if not isinstance(items, list) or not items:
+        return jsonify({'success': False, 'error': 'Choose at least one session'}), 400
+    if not controller.mqtt_connected or not controller.mqtt_client:
+        return jsonify({'success': False, 'error': 'MQTT not connected'}), 503
+    with controller.mqtt_lock:
+        owls = {oid: dict(s) for oid, s in controller.owls_state.items()}
+    pending = {}
+    for r in controller.collect.bridged_upload_requests():
+        pending.setdefault(r['local_id'], set()).add(r['session_id'])
+    deleted, skipped = [], []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        owl_id, session_id = str(item.get('owl') or ''), str(item.get('session_id') or '')
+        reason = _session_delete_block(owls.get(owl_id), session_id, pending.get(owl_id, set()))
+        if reason:
+            skipped.append({'owl': owl_id, 'session_id': session_id, 'reason': reason})
+            continue
+        controller.mqtt_client.publish(f'owl/{owl_id}/commands', json.dumps(
+            {'action': 'delete_session', 'session_id': session_id, 'data_types': ['images']}))
+        deleted.append({'owl': owl_id, 'session_id': session_id})
+    return jsonify({'success': True, 'deleted': deleted, 'skipped': skipped})
+
+
 @app.route('/api/collect/camera', methods=['GET'])
 def collect_camera_get():
     """Current [Camera] values from the first connected OWL that has

@@ -73,7 +73,7 @@
                         <tbody id="session-rows"></tbody>
                     </table>
                 </div>
-                <div class="c-foot"><button class="c-btn c-btn--primary" id="upload-btn" type="button" disabled data-i18n="upload">Upload selected</button><span class="c-hint" id="upload-summary"></span></div>
+                <div class="c-foot"><button class="c-btn c-btn--primary" id="upload-btn" type="button" disabled data-i18n="upload">Upload selected</button><button class="c-btn c-btn--danger" id="delete-btn" type="button" disabled data-i18n="delete">Delete selected</button><span class="c-hint" id="upload-summary"></span></div>
                 <p class="c-hint" data-i18n="upload_hint">Uploads use the router's mobile data.</p>
             </div>
 
@@ -168,6 +168,31 @@
     <div class="c-modal c-modal--small" role="dialog" aria-modal="true">
         <h2 data-i18n="confirm_stop">Stop recording on all OWLs?</h2>
         <div class="c-mfoot"><button class="c-btn" type="button" id="stop-no" data-i18n="confirm_no">Keep recording</button><button class="c-btn c-btn--stop" type="button" id="stop-yes" data-i18n="confirm_yes">Stop</button></div>
+    </div>
+</div>
+
+<!-- Delete confirmation (sessions pane) -->
+<div class="c-scrim" id="delete-modal" hidden>
+    <div class="c-modal c-modal--small" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+        <h2 id="delete-title"></h2>
+        <p class="c-hint" data-i18n="delete_hint">The images are removed from the OWLs. Upload first if you need a copy.</p>
+        <div class="c-mfoot"><button class="c-btn" type="button" id="delete-no" data-i18n="cancel">Cancel</button><button class="c-btn c-btn--stop" type="button" id="delete-yes" data-i18n="delete_confirm">Delete</button></div>
+    </div>
+</div>
+
+<!-- Live view: one OWL's MJPEG stream (/api/video_feed/<id>). Closing clears
+     the src so the stream, and the gunicorn thread proxying it, stops. -->
+<div class="c-scrim" id="live-modal" hidden>
+    <div class="c-modal c-live-modal" role="dialog" aria-modal="true" aria-labelledby="live-title">
+        <div class="c-live-head">
+            <h2 id="live-title"></h2>
+            <div class="c-seg" id="live-owls"></div>
+            <button class="c-btn c-btn--primary" type="button" id="live-close" data-i18n="close">Close</button>
+        </div>
+        <div class="c-live-frame">
+            <img id="live-img" alt="" />
+            <p class="c-live-error" id="live-error" hidden></p>
+        </div>
     </div>
 </div>
 

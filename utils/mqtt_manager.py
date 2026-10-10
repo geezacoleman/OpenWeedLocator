@@ -2869,6 +2869,24 @@ class OWLMQTTPublisher:
                 self.state['preview_upload'].update(status='error', error=str(e))
             self._publish_state()
 
+    def _session_busy(self, real_target, session_id):
+        """Why this session (or date folder) must not be deleted now, or ''.
+        Covers every sender: the collect screen, downloads page and Noktura."""
+        with self.state_lock:
+            recording = bool(self.state.get('image_sample_enable'))
+            transfer = dict(self.state.get('data_transfer') or {})
+        recorder = getattr(self.owl_instance, 'image_recorder', None)
+        active = getattr(recorder, 'save_directory', None)
+        if recording and isinstance(active, str):
+            real_active = os.path.realpath(active)
+            if real_active == real_target or real_active.startswith(real_target + os.sep):
+                return 'recording into it'
+        uploading = str(transfer.get('session_date') or '')
+        if (transfer.get('status') not in (None, 'idle', 'complete', 'error')
+                and (uploading == session_id or uploading.startswith(session_id + '/'))):
+            return 'uploading it'
+        return ''
+
     def _delete_session(self, session_date, data_types):
         """Delete a data session directory from the OWL. Runs in background thread.
 
@@ -2895,6 +2913,11 @@ class OWLMQTTPublisher:
                 # Path traversal check
                 if not real_target.startswith(real_save + os.sep):
                     self.logger.error(f"Path traversal rejected: {target}")
+                    return
+
+                busy = self._session_busy(real_target, session_date)
+                if busy:
+                    self.logger.warning(f"Not deleting {session_date}: {busy}")
                     return
 
                 if os.path.isdir(target):

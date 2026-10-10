@@ -565,3 +565,37 @@ class TestOversizeTrimming:
                                             capture_time=CAPTURE_TIME))
         assert piexif.ExifIFD.DateTimeOriginal in exif['Exif']
         assert piexif.ExifIFD.ExposureTime in exif['Exif']
+
+
+def _owl_detection_settings():
+    """owl.Owl._detection_settings, compiled on its own (owl.py itself needs
+    cv2/GPIO and cannot be imported in the test environment)."""
+    import ast
+    import textwrap
+    from pathlib import Path
+    src = (Path(__file__).parent.parent / 'owl.py').read_text(encoding='utf-8')
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == '_detection_settings')
+    namespace = {}
+    exec(textwrap.dedent(ast.get_source_segment(src, fn)), namespace)
+    return namespace['_detection_settings']
+
+
+class TestDetectionSettings:
+    """Regression (v3.17-v3.21 field rigs): with controller_type = none and a
+    dashboard there is no self.sensitivity_level Value, and reading it raised
+    on every capture, so networked OWLs saved no images at all."""
+
+    def _owl(self, **extra):
+        import types
+        return types.SimpleNamespace(min_detection_area_percent=0.1, exg_min=25, exg_max=200,
+                                     hue_min=30, hue_max=90, saturation_min=30, saturation_max=255,
+                                     brightness_min=5, brightness_max=200, invert_hue=False, **extra)
+
+    def test_no_switch_panel_does_not_raise(self):
+        settings = _owl_detection_settings()(self._owl(), 'exhsv')
+        assert 'sensitivity_level' not in settings and settings['exg_min'] == 25
+
+    def test_records_the_active_preset_name(self):
+        settings = _owl_detection_settings()(self._owl(_sensitivity_level='medium'), 'exhsv')
+        assert settings['sensitivity_level'] == 'medium'

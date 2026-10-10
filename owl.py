@@ -818,7 +818,10 @@ class Owl:
         """
         settings = {
             'min_detection_area_percent': self.min_detection_area_percent or None,
-            'sensitivity_level': getattr(self.sensitivity_level, 'value', None),
+            # The preset name the main loop syncs in every mode. The Value
+            # self.sensitivity_level only exists with an advanced/ute switch
+            # panel, and reading it raised on every saved frame otherwise.
+            'sensitivity_level': getattr(self, '_sensitivity_level', None),
         }
         if algorithm in ('exg', 'exhsv'):
             settings['exg_min'] = self.exg_min

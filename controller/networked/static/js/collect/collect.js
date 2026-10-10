@@ -26,6 +26,7 @@
     let pointsNext = 0, pointsRun = null, pointCount = 0;
     const markers = [];
     let cameraValues = null;
+    let liveOwl = null;
 
     // ---------- helpers ----------
     const $ = (id) => document.getElementById(id);
@@ -159,7 +160,7 @@
             if (!o.connected) {
                 return '<div class="c-owl-row c-owl-row--off"><span class="c-dot c-dot--bad"></span>' +
                     '<span class="c-owl-name" style="color:' + colour + '">' + esc(o.id) + '</span>' +
-                    '<span>' + esc(t('offline')) + '</span><span></span><span></span><span></span></div>';
+                    '<span>' + esc(t('offline')) + '</span><span></span><span></span><span></span><span></span></div>';
             }
             const dot = o.recording ? 'c-dot--ok' : '';
             const images = o.record_mode === 'video' && o.video_seconds
@@ -169,7 +170,9 @@
                 cell(t('images'), images) +
                 cell(t('speed'), o.speed_kmh === null || o.speed_kmh === undefined ? '-' : o.speed_kmh.toFixed(1) + ' km/h') +
                 cell(t('shutter'), shutterText(o.exposure_time_us) + (o.analogue_gain ? ' · ' + o.analogue_gain.toFixed(1) + '×' : '')) +
-                cell(t('free'), freeText(o.storage_free_mb)) + '</div>';
+                cell(t('free'), freeText(o.storage_free_mb)) +
+                '<button class="c-btn c-btn--small c-live-btn" type="button" data-live="' + esc(o.id) + '">' +
+                esc(t('live')) + '</button></div>';
         });
         $('owl-rows').innerHTML = rows.join('') || '<div class="c-hint">' + esc(t('no_owls')) + '</div>';
     }
@@ -479,8 +482,9 @@
             body.innerHTML = rows.map(([owl, s]) => {
                 const key = owl.id + '|' + s.session_id;
                 const st = sessionStatus(owl, s);
-                // Not the session this OWL is still recording into
-                const canPick = (st[0] === '' || st[0] === 'bad') && !isRecordingInto(owl, s);
+                // Not the session this OWL is still recording into, uploading
+                // or waiting on Noktura for. Uploaded ones can be ticked to delete.
+                const canPick = (st[0] === '' || st[0] === 'bad' || st[0] === 'ok') && !isRecordingInto(owl, s);
                 if (!canPick) delete ticked[key];
                 const date = String(s.date || '');
                 const when = (date.length === 8 ? date.slice(6, 8) + '-' + date.slice(4, 6) + ' ' : '') + (s.time || '');
@@ -502,18 +506,38 @@
             return sum + (s ? s.total_size || 0 : 0);
         }, 0);
         $('upload-btn').disabled = !chosen.length;
+        $('delete-btn').disabled = !chosen.length;
         $('upload-summary').textContent = chosen.length ? t('selected', { n: chosen.length, mb: mb(bytes) }) : t('nothing_selected');
     }
 
     function onUpload() {
         if (!state.cloud.configured) { toast(t('cloud_needed'), 'warning'); return; }
-        const items = Object.keys(ticked).filter((k) => ticked[k]).map((k) => {
+        api('/api/collect/upload', { items: chosenItems() }).then((data) => {
+            ticked = {};
+            if (!(data.requested || []).length) toast(t('upload_already'), 'warning');
+            poll();
+        }).catch((e) => toast(e.message, 'error'));
+    }
+
+    function chosenItems() {
+        return Object.keys(ticked).filter((k) => ticked[k]).map((k) => {
             const [owl, session_id] = k.split('|');
             return { owl: owl, session_id: session_id };
         });
-        api('/api/collect/upload', { items: items }).then((data) => {
+    }
+    function onDeletePress() {
+        const n = chosenItems().length;
+        if (!n) return;
+        $('delete-title').textContent = t('delete_title', { n: n });
+        $('delete-modal').hidden = false;
+    }
+    function deleteSessions() {
+        $('delete-modal').hidden = true;
+        api('/api/collect/sessions/delete', { items: chosenItems() }).then((data) => {
             ticked = {};
-            if (!(data.requested || []).length) toast(t('upload_already'), 'warning');
+            const done = (data.deleted || []).length, skipped = (data.skipped || []).length;
+            if (done) toast(t('deleted', { n: done }), 'success');
+            if (skipped) toast(t('delete_skipped', { n: skipped }), 'warning');
             poll();
         }).catch((e) => toast(e.message, 'error'));
     }
@@ -595,6 +619,52 @@
         $('restart-row').hidden = !state.owls.some((o) => o.connected && o.restart_required);
     }
 
+    // ---------- Live view ----------
+    // One OWL's MJPEG stream through the controller (/api/video_feed/<id>).
+    // Each open stream holds one of gunicorn's threads, so closing or
+    // switching always drops the old src first.
+    function openLive(id) {
+        if (!id || id === liveOwl) return;
+        liveOwl = id;
+        const img = $('live-img');
+        img.removeAttribute('src');
+        img.hidden = false;
+        $('live-error').hidden = true;
+        $('live-title').textContent = t('live_title', { owl: id });
+        renderLiveOwls();
+        img.src = '/api/video_feed/' + encodeURIComponent(id) + '?t=' + Date.now();
+        $('live-modal').hidden = false;
+    }
+    function closeLive() {
+        if (!liveOwl) return;
+        liveOwl = null;
+        $('live-img').removeAttribute('src');
+        $('live-modal').hidden = true;
+    }
+    function renderLiveOwls() {
+        const ids = state ? state.owls.filter((o) => o.connected).map((o) => o.id) : [];
+        const seg = $('live-owls');
+        seg.hidden = ids.length < 2;
+        seg.innerHTML = ids.map((id) => '<button type="button" data-live="' + esc(id) + '" aria-pressed="' +
+            (id === liveOwl) + '">' + esc(id) + '</button>').join('');
+    }
+    function onLiveError() {
+        if (!liveOwl) return;
+        $('live-img').hidden = true;
+        $('live-error').textContent = t('live_error', { owl: liveOwl });
+        $('live-error').hidden = false;
+    }
+    // pointerdown, not click: the status rows are redrawn every second, and a
+    // redraw between press and release would swallow the tap.
+    function bindLiveButtons(container) {
+        const open = (e) => {
+            const b = e.target.closest('[data-live]');
+            if (b) openLive(b.dataset.live);
+        };
+        container.addEventListener('pointerdown', open);
+        container.addEventListener('click', open);
+    }
+
     // ---------- Noktura ----------
     function renderCloudPane() {
         const c = state.cloud;
@@ -646,6 +716,9 @@
         $('map-centre').addEventListener('click', centreMap);
         $('sessions-refresh').addEventListener('click', refreshSessions);
         $('upload-btn').addEventListener('click', onUpload);
+        $('delete-btn').addEventListener('click', onDeletePress);
+        $('delete-no').addEventListener('click', () => { $('delete-modal').hidden = true; });
+        $('delete-yes').addEventListener('click', deleteSessions);
         $('session-rows').addEventListener('click', (e) => {
             const b = e.target.closest('.c-tick');
             if (!b) return;
@@ -674,6 +747,12 @@
         $('restart-btn').addEventListener('click', () => api('/api/command', { device_id: 'all', action: 'restart_service' })
             .catch((e) => toast(e.message, 'error')));
         $('connect-btn').addEventListener('click', onConnect);
+        bindLiveButtons($('owl-rows'));
+        bindLiveButtons($('live-owls'));
+        $('live-close').addEventListener('click', closeLive);
+        $('live-img').addEventListener('error', onLiveError);
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLive(); });
+        document.addEventListener('visibilitychange', () => { if (document.hidden) closeLive(); });
     }
 
     function init() {

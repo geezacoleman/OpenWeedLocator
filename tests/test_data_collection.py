@@ -777,3 +777,89 @@ class TestSetupScriptDashboardChoice:
         assert cp.get('Collect', 'sample_mode') == 'distance'
         for line in text.splitlines():
             assert not line.strip().startswith(';'), 'INI comments must use #'
+
+
+@pytest.mark.unit
+class TestCollectDeleteSessions:
+    """Collect screen 'Delete selected' (v3.21.1)."""
+
+    SID = '20261008/session_090000'
+
+    def _sent(self, ctrl):
+        return [(c.args[0], json.loads(c.args[1])) for c in ctrl.mqtt_client.publish.call_args_list
+                if c.args[0].endswith('/commands')]
+
+    def _client(self, collect_client):
+        client, ctrl, nw = collect_client
+        ctrl.mqtt_connected = True
+        ctrl.mqtt_client = MagicMock()
+        return client, ctrl
+
+    def test_deletes_known_idle_session(self, collect_client):
+        client, ctrl = self._client(collect_client)
+        resp = client.post('/api/collect/sessions/delete', json={'items': [{'owl': 'owl-1', 'session_id': self.SID}]})
+        assert resp.status_code == 200 and resp.get_json()['deleted'] == [{'owl': 'owl-1', 'session_id': self.SID}]
+        assert self._sent(ctrl) == [('owl/owl-1/commands', {'action': 'delete_session', 'session_id': self.SID,
+                                                            'data_types': ['images']})]
+
+    def test_validation(self, collect_client):
+        client, ctrl = self._client(collect_client)
+        assert client.post('/api/collect/sessions/delete', json={'items': []}).status_code == 400
+        assert client.post('/api/collect/sessions/delete', json={}).status_code == 400
+        ctrl.mqtt_connected = False
+        assert client.post('/api/collect/sessions/delete',
+                           json={'items': [{'owl': 'owl-1', 'session_id': self.SID}]}).status_code == 503
+
+    @pytest.mark.parametrize('setup, reason', [
+        (lambda s: s.update(image_sample_enable=True, capture={'session_id': 'session_090000'}), 'recording'),
+        (lambda s: s.update(data_transfer={'status': 'uploading', 'session_date': '20261008/session_090000'}), 'uploading'),
+    ])
+    def test_busy_sessions_skipped(self, collect_client, setup, reason):
+        client, ctrl = self._client(collect_client)
+        setup(ctrl.owls_state['owl-1'])
+        data = client.post('/api/collect/sessions/delete',
+                           json={'items': [{'owl': 'owl-1', 'session_id': self.SID}]}).get_json()
+        assert data['deleted'] == [] and data['skipped'][0]['reason'] == reason
+        assert self._sent(ctrl) == []
+
+    def test_pending_upload_and_unknown_skipped(self, collect_client):
+        client, ctrl = self._client(collect_client)
+        ctrl.collect.request_uploads([{'owl': 'owl-1', 'session_id': self.SID}])
+        data = client.post('/api/collect/sessions/delete', json={'items': [
+            {'owl': 'owl-1', 'session_id': self.SID}, {'owl': 'owl-1', 'session_id': '20261008/session_999999'},
+            {'owl': 'owl-9', 'session_id': self.SID}]}).get_json()
+        assert [s['reason'] for s in data['skipped']] == ['upload_pending', 'not_on_owl', 'not_on_owl']
+        assert self._sent(ctrl) == []
+
+    def test_finished_upload_can_be_deleted(self, collect_client):
+        client, ctrl = self._client(collect_client)
+        ctrl.owls_state['owl-1']['data_transfer'] = {'status': 'complete', 'session_date': self.SID}
+        data = client.post('/api/collect/sessions/delete',
+                           json={'items': [{'owl': 'owl-1', 'session_id': self.SID}]}).get_json()
+        assert len(data['deleted']) == 1
+
+
+@pytest.mark.unit
+class TestCollectLiveView:
+    """Collect screen 'Live view' (v3.21.1): per-OWL button, one stream at a time."""
+
+    HTML = (REPO / 'controller/networked/templates/collect.html').read_text(encoding='utf-8')
+    JS = (REPO / 'controller/networked/static/js/collect/collect.js').read_text(encoding='utf-8')
+    I18N = (REPO / 'controller/networked/static/js/collect/i18n.js').read_text(encoding='utf-8')
+
+    def test_modal_and_controls(self):
+        for el in ('id="live-modal"', 'id="live-img"', 'id="live-close"', 'id="live-owls"', 'id="delete-btn"',
+                   'id="delete-modal"'):
+            assert el in self.HTML
+
+    def test_uses_existing_proxy_and_drops_stream(self):
+        assert "'/api/video_feed/' + encodeURIComponent(id)" in self.JS
+        # Each open stream holds a gunicorn thread: close/switch must clear src
+        assert self.JS.count("$('live-img').removeAttribute('src')") >= 1
+        assert "img.removeAttribute('src');" in self.JS
+        assert "addEventListener('pointerdown', open)" in self.JS
+
+    def test_strings_in_both_languages(self):
+        for key in ('live:', 'live_title:', 'live_error:', 'close:', 'delete:', 'delete_title:',
+                    'delete_hint:', 'deleted:', 'delete_skipped:', 'delete_confirm:'):
+            assert self.I18N.count(key) >= 2, key

@@ -1964,3 +1964,38 @@ class TestStandaloneLocationsRoute:
         paths = select_preview_images(str(save_dir), '20260331/session_143015', 10)
         assert all(p.lower().endswith(('.jpg', '.jpeg', '.png')) for p in paths)
         assert len(paths) == 2
+
+
+@pytest.mark.unit
+class TestDeleteSessionGuard:
+    """The OWL itself refuses to delete what it is recording into or
+    uploading, whoever sends delete_session (collect screen, Noktura)."""
+
+    def _session(self, mqtt_publisher, tmp_path):
+        save_dir = str(tmp_path / 'save')
+        target = os.path.join(save_dir, '20261009', 'session_101500')
+        os.makedirs(target)
+        mqtt_publisher.owl_instance.save_directory = save_dir
+        return target
+
+    def test_recording_session_kept(self, mqtt_publisher, tmp_path):
+        target = self._session(mqtt_publisher, tmp_path)
+        mqtt_publisher.owl_instance.image_recorder.save_directory = target
+        mqtt_publisher.state['image_sample_enable'] = True
+        mqtt_publisher._delete_session('20261009/session_101500', ['images'])
+        mqtt_publisher._delete_session('20261009', ['images'])  # its date folder too
+        assert os.path.isdir(target)
+
+    def test_uploading_session_kept(self, mqtt_publisher, tmp_path):
+        target = self._session(mqtt_publisher, tmp_path)
+        mqtt_publisher.state['data_transfer'].update(status='uploading', session_date='20261009/session_101500')
+        mqtt_publisher._delete_session('20261009/session_101500', ['images'])
+        assert os.path.isdir(target)
+
+    def test_stopped_recording_and_finished_upload_delete(self, mqtt_publisher, tmp_path):
+        target = self._session(mqtt_publisher, tmp_path)
+        mqtt_publisher.owl_instance.image_recorder.save_directory = target
+        mqtt_publisher.state['image_sample_enable'] = False
+        mqtt_publisher.state['data_transfer'].update(status='complete', session_date='20261009/session_101500')
+        mqtt_publisher._delete_session('20261009/session_101500', ['images'])
+        assert not os.path.exists(target)
