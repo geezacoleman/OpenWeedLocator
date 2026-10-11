@@ -242,7 +242,10 @@ class AdvancedController:
                 elif mode == 2:  # All solenoids on (Blanket)
                     self.owl.detection_enable.value = False
                     self.status_indicator.disable_weed_detection()
-                    self.owl.relay_controller.relay.all_on()
+                    if getattr(self.owl, '_firstboot_active', False) is True:
+                        self.logger.warning("Blanket spray refused: first-boot setup is active")
+                    else:
+                        self.owl.relay_controller.relay.all_on()
                 else:  # Off (mode 1)
                     self.owl.detection_enable.value = False
                     self.status_indicator.disable_weed_detection()

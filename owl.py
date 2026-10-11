@@ -297,6 +297,12 @@ class Owl:
         # Relay Dict maps the reference relay number to a boardpin on the embedded device
         self.relay_dict = {}
 
+        # What the nozzles do on a spraying fault (camera lost, control lost):
+        # 'off' = detection off, all nozzles off; 'on' = blanket spray when
+        # detection can no longer run. Either way the fault is published.
+        self.on_error = self.config.get('System', 'on_error', fallback='off').strip().lower()
+        self._fault_state = None
+
         # use the [Relays] section to build the dictionary
         for key, value in self.config['Relays'].items():
             self.relay_dict[int(key)] = int(value)
@@ -310,6 +316,7 @@ class Owl:
             self.logger.critical("OWL initialization failed: GPIO pin conflict. Another OWL instance may be running.",
                                  exc_info=True)
             raise
+        self.relay_controller.on_stuck = self._relay_stuck
 
         ### Data collection only ###
         detection_enable_config = self.config.getboolean('DataCollection', 'detection_enable', fallback=False)
@@ -372,12 +379,14 @@ class Owl:
                 self.logger.info(f"Device ID: {device_id}")
                 self.logger.info(f"Client ID: {client_id}")
 
-                # Only attach log handler if broker is already reachable
-                if self.dash.connected:
-                    LogManager.add_mqtt_handler(
-                        mqtt_client=self.dash.client,
-                        mqtt_error_topic=self.dash.topics['errors']
-                    )
+                # Errors go to the dashboards on owl/errors. Attached always:
+                # the connection completes later on paho's thread, so the old
+                # `if self.dash.connected` check was almost always False and
+                # errors never left the OWL. paho queues while offline.
+                LogManager.add_mqtt_handler(
+                    mqtt_client=self.dash.client,
+                    mqtt_error_topic=self.dash.topics['errors']
+                )
 
             except Exception as e:
                 self.dash = None
@@ -772,6 +781,11 @@ class Owl:
         # Derive crop_slice, lane coords and actuation band pixel bounds.
         self.recompute_geometry()
 
+        # The dashboard took its state snapshot early in __init__, before
+        # controller_type, save_directory and the resolution clamp were set.
+        if self.dash:
+            self.dash._sync_parameters_to_state()
+
     @property
     def config_path(self):
         return self._config_path
@@ -865,6 +879,10 @@ class Owl:
             return 'storage_full'
         return 'storage_error'
 
+    def _save_directory_writable(self):
+        save_dir = getattr(self, 'save_directory', None)
+        return bool(save_dir) and os.access(save_dir, os.W_OK)
+
     def _retry_storage_setup(self):
         """One-shot re-scan for a writable recording location, run when
         recording is requested while none was found at boot (or the drive
@@ -883,7 +901,8 @@ class Owl:
                                                     jpeg_quality=self.jpeg_quality)
             self.status_indicator.save_directory = self.save_directory
             self.status_indicator.storage_location = self.directory_manager.resolved_location
-            self.status_indicator.clear_error()
+            if self.status_indicator.error_code in (5, 6):  # storage codes only
+                self.status_indicator.clear_error()
             self._no_drive_warned = False
             if self.dash:
                 self.dash.set_storage_available(True)
@@ -1045,17 +1064,27 @@ class Owl:
                             self.logger.warning('[WARNING] No frame from camera - retrying')
                         time.sleep(0.05)
                         continue
-                    self.logger.error(
-                        f'[ERROR] No frame from camera after {MAX_DROPPED_FRAMES} '
-                        f'retries - camera disconnected? Stopping.')
-                    if self.status_indicator:
-                        self.status_indicator.error(3)
-                    self.stop()
-                    break
+                    if (self._fault_state or {}).get('code') != 'camera_lost':
+                        self._fault('camera_lost',
+                                    f'No frame from camera after {MAX_DROPPED_FRAMES} '
+                                    f'retries - camera disconnected?',
+                                    detection_possible=False)
+                    if self._fault_state['action'] != 'blanket':
+                        self.stop()
+                        break
+                    # on_error = on: blanket spray while the operator has
+                    # spraying on, and keep trying the camera.
+                    if self._detection_enable:
+                        self.relay_controller.relay.all_on()
+                    else:
+                        self.relay_controller.relay.all_off()
+                    time.sleep(0.5)
+                    continue
                 if dropped_frames:
                     self.logger.info(f'[INFO] Camera recovered after {dropped_frames} '
                                      f'dropped frame(s)')
                     dropped_frames = 0
+                    self._clear_fault('camera_lost')
 
                 # Reset tracker when detection toggled off
                 if prev_detection_enable and not self._detection_enable:
@@ -1076,12 +1105,15 @@ class Owl:
 
                 # Create new session directory when recording starts
                 if self._image_sample_enable and not prev_recording_enable:
-                    # No drive at boot (or since removed) — re-scan now so
-                    # plugging a USB in mid-session just works.
-                    if not getattr(self, 'save_directory', None):
+                    # No drive at boot, or it has been removed or gone
+                    # read-only since: re-scan now so plugging a USB in
+                    # mid-session just works. Checking only for an empty
+                    # path missed a pulled drive, and the session folder
+                    # creation below then raised and stopped the OWL.
+                    if not self._save_directory_writable():
                         self._retry_storage_setup()
 
-                    if getattr(self, 'save_directory', None):
+                    if self._save_directory_writable():
                         session_name = f"session_{datetime.now().strftime('%H%M%S')}"
                         date_dir = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
                         session_dir = os.path.join(date_dir, session_name)
@@ -1095,7 +1127,7 @@ class Owl:
 
                         # Stop old ImageRecorder, create new one for this session
                         if hasattr(self, 'image_recorder') and self.image_recorder:
-                            self.image_recorder.stop()
+                            self.image_recorder.stop(wait=False)
                         self.image_recorder = ImageRecorder(
                             save_directory=session_dir, mode=self.sample_method,
                             jpeg_quality=self.jpeg_quality)
@@ -1493,8 +1525,13 @@ class Owl:
                         # enable flag is True and both names are unbound, and the
                         # NameError escapes the guarded block below and stops the OWL.
                         if self.sample_method != 'whole' and detection_ran:
-                            save_boxes = boxes
-                            save_centres = weed_centres
+                            # Detections are in cropped-frame pixels; the full
+                            # frame is saved, so shift them by the crop origin
+                            # (crops and their EXIF ROI were offset before).
+                            dy = self.crop_slice[0].start or 0
+                            dx = self.crop_slice[1].start or 0
+                            save_boxes = [(x + dx, y + dy, w, h) for x, y, w, h in boxes]
+                            save_centres = [(cx + dx, cy + dy) for cx, cy in weed_centres]
 
                         # Image sampling is auxiliary — a metadata/EXIF/disk error here
                         # must never reach the loop's except (which stops the OWL).
@@ -1535,20 +1572,16 @@ class Owl:
 
                     # Checked every recording frame, stills or video clip
                     if self.status_indicator.DRIVE_FULL:
+                        # Clears the shared switch value too: with a dashboard
+                        # it used to clear only the dashboard state, and a
+                        # held record switch turned recording straight back on.
+                        self._stop_recording('storage_full')
                         if self.dash:
-                            self.dash.set_image_sample_enable(False)
                             self.dash.set_recording_blocked('storage_full')
                             self.dash.drive_full_indicator()
-                            self.logger.info("Drive full: Image sampling disabled via MQTT")
-                        else:
-                            with self.image_sample_enable.get_lock():
-                                self.image_sample_enable.value = False
-                            self.logger.info("Drive full: Image sampling disabled locally")
-
-                        self._image_sample_enable = False
 
                         self._close_video_clip()
-                        self.image_recorder.stop()
+                        self.image_recorder.stop(wait=False)
                         self.status_indicator.error(5)
                         self.logger.info("Drive full: image sampling disabled until space is freed")
 
@@ -1572,7 +1605,9 @@ class Owl:
                         last_fps_time = time.time()
 
                 if self.show_display:
-                    if not self._detection_enable:
+                    # image_out is None when detection is on but no detector
+                    # was built (e.g. gog with a missing model)
+                    if not self._detection_enable or image_out is None:
                         image_out = frame.copy()
 
                     if self.record_video:
@@ -2014,6 +2049,57 @@ class Owl:
         self._video_last_t = None
         self._video_dts = []
 
+    # Status LED blink count per spraying fault
+    _FAULT_LED = {'camera_lost': 3, 'control_lost': 4, 'relay_stuck': 7}
+
+    def _fault(self, code, message, detection_possible):
+        """A spraying fault. Always loud (log, LED, dashboard/app); then
+        [System] on_error decides the nozzles: 'off' -> detection off, all
+        nozzles off; 'on' -> blanket spray if detection can no longer run,
+        otherwise keep spot spraying."""
+        if self.on_error == 'on':
+            action = 'spot_spray' if detection_possible else 'blanket'
+        else:
+            action = 'nozzles_off'
+        self._fault_state = {'code': code, 'message': message,
+                             'action': action, 'since': time.time()}
+        self.logger.error(f"[FAULT] {code}: {message} "
+                          f"(on_error = {self.on_error}: {action.replace('_', ' ')})")
+        if action == 'nozzles_off':
+            self._detection_enable = False
+            self.relay_controller.relay.all_off()
+        elif action == 'blanket' and self._detection_enable:
+            # Blanket follows the operator's detection switch, so spraying
+            # can always be turned off (see the camera-lost wait in hoot).
+            self.relay_controller.relay.all_on()
+        indicator = getattr(self, 'status_indicator', None)
+        if indicator:
+            indicator.error(self._FAULT_LED.get(code, 1))
+        dash = getattr(self, 'dash', None)
+        if dash:
+            dash.set_fault(self._fault_state)
+
+    def _relay_stuck(self, message):
+        # Called from the relay thread on every failed retry: raise it once.
+        if (self._fault_state or {}).get('code') != 'relay_stuck':
+            self._fault('relay_stuck', message, detection_possible=True)
+
+    def _clear_fault(self, code):
+        """The fault condition has gone: release the nozzles and say so."""
+        fault = self._fault_state
+        if not fault or fault['code'] != code:
+            return
+        self._fault_state = None
+        self.logger.info(f"[FAULT] {code} cleared")
+        if fault['action'] == 'blanket':
+            self.relay_controller.relay.all_off()
+        indicator = getattr(self, 'status_indicator', None)
+        if indicator and indicator.error_code == self._FAULT_LED.get(code, 1):
+            indicator.clear_error()
+        dash = getattr(self, 'dash', None)
+        if dash:
+            dash.set_fault(None)
+
     def _stop_recording(self, reason):
         """Turn recording off from inside the loop and say why."""
         self._recording_stopped_reason = reason
@@ -2157,141 +2243,168 @@ class Owl:
 
         return stats
 
+    # Consecutive failed sync cycles (0.1 s each) before control counts as lost
+    _STATE_FAILURES_BEFORE_FAULT = 20
+
     def update_state(self):
+        """Run _update_state_once forever. An exception used to kill this
+        thread silently, leaving the dashboard unable to turn spraying off and
+        GPS frozen; now it is logged, and persistent failure raises a fault."""
+        failures = 0
+        while not self.stop_state_update.is_set():
+            try:
+                self._update_state_once()
+                if failures >= self._STATE_FAILURES_BEFORE_FAULT:
+                    self.logger.info("State sync recovered")
+                    self._clear_fault('control_lost')
+                failures = 0
+            except Exception as e:
+                failures += 1
+                if failures == 1:
+                    self.logger.error(f"State sync error: {e}", exc_info=True)
+                if failures == self._STATE_FAILURES_BEFORE_FAULT:
+                    self._fault('control_lost',
+                                f'Dashboard and switch control stopped updating: {e}',
+                                detection_possible=True)
+            time.sleep(self._STATE_CHECK_INTERVAL)
+
+    def _update_state_once(self):
         """Update local state from MQTT server or local hardware controllers.
 
         Ute controller has ONE switch that controls either recording or detection
         (based on switch_purpose). The other control comes from the dashboard.
         Advanced controller manages recording, detection mode, and sensitivity.
         """
-        while not self.stop_state_update.is_set():
-            if self.dash:
-                if self.controller_type == 'ute':
-                    # Ute has one switch — only override the control it manages.
-                    # The other control + sensitivity come from MQTT (dashboard).
-                    if self.switch_purpose == 'recording':
-                        # Hardware controls recording; detection from dashboard
-                        with self.image_sample_enable.get_lock():
-                            hardware_recording = self.image_sample_enable.value
-                        self.dash.set_image_sample_enable(hardware_recording)
-                        self._image_sample_enable = hardware_recording
-                        self._detection_enable = self.dash.get_detection_enable()
-                    else:
-                        # Hardware controls detection; recording from dashboard
-                        with self.detection_enable.get_lock():
-                            hardware_detection = self.detection_enable.value
-                        self.dash.set_detection_enable(hardware_detection)
-                        self._detection_enable = hardware_detection
-                        self._image_sample_enable = self.dash.get_image_sample_enable()
-                    # Sensitivity always from dashboard for Ute
-                    self._sensitivity_level = self.dash.get_sensitivity_level()
-
-                elif self.controller_type == 'advanced':
-                    # Advanced controller manages all three
-                    if hasattr(self, 'detection_enable'):
-                        with self.detection_enable.get_lock():
-                            hardware_detection = self.detection_enable.value
-                        self.dash.set_detection_enable(hardware_detection)
-                        self._detection_enable = hardware_detection
-
-                    if hasattr(self, 'image_sample_enable'):
-                        with self.image_sample_enable.get_lock():
-                            hardware_recording = self.image_sample_enable.value
-                        self.dash.set_image_sample_enable(hardware_recording)
-                        self._image_sample_enable = hardware_recording
-
-                    if hasattr(self, 'sensitivity_level'):
-                        with self.sensitivity_level.get_lock():
-                            hardware_sensitivity_int = self.sensitivity_level.value
-                        hardware_sensitivity_string = Sensitivity(hardware_sensitivity_int).name.lower()
-                        self.dash.set_sensitivity_level(hardware_sensitivity_string)
-                        self._sensitivity_level = hardware_sensitivity_string
-
-                else:
-                    # No hardware controller - normal dashboard control
+        if self.dash:
+            if self.controller_type == 'ute':
+                # Ute has one switch — only override the control it manages.
+                # The other control + sensitivity come from MQTT (dashboard).
+                if self.switch_purpose == 'recording':
+                    # Hardware controls recording; detection from dashboard
+                    with self.image_sample_enable.get_lock():
+                        hardware_recording = self.image_sample_enable.value
+                    self.dash.set_image_sample_enable(hardware_recording)
+                    self._image_sample_enable = hardware_recording
                     self._detection_enable = self.dash.get_detection_enable()
+                else:
+                    # Hardware controls detection; recording from dashboard
+                    with self.detection_enable.get_lock():
+                        hardware_detection = self.detection_enable.value
+                    self.dash.set_detection_enable(hardware_detection)
+                    self._detection_enable = hardware_detection
                     self._image_sample_enable = self.dash.get_image_sample_enable()
-                    self._sensitivity_level = self.dash.get_sensitivity_level()
+                # Sensitivity always from dashboard for Ute
+                self._sensitivity_level = self.dash.get_sensitivity_level()
 
-            else:
-                # Hardware only, no dashboard
+            elif self.controller_type == 'advanced':
+                # Advanced controller manages all three
                 if hasattr(self, 'detection_enable'):
                     with self.detection_enable.get_lock():
-                        self._detection_enable = self.detection_enable.value
+                        hardware_detection = self.detection_enable.value
+                    self.dash.set_detection_enable(hardware_detection)
+                    self._detection_enable = hardware_detection
+
                 if hasattr(self, 'image_sample_enable'):
                     with self.image_sample_enable.get_lock():
-                        self._image_sample_enable = self.image_sample_enable.value
+                        hardware_recording = self.image_sample_enable.value
+                    self.dash.set_image_sample_enable(hardware_recording)
+                    self._image_sample_enable = hardware_recording
+
                 if hasattr(self, 'sensitivity_level'):
                     with self.sensitivity_level.get_lock():
-                        sensitivity_int = self.sensitivity_level.value
-                    self._sensitivity_level = Sensitivity(sensitivity_int).name.lower()
+                        hardware_sensitivity_int = self.sensitivity_level.value
+                    hardware_sensitivity_string = Sensitivity(hardware_sensitivity_int).name.lower()
+                    self.dash.set_sensitivity_level(hardware_sensitivity_string)
+                    self._sensitivity_level = hardware_sensitivity_string
 
-            # First-boot setup mode: detection stays off no matter what the
-            # hardware switch or dashboard said above — a flipped-on Ute
-            # switch must not click relays on the bench. Runs only when the
-            # flag existed at boot; re-stats it at most every 5 s to notice
-            # setup finishing (teardown removes the flag).
+            else:
+                # No hardware controller - normal dashboard control
+                self._detection_enable = self.dash.get_detection_enable()
+                self._image_sample_enable = self.dash.get_image_sample_enable()
+                self._sensitivity_level = self.dash.get_sensitivity_level()
+
+        else:
+            # Hardware only, no dashboard
+            if hasattr(self, 'detection_enable'):
+                with self.detection_enable.get_lock():
+                    self._detection_enable = self.detection_enable.value
+            if hasattr(self, 'image_sample_enable'):
+                with self.image_sample_enable.get_lock():
+                    self._image_sample_enable = self.image_sample_enable.value
+            if hasattr(self, 'sensitivity_level'):
+                with self.sensitivity_level.get_lock():
+                    sensitivity_int = self.sensitivity_level.value
+                self._sensitivity_level = Sensitivity(sensitivity_int).name.lower()
+
+        # First-boot setup mode: detection stays off no matter what the
+        # hardware switch or dashboard said above — a flipped-on Ute
+        # switch must not click relays on the bench. Runs only when the
+        # flag existed at boot; re-stats it at most every 5 s to notice
+        # setup finishing (teardown removes the flag).
+        if self._firstboot_active:
+            now = time.time()
+            if now - self._firstboot_last_check >= 5.0:
+                self._firstboot_last_check = now
+                if not self._firstboot_flag_path.exists():
+                    self._firstboot_active = False
+                    self.logger.info("First-boot flag cleared: detection control restored")
             if self._firstboot_active:
-                now = time.time()
-                if now - self._firstboot_last_check >= 5.0:
-                    self._firstboot_last_check = now
-                    if not self._firstboot_flag_path.exists():
-                        self._firstboot_active = False
-                        self.logger.info("First-boot flag cleared: detection control restored")
-                if self._firstboot_active:
-                    self._detection_enable = False
+                self._detection_enable = False
 
-            # GPS: serial takes priority, then dashboard (browser geolocation)
-            self.gps_data = self._get_best_gps_data()
+        # on_error = off: a spraying fault holds detection off whatever the
+        # switch or dashboard says, until it clears.
+        if self._fault_state and self._fault_state['action'] == 'nozzles_off':
+            self._detection_enable = False
 
-            # Best-GPS reading → dashboard/app state (change-guarded in the
-            # setter; coords quantized there so a parked rig stays quiet)
-            if self.dash:
-                gps = self.gps_data
-                self.dash.set_gps_status(
-                    fix=gps is not None,
-                    source=gps.get('source') if gps else None,
-                    latitude=gps.get('latitude') if gps else None,
-                    longitude=gps.get('longitude') if gps else None,
-                    accuracy=gps.get('accuracy') if gps else None)
+        # GPS: serial takes priority, then dashboard (browser geolocation)
+        self.gps_data = self._get_best_gps_data()
 
-            # Session GPS track: recorder throttles internally (1 s / 0.5 m)
-            if (self.track_recorder.recording and self._image_sample_enable
-                    and self.gps_data):
-                self.track_recorder.add_point(
-                    lat=self.gps_data.get('latitude'),
-                    lon=self.gps_data.get('longitude'),
-                    speed=self.gps_data.get('speed_kmh'),
-                    heading=self.gps_data.get('heading'),
-                    altitude=self.gps_data.get('altitude'))
+        # Best-GPS reading → dashboard/app state (change-guarded in the
+        # setter; coords quantized there so a parked rig stays quiet)
+        if self.dash:
+            gps = self.gps_data
+            self.dash.set_gps_status(
+                fix=gps is not None,
+                source=gps.get('source') if gps else None,
+                latitude=gps.get('latitude') if gps else None,
+                longitude=gps.get('longitude') if gps else None,
+                accuracy=gps.get('accuracy') if gps else None)
 
-            # Spray timing once a second; system stats every 3 s. Stats used to
-            # be gathered inside the detection loop, where psutil's sampling
-            # interval and the vcgencmd call froze detection for ~130 ms.
-            now = time.monotonic()
-            if now - self._last_timing_update >= 1.0:
-                self._last_timing_update = now
-                self._update_spray_timing()
-            if self.dash and now - self._last_stats_at >= 3.0:
-                self._last_stats_at = now
-                try:
-                    self.dash.update_system_stats(self.get_system_stats())
-                except Exception as e:
-                    self.logger.debug(f"Error updating system stats: {e}")
+        # Session GPS track: recorder throttles internally (1 s / 0.5 m)
+        if (self.track_recorder.recording and self._image_sample_enable
+                and self.gps_data):
+            self.track_recorder.add_point(
+                lat=self.gps_data.get('latitude'),
+                lon=self.gps_data.get('longitude'),
+                speed=self.gps_data.get('speed_kmh'),
+                heading=self.gps_data.get('heading'),
+                altitude=self.gps_data.get('altitude'))
 
-            # Storage watchdog readings → dashboard/app (change-guarded in
-            # the setter, so this is cheap every cycle)
-            if self.dash and hasattr(self, 'status_indicator'):
-                indicator = self.status_indicator
-                free_mb = (int(indicator.storage_free / (1024 * 1024))
-                           if indicator.storage_free is not None else None)
-                self.dash.set_storage_status(
-                    location=indicator.storage_location,
-                    free_mb=free_mb,
-                    warning=indicator.storage_warning,
-                    quota_gb=getattr(self, 'image_quota_gb', 12))
+        # Spray timing once a second; system stats every 3 s. Stats used to
+        # be gathered inside the detection loop, where psutil's sampling
+        # interval and the vcgencmd call froze detection for ~130 ms.
+        now = time.monotonic()
+        if now - self._last_timing_update >= 1.0:
+            self._last_timing_update = now
+            self._update_spray_timing()
+        if self.dash and now - self._last_stats_at >= 3.0:
+            self._last_stats_at = now
+            try:
+                self.dash.update_system_stats(self.get_system_stats())
+            except Exception as e:
+                self.logger.debug(f"Error updating system stats: {e}")
 
-            time.sleep(self._STATE_CHECK_INTERVAL)
+        # Storage watchdog readings → dashboard/app (change-guarded in
+        # the setter, so this is cheap every cycle)
+        if self.dash and hasattr(self, 'status_indicator'):
+            indicator = self.status_indicator
+            free_mb = (int(indicator.storage_free / (1024 * 1024))
+                       if indicator.storage_free is not None else None)
+            self.dash.set_storage_status(
+                location=indicator.storage_location,
+                free_mb=free_mb,
+                warning=indicator.storage_warning,
+                quota_gb=getattr(self, 'image_quota_gb', 12))
 
     # Controller timing counts as live for this long after its last broadcast
     # (it broadcasts once a second).

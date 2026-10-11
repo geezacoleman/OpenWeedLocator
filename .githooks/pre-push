@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Fast tests before every push. CI runs the full suite on GitHub.
+#   Enable once per clone:  git config core.hooksPath .githooks
+#   Skip one push:          git push --no-verify
+# Tiers are described in tests/README.md.
+set -e
+cd "$(git rev-parse --show-toplevel)"
+
+PARALLEL=()
+if python -c "import xdist" 2>/dev/null; then
+    PARALLEL=(-n auto)
+else
+    echo "pre-push: pip install pytest-xdist to run these in parallel"
+fi
+
+# test_bytetrack_real imports torch at collection; it is CI-only (marked slow).
+python -m pytest tests/unit tests/owl tests/mqtt tests/contract \
+    -q -x -m "not slow" "${PARALLEL[@]}" -p no:cacheprovider \
+    --ignore=tests/unit/test_bytetrack_real.py

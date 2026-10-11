@@ -179,7 +179,8 @@ class BaseStatusIndicator:
                 # storage watchdog. Log once per failure transition only.
                 if not self._update_failed:
                     self._update_failed = True
-                    self.logger.warning(f"Storage monitoring error (drive removed?): {e}")
+                    self.logger.error(f"Recording drive unreadable (removed?): {e}")
+                    self.error(6)  # cleared by update() once the drive is back
             self.update_event.wait(10.5)
             self.update_event.clear()
 
@@ -369,7 +370,7 @@ class AdvancedStatusIndicator(BaseStatusIndicator):
     def _update_storage_indicator(self, percent_full):
         if percent_full >= 0.90:
             self.DRIVE_FULL = True
-            self.error(1)  # Use error code 1 for drive full
+            self.error(5)  # storage full (1 is camera/dependency failure)
         elif self.DRIVE_FULL:
             # space was freed (e.g. sessions deleted) — recording may resume
             self.clear_error()
@@ -658,6 +659,9 @@ class RelayController:
         self.relay_schedule_dict = {}
         self.relay_condition_dict = {}
         self.running = True
+        # Called with a message when a relay will not switch off (owl.py
+        # raises it as a fault); None = log only.
+        self.on_stuck = None
 
         # create a spray-window schedule and Condition() for each nozzle
         self.logger.info("[INFO] Setting up nozzles...")
@@ -777,6 +781,8 @@ class RelayController:
                     except Exception as e2:
                         self.logger.error(f"Relay {relay} STUCK ON - direct off "
                                           f"also failed: {e2}")
+                        if self.on_stuck:
+                            self.on_stuck(f"Relay {relay} is stuck on: {e2}")
 
         with condition:
             while self.running:

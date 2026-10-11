@@ -19,7 +19,8 @@ const CONFIG_FIELD_DEFS = {
         'delay': { type: 'number', step: 0.01, min: 0, max: 5.0, help: 'Delay before actuation' },
         'actuation_zone': { type: 'number', min: 1, max: 100, help: 'Legacy bottom-anchored zone (%). Use actuation_top/bottom instead.' },
         'actuation_top': { type: 'number', step: 0.01, min: 0, max: 1.0, help: 'Actuation band top (fraction of cropped height; 0 = top)' },
-        'actuation_bottom': { type: 'number', step: 0.01, min: 0, max: 1.0, help: 'Actuation band bottom (fraction of cropped height; 1 = bottom)' }
+        'actuation_bottom': { type: 'number', step: 0.01, min: 0, max: 1.0, help: 'Actuation band bottom (fraction of cropped height; 1 = bottom)' },
+        'on_error': { type: 'select', options: ['off', 'on'], help: 'Nozzles on a fault (camera lost, control lost). off: all nozzles off. on: blanket spray while spraying is switched on. The fault is always shown.' }
     },
     'MQTT': {
         'enable': { type: 'boolean', help: 'Enable MQTT communication' },

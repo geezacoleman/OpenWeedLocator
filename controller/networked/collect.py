@@ -213,9 +213,14 @@ def collect_warnings(owls, now, thresholds=None, cloud_configured=False, gps_fix
         recording = bool(s.get('image_sample_enable'))
         capture = s.get('capture') or {}
 
-        if s.get('storage_warning') or (s.get('storage_free_mb') is not None
-                                        and s['storage_free_mb'] < t['storage_low_mb']):
-            add(owl_id, 'storage_low', 'bad' if s.get('storage_warning') == 'critical' else 'warn',
+        if s.get('fault'):
+            add(owl_id, 'fault', 'bad', message=s['fault'].get('message'))
+        # storage_warning is 'ok' | 'low' | 'full': 'ok' is a non-empty
+        # string, so testing it for truth warned on every OWL.
+        if s.get('storage_warning') in ('low', 'full') or (
+                s.get('storage_free_mb') is not None
+                and s['storage_free_mb'] < t['storage_low_mb']):
+            add(owl_id, 'storage_low', 'bad' if s.get('storage_warning') == 'full' else 'warn',
                 free_mb=s.get('storage_free_mb'))
         if s.get('recording_blocked_reason') and not recording:
             add(owl_id, 'recording_blocked', 'bad', reason=s['recording_blocked_reason'])

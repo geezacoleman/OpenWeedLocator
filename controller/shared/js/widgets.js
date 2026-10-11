@@ -18,7 +18,7 @@
 const OWLWidget = {
     /** Return the latest cached system state (from stats polling). */
     getState() {
-        return typeof lastSystemStats !== 'undefined' ? lastSystemStats : {};
+        return OWLWidget._lastState;
     },
 
     /** Fetch a single config value from the backend. */
@@ -87,7 +87,9 @@ const OWLWidget = {
     },
 
     /** Internal: broadcast state to registered listeners. */
+    _lastState: {},
     _broadcastState(state) {
+        OWLWidget._lastState = state || {};
         for (const cb of OWLWidget._stateListeners) {
             try { cb(state); } catch (e) { console.error('Widget state listener error:', e); }
         }
@@ -250,11 +252,11 @@ function wireBuiltinWidget(container, widget) {
         btn.addEventListener('click', function() {
             var presetName = btn.dataset.presetName;
             if (presetName) {
-                fetch('/api/sensitivity/set', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ level: presetName }),
-                }).catch(function(e) { console.error('Preset apply error:', e); });
+                // /api/config/param exists on both controllers;
+                // /api/sensitivity/set was standalone-only (404 on networked)
+                OWLWidget.sendCommand('set_sensitivity', { value: presetName }).then(function(r) {
+                    if (!r || !r.success) OWLWidget.notify('Preset not applied', (r && r.error) || '', 'error');
+                });
             }
         });
     });

@@ -3,7 +3,32 @@
 // Detection/recording toggles, OWL restart
 // ============================================
 
+// Main buttons follow what the OWLs report, not only what was last pressed:
+// an OWL that refused (no drive), faulted or rebooted otherwise still showed
+// as running. Skipped briefly after a press while the OWLs catch up.
+let _mainPressAt = 0;
+function syncMainButtons() {
+    if (Date.now() - _mainPressAt < 3000) return;
+    const online = Object.values(owlsData).filter((o) => o && o.connected);
+    if (!online.length) return;
+    const detecting = online.some((o) => o.detection_enable);
+    const recording = online.some((o) => o.image_sample_enable);
+    const det = document.getElementById('main-detection-btn');
+    if (det) {
+        det.classList.toggle('off', detecting);
+        det.textContent = detecting ? 'Stop Detection' : 'Start Detection';
+    }
+    const rec = document.getElementById('main-recording-btn');
+    if (rec) {
+        rec.classList.toggle('active', recording);
+        rec.textContent = recording ? 'Stop Recording' : 'Start Recording';
+    }
+    globalDetectionEnabled = detecting;
+    globalRecordingEnabled = recording;
+}
+
 function toggleMainDetection() {
+    _mainPressAt = Date.now();
     const btn = document.getElementById('main-detection-btn');
     const nozzleBtn = document.getElementById('main-nozzles-btn');
 
@@ -31,6 +56,7 @@ function toggleMainDetection() {
 }
 
 function toggleMainRecording() {
+    _mainPressAt = Date.now();
     const btn = document.getElementById('main-recording-btn');
 
     if (btn.classList.contains('active')) {
@@ -107,6 +133,7 @@ function toggleMainRecording() {
 }
 
 function _doToggleRecordingOn(btn) {
+    _mainPressAt = Date.now();
     btn.classList.add('active');
     btn.textContent = 'Stop Recording';
     globalRecordingEnabled = true;

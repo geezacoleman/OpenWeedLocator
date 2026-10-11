@@ -99,10 +99,15 @@ class OWLDashboard:
                          static_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static'),
                          template_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates'))
 
+        # A factory OWL joined to a rig by the phone app keeps this dashboard,
+        # but owl.py now talks to the rig's broker on owl/<id>/ topics.
+        # Following CONTROLLER.ini keeps the dashboard in step with it.
+        networked = self.config.get('Network', 'mode', fallback='standalone') == 'networked'
         self.mqtt_client = DashMQTTSubscriber(
-            broker_host='localhost',
-            broker_port=1883,
+            broker_host=self.config.get('MQTT', 'broker_ip', fallback='localhost') if networked else 'localhost',
+            broker_port=self.config.getint('MQTT', 'broker_port', fallback=1883) if networked else 1883,
             client_id=f'owl_dashboard_{os.getpid()}',
+            device_id=self.config.get('MQTT', 'device_id', fallback=None) if networked else None,
             cloud_device_id=self.cloud_device_id if self.cloud_enable else None)
 
         try:
@@ -626,6 +631,9 @@ class OWLDashboard:
                 result = self.mqtt_client._send_command('set_tracking', value=value)
                 self._persist_config_change('Tracking', 'tracking_enabled', str(value))
                 self.logger.info(f"Tracking {'enabled' if value else 'disabled'} via dashboard")
+                if not result.get('success'):
+                    # Saved for the next start, but the running OWL did not get it
+                    return jsonify(result), 503
                 return jsonify({'success': True, 'tracking_enabled': value})
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)}), 500
@@ -997,6 +1005,7 @@ class OWLDashboard:
                 'confidence': mqtt_state.get('confidence', 0.5),
                 'crop_buffer_px': mqtt_state.get('crop_buffer_px', 20),
                 'algorithm_error': mqtt_state.get('algorithm_error'),
+                'fault': mqtt_state.get('fault'),
                 'config_name': mqtt_state.get('config_name', ''),
                 'config_unsaved': mqtt_state.get('config_unsaved', False),
                 'config_source': mqtt_state.get('config_source', ''),
@@ -1675,10 +1684,30 @@ class OWLDashboard:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             try:
                 data = request.get_json() or {}
+                # Widget buttons/selects send {action, ...} (OWLWidget.sendCommand),
+                # as on the networked controller; they used to get a 400 here.
+                action = data.pop('action', None)
+                if action:
+                    if action == 'set_sensitivity':
+                        action, data = 'set_sensitivity_level', {'level': str(data.get('value', '')).lower()}
+                    return jsonify(self.mqtt_client._send_command(action, **data))
                 param = data.get('param', '')
                 value = data.get('value')
                 if not param or value is None:
                     return jsonify({'success': False, 'error': 'param and value required'}), 400
+                section = data.get('section') or 'GreenOnBrown'
+                if section != 'GreenOnBrown':
+                    # Widget controls on other sections (toggles send 'true'/'false')
+                    blocked = ConfigValidator.protected_pin_errors(
+                        {section: {param: str(value)}}, self._device_protected_pins())
+                    if blocked:
+                        return jsonify({'success': False,
+                                        'error': ConfigValidator.format_protected_pin_errors(blocked),
+                                        'rejected': blocked}), 400
+                    result = self.mqtt_client._send_command(
+                        'set_config_section', section=section, params={param: str(value)})
+                    self._persist_config_change(section, param, str(value))
+                    return jsonify(result)
                 # min_detection_area_percent is a small float (e.g. 0.0005);
                 # int() would truncate it to 0 live AND persist "0".
                 if param in FLOAT_CONFIG_PARAMS:

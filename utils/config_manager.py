@@ -280,7 +280,9 @@ class ConfigValidator:
         'System': {
             'required_keys': {'algorithm', 'relay_num'},
             'optional_keys': {'input_file_or_directory', 'actuation_duration', 'delay', 'actuation_zone',
-                              'actuation_top', 'actuation_bottom'}
+                              'actuation_top', 'actuation_bottom',
+                              # off | on - string key, optional_keys only
+                              'on_error'}
         },
         'Controller': {
             # Base requirements for all controller types

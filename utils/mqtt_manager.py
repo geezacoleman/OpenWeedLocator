@@ -41,6 +41,10 @@ GEOMETRY_KEYS = set(MOUNT_GEOMETRY_KEYS) | {
 # Changing one updates config + state and surfaces a "restart required" notice.
 RESTART_REQUIRED_KEYS = {
     'resolution_width', 'resolution_height', 'relay_num',
+    # Set up once at boot. A live save_directory pointed recording at an
+    # unresolved path while the storage watchdog kept checking the old disk;
+    # the switch panel process is built from controller_type/switch_purpose.
+    'save_directory', 'controller_type', 'switch_purpose',
 }
 
 # ---------------------------------------------------------------------------
@@ -1062,6 +1066,12 @@ class OWLMQTTPublisher:
             if action == 'set_detection_enable':
                 self.state['detection_enable'] = bool(command.get('value', False))
                 self.logger.info(f"Detection enable set to: {self.state['detection_enable']}")
+                if self.state.get('detection_mode') == 2:
+                    # Leaving blanket: all_on bypassed the relay workers, so
+                    # nothing would switch the nozzles off again.
+                    self.state['detection_mode'] = 0 if self.state['detection_enable'] else 1
+                    if self.owl_instance and hasattr(self.owl_instance, 'relay_controller'):
+                        self.owl_instance.relay_controller.relay.all_off()
 
             elif action == 'set_image_sample_enable':
                 was_recording = self.state['image_sample_enable']
@@ -1223,7 +1233,9 @@ class OWLMQTTPublisher:
                 self.state['detection_mode'] = mode
                 if mode == 2:  # Blanket — all nozzles on
                     self.state['detection_enable'] = False
-                    if self.owl_instance and hasattr(self.owl_instance, 'relay_controller'):
+                    if getattr(self.owl_instance, '_firstboot_active', False) is True:
+                        self.logger.warning("Blanket spray refused: first-boot setup is active")
+                    elif self.owl_instance and hasattr(self.owl_instance, 'relay_controller'):
                         self.owl_instance.relay_controller.relay.all_on()
                     self.logger.info("Blanket spray: all nozzles ON, detection disabled")
                 elif mode == 0:  # Spot spray — detection on
@@ -1570,12 +1582,14 @@ class OWLMQTTPublisher:
                 if key in GREENONBROWN_PARAMS:
                     self._update_greenonbrown_param(key, value)
                     gob_changed = True
-                elif section == 'GreenOnGreen':
+                elif section == 'GreenOnGreen' and key == 'confidence':
                     self._update_greenongreen_param(key, value)
                 elif section == 'System' and key == 'algorithm':
                     # Route algorithm changes through set_algorithm handler
                     self._handle_command({'action': 'set_algorithm', 'value': value})
-                elif key in RESTART_REQUIRED_KEYS:
+                elif key in RESTART_REQUIRED_KEYS or section == 'GreenOnGreen':
+                    # (GreenOnGreen: only confidence applies live; the rest
+                    # used to log "restart required" without telling anyone.)
                     # Can't apply live — applying relay_num/resolution to the running
                     # instance would leave lane/camera state inconsistent. Persist to
                     # config below and flag a restart instead. Only a REAL value
@@ -1602,8 +1616,11 @@ class OWLMQTTPublisher:
                         continue
                     setattr(self.owl_instance, key, typed)
                     camera_live_params[key] = typed
-                elif hasattr(self.owl_instance, key):
-                    # Type-convert to match existing attribute type (INI values are strings)
+                elif isinstance(getattr(self.owl_instance, key, None), (bool, int, float, str)):
+                    # Type-convert to match existing attribute type (INI values are
+                    # strings). Only plain values: detection_enable and
+                    # image_sample_enable are shared Values, and a preset load
+                    # used to replace them with the string 'False'.
                     current = getattr(self.owl_instance, key)
                     try:
                         if isinstance(current, bool):
@@ -3178,6 +3195,18 @@ class OWLMQTTPublisher:
         if not isinstance(gps_data, dict) or gps_data.get('latitude') is None or gps_data.get('longitude') is None:
             self.logger.warning(f"Ignoring GPS update without coordinates: {gps_data}")
             return
+        # Numbers as numbers: a string field stored here used to raise on
+        # every state-sync cycle downstream (float()/round() on it).
+        payload = dict(gps_data)
+        try:
+            for key in ('latitude', 'longitude', 'accuracy', 'altitude',
+                        'speed_kmh', 'heading', 'timestamp'):
+                if payload.get(key) is not None:
+                    payload[key] = float(payload[key])
+        except (TypeError, ValueError):
+            self.logger.warning(f"Ignoring GPS update with a non-numeric field: {gps_data}")
+            return
+        gps_data = payload
 
         with self.state_lock:
             self.state['gps_payload'] = dict(gps_data)
@@ -3385,8 +3414,11 @@ class OWLMQTTPublisher:
 
     # State update methods for owl.py to call
     def set_detection_enable(self, value):
-        """Set detection enable state (for owl.py internal use)"""
+        """Set detection enable state (for owl.py internal use). Change-
+        guarded: switch-panel units call this every 0.1 s state-sync cycle."""
         with self.state_lock:
+            if self.state.get('detection_enable') == bool(value):
+                return
             self.state['detection_enable'] = bool(value)
             self.state['last_update'] = time.time()
         self._publish_state()
@@ -3404,6 +3436,8 @@ class OWLMQTTPublisher:
         """Set image sampling state (for owl.py internal use and hardware controllers)"""
         with self.state_lock:
             was_recording = self.state['image_sample_enable']
+            if was_recording == bool(value):
+                return  # change-guarded, as set_detection_enable
             self.state['image_sample_enable'] = bool(value)
             self.state['last_update'] = time.time()
 
@@ -3441,6 +3475,16 @@ class OWLMQTTPublisher:
         with self.state_lock:
             self.state['recording_blocked_reason'] = reason
             self.state['recording_location'] = None
+            self.state['last_update'] = time.time()
+        self._publish_state()
+
+    def set_fault(self, fault):
+        """Publish a spraying fault so dashboards/app can show it, or clear it
+        with None. fault: {code, message, action, since} from Owl._fault."""
+        with self.state_lock:
+            if self.state.get('fault') == fault:
+                return
+            self.state['fault'] = fault
             self.state['last_update'] = time.time()
         self._publish_state()
 
@@ -3822,11 +3866,16 @@ class DashMQTTSubscriber:
     def get_state(self):
         """Get current state"""
         with self.state_lock:
-            current_time = time.time()
-            if current_time - self.last_heartbeat > self.heartbeat_timeout:
+            silent = time.time() - self.last_heartbeat > self.heartbeat_timeout
+            if silent:
                 self.current_state['owl_running'] = False
-
-            return self.current_state.copy()
+            state = self.current_state.copy()
+        # An OWL that has gone quiet neither detects nor records, whatever
+        # its last state said (the switches used to stay ON after it died)
+        if silent:
+            state['detection_enable'] = False
+            state['image_sample_enable'] = False
+        return state
 
     def get_weed_detect_indicator(self):
         """Check if weed was recently detected (for UI indicators)"""
@@ -3849,6 +3898,13 @@ class DashMQTTSubscriber:
         """Send command to OWL"""
         if not self.connected:
             return {'success': False, 'error': 'Not connected to MQTT broker'}
+
+        # The OWL's set_config only takes GreenOnBrown keys and ignores
+        # `section`; route other sections as the networked controller does.
+        if action == 'set_config' and kwargs.get('section', 'GreenOnBrown') != 'GreenOnBrown':
+            action, kwargs = 'set_config_section', {
+                'section': kwargs['section'],
+                'params': {kwargs.get('key'): str(kwargs.get('value'))}}
 
         command = {'action': action, **kwargs}
         try:

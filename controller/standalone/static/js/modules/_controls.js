@@ -1096,27 +1096,39 @@ function updatePaintedChipHint(hasProfiles) {
    Algorithm Error State
    -------------------------------------------------------------------------- */
 
-let lastAlgorithmError = null;
-
-function updateAlgorithmError(error) {
-    // Only act on state changes
-    if (error === lastAlgorithmError) return;
-    lastAlgorithmError = error;
-
-    var banner = document.getElementById('algorithmErrorBanner');
-    if (error) {
+// Show (text) or hide (null) a banner under the detection mode row.
+function setModeBanner(id, text) {
+    var banner = document.getElementById(id);
+    if (text) {
         if (!banner) {
             banner = document.createElement('div');
-            banner.id = 'algorithmErrorBanner';
+            banner.id = id;
             banner.className = 'algorithm-error-banner';
             var modeRow = document.querySelector('.pipeline-mode');
             if (modeRow) modeRow.parentNode.insertBefore(banner, modeRow.nextSibling);
         }
-        banner.textContent = 'Detection unavailable: ' + error + '. Switch algorithm to recover.';
+        banner.textContent = text;
         banner.style.display = '';
-    } else {
-        if (banner) banner.style.display = 'none';
+    } else if (banner) {
+        banner.style.display = 'none';
     }
+}
+
+function updateAlgorithmError(error) {
+    setModeBanner('algorithmErrorBanner',
+        error ? 'Detection unavailable: ' + error + '. Switch algorithm to recover.' : null);
+}
+
+// OWL spraying fault (camera lost, control lost, relay stuck)
+const FAULT_ACTIONS = {
+    nozzles_off: 'Nozzles are off.',
+    blanket: 'Blanket spraying while spraying is switched on.',
+    spot_spray: 'Spot spraying continues.'
+};
+function updateFault(fault) {
+    setModeBanner('faultBanner', fault
+        ? 'Fault: ' + fault.message + '. ' + (FAULT_ACTIONS[fault.action] || '')
+        : null);
 }
 
 /* --------------------------------------------------------------------------
