@@ -1924,7 +1924,6 @@ def collect_cloud_provision():
     data = request.get_json(silent=True) or {}
     try:
         payload = parse_provision_command(data.get('command', ''))
-        cloud_provision.require_noktura_broker(payload)
         payload['replace'] = data.get('replace') is True
         result = cloud_provision.provision(subprocess.run, payload,
                                            controller_ini=controller.config_file)

@@ -14,6 +14,10 @@ Behaviour knobs are baked in and deterministic:
   - timings are shortened (switch 0.5 s) so wizard runs stay fast
   - finish() re-arms instead of exiting, so one server instance survives a
     whole Playwright suite
+  - the root cloud helper is faked: a provision that passes the real
+    validation (Noktura broker only) writes [Cloud] into CONTROLLER.ini the
+    way owl_cloud_provision.sh does, so cloud_site_conflict and replace run
+    for real. Re-arming clears it.
   - contract 5 setup session: every Playwright test is a new "phone", so the
     TEST-ONLY route POST /__test__/new-phone releases the previous test's
     session (a real unit frees it on service restart or after 10 idle
@@ -21,7 +25,9 @@ Behaviour knobs are baked in and deterministic:
 """
 
 import argparse
+import json
 import logging
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -62,6 +68,14 @@ def main():
 
     fake = FakeNmcli()
     system = FakeSystem()
+    base_ini = controller_ini.read_text()
+
+    def cloud_runner(argv, input=None, **kwargs):
+        meta = json.loads(input.split('\n')[0])
+        controller_ini.write_text(base_ini + '\n[Cloud]\nenable = True\n'
+                                  f"device_id = {meta['device_id']}\n"
+                                  f"portal_url = {meta['portal_url']}\n")
+        return subprocess.CompletedProcess(argv, 0, stdout='', stderr='')
 
     def runner(argv, timeout=None):
         # 'badpass99' mirrors the app mock's failure password: a PSK set on
@@ -91,6 +105,8 @@ def main():
             fb.wifi_error = None
             fb.wifi_warning = None
             fb._persist()
+        controller_ini.write_text(base_ini)
+        fb.cloud = None
         for name in [n for n, p in fake.profiles.items() if p['mode'] != 'ap']:
             del fake.profiles[name]
         if not fake.profiles:
@@ -101,10 +117,16 @@ def main():
         nm, flag_path=flag, state_file=workdir / 'state.json',
         system_runner=system, controller_ini=controller_ini,
         hostname_getter=lambda: system.hostname,
-        exit_fn=rearm)
+        exit_fn=rearm, cloud_runner=cloud_runner)
 
     session = SetupSession()
     app = create_app(network_manager=nm, state=fb, session=session)
+
+    @app.route('/__test__/reset-cloud', methods=['POST'])
+    def reset_cloud():
+        controller_ini.write_text(base_ini)
+        fb.cloud = None
+        return {'success': True}
 
     @app.route('/__test__/new-phone', methods=['POST'])
     def new_phone():

@@ -145,7 +145,8 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
                               internet_probe=None, update_state_getter=None,
                               status_path=None, popen=None,
                               dashboard_unit=DASHBOARD_UNIT,
-                              process_started_at=None, git_info_getter=None):
+                              process_started_at=None, git_info_getter=None,
+                              firstboot_flag_path=None):
     """Build the device-settings blueprint.
 
     manager: NetworkSettingsManager (owns the nmcli wrapper as manager.nm)
@@ -160,6 +161,8 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
         data_transfer status gates an update)
     status_path/popen/dashboard_unit/process_started_at/git_info_getter:
         software-update plumbing (see /api/settings/update/*)
+    firstboot_flag_path: the armed-unit flag (default as owl.py's); token
+        recovery is refused while it exists
     """
     log = logger or logging.getLogger(__name__)
     bp = Blueprint('settings', __name__)
@@ -566,8 +569,17 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
     # token was originally granted under. Deliberately NOT token-guarded.
     recovery_lock = {'failures': 0, 'lock_until': 0.0}
 
+    firstboot_flag = Path(firstboot_flag_path or os.environ.get(
+        'OWL_FIRSTBOOT_FLAG', '/boot/firmware/owl-firstboot.flag'))
+
     @bp.route('/api/settings/token', methods=['POST'])
     def recover_token():
+        # An armed unit still has the printed hotspot PSK, which every
+        # unit shares, so it proves nothing yet. The first-boot setup API
+        # hands the token to the phone that finishes setup.
+        if firstboot_flag.exists():
+            return jsonify({'success': False, 'error': 'setup_in_progress',
+                            'detail': 'Finish first-boot setup in the OWL app first.'}), 409
         now = time.time()
         if now < recovery_lock['lock_until']:
             wait_s = int(recovery_lock['lock_until'] - now) + 1
