@@ -92,6 +92,17 @@ ensure_read_lock() {
     info "lock_device_private_key=1 appended to $BOOT_CONFIG (takes effect after reboot)"
 }
 
+otp_pubkey_pem() {
+    # rpi-fw-crypto writes the public key as binary DER (SubjectPublicKeyInfo)
+    # and fails on a blank slot. Convert to the PEM the rest of OWL reads.
+    local der="$1.der"
+    rm -f "$der" "$1"
+    "$FW_CRYPTO" pubkey --key-id "$KEY_ID" --out "$der" || { rm -f "$der"; return 1; }
+    openssl pkey -pubin -inform DER -in "$der" -outform PEM -out "$1" || { rm -f "$der" "$1"; return 1; }
+    rm -f "$der"
+    grep -q 'BEGIN PUBLIC KEY' "$1"
+}
+
 do_otp() {
     need_root --otp
     command -v "$FW_CRYPTO" >/dev/null 2>&1 || fail "$FW_CRYPTO not found. Install the rpi-fw-crypto package, or build raspberrypi/utils/rpifwcrypto (cmake). See PROJECT_NOTES for the bench record."
@@ -99,11 +110,10 @@ do_otp() {
 
     install -d -m 755 "$IDENTITY_DIR"
     local status
-    status=$("$FW_CRYPTO" get-key-status --key-id "$KEY_ID" 2>&1 || true)
+    status=$("$FW_CRYPTO" get-key-status "$KEY_ID" 2>&1 || true)
     info "key slot $KEY_ID status: ${status:-unknown}"
 
-    if ! "$FW_CRYPTO" pubkey --key-id "$KEY_ID" > "$IDENTITY_DIR/device.pub.tmp" 2>/dev/null \
-       || ! grep -q 'BEGIN PUBLIC KEY' "$IDENTITY_DIR/device.pub.tmp"; then
+    if ! otp_pubkey_pem "$IDENTITY_DIR/device.pub.tmp" 2>/dev/null; then
         # Blank slot. Generating is permanent: confirm.
         rm -f "$IDENTITY_DIR/device.pub.tmp"
         echo -e "${ORANGE}[WARN] OTP key slot $KEY_ID is blank. Generating a key writes OTP bits that${NC}"
@@ -112,8 +122,8 @@ do_otp() {
             read -r -p "Type GENKEY to continue: " confirm
             [[ "$confirm" == "GENKEY" ]] || fail "aborted, nothing written"
         fi
-        "$FW_CRYPTO" genkey --key-id "$KEY_ID" || fail "genkey failed"
-        "$FW_CRYPTO" pubkey --key-id "$KEY_ID" > "$IDENTITY_DIR/device.pub.tmp" || fail "pubkey after genkey failed"
+        "$FW_CRYPTO" genkey --key-id "$KEY_ID" --alg ec || fail "genkey failed"
+        otp_pubkey_pem "$IDENTITY_DIR/device.pub.tmp" || fail "pubkey after genkey failed"
         info "P-256 key generated in OTP slot $KEY_ID"
     else
         info "OTP slot $KEY_ID already holds a key; using it"
