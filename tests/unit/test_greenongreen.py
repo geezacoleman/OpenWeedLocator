@@ -59,8 +59,8 @@ def make_mock_yolo(task='detect', names=None):
     # Mock boxes
     mock_box = MagicMock()
     mock_box.xyxy = [np.array([100, 50, 200, 150])]
-    mock_box.conf = [np.array([0.85])]
-    mock_box.cls = [np.array([0])]
+    mock_box.conf = np.array([0.85])
+    mock_box.cls = np.array([0])
     mock_result.boxes = [mock_box]
 
     # Mock masks (None for detection, populated for segmentation)
@@ -162,13 +162,15 @@ class TestModelDiscovery:
         # Should have loaded the NCNN dir, not the .pt
         mock_yolo_cls.assert_called_once_with(str(ncnn_dir), task=None)
 
-    def test_no_models_raises(self, tmp_path):
+    @patch('utils.greenongreen.YOLO')
+    def test_no_models_raises(self, mock_yolo_cls, tmp_path):
         """Empty directory raises FileNotFoundError."""
         from utils.greenongreen import GreenOnGreen
         with pytest.raises(FileNotFoundError, match='No YOLO models found'):
             GreenOnGreen(model_path=str(tmp_path))
 
-    def test_nonexistent_path_raises(self):
+    @patch('utils.greenongreen.YOLO')
+    def test_nonexistent_path_raises(self, mock_yolo_cls):
         """Non-existent path raises FileNotFoundError."""
         from utils.greenongreen import GreenOnGreen
         with pytest.raises(FileNotFoundError, match='does not exist'):
@@ -390,8 +392,8 @@ class TestZoneActuation:
         mock_result = MagicMock()
         mock_box = MagicMock()
         mock_box.xyxy = [np.array([100, 50, 200, 150])]
-        mock_box.conf = [np.array([0.9])]
-        mock_box.cls = [np.array([0])]
+        mock_box.conf = np.array([0.9])
+        mock_box.cls = np.array([0])
         mock_result.boxes = [mock_box]
 
         # Mask polygon covering x=100-200, y=50-150
@@ -686,8 +688,8 @@ class TestTrackingMode:
         mock_result = MagicMock()
         mock_box = MagicMock()
         mock_box.xyxy = [np.array([100, 50, 200, 150])]
-        mock_box.conf = [np.array([0.85])]
-        mock_box.cls = [np.array([0])]
+        mock_box.conf = np.array([0.85])
+        mock_box.cls = np.array([0])
         mock_result.boxes = make_mock_boxes([mock_box], track_ids=np.array([1]))
         mock_result.masks = None
         mock_model.track.return_value = [mock_result]
@@ -711,12 +713,12 @@ class TestTrackingMode:
         mock_result = MagicMock()
         mock_box1 = MagicMock()
         mock_box1.xyxy = [np.array([10, 20, 50, 60])]
-        mock_box1.conf = [np.array([0.9])]
-        mock_box1.cls = [np.array([0])]
+        mock_box1.conf = np.array([0.9])
+        mock_box1.cls = np.array([0])
         mock_box2 = MagicMock()
         mock_box2.xyxy = [np.array([100, 100, 200, 200])]
-        mock_box2.conf = [np.array([0.7])]
-        mock_box2.cls = [np.array([1])]
+        mock_box2.conf = np.array([0.7])
+        mock_box2.cls = np.array([1])
 
         mock_result.boxes = make_mock_boxes([mock_box1, mock_box2], track_ids=np.array([5, 8]))
         mock_result.masks = None
@@ -744,8 +746,8 @@ class TestTrackingMode:
         mock_result = MagicMock()
         mock_box = MagicMock()
         mock_box.xyxy = [np.array([100, 50, 200, 150])]
-        mock_box.conf = [np.array([0.85])]
-        mock_box.cls = [np.array([0])]
+        mock_box.conf = np.array([0.85])
+        mock_box.cls = np.array([0])
         mock_result.boxes = make_mock_boxes([mock_box], track_ids=None)
         mock_result.masks = None
         mock_model.track.return_value = [mock_result]
@@ -851,8 +853,8 @@ class TestTrackingMode:
         mock_result = MagicMock()
         mock_box = MagicMock()
         mock_box.xyxy = [np.array([100, 50, 200, 150])]
-        mock_box.conf = [np.array([0.8])]
-        mock_box.cls = [np.array([1])]  # crop class
+        mock_box.conf = np.array([0.8])
+        mock_box.cls = np.array([1])  # crop class
         mock_result.boxes = make_mock_boxes([mock_box], track_ids=np.array([3]))
         mock_result.masks = None
         mock_model.track.return_value = [mock_result]
@@ -885,8 +887,8 @@ class TestTrackingMode:
         mock_result = MagicMock()
         mock_box = MagicMock()
         mock_box.xyxy = [np.array([100, 50, 200, 150])]
-        mock_box.conf = [np.array([0.8])]
-        mock_box.cls = [np.array([1])]
+        mock_box.conf = np.array([0.8])
+        mock_box.cls = np.array([1])
         mock_result.boxes = make_mock_boxes([mock_box], track_ids=None)
         mock_result.masks = None
         mock_model.track.return_value = [mock_result]

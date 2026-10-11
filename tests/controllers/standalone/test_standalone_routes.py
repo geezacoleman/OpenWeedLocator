@@ -9,14 +9,8 @@ import pytest
 
 
 def _stabilize_mqtt(dashboard):
-    """Stop MQTT background thread and force connected=True.
-
-    The standalone_test_client fixture creates a real DashMQTTSubscriber
-    (importlib.reload overwrites the patch). Its background loop_start()
-    thread tries to connect to localhost, fails, and sets connected=False
-    at unpredictable times. For route tests that go through _send_command,
-    we need a stable connected=True state without a racing thread.
-    """
+    """Mark the fixture's DashMQTTSubscriber connected, as if the broker
+    were up (the fixture never connects it; its paho client is a mock)."""
     mqtt = dashboard.mqtt_client
     if mqtt and hasattr(mqtt, 'client'):
         try:
