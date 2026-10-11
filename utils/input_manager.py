@@ -11,9 +11,12 @@ logger = logging.getLogger(__name__)
 
 
 def is_raspberry_pi() -> bool:
-    """Check if system is running on Raspberry Pi"""
-    platform_str = platform.platform().lower()
-    return 'rpi' in platform_str or 'aarch' in platform_str
+    """Check if system is running on Raspberry Pi."""
+    try:
+        with open('/proc/device-tree/model', 'r') as f:
+            return 'raspberry pi' in f.read().lower()
+    except (FileNotFoundError, OSError):
+        return False
 
 
 # Determine if we're in testing mode and import GPIO if needed
@@ -350,7 +353,7 @@ def get_rpi_version():
         elif 'Pi 3' in model:
             _rpi_version_cache = 'rpi-3'
         else:
-            _rpi_version_cache = 'rpi-other'
+            _rpi_version_cache = 'non-rpi'
 
     except FileNotFoundError:
         logging.warning(errors.RPVersionError(original_error="The model file '/proc/device-tree/model' was not found."))

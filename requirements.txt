@@ -2,7 +2,6 @@
 # OpenCV should be installed separately
 gpiozero
 pandas
-RPi.GPIO
 tqdm
 blessed
 matplotlib==3.10.3

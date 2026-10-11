@@ -124,7 +124,13 @@ class WebcamStream:
         self.name = "WebcamStream"
         self.logger.info(f'Camera type: {self.name}')
 
-        self.stream = cv2.VideoCapture(src)
+        self.stream = cv2.VideoCapture(src, cv2.CAP_V4L2) if platform.system() == 'Linux' else cv2.VideoCapture(src)
+
+        # Prefer MJPG for higher USB webcam resolutions (e.g., 1280x720 on C270).
+        try:
+            self.stream.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'YUYV'))
+        except Exception:
+            pass
 
         # Check if the stream opened successfully
         if not self.stream.isOpened():
@@ -559,18 +565,30 @@ class VideoStream:
 
     def _init_usb_camera(self, src, resolution) -> Optional[str]:
         """Initialize USB webcam. Returns error message on failure, None on success."""
-        # Determine video source based on platform
-        if self.platform_info['system'] == 'Linux':
-            video_src = src if isinstance(src, str) else '/dev/video0'
-        else:
-            video_src = src if isinstance(src, int) else 0
+        candidates = []
 
-        try:
-            self.stream = WebcamStream(src=video_src, resolution=resolution)
-            return None
-        except Exception as e:
-            self.logger.error(f"WebcamStream initialization failed: {e}", exc_info=True)
-            return str(e)
+        if self.platform_info['system'] == 'Linux':
+            # On SBCs, /dev/video0 can be a codec node (non-capture). Try several devices.
+            if isinstance(src, str):
+                candidates = [src]
+            else:
+                # Prefer real UVC capture nodes first on SBCs where /dev/video0 may be codec-only.
+                candidates = ['/dev/video1', '/dev/video2', '/dev/video3', '/dev/video0']
+        else:
+            candidates = [src if isinstance(src, int) else 0]
+
+        last_error = None
+        for video_src in candidates:
+            try:
+                self.stream = WebcamStream(src=video_src, resolution=resolution)
+                self.logger.info(f"USB camera opened on source: {video_src}")
+                return None
+            except Exception as e:
+                last_error = str(e)
+                self.logger.warning(f"USB camera source failed: {video_src} ({e})")
+
+        self.logger.error(f"WebcamStream initialization failed on all candidates: {candidates}", exc_info=True)
+        return last_error or 'No usable USB camera source found'
 
     def start(self):
         """Start the threaded video stream."""

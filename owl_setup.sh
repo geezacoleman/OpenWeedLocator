@@ -414,7 +414,12 @@ PY
 # Step 8: Install OWL dependencies
 echo -e "${GREEN}[INFO] Installing the OWL Python dependencies...${NC}"
 cd "$SCRIPT_DIR"
-pip install -r requirements.txt
+if grep -qi "raspberry pi" /proc/device-tree/model 2>/dev/null; then
+  pip install -r requirements.txt
+else
+  grep -v "^RPi.GPIO$" requirements.txt > /tmp/requirements.nonrpi.txt
+  pip install -r /tmp/requirements.nonrpi.txt
+fi
 check_status "Installing dependencies from requirements.txt" "OWL_DEPS"
 
 # Step 8b: Optional Green-on-Green (YOLO) support
