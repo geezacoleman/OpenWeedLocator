@@ -447,6 +447,10 @@ class FirstBootState:
                         ['systemctl', 'restart', 'owl.service'])
                     if getattr(result, 'returncode', 0) != 0:
                         warning = 'owl_restart_failed'
+                    # The local dashboard reads the broker from CONTROLLER.ini
+                    # at start; without this it stayed on the hotspot-era
+                    # broker and showed stale state. Only if it is running.
+                    self._system_runner(['systemctl', 'try-restart', 'owl-dash.service'])
                 except Exception as e:
                     logger.warning("Could not restart owl.service: %s", e)
                     warning = 'owl_restart_failed'

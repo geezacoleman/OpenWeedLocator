@@ -190,6 +190,9 @@ async function updateDashboard() {
         if (typeof updateRestartNotice === 'function') {
             updateRestartNotice();
         }
+        if (typeof syncMainButtons === 'function') {
+            syncMainButtons();
+        }
 
         // Sync pipeline mode from first connected OWL
         var firstOwl = null;
@@ -402,6 +405,14 @@ function buildOWLCard(deviceId, owl) {
     const speedWarning = (isOnline && owl.speed_warning)
         ? '<div class="device-warning-badge">' + esc(owl.speed_warning) + '</div>'
         : '';
+    // Spraying fault and refused recording: the OWL says why, show it
+    const faultWarning = (isOnline && owl.fault)
+        ? '<div class="device-warning-badge">Fault: ' + esc(owl.fault.message) + '</div>'
+        : '';
+    const blockedWarning = (isOnline && owl.recording_blocked_reason && !owl.image_sample_enable)
+        ? '<div class="device-warning-badge">Cannot record: '
+            + esc(String(owl.recording_blocked_reason).replace(/_/g, ' ')) + '</div>'
+        : '';
 
     // friendly_name is user-typed via the fleet API — must be escaped.
     // deviceId comes from MQTT topic names (anonymous broker), so it is
@@ -423,6 +434,8 @@ function buildOWLCard(deviceId, owl) {
             ${cfgLine}
             ${timingLine}
             ${speedWarning}
+            ${faultWarning}
+            ${blockedWarning}
             <div class="owl-mini-dials">
                 ${buildMiniDial({value: isOnline ? temp : null, min: 30, max: 90,
                                  amber: [60, 70], red: [70, 90], endLabels: ['C', 'H'],

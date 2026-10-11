@@ -1,0 +1,730 @@
+"""Tests for output_manager.py — relay control, test mocks, status indicators.
+
+Priority 3 — nozzles must fire correctly in the field.
+"""
+
+import time
+import threading
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+
+# ---------------------------------------------------------------------------
+# TestRelay / TestBuzzer / TestLED mock classes
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestTestRelay:
+    """Tests for the TestRelay mock used on non-Pi platforms."""
+
+    def test_on_off_no_crash(self):
+        from utils.output_manager import TestRelay
+        relay = TestRelay(0)
+        relay.on()
+        relay.off()
+
+    def test_verbose_prints(self, capsys):
+        from utils.output_manager import TestRelay
+        relay = TestRelay(3, verbose=True)
+        relay.on()
+        relay.off()
+        captured = capsys.readouterr()
+        assert 'Relay 3 ON' in captured.out
+        assert 'Relay 3 OFF' in captured.out
+
+    def test_non_verbose_silent(self, capsys):
+        from utils.output_manager import TestRelay
+        relay = TestRelay(0, verbose=False)
+        relay.on()
+        relay.off()
+        captured = capsys.readouterr()
+        assert captured.out == ''
+
+
+@pytest.mark.unit
+class TestTestBuzzer:
+    """Tests for the TestBuzzer mock."""
+
+    def test_beep_no_crash(self):
+        from utils.output_manager import TestBuzzer
+        buzzer = TestBuzzer()
+        buzzer.beep(on_time=0.1, off_time=0.1, n=2)
+
+    def test_beep_verbose(self, capsys):
+        from utils.output_manager import TestBuzzer
+        buzzer = TestBuzzer()
+        buzzer.beep(on_time=0.1, off_time=0.1, n=3, verbose=True)
+        captured = capsys.readouterr()
+        assert captured.out.count('BEEP') == 3
+
+
+@pytest.mark.unit
+class TestTestLED:
+    """Tests for the TestLED mock."""
+
+    def test_blink_no_crash(self):
+        from utils.output_manager import TestLED
+        led = TestLED(pin='BOARD37')
+        led.blink(on_time=0.1, off_time=0.1, n=1)
+
+    def test_on_off_tracks_state_quietly(self, capsys):
+        """The stub must track state without printing: the GPS LED thread
+        drives off() twice a second, which used to flood the console on any
+        non-Pi machine."""
+        from utils.output_manager import TestLED
+        led = TestLED(pin='BOARD37')
+        assert led.is_lit is False
+        led.on()
+        assert led.is_lit is True
+        led.off()
+        assert led.is_lit is False
+        assert capsys.readouterr().out == ''
+
+    def test_blink_none_n(self):
+        """n=None should not crash (converted to n=1 internally)."""
+        from utils.output_manager import TestLED
+        led = TestLED(pin='BOARD37')
+        led.blink(on_time=0.1, off_time=0.1, n=None)
+
+
+# ---------------------------------------------------------------------------
+# RelayControl (uses TestRelay on non-Pi)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestRelayControl:
+    """Tests for RelayControl class (test mode on Windows)."""
+
+    def _make_relay_control(self):
+        from utils.output_manager import RelayControl
+        relay_dict = {0: 13, 1: 15, 2: 16, 3: 18}
+        return RelayControl(relay_dict)
+
+    def test_init_creates_test_relays(self):
+        rc = self._make_relay_control()
+        assert rc.testing is True
+        # All 4 relays should be TestRelay instances
+        from utils.output_manager import TestRelay
+        for relay in rc.relay_dict.values():
+            assert isinstance(relay, TestRelay)
+
+    def test_relay_on_off(self):
+        rc = self._make_relay_control()
+        rc.relay_on(0, verbose=False)
+        rc.relay_off(0, verbose=False)
+
+    def test_all_on(self):
+        rc = self._make_relay_control()
+        rc.all_on(verbose=False)
+        # No crash = pass
+
+    def test_all_off(self):
+        rc = self._make_relay_control()
+        rc.all_off(verbose=False)
+
+    def test_beep(self):
+        rc = self._make_relay_control()
+        rc.beep(duration=0.1, repeats=1)
+
+    def test_remove_relay(self):
+        rc = self._make_relay_control()
+        rc.remove(2)
+        assert 2 not in rc.relay_dict
+        assert len(rc.relay_dict) == 3
+
+    def test_clear_relays(self):
+        rc = self._make_relay_control()
+        rc.clear()
+        assert len(rc.relay_dict) == 0
+
+
+# ---------------------------------------------------------------------------
+# RelayController (thread-based job queue system)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestRelayController:
+    """Tests for RelayController — spray-window (deadline) actuation.
+
+    Each detection opens a window [time_stamp + delay, time_stamp + delay + duration].
+    Overlapping windows merge: off_at only ever extends, so continuous detection
+    holds a nozzle on without off/on cycling, and a live duration drop (GPS
+    speed-adaptive update) can never cut short spray already promised.
+    """
+
+    def _make_controller(self):
+        from utils.output_manager import RelayController
+        relay_dict = {0: 13, 1: 15}
+        return RelayController(relay_dict, vis=False)
+
+    def _record_switching(self, rc):
+        """Wrap the relay board calls so tests can assert real switching events."""
+        events = []
+        rc.relay.relay_on = lambda relay, verbose=True: events.append(('on', relay, time.monotonic()))
+        rc.relay.relay_off = lambda relay, verbose=True: events.append(('off', relay, time.monotonic()))
+        return events
+
+    def test_init_creates_consumer_threads(self):
+        rc = self._make_controller()
+        # Should have a schedule and condition for each relay
+        assert 0 in rc.relay_schedule_dict
+        assert 1 in rc.relay_schedule_dict
+        assert 0 in rc.relay_condition_dict
+        assert 1 in rc.relay_condition_dict
+        rc.stop()
+
+    def test_receive_opens_window(self):
+        rc = self._make_controller()
+        t = time.monotonic()
+        rc.receive(relay=0, time_stamp=t, delay=0, duration=5)
+        schedule = rc.relay_schedule_dict[0]
+        assert schedule['on_at'] == pytest.approx(t, abs=0.001)
+        assert schedule['off_at'] == pytest.approx(t + 5, abs=0.001)
+        rc.stop()
+
+    def test_overlapping_windows_merge_and_extend(self):
+        rc = self._make_controller()
+        t = time.monotonic()
+        rc.receive(relay=0, time_stamp=t, delay=0, duration=5)
+        rc.receive(relay=0, time_stamp=t + 0.5, delay=0, duration=5)
+        schedule = rc.relay_schedule_dict[0]
+        assert schedule['on_at'] == pytest.approx(t, abs=0.001)
+        assert schedule['off_at'] == pytest.approx(t + 5.5, abs=0.001)
+        rc.stop()
+
+    def test_duration_drop_never_shrinks_open_window(self):
+        """A mid-stream GPS speed update lowering duration must not cut short
+        spray that was already promised (the field off-blip bug)."""
+        rc = self._make_controller()
+        t = time.monotonic()
+        rc.receive(relay=0, time_stamp=t, delay=0, duration=5)
+        rc.receive(relay=0, time_stamp=t + 0.1, delay=0, duration=0.05)
+        schedule = rc.relay_schedule_dict[0]
+        assert schedule['off_at'] == pytest.approx(t + 5, abs=0.001)
+        rc.stop()
+
+    def test_stale_window_ignored(self):
+        """A detection whose whole window is already in the past schedules nothing."""
+        rc = self._make_controller()
+        rc.receive(relay=0, time_stamp=time.monotonic() - 10, delay=0, duration=1)
+        schedule = rc.relay_schedule_dict[0]
+        assert schedule['off_at'] is None
+        rc.stop()
+
+    def test_continuous_detection_single_on_off(self):
+        """Continuous detections must hold the nozzle on: exactly one ON at the
+        start and one OFF after the last window closes — no cycling between."""
+        rc = self._make_controller()
+        events = self._record_switching(rc)
+        last_t = None
+        for _ in range(8):
+            last_t = time.monotonic()
+            rc.receive(relay=0, time_stamp=last_t, delay=0, duration=0.3)
+            time.sleep(0.05)
+        time.sleep(0.6)  # let the final window close
+
+        ons = [e for e in events if e[0] == 'on' and e[1] == 0]
+        offs = [e for e in events if e[0] == 'off' and e[1] == 0]
+        assert len(ons) == 1
+        assert len(offs) == 1
+        # Off must come only after the final window's deadline...
+        assert offs[0][2] >= last_t + 0.3 - 0.02
+        # ...but windows must MERGE, not accumulate: off no later than the last
+        # detection + one duration (+ margin). 8 stacked 0.3s jobs would run
+        # ~2.4s — the trailing over-spray seen in the field.
+        assert offs[0][2] <= last_t + 0.3 + 0.2
+        rc.stop()
+
+    def test_continuous_detection_with_delay_no_cycling(self):
+        """Field bug repro: with a GPS-derived delay and a duration shorter than
+        the frame interval, the old queue model strobed the nozzle (off + full
+        delay re-applied between every frame) despite continuous detection.
+        Windows [ts+delay, ts+delay+duration] overlap the next frame's arrival,
+        so they must merge into one continuous activation."""
+        rc = self._make_controller()
+        events = self._record_switching(rc)
+        last_t = None
+        for _ in range(6):
+            last_t = time.monotonic()
+            rc.receive(relay=0, time_stamp=last_t, delay=0.2, duration=0.05)
+            time.sleep(0.1)
+        time.sleep(0.6)  # let the final window close
+
+        ons = [e for e in events if e[0] == 'on' and e[1] == 0]
+        offs = [e for e in events if e[0] == 'off' and e[1] == 0]
+        assert len(ons) == 1, f"nozzle cycled during continuous detection: {events}"
+        assert len(offs) == 1
+        assert offs[0][2] >= last_t + 0.25 - 0.02
+        rc.stop()
+
+    def test_duration_drop_does_not_blip_relay(self):
+        """Field bug repro: the 1 Hz speed broadcast lowering actuation_duration
+        mid-spray must not switch an active nozzle off before the spray already
+        promised has finished (the visible off-blip on the sprayer)."""
+        rc = self._make_controller()
+        events = self._record_switching(rc)
+        t = time.monotonic()
+        rc.receive(relay=0, time_stamp=t, delay=0, duration=0.6)
+        time.sleep(0.1)
+        # New detection arrives carrying a much smaller duration (speed rose)
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=0.05)
+        time.sleep(0.2)  # t+0.3: well inside the original 0.6s window
+        assert not any(e[0] == 'off' and e[1] == 0 for e in events), (
+            "duration drop cut short an active spray window"
+        )
+        time.sleep(0.5)  # let the window close
+        offs = [e for e in events if e[0] == 'off' and e[1] == 0]
+        assert len(offs) == 1
+        assert offs[0][2] >= t + 0.6 - 0.02
+        rc.stop()
+
+    def test_relay_turns_off_after_window(self):
+        rc = self._make_controller()
+        events = self._record_switching(rc)
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=0.15)
+        time.sleep(0.5)
+        assert events, "relay never switched"
+        assert events[-1][0] == 'off'
+        assert rc.relay_schedule_dict[0]['off_at'] is None  # schedule reset
+        rc.stop()
+
+    def test_delay_defers_activation(self):
+        rc = self._make_controller()
+        events = self._record_switching(rc)
+        t = time.monotonic()
+        rc.receive(relay=0, time_stamp=t, delay=0.3, duration=0.2)
+        time.sleep(0.1)
+        assert not any(e[0] == 'on' for e in events), "fired before delay elapsed"
+        time.sleep(0.5)
+        ons = [e for e in events if e[0] == 'on' and e[1] == 0]
+        assert len(ons) == 1
+        assert ons[0][2] >= t + 0.3 - 0.02
+        rc.stop()
+
+    def test_concurrent_activations_no_interference(self):
+        """Two relays activated simultaneously should not interfere."""
+        rc = self._make_controller()
+        events = self._record_switching(rc)
+        t = time.monotonic()
+        rc.receive(relay=0, time_stamp=t, delay=0, duration=0.1)
+        rc.receive(relay=1, time_stamp=t, delay=0, duration=0.1)
+        time.sleep(0.4)
+        for relay in (0, 1):
+            assert any(e[0] == 'on' and e[1] == relay for e in events)
+            assert any(e[0] == 'off' and e[1] == relay for e in events)
+        rc.stop()
+
+    def test_stop_turns_off_active_relay(self):
+        """stop() must never leave a nozzle on."""
+        rc = self._make_controller()
+        events = self._record_switching(rc)
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=5)
+        time.sleep(0.1)
+        assert any(e[0] == 'on' for e in events)
+        rc.stop()
+        time.sleep(0.2)
+        assert events[-1][0] == 'off'
+
+
+# ---------------------------------------------------------------------------
+# HeadlessStatusIndicator
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestHeadlessStatusIndicator:
+    """Tests for HeadlessStatusIndicator."""
+
+    def test_init_no_crash(self, tmp_path):
+        from utils.output_manager import HeadlessStatusIndicator
+        indicator = HeadlessStatusIndicator(save_directory=str(tmp_path))
+        indicator.stop()
+
+    def test_drive_full_at_90_percent(self, tmp_path):
+        from utils.output_manager import HeadlessStatusIndicator
+        indicator = HeadlessStatusIndicator(save_directory=str(tmp_path))
+        indicator._update_storage_indicator(0.91)
+        assert indicator.DRIVE_FULL is True
+        indicator.stop()
+
+    def test_drive_not_full_below_90(self, tmp_path):
+        from utils.output_manager import HeadlessStatusIndicator
+        indicator = HeadlessStatusIndicator(save_directory=str(tmp_path))
+        indicator._update_storage_indicator(0.5)
+        assert indicator.DRIVE_FULL is False
+        indicator.stop()
+
+    def test_no_save_mode(self):
+        from utils.output_manager import HeadlessStatusIndicator
+        indicator = HeadlessStatusIndicator(save_directory=None, no_save=True)
+        indicator.stop()
+
+    def test_drive_full_clears_when_space_freed(self, tmp_path):
+        """Deleting sessions below 90% must unlatch DRIVE_FULL so recording
+        can resume without a restart (R2 eMMC recovery path)."""
+        from utils.output_manager import HeadlessStatusIndicator
+        indicator = HeadlessStatusIndicator(save_directory=str(tmp_path))
+        indicator._update_storage_indicator(0.91)
+        assert indicator.DRIVE_FULL is True
+        indicator._update_storage_indicator(0.5)
+        assert indicator.DRIVE_FULL is False
+        indicator.stop()
+
+
+# ---------------------------------------------------------------------------
+# LED capability probe (R1 journal quiet)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestLEDCapabilityProbe:
+    """LED signalling degrades to a single warning on units without
+    passwordless sudo or LED sysfs paths (sealed CM5, desktops)."""
+
+    def _no_save_indicator(self):
+        from utils.output_manager import HeadlessStatusIndicator
+        return HeadlessStatusIndicator(save_directory=None, no_save=True)
+
+    def test_disabled_in_test_mode(self):
+        indicator = self._no_save_indicator()
+        assert indicator.leds_enabled is False
+        indicator.stop()
+
+    def test_missing_sysfs_warns_once(self, caplog):
+        import logging
+        indicator = self._no_save_indicator()
+        indicator.testing = False
+        with patch('utils.output_manager.os.path.exists', return_value=False), \
+                caplog.at_level(logging.WARNING, logger='utils.output_manager'):
+            assert indicator._probe_led_control() is False
+        warnings = [r for r in caplog.records if 'LED signalling disabled' in r.message]
+        assert len(warnings) == 1
+        indicator.stop()
+
+    def test_no_passwordless_sudo_disables(self, caplog):
+        import logging
+        indicator = self._no_save_indicator()
+        indicator.testing = False
+        failed = MagicMock(returncode=1)
+        with patch('utils.output_manager.os.path.exists', return_value=True), \
+                patch('utils.output_manager.subprocess.run', return_value=failed), \
+                caplog.at_level(logging.WARNING, logger='utils.output_manager'):
+            assert indicator._probe_led_control() is False
+        warnings = [r for r in caplog.records if 'LED signalling disabled' in r.message]
+        assert len(warnings) == 1
+        indicator.stop()
+
+    def test_sudo_missing_disables(self):
+        indicator = self._no_save_indicator()
+        indicator.testing = False
+        with patch('utils.output_manager.os.path.exists', return_value=True), \
+                patch('utils.output_manager.subprocess.run', side_effect=OSError('no sudo')):
+            assert indicator._probe_led_control() is False
+        indicator.stop()
+
+    def test_probe_success_enables(self):
+        indicator = self._no_save_indicator()
+        indicator.testing = False
+        ok = MagicMock(returncode=0)
+        with patch('utils.output_manager.os.path.exists', return_value=True), \
+                patch('utils.output_manager.subprocess.run', return_value=ok):
+            assert indicator._probe_led_control() is True
+        indicator.stop()
+
+    def test_set_led_state_noop_when_disabled(self):
+        indicator = self._no_save_indicator()
+        indicator.testing = False
+        indicator.leds_enabled = False
+        with patch('utils.output_manager.subprocess.run') as run:
+            indicator._set_led_state('ACT', 1)
+            indicator._set_led_trigger('ACT', 'none')
+        run.assert_not_called()
+        indicator.stop()
+
+
+# ---------------------------------------------------------------------------
+# Error flash lifecycle: bounded loop + clear_error() (R1 journal quiet)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestErrorFlashLifecycle:
+
+    def _led_indicator(self):
+        """Indicator with LED signalling forced on. testing=True still
+        short-circuits _set_led_state, so no subprocess is ever run."""
+        from utils.output_manager import HeadlessStatusIndicator
+        indicator = HeadlessStatusIndicator(save_directory=None, no_save=True)
+        indicator.leds_enabled = True
+        return indicator
+
+    def test_error_starts_flash_thread(self):
+        indicator = self._led_indicator()
+        indicator.error(3)
+        assert indicator.flashing_thread is not None
+        assert indicator.flashing_thread.is_alive()
+        indicator.stop()
+
+    def test_clear_error_stops_flash_thread(self):
+        indicator = self._led_indicator()
+        indicator.error(3)
+        indicator.clear_error()
+        indicator.flashing_thread.join(timeout=3)
+        assert not indicator.flashing_thread.is_alive()
+        assert indicator.error_code is None
+        indicator.stop()
+
+    def test_error_without_leds_starts_no_thread(self):
+        """Sealed units: error code still latches for the dashboard/app, but
+        no flash thread (and so no sudo subprocess loop) ever starts."""
+        indicator = self._led_indicator()
+        indicator.leds_enabled = False
+        indicator.error(4)
+        assert indicator.flashing_thread is None
+        assert indicator.error_code == 4
+        indicator.stop()
+
+    def test_update_clears_no_drive_error_when_directory_returns(self, tmp_path):
+        from utils.output_manager import HeadlessStatusIndicator
+        indicator = HeadlessStatusIndicator(save_directory=None)
+        indicator.update()
+        assert indicator.error_code == 6
+        indicator.save_directory = str(tmp_path)
+        indicator.update()
+        assert indicator.error_code is None
+        indicator.stop()
+
+    def test_stop_ends_flash_thread_promptly(self):
+        indicator = self._led_indicator()
+        indicator.error(6)
+        indicator.stop()
+        indicator.flashing_thread.join(timeout=3)
+        assert not indicator.flashing_thread.is_alive()
+
+
+@pytest.mark.unit
+class TestAdvancedIndicatorErrorRecovery:
+
+    def _advanced(self):
+        from utils.output_manager import AdvancedStatusIndicator
+        return AdvancedStatusIndicator(save_directory=None, status_led_pin=None)
+
+    def test_clear_error_leaves_error_state(self):
+        from utils.output_manager import AdvancedIndicatorState
+        indicator = self._advanced()
+        indicator.error(2)
+        assert indicator.state == AdvancedIndicatorState.ERROR
+        indicator.clear_error()
+        assert indicator.state == AdvancedIndicatorState.IDLE
+        assert indicator.error_code is None
+        indicator.stop()
+
+    def test_clear_error_restores_activity_state(self):
+        from utils.output_manager import AdvancedIndicatorState
+        indicator = self._advanced()
+        indicator.enable_weed_detection()
+        indicator.error(1)
+        indicator.clear_error()
+        assert indicator.state == AdvancedIndicatorState.DETECTING
+        indicator.stop()
+
+    def test_drive_full_recovery(self):
+        indicator = self._advanced()
+        indicator._update_storage_indicator(0.95)
+        assert indicator.DRIVE_FULL is True
+        indicator._update_storage_indicator(0.5)
+        assert indicator.DRIVE_FULL is False
+        assert indicator.error_code is None
+        indicator.stop()
+
+
+# ---------------------------------------------------------------------------
+# Storage watchdog thread survives disk_usage failures (R1; R2 prerequisite)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestStorageWatchdogResilience:
+
+    def test_thread_survives_oserror_and_logs_once(self, tmp_path, caplog):
+        """A yanked USB drive raises OSError from disk_usage; the watchdog
+        thread must survive and log once per failure transition, then log
+        recovery once when the drive is back."""
+        import logging
+        from utils.output_manager import HeadlessStatusIndicator
+        indicator = HeadlessStatusIndicator(save_directory=str(tmp_path))
+
+        with caplog.at_level(logging.INFO, logger='utils.output_manager'):
+            with patch('utils.output_manager.shutil.disk_usage',
+                       side_effect=OSError('drive yanked')):
+                indicator.start_storage_indicator()
+                time.sleep(0.2)
+                assert indicator.thread.is_alive()
+                # second watchdog cycle, still failing
+                indicator.update_event.set()
+                time.sleep(0.2)
+                assert indicator.thread.is_alive()
+                assert indicator._update_failed is True
+
+            # drive is back: next cycle recovers
+            indicator.update_event.set()
+            time.sleep(0.2)
+            assert indicator._update_failed is False
+
+        failures = [r for r in caplog.records if 'Recording drive unreadable' in r.message]
+        recoveries = [r for r in caplog.records if 'Storage monitoring recovered' in r.message]
+        assert len(failures) == 1
+        assert len(recoveries) == 1
+        indicator.stop()
+
+
+@pytest.mark.unit
+class TestNozzleSwitchFailure:
+    """A switching failure must never leave a nozzle energised and unattended.
+
+    The consumer thread had no exception handling: a raise from the GPIO call
+    killed the thread, and if it happened while the nozzle was on it stayed on
+    until the process ended, silently, with the main loop still running.
+    """
+
+    def _make_controller(self):
+        from utils.output_manager import RelayController
+        return RelayController({0: 13}, vis=False)
+
+    def test_indicator_failure_does_not_strand_the_nozzle(self):
+        """An LED/visualiser fault must not stop the nozzle switching off."""
+        rc = self._make_controller()
+        events = []
+        rc.relay.relay_on = lambda relay, verbose=True: events.append(('on', relay))
+        rc.relay.relay_off = lambda relay, verbose=True: events.append(('off', relay))
+
+        class BrokenLED:
+            def blink(self, **kwargs):
+                raise RuntimeError('LED sysfs gone')
+
+        rc.status_led = BrokenLED()
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=0.1)
+        time.sleep(0.4)
+        rc.stop()
+        time.sleep(0.1)
+
+        assert ('on', 0) in events, 'nozzle never fired'
+        assert events[-1] == ('off', 0), f'nozzle not switched off: {events}'
+
+    def test_consumer_survives_a_raising_switch_and_still_turns_off(self):
+        """If switching ON raises, the thread must stay alive and force OFF."""
+        rc = self._make_controller()
+        events = []
+        state = {'fail_on': True}
+
+        def relay_on(relay, verbose=True):
+            events.append(('on', relay))
+            if state['fail_on']:
+                raise RuntimeError('lgpio busy')
+
+        rc.relay.relay_on = relay_on
+        rc.relay.relay_off = lambda relay, verbose=True: events.append(('off', relay))
+
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=0.1)
+        time.sleep(0.4)
+
+        # the thread must still be running its window, not dead
+        assert ('off', 0) in events, f'nozzle never turned off after a failure: {events}'
+        rc.stop()
+        time.sleep(0.1)
+
+    def test_stop_still_turns_off_after_an_earlier_failure(self):
+        rc = self._make_controller()
+        events = []
+        rc.relay.relay_on = lambda relay, verbose=True: events.append(('on', relay))
+        rc.relay.relay_off = lambda relay, verbose=True: events.append(('off', relay))
+
+        class BrokenVis:
+            def update(self, **kwargs):
+                raise RuntimeError('vis dead')
+
+        rc.vis = True
+        rc.relay_vis = BrokenVis()
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=5)
+        time.sleep(0.2)
+        rc.stop()
+        time.sleep(0.2)
+        assert events[-1] == ('off', 0), f'stop() left the nozzle on: {events}'
+
+    def test_failed_off_is_retried_not_left_energised(self):
+        """A failing off must be retried, not slept on with a live nozzle."""
+        rc = self._make_controller()
+        events = []
+        state = {'fail': True}
+
+        def relay_off(relay, verbose=True):
+            events.append(('off', relay))
+            if state['fail']:
+                raise RuntimeError('gpio busy')
+
+        rc.relay.relay_on = lambda relay, verbose=True: events.append(('on', relay))
+        rc.relay.relay_off = relay_off
+
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=0.1)
+        time.sleep(0.6)
+        first_attempts = [e for e in events if e[0] == 'off']
+        assert len(first_attempts) >= 2, (
+            f'off should be retried while it keeps failing, got {events}')
+
+        # once the hardware recovers, the nozzle actually goes off
+        state['fail'] = False
+        time.sleep(1.3)
+        rc.stop()
+        time.sleep(0.1)
+        assert events[-1] == ('off', 0)
+
+
+@pytest.mark.unit
+class TestStaleAnchorCost:
+    """What a timestamp taken earlier than the receive() call actually costs.
+
+    These pin down why owl.py stamps `actuation_time` AFTER detection rather
+    than at frame capture. Anchoring at capture reads as more principled, but
+    with delay = 0 - the normal OWL setting, because processing is only just
+    fast enough to open the nozzle in time - the nozzle cannot open any earlier
+    than this call whatever the stamp says. The earlier anchor only moves off_at
+    forward, so it shortens every spray by the processing time and eventually
+    cancels it outright.
+    """
+
+    def _committed_window_ms(self, lag_s, duration, delay=0.0):
+        """Milliseconds of spray the scheduler commits to, measured from now.
+
+        Returns None when the window is discarded entirely.
+        """
+        from utils.output_manager import RelayController
+        rc = RelayController({0: 13}, vis=False)
+        rc.running = False          # keep the consumer off the schedule
+        rc.relay.relay_on = lambda *a, **k: None
+        rc.relay.relay_off = lambda *a, **k: None
+        schedule = rc.relay_schedule_dict[0]
+        schedule['on_at'] = schedule['off_at'] = None
+        now = time.monotonic()
+        rc.receive(relay=0, time_stamp=now - lag_s, delay=delay, duration=duration)
+        rc.stop()
+        if schedule['off_at'] is None:
+            return None
+        return (schedule['off_at'] - now) * 1000
+
+    def test_fresh_anchor_commits_the_whole_duration(self):
+        assert self._committed_window_ms(0.0, 0.150) == pytest.approx(150, abs=5)
+
+    def test_stale_anchor_shortens_the_spray_by_exactly_the_lag(self):
+        """40 ms of processing lag costs 40 ms of spray."""
+        assert self._committed_window_ms(0.040, 0.150) == pytest.approx(110, abs=5)
+
+    def test_stale_anchor_cancels_a_short_spray_completely(self):
+        """The failure that matters: at speed the spray silently disappears.
+
+        The speed-adaptive calculation is duration = actuation_length_cm / speed.
+        At 12 km/h with the default 10 cm patch that is 30 ms. A Pi loop of 40 ms
+        would put the whole window in the past, receive()'s stale guard would
+        discard it, and the OWL would stop spraying with nothing logged.
+        """
+        assert self._committed_window_ms(0.040, 0.030) is None
+
+    def test_a_real_delay_still_schedules_into_the_future(self):
+        """With a genuine camera-to-nozzle delay the window is still ahead."""
+        assert self._committed_window_ms(0.040, 0.030, delay=0.20) == pytest.approx(190, abs=5)

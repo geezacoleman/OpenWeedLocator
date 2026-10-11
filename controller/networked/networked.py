@@ -415,9 +415,7 @@ class CentralController:
             topics = [
                 ("owl/+/state", 0),
                 ("owl/+/status", 0),
-                ("owl/+/detection", 0),
                 ("owl/+/config", 0),
-                ("owl/+/system", 0),
             ]
             # Data collection (local only): capture events, gallery thumbnails,
             # and Noktura's replies to the controller's upload requests.
@@ -534,12 +532,8 @@ class CentralController:
                         self.owls_state[device_id].pop('restart_required', None)
                 elif topic_type == 'status':
                     self.owls_state[device_id]['status'] = payload
-                elif topic_type == 'detection':
-                    self.owls_state[device_id]['detection'] = payload
                 elif topic_type == 'config':
                     self.owls_state[device_id]['config'] = payload
-                elif topic_type == 'system':
-                    self.owls_state[device_id]['system'] = payload
                 else:
                     self.owls_state[device_id][topic_type] = payload
 
@@ -3409,6 +3403,14 @@ def api_downloads_request():
         with controller.mqtt_lock:
             owl_state = controller.owls_state.get(device_id, {})
             sessions = owl_state.get('data_sessions', [])
+            transfer_status = (owl_state.get('data_transfer') or {}).get('status', 'idle')
+
+        # The OWL drops a second transfer while one runs (only logging it),
+        # so say so here instead of reporting "sent".
+        if transfer_status not in ('idle', 'complete', 'error'):
+            return jsonify({'success': False,
+                            'error': f'{device_id} is already transferring a session. '
+                                     f'Wait for it to finish.'}), 409
 
         # Match by session_id first, fall back to date match
         session_info = next((s for s in sessions if s.get('session_id') == session_id), None)

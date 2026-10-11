@@ -74,6 +74,7 @@
             unknown: 'Unknown', ok_short: 'ok', no_route: 'no internet',
             // Warnings: {owl} is replaced with the OWL name
             w_offline: '{owl} is offline. Check its power and network cable.',
+            w_fault: '{owl} fault: {message}',
             w_storage_low: '{owl} is low on storage ({free}). Upload or delete old sessions.',
             w_recording_blocked: '{owl} cannot record: {reason}.',
             w_video_limit: '{owl} stopped: the video clip reached {s} s.',
@@ -161,6 +162,7 @@
             pill_connected: 'Noktura forbundet', pill_uploading: 'Uploader {p}%',
             unknown: 'Ukendt', ok_short: 'ok', no_route: 'intet internet',
             w_offline: '{owl} er offline. Tjek strøm og netværkskabel.',
+            w_fault: '{owl} fejl: {message}',
             w_storage_low: '{owl} har lidt plads tilbage ({free}). Upload eller slet gamle sessioner.',
             w_recording_blocked: '{owl} kan ikke optage: {reason}.',
             w_video_limit: '{owl} stoppede: videoklippet nåede {s} s.',

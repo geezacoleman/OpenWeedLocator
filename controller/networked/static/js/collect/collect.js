@@ -208,6 +208,7 @@
         if (w.code === 'recording_blocked') v.reason = String(w.reason || '').replace(/_/g, ' ');
         if (w.code === 'video_limit') v.s = w.seconds;
         if (w.code === 'not_saving') v.s = w.seconds;
+        if (w.code === 'fault') v.message = w.message || '';
         return t('w_' + w.code, v);
     }
     function renderWarnings() {

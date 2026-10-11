@@ -240,6 +240,12 @@ function updateSystemStats() {
             if (typeof updateAlgorithmError === 'function') {
                 updateAlgorithmError(data.algorithm_error);
             }
+            if (typeof updateFault === 'function') {
+                updateFault(data.fault);
+            }
+            if (typeof OWLWidget !== 'undefined') {
+                OWLWidget._broadcastState(data);
+            }
 
             // Live white balance readout + calibration progress (Config tab)
             if (typeof updateAwbReadout === 'function') {

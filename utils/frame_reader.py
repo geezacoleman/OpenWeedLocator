@@ -22,7 +22,13 @@ class FrameReader:
         self.logger = LogManager.get_logger(__name__)
 
         if os.path.isdir(path):
-            self.files = iter(os.listdir(path))
+            # Images only: a stray file made cv2.resize(None) stop the OWL,
+            # and an empty directory recursed forever in read().
+            self.images = [f for f in os.listdir(path)
+                           if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp'))]
+            if not self.images:
+                raise ValueError(f'[ERROR] No images in directory: {path}')
+            self.files = iter(self.images)
             self.path = path
             self.cam = None
             self.input_type = "directory"
@@ -58,7 +64,7 @@ class FrameReader:
                     self.loop_start_time = time.time()
 
                 except StopIteration:
-                    self.files = iter(os.listdir(self.path))  # restart from first image
+                    self.files = iter(self.images)  # restart from first image
                     return self.read()
 
             return self.curr_image
@@ -78,7 +84,7 @@ class FrameReader:
     def reset(self):
         if self.input_type == "directory":
             # reset the iterator to the beginning of the directory
-            self.files = iter(os.listdir(self.path))
+            self.files = iter(self.images)
             self.curr_image = None
 
         elif self.input_type == "video":

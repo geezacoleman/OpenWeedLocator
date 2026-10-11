@@ -1,10 +1,12 @@
 name: Tests
 
+# Every push on every branch, and every PR. Until v3.22 this ran only on
+# main/display-bug: the v3.17 commit that stopped images saving on most units
+# DID fail CI (display-bug, 2026-09-15), but the branch stayed red and the
+# field branches never ran CI at all. A red run means no field deploy.
 on:
   push:
-    branches: [main, display-bug]
   pull_request:
-    branches: [main]
 
 jobs:
   test:
@@ -12,22 +14,27 @@ jobs:
     # The suite runs in a few minutes. A hang or a killed runner should fail
     # fast instead of burning the default 6-hour limit.
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11: Bookworm units still in the field. 3.13: Trixie (the target).
+        python-version: ['3.11', '3.13']
 
     steps:
       - uses: actions/checkout@v5
 
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        # From the requirements file, not a hand-written list. The list drifted:
-        # it omitted piexif, which utils/image_sampler.py imports at module
-        # scope, so test_image_exif / test_basic_modes / test_internal_storage
-        # would all fail here. opencv-python-headless replaces opencv-python
-        # because the runner has no display.
+        # From the requirements file, not a hand-written list (the list
+        # drifted and silently dropped tests). opencv-python-headless replaces
+        # opencv-python because the runner has no display. httpx is the one
+        # controller dependency the agent tests need; requirements-controller.txt
+        # pins flask 2.2 and cannot be installed alongside the OWL's flask 3.
         run: |
-          pip install pytest
+          pip install pytest pytest-xdist httpx
           pip install -r non_rpi_requirements.txt
           pip uninstall -y opencv-python
           pip install opencv-python-headless
@@ -38,22 +45,10 @@ jobs:
           touch custom_algorithms/__init__.py
 
       - name: Run tests
+        # Only one file is skipped, for a stated reason. Do not add an
+        # --ignore to make CI green: fix the test or the code.
+        #   test_custom_algorithms.py: tests custom_algorithms/, which is
+        #   gitignored (user code on the device), so it is not in the checkout.
         run: |
-          pytest tests/ -v --tb=short \
-            --ignore=tests/test_agent_engine.py \
-            --ignore=tests/test_agent_integration.py \
-            --ignore=tests/test_agent_networked.py \
-            --ignore=tests/test_agent_vision.py \
-            --ignore=tests/test_llm_provider.py \
-            --ignore=tests/test_tool_registry.py \
-            --ignore=tests/test_widget_manager.py \
-            --ignore=tests/test_custom_algorithms.py \
-            --ignore=tests/test_speed_actuation_integration.py \
-            --ignore=tests/test_greenongreen.py \
-            --ignore=tests/test_actuation.py \
-            --ignore=tests/test_model_manager.py \
-            --ignore=tests/test_mqtt_reconnect.py \
-            --ignore=tests/test_mqtt_state_sync.py \
-            --ignore=tests/test_networked_routes.py \
-            --ignore=tests/test_standalone_routes.py \
-            --ignore=tests/test_downloads.py
+          pytest tests/ -n auto -q --durations=25 \
+            --ignore=tests/agent/test_custom_algorithms.py

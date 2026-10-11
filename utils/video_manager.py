@@ -447,9 +447,14 @@ class PiCamera2Stream:
 
     def read_with_metadata(self):
         # return the most recent frame and its capture metadata atomically
+        # If the capture thread has died (camera unplugged, I/O error) no
+        # frame will ever arrive: return None so owl.py's dropped-frame check
+        # raises a camera fault, instead of waiting forever.
         with self.condition:
             while not self.frame_available:
-                self.condition.wait()
+                if not self.thread.is_alive():
+                    return None, None
+                self.condition.wait(timeout=1.0)
 
             with self.lock:
                 self.frame_available = False
@@ -508,7 +513,7 @@ class PiCamera2Stream:
 
     def stop(self):
         self.stopped.set()
-        self.thread.join()
+        self.thread.join(timeout=2)
         self.camera.stop()
         time.sleep(2)  # Allow time for the camera to be released properly
 

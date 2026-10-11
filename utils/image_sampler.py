@@ -6,7 +6,8 @@ import time
 import numpy as np
 from collections import deque
 from datetime import datetime, timezone
-from multiprocessing import Process, Queue
+import threading
+from multiprocessing import Event, Process, Queue, Value
 from multiprocessing.queues import Empty
 from utils.algorithms import fft_blur
 from utils.log_manager import LogManager
@@ -434,6 +435,12 @@ class ImageRecorder:
         self.max_processes = max_processes
         self.processes = []
         self.running = True
+        # Shared with the workers: they hold a fork-time copy of `running`,
+        # so a stop has to reach them through an Event.
+        self._stop_event = Event()
+        self.failed = Value('i', 0)
+        self._failed_seen = 0
+        self._queue_full_logged_at = float('-inf')
         self.logger = LogManager.get_logger(__name__)
 
         # Main-process view of what was last queued for saving: the gallery
@@ -455,12 +462,12 @@ class ImageRecorder:
             self.logger.warning("[INFO] Maximum number of processes reached.")
 
     def save_images(self):
-        while self.running or not self.queue.empty():
+        while True:
             try:
                 frame, frame_id, boxes, centres, gps_data, camera_metadata, context, capture_time, quality = \
-                    self.queue.get(timeout=3)
+                    self.queue.get(timeout=0.5)
             except Empty:
-                if not self.running:
+                if self._stop_event.is_set():
                     break
                 continue
             except KeyboardInterrupt:
@@ -470,8 +477,16 @@ class ImageRecorder:
             # Workers hold the recorder as it was at fork time, so a live
             # jpeg_quality change only reaches them with each frame.
             self.jpeg_quality = quality
-            self.process_frame(frame, frame_id, boxes, centres, gps_data,
-                               camera_metadata, context, capture_time)
+            # One bad frame (drive pulled, I/O error, empty crop) used to kill
+            # the worker, and saving then stopped with nobody told. Count it
+            # for the main process (add_frame reports it) and carry on.
+            try:
+                self.process_frame(frame, frame_id, boxes, centres, gps_data,
+                                   camera_metadata, context, capture_time)
+            except Exception as e:
+                logger.error(f"Image {frame_id} not saved: {e}", exc_info=True)
+                with self.failed.get_lock():
+                    self.failed.value += 1
 
     def process_frame(self, frame, frame_id, boxes, centres, gps_data,
                       camera_metadata=None, context=None, capture_time=None):
@@ -605,7 +620,16 @@ class ImageRecorder:
                 self._thumb_at = now
             self.note_preview(frame, gps_data, capture_time, saved=True, thumbnail=thumbnail)
         else:
-            self.logger.info("[INFO] Queue is full, spinning up new process. Frame skipped.")
+            now = time.monotonic()
+            if now - self._queue_full_logged_at >= 10:
+                self._queue_full_logged_at = now
+                self.logger.warning("Image queue full - frames are being skipped")
+
+        failed = self.failed.value
+        if failed != self._failed_seen:
+            self._failed_seen = failed
+            self.logger.error(f"Image saving failed for {failed} image(s) this session "
+                              f"- check the recording drive")
 
         if self.queue.qsize() > self.new_process_threshold and len(self.processes) < self.max_processes:
             self.start_new_process()
@@ -634,29 +658,34 @@ class ImageRecorder:
         except Exception as e:
             self.logger.warning(f"Preview/quality update failed (image unaffected): {e}")
 
-    def stop(self):
-        """Stop image recording processes and clean up resources."""
+    def stop(self, wait=True):
+        """Stop the workers once they have saved what is queued.
+
+        wait=False returns at once and finishes in the background, for calls
+        from the detection loop: joining the workers there cost >= 1 s of
+        spraying per recording start, and the queued frames were thrown away.
+        """
         self.running = False
+        self._stop_event.set()
+        if wait:
+            self._join_workers()
+        else:
+            threading.Thread(target=self._join_workers, daemon=True).start()
 
-        try:
-            while not self.queue.empty():
-                self.queue.get_nowait()
-        except Exception as e:
-            self.logger.warning(f"Failed to clear queue: {e}")
-
-        self.queue.close()
-        self.queue.join_thread()
-
+    def _join_workers(self):
+        # Generous: the workers are saving what was queued, and a frame lost
+        # at shutdown is worse than a few seconds (systemd allows 90 s).
         for p in self.processes:
             try:
-                p.join(timeout=1)
+                p.join(timeout=10)
                 if p.is_alive():
                     p.terminate()
                     p.join(timeout=0.5)
             except Exception as e:
                 self.logger.error(f"Failed to stop process: {e}")
 
-        self.processes.clear()
+        self.processes = []
+        self.queue.close()
         self.logger.info("[INFO] ImageRecorder stopped.")
 
     def terminate(self):

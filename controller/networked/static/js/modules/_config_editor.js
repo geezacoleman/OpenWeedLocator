@@ -352,6 +352,9 @@ const RESTART_KEY_LABELS = {
     resolution_width: 'camera resolution',
     resolution_height: 'camera resolution',
     relay_num: 'number of nozzles',
+    save_directory: 'recording folder',
+    controller_type: 'switch panel type',
+    switch_purpose: 'switch use',
 };
 
 function updateRestartNotice() {

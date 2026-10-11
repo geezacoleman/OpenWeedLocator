@@ -344,7 +344,9 @@ down **Time zone** and **System clock synchronized** — every check below is re
 against those two values.
 
 - [ ] **T1 no GPS, no network, default UTC** (the reporter's worst case).
-      Unplug GPS and network, recording on, low `sample_frequency`.
+      Unplug GPS and network, recording on, low `sample_frequency`. Run T1 with
+      `controller_type = none` and the dashboard: the mode most field units use
+      (v3.17-v3.21 saved nothing there; see Part 16).
       `exiftool -DateTimeOriginal -OffsetTimeOriginal -ModifyDate <newest jpg>`
       → DateTimeOriginal present and non-blank, offset `+00:00`, no GPS block.
       This is the exact case that used to be empty.
@@ -779,3 +781,37 @@ Over SSH on the controller, refresh it first, then Connect again with the same c
 17. [ ] Note 4G use (RUT951 mobile data counter) for one idle running hour with Noktura connected.
         Pass: < 1 MB. (Before v3.21.0 it was ~20 MB.) One upload still shows progress in the portal
         and completes.
+
+## Part 16 — v3.22.0 mode matrix and spraying faults
+
+v3.17 stopped image saving on every unit with `controller_type = none` and a dashboard, and no
+bench part pinned the controller type, so it reached the field. `tests/owl/test_mode_matrix.py`
+now runs these cases off-Pi on every push; this part checks them on hardware, with the real
+switch panel, camera and drive. For each row: set `[Controller] controller_type`, restart
+`owl.service`, turn detection and recording on the way that mode does, run for a minute over
+green on brown.
+
+**Pass for every row:** new JPEGs in the session folder (`ls -t <save dir>/<date>/session_*/ | head`),
+`journalctl -u owl -p err --since "-5min"` empty, and with a dashboard: thumbnails arrive
+(networked: collect screen gallery; standalone: last-image preview).
+
+1. [ ] `none` + standalone dashboard (app or local dashboard toggles)
+2. [ ] `none` + networked controller (collect screen Start)
+3. [ ] `none`, no MQTT (`[DataCollection] image_sample_enable = True` in the config)
+4. [ ] `ute` (switch = recording) + dashboard (detection from the dashboard)
+5. [ ] `ute` (switch = recording), no dashboard: records; detection stays off (decided behaviour)
+6. [ ] `advanced` + dashboard: record switch and spot-spray switch
+7. [ ] `advanced`, no dashboard
+
+**Spraying faults** (`[System] on_error`, one OWL, detection on, a nozzle or LED on each relay):
+
+8. [ ] `on_error = off`, pull the camera ribbon while running: within about 1 s all nozzles off,
+       the status LED flashes 3, the dashboard/collect screen shows "Fault: No frame from camera".
+       The service restarts (camera missing at start: LED 2) until the ribbon is back.
+9. [ ] `on_error = on`, same: all nozzles on (blanket) while detection is switched on, off when you
+       switch detection off. Reseat the ribbon: blanket ends, spot spraying resumes, the fault clears.
+10. [ ] Load a preset on the networked Config tab while recording on a `ute` unit: recording and
+        detection keep working (the preset used to break the switch state).
+11. [ ] Pull the USB drive while recording (`storage_location = usb`): LED flashes 6 within ~10 s,
+        the journal says "Recording drive unreadable"; the OWL keeps spraying. Press Record again:
+        it is refused with "no drive" instead of stopping the OWL.
