@@ -8,6 +8,9 @@ from unittest import mock
 
 import pytest
 
+pytest.importorskip('custom_algorithms', reason=(
+    'custom_algorithms/ is gitignored: its AST validator is bypassable and install_algorithm accepts code over MQTT, so it stays off installed OWLs until it is sandboxed (2026-10-11)'))
+
 from custom_algorithms import (
     CUSTOM_ALGO_DIR,
     validate_algorithm_code,

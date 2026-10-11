@@ -39,16 +39,10 @@ jobs:
           pip uninstall -y opencv-python
           pip install opencv-python-headless
 
-      - name: Create runtime stubs
-        run: |
-          mkdir -p custom_algorithms
-          touch custom_algorithms/__init__.py
-
       - name: Run tests
-        # Only one file is skipped, for a stated reason. Do not add an
-        # --ignore to make CI green: fix the test or the code.
-        #   test_custom_algorithms.py: tests custom_algorithms/, which is
-        #   gitignored (user code on the device), so it is not in the checkout.
-        run: |
-          pytest tests/ -n auto -q --durations=25 \
-            --ignore=tests/agent/test_custom_algorithms.py
+        # No --ignore. Do not add one to make CI green: fix the test or the
+        # code. The runner has no MQTT broker, no CONTROLLER.ini, no
+        # ultralytics and no custom_algorithms/ (gitignored until it is
+        # sandboxed; its tests skip); a test that only passes with one of
+        # those on your machine is a broken test.
+        run: pytest tests/ -n auto -q --durations=25

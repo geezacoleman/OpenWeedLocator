@@ -60,6 +60,22 @@ def _block_real_power_commands(monkeypatch):
     monkeypatch.setattr(subprocess, 'run', _guard(subprocess.run))
     monkeypatch.setattr(subprocess, 'Popen', _guard(subprocess.Popen))
 
+
+@pytest.fixture(autouse=True)
+def _no_real_mqtt_broker(monkeypatch):
+    """Refuse every real MQTT connection, as on the CI runner.
+
+    A dev machine running mosquitto on localhost:1883 let 40 standalone
+    tests pass by talking to it; CI has no broker and they all failed
+    (2026-10-11). Tests that need a connected client mock it themselves.
+    """
+    import paho.mqtt.client as paho
+
+    def _refuse(self, *a, **kw):
+        raise ConnectionRefusedError(111, 'tests never use a real MQTT broker')
+
+    monkeypatch.setattr(paho.Client, 'connect', _refuse)
+
 # All 8 detection sections present in the OWL INI configs
 # (MQTT, WebDashboard, Network, GPS moved to CONTROLLER.ini)
 EXPECTED_SECTIONS = [
@@ -367,17 +383,18 @@ def standalone_test_client(tmp_config_dir):
 
     config_dir_str = str(tmp_config_dir)
 
-    # Patch MQTT to avoid broker connection
-    with patch('controller.standalone.standalone.DashMQTTSubscriber') as MockMQTT:
-        mock_mqtt = MagicMock()
-        MockMQTT.return_value = mock_mqtt
+    # A real DashMQTTSubscriber (its command translation is under test) that
+    # never opens a socket: start() is a no-op and the paho client is a mock.
+    # This used to patch before importlib.reload, which put the real start()
+    # back, so every test talked to whatever broker was on localhost:1883:
+    # green on a dev machine running mosquitto, 40 failures in CI.
+    import controller.standalone.standalone as sa_mod
+    importlib.reload(sa_mod)
 
-        # Also patch get_rpi_version to avoid GPIO imports
-        with patch('controller.standalone.standalone.get_rpi_version', return_value='unknown'):
-            import controller.standalone.standalone as sa_mod
-            importlib.reload(sa_mod)
-
-            dashboard = sa_mod.OWLDashboard()
+    with patch.object(sa_mod.DashMQTTSubscriber, 'start'), \
+            patch.object(sa_mod, 'get_rpi_version', return_value='unknown'):
+        dashboard = sa_mod.OWLDashboard()
+    dashboard.mqtt_client.client = MagicMock()
 
     # Redirect file operations to temp dir
     dashboard._get_config_dir = lambda: config_dir_str

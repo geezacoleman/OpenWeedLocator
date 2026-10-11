@@ -632,7 +632,8 @@ class TestCustomAlgorithmTools:
 
     @pytest.fixture(autouse=True)
     def _temp_algo_dir(self, tmp_path, monkeypatch):
-        import custom_algorithms
+        # Not in the repo on purpose: see test_custom_algorithms.py
+        custom_algorithms = pytest.importorskip('custom_algorithms')
         monkeypatch.setattr(custom_algorithms, 'CUSTOM_ALGO_DIR', tmp_path)
         self.algo_dir = tmp_path
 

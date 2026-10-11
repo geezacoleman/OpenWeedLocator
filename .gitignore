@@ -222,3 +222,4 @@ benchmarks/results/*.png
 
 # Separate clone of the openweedlocator-docs repository
 /readthedocs/
+/tests/outputs/

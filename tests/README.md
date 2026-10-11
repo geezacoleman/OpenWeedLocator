@@ -21,6 +21,12 @@ git config core.hooksPath .githooks   # once per clone: fast tier before every p
 A red CI run means no field deploy. Do not add an `--ignore` to make it green:
 fix the test or the code.
 
+The CI runner has no MQTT broker, no `config/CONTROLLER.ini` (gitignored) and
+no ultralytics. The root conftest refuses real MQTT connections so a local
+mosquitto can't hide a broken test; for the other two, mock the model
+(`@patch('utils.greenongreen.YOLO')`) and never read the repo's
+`CONTROLLER.ini` from a test.
+
 ## Layout
 
 | Folder | Covers | Fakes |
