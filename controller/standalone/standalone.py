@@ -18,6 +18,7 @@ import time
 import logging
 import subprocess
 import configparser
+import uuid
 from pathlib import Path
 from datetime import datetime
 import urllib.request
@@ -25,7 +26,10 @@ import urllib.error
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from utils.mqtt_manager import DashMQTTSubscriber
-from utils.session_metadata import clean_session_metadata
+from utils.session_metadata import (clean_session_metadata, COLLECT_CAPTURE_DEFAULTS, COLLECT_LANGUAGES,
+                                    OWL_CAPTURE_DEFAULTS, capture_settings_from, coerce_capture_value,
+                                    ini_value, last_pick_values, load_last_pick, merge_session_file,
+                                    presets_from_config, read_session_file)
 from utils.input_manager import get_rpi_version
 from utils.device_identity import get_device_serial, read_identity
 from utils import cloud_provision
@@ -35,7 +39,7 @@ from utils.directory_manager import (scan_sessions, stream_zip,
 from utils.config_manager import (
     build_config_filename, parse_config_meta, strip_geometry_keys, GEOMETRY_FILE,
     stamp_config_meta, atomic_write_config, AUTOSAVE_CONFIG, seed_autosave,
-    strip_legacy_min_area, config_unsaved_state, ConfigValidator,
+    strip_legacy_min_area, config_unsaved_state, ConfigValidator, write_ini_section,
 )
 from utils.lut_manager import LUTProfileManager, LUTProfileError, MIN_CLASS_PIXELS
 from utils.painter_sessions import (
@@ -1061,6 +1065,10 @@ class OWLDashboard:
                 # Noktura serial. The app's Cloud card compares the
                 # fingerprint with Noktura's record for this serial.
                 'identity': read_identity(),
+                # Data collection (additive): live capture settings as the
+                # OWL applied them, and the current session's metadata.
+                'capture': mqtt_state.get('capture'),
+                'session_metadata': clean_session_metadata(mqtt_state.get('session_metadata')),
             })
 
             return jsonify(stats)
@@ -1479,6 +1487,51 @@ class OWLDashboard:
 
             return send_file(file_path)
 
+        def _is_recording_into(session_id):
+            """True while recording is on and session_id is (or holds) the
+            newest session, the one the recorder is writing."""
+            mqtt_state = self.mqtt_client.get_state() if self.mqtt_client else {}
+            if not mqtt_state.get('image_sample_enable'):
+                return False
+            sessions = scan_sessions(self._get_save_directory())
+            if not sessions:
+                return False
+            newest = sessions[0]['session_id']
+            return newest == session_id or newest.startswith(session_id + '/')
+
+        @self.app.route('/api/downloads/session/<path:session_id>/metadata', methods=['GET'])
+        def api_downloads_session_metadata(session_id):
+            """Farmer-entered metadata of one recorded session."""
+            session_path, err = _validate_session_path(session_id)
+            if err:
+                return err
+            return jsonify({'success': True,
+                            'metadata': clean_session_metadata(read_session_file(session_path))})
+
+        @self.app.route('/api/downloads/session/<path:session_id>/metadata', methods=['POST'])
+        def api_downloads_session_metadata_save(session_id):
+            """Add or correct a recorded session's metadata (session_metadata.json,
+            which travels in the session ZIP to Noktura). Written straight to
+            the session folder: the OWL's own metadata state belongs to the
+            session being recorded."""
+            session_path, err = _validate_session_path(session_id)
+            if err:
+                return err
+            if _is_recording_into(session_id):
+                return jsonify({'success': False, 'error': 'This session is recording now. '
+                                                           'Stop recording first.'}), 409
+            data = request.get_json(silent=True) or {}
+            updates = data.get('metadata')
+            if not isinstance(updates, dict):
+                return jsonify({'success': False, 'error': 'metadata must be an object'}), 400
+            try:
+                metadata = merge_session_file(session_path, updates)
+            except OSError as e:
+                self.logger.error(f"Could not save session metadata for {session_id}: {e}")
+                return jsonify({'success': False, 'error': 'Could not save the session details'}), 500
+            self.logger.info(f"Session metadata updated: {session_id}")
+            return jsonify({'success': True, 'metadata': metadata})
+
         @self.app.route('/api/downloads/session/<path:session_id>', methods=['DELETE'])
         def api_downloads_delete_session(session_id):
             """Delete a recording session directory (token-guarded since R3;
@@ -1494,14 +1547,9 @@ class OWLDashboard:
             # Never delete the session being written: the ImageRecorder
             # workers ENOENT-storm and the recording silently dies. The
             # active session is the newest one while recording is on.
-            mqtt_state = self.mqtt_client.get_state() if self.mqtt_client else {}
-            if mqtt_state.get('image_sample_enable'):
-                sessions = scan_sessions(self._get_save_directory())
-                if sessions:
-                    newest = sessions[0]['session_id']
-                    if newest == session_id or newest.startswith(session_id + '/'):
-                        return jsonify({'error': 'This session is recording now. '
-                                                 'Stop recording first.'}), 409
+            if _is_recording_into(session_id):
+                return jsonify({'error': 'This session is recording now. '
+                                         'Stop recording first.'}), 409
 
             try:
                 shutil.rmtree(session_path)
@@ -1535,16 +1583,116 @@ class OWLDashboard:
 
         @self.app.route('/api/session/metadata', methods=['POST'])
         def set_session_metadata():
-            """Save session metadata — writes to session_metadata.json on the OWL."""
+            """Save session metadata — writes to session_metadata.json on the OWL.
+            Fields left out keep their current values (older app builds send
+            only four of them)."""
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             try:
                 data = request.get_json() or {}
-                result = self.mqtt_client._send_command('set_session_metadata',
-                                                        **clean_session_metadata(data))
+                metadata = clean_session_metadata(self.mqtt_client.get_state().get('session_metadata'))
+                metadata.update({k: v for k, v in clean_session_metadata(data).items() if k in data})
+                result = self.mqtt_client._send_command('set_session_metadata', **metadata)
                 return jsonify(result)
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)}), 500
+
+        # ------------------------------------------------------------------
+        # Data collection: the same /api/collect/* contract as the networked
+        # controller (controller/networked/networked.py), so the shared
+        # collect_form.js and owl-app work against either. Differences: one
+        # OWL, settings persist in the active config, and Start does not
+        # switch detection off (recording while spraying still works).
+        # ------------------------------------------------------------------
+
+        def _recording_locked_response():
+            reason = (f'{self._get_controller_type().upper()} controller '
+                      f'active - use physical switches')
+            return jsonify({'success': False, 'error': reason}), 409
+
+        @self.app.route('/api/collect/config')
+        def collect_config():
+            ctrl = self._read_controller_ini()
+            language = ctrl.get('Collect', 'language', fallback='en').strip().lower()
+            state = self.mqtt_client.get_state() if self.mqtt_client else {}
+            return jsonify({
+                'presets': {k: list(v) for k, v in presets_from_config(ctrl).items()},
+                'capture': self._capture_settings(),
+                'language': language if language in COLLECT_LANGUAGES else 'en',
+                'last_pick': load_last_pick(ctrl),
+                'recording': bool(state.get('image_sample_enable')),
+                'metadata': clean_session_metadata(state.get('session_metadata')),
+            })
+
+        @self.app.route('/api/collect/settings', methods=['POST'])
+        def collect_settings():
+            """Validate capture settings, save them to the active config and
+            apply them live (set_capture_params) without a restart."""
+            data = request.get_json(silent=True) or {}
+            values = {}
+            for key, raw in (data.get('capture') or {}).items():
+                if key not in COLLECT_CAPTURE_DEFAULTS:
+                    continue
+                try:
+                    values[key] = coerce_capture_value(key, raw)
+                except (TypeError, ValueError) as e:
+                    return jsonify({'success': False, 'error': str(e)}), 400
+            language = None
+            if 'language' in data:
+                language = str(data['language']).strip().lower()
+                if language not in COLLECT_LANGUAGES:
+                    return jsonify({'success': False, 'error': 'language must be en or da'}), 400
+            if not values and language is None:
+                return jsonify({'success': False, 'error': 'No settings given'}), 400
+            if language is not None:
+                try:
+                    write_ini_section(self.controller_ini_path, 'Collect', {'language': language})
+                except OSError as e:
+                    self.logger.warning(f"Could not save [Collect] language: {e}")
+            for key, value in values.items():
+                section = 'Camera' if key == 'max_gain' else 'DataCollection'
+                self._persist_config_change(section, key, ini_value(value))
+            live = False
+            if values and self.mqtt_client:
+                result = self.mqtt_client._send_command('set_capture_params', params=values)
+                live = bool(result.get('success'))
+            return jsonify({'success': True, 'capture': self._capture_settings(), 'live': live})
+
+        @self.app.route('/api/collect/start', methods=['POST'])
+        def collect_start():
+            """One press of Record: metadata (with a run id), then recording on."""
+            if self._is_hardware_locked('recording'):
+                return _recording_locked_response()
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 503
+            data = request.get_json(silent=True) or {}
+            metadata = clean_session_metadata(data.get('metadata'))
+            metadata['run_id'] = uuid.uuid4().hex[:12]
+            try:
+                write_ini_section(self.controller_ini_path, 'Collect', last_pick_values(metadata))
+            except OSError as e:
+                self.logger.warning(f"Could not save the last record choices: {e}")
+            result = self.mqtt_client._send_command('set_session_metadata', **metadata)
+            if result.get('success'):
+                result = self.mqtt_client.set_image_sample_enable(True)
+            if not result.get('success'):
+                return jsonify({'success': False,
+                                'error': result.get('error') or 'Could not start recording'}), 503
+            self.logger.info("Recording enabled via dashboard")
+            return jsonify({'success': True, 'run_id': metadata['run_id']})
+
+        @self.app.route('/api/collect/stop', methods=['POST'])
+        def collect_stop():
+            if self._is_hardware_locked('recording'):
+                return _recording_locked_response()
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 503
+            result = self.mqtt_client.set_image_sample_enable(False)
+            if not result.get('success'):
+                return jsonify({'success': False,
+                                'error': result.get('error') or 'Could not stop recording'}), 503
+            self.logger.info("Recording disabled via dashboard")
+            return jsonify({'success': True})
 
         # ------------------------------------------------------------------
         # End Session metadata routes
@@ -2609,6 +2757,30 @@ class OWLDashboard:
         self._persist_config_change('GreenOnBrown', 'lut_profile', name)
         self._persist_config_change('GreenOnBrown', 'lut_sensitivity', str(sensitivity))
         self._persist_config_change('System', 'algorithm', 'lut')
+
+    def _read_controller_ini(self):
+        """CONTROLLER.ini read fresh ([Collect] presets, last choices and
+        language are hand-editable and saved by the record form)."""
+        cfg = configparser.ConfigParser()
+        try:
+            cfg.read(self.controller_ini_path)
+        except configparser.Error as e:
+            self.logger.warning(f"CONTROLLER.ini could not be parsed: {e}")
+        return cfg
+
+    def _capture_settings(self):
+        """Capture settings from the active config ([DataCollection] +
+        [Camera] max_gain), with owl.py's fallbacks for blank keys."""
+        cfg = configparser.ConfigParser()
+        try:
+            cfg.read(self._resolve_config_path(self._get_active_config_path()))
+        except configparser.Error as e:
+            self.logger.warning(f"Active config could not be parsed: {e}")
+
+        def lookup(key):
+            section = 'Camera' if key == 'max_gain' else 'DataCollection'
+            return cfg.get(section, key, fallback='') if cfg.has_section(section) else ''
+        return capture_settings_from(lookup, OWL_CAPTURE_DEFAULTS)
 
     def _persist_config_change(self, section, key, value):
         """Persist a single config parameter change to the active config file.

@@ -17,7 +17,8 @@ from controller.networked.collect import (CollectSession, collect_warnings, expe
 
 REPO = Path(__file__).resolve().parents[3]
 JS = (REPO / 'controller/networked/static/js/collect/collect.js').read_text(encoding='utf-8')
-I18N = (REPO / 'controller/networked/static/js/collect/i18n.js').read_text(encoding='utf-8')
+FORM_JS = (REPO / 'controller/shared/js/collect_form.js').read_text(encoding='utf-8')
+I18N = (REPO / 'controller/shared/js/collect_i18n.js').read_text(encoding='utf-8')
 HTML = (REPO / 'controller/networked/templates/collect.html').read_text(encoding='utf-8')
 
 
@@ -232,7 +233,8 @@ class TestLastPick:
         assert client.post('/api/collect/start', json={'metadata': {'crop': 'rye'}}).status_code == 200
 
     def test_js_has_no_preselected_crop_and_gates_start(self):
-        assert "crop: ''" in JS and "$('modal-start').disabled = !pick.crop" in JS
+        # The record modal is shared with the standalone dashboard
+        assert "crop: ''" in FORM_JS and "startBtn.disabled = !pick.crop" in FORM_JS
         assert "collect.pick" not in JS and 'data.last_pick' in JS
 
 

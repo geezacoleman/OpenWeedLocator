@@ -15,19 +15,6 @@ import time
 import uuid
 from collections import deque
 
-# --- Presets ---------------------------------------------------------------
-# Values are slugs: they go into EXIF / session_metadata.json and Noktura maps
-# them onto dataset fields (crop_type, lighting enum, agcontext). Labels and
-# translations live in static/js/collect/i18n.js. Each list is overridable as
-# a comma-separated key in CONTROLLER.ini [Collect].
-DEFAULT_CROPS = ('wheat', 'barley', 'canola', 'rye', 'oats', 'triticale', 'sugar_beet',
-                 'maize', 'grass_clover', 'peas', 'faba_beans', 'potatoes', 'fallow')
-SEASONAL_CROPS = ('wheat', 'barley', 'canola', 'rye', 'triticale')
-DEFAULT_WEATHER = ('dry', 'dew', 'wet', 'windy')
-# Noktura datasets.lighting enum values
-DEFAULT_LIGHTING = ('natural_sun', 'natural_partial', 'natural_overcast')
-DEFAULT_PURPOSES = ('herbicide', 'fungicide', 'insecticide', 'survey')
-
 # --- Warning thresholds (defaults; [Collect] keys override) ---------------
 DEFAULT_THRESHOLDS = {
     'smear_limit_mm': 2.0,       # ground movement during one exposure
@@ -45,52 +32,6 @@ GAIN_AT_LIMIT = 15.5             # the IMX296/HQ AGC tops out at 16x
 MAX_POINTS = 50000               # ~14 h at one image a second per OWL
 THUMBS_PER_OWL = 2
 UPLOAD_REQUEST_TTL_S = 24 * 3600
-
-
-def update_ini_text(text, section, values):
-    """Set keys in one INI section, keeping every comment and other line.
-
-    configparser rewrites drop comments, and CONTROLLER.ini is meant to be
-    hand-edited, so settings saved from the screen edit lines in place:
-    existing keys are replaced, missing keys go at the end of the section,
-    and a missing section is appended to the file.
-    """
-    lines = text.splitlines()
-    remaining = {k: str(v) for k, v in values.items()}
-    out, in_section, section_seen = [], False, False
-
-    def flush():
-        for key, value in remaining.items():
-            out.append(f'{key} = {value}')
-        remaining.clear()
-
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith('[') and stripped.endswith(']'):
-            if in_section:
-                # Keep a blank line between the new keys and the next header
-                while out and not out[-1].strip():
-                    out.pop()
-                flush()
-                out.append('')
-            in_section = stripped[1:-1].strip() == section
-            section_seen = section_seen or in_section
-            out.append(line)
-            continue
-        if in_section and '=' in stripped and not stripped.startswith('#'):
-            key = stripped.split('=', 1)[0].strip()
-            if key in remaining:
-                out.append(f'{key} = {remaining.pop(key)}')
-                continue
-        out.append(line)
-    if in_section:
-        flush()
-    elif not section_seen:
-        if out and out[-1].strip():
-            out.append('')
-        out.append(f'[{section}]')
-        flush()
-    return '\n'.join(out) + '\n'
 
 
 _PROVISION_FLAGS = {'--host': 'broker_host', '--port': 'broker_port', '--device-id': 'device_id',
@@ -129,24 +70,6 @@ def parse_provision_command(text):
         if not data.get(required):
             raise ValueError(f'The command is missing {required.replace("_", " ")}.')
     return data
-
-
-def parse_list(value, default):
-    items = [v.strip() for v in str(value or '').split(',') if v.strip()]
-    return tuple(items) or tuple(default)
-
-
-def presets_from_config(config):
-    """Preset lists for the record modal, from CONTROLLER.ini [Collect]."""
-    get = (lambda key: config.get('Collect', key, fallback='')) if config.has_section('Collect') \
-        else (lambda key: '')
-    return {
-        'crops': parse_list(get('crops'), DEFAULT_CROPS),
-        'seasonal_crops': parse_list(get('seasonal_crops'), SEASONAL_CROPS),
-        'weather': parse_list(get('weather'), DEFAULT_WEATHER),
-        'lighting': parse_list(get('lighting'), DEFAULT_LIGHTING),
-        'purposes': parse_list(get('purposes'), DEFAULT_PURPOSES),
-    }
 
 
 def thresholds_from_config(config):

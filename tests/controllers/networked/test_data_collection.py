@@ -19,10 +19,11 @@ from utils.exposure_governor import (ExposureGovernor, MIN_EXPOSURE_US, ground_s
                                      shutter_cap_us, parse_max_gain, GAIN_RECHECK_S, RELEASE_HOLD_S)
 from utils.image_sampler import (CaptureQC, CaptureScheduler, ImageRecorder, image_quality,
                                  make_thumbnail)
-from utils.session_metadata import SESSION_METADATA_FIELDS, clean_session_metadata
+from utils.session_metadata import (SESSION_METADATA_FIELDS, clean_session_metadata,
+                                    presets_from_config, DEFAULT_CROPS)
+from utils.config_manager import update_ini_text
 from controller.networked.collect import (CollectSession, collect_warnings, parse_provision_command,
-                                          presets_from_config, thresholds_from_config, update_ini_text,
-                                          UPLOAD_REQUEST_TTL_S, DEFAULT_CROPS)
+                                          thresholds_from_config, UPLOAD_REQUEST_TTL_S)
 
 REPO = Path(__file__).resolve().parents[3]
 
@@ -848,7 +849,7 @@ class TestCollectLiveView:
 
     HTML = (REPO / 'controller/networked/templates/collect.html').read_text(encoding='utf-8')
     JS = (REPO / 'controller/networked/static/js/collect/collect.js').read_text(encoding='utf-8')
-    I18N = (REPO / 'controller/networked/static/js/collect/i18n.js').read_text(encoding='utf-8')
+    I18N = (REPO / 'controller/shared/js/collect_i18n.js').read_text(encoding='utf-8')
 
     def test_modal_and_controls(self):
         for el in ('id="live-modal"', 'id="live-img"', 'id="live-close"', 'id="live-owls"', 'id="delete-btn"',

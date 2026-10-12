@@ -317,9 +317,11 @@ REBOOT_BIN="$(command -v reboot || echo /usr/sbin/reboot)"
 SUDOERS_TMP="$(mktemp)"
 cat > "$SUDOERS_TMP" <<EOF
 # Managed by owl_cloud_provision.sh — remote update/restart/reboot via MQTT.
-Cmnd_Alias OWL_UPDATE_RUN = ${SYSTEMD_RUN_BIN} --unit=owl-update --collect --property=RuntimeMaxSec=1800 --uid=${CURRENT_USER} --gid=${CURRENT_USER} /bin/bash ${REPO_DIR}/owl_update.sh *
+# Alias names are global across /etc/sudoers.d: 96-owl-update (setup.sh)
+# already defines OWL_UPDATE_RUN, so this file uses its own name.
+Cmnd_Alias OWL_CLOUD_UPDATE_RUN = ${SYSTEMD_RUN_BIN} --unit=owl-update --collect --property=RuntimeMaxSec=1800 --uid=${CURRENT_USER} --gid=${CURRENT_USER} /bin/bash ${REPO_DIR}/owl_update.sh *
 Cmnd_Alias OWL_CLOUD_CMDS = ${SYSTEMCTL_BIN} restart owl.service, ${SYSTEMCTL_BIN} restart owl-controller.service, ${REBOOT_BIN}
-${CURRENT_USER} ALL=(ALL) NOPASSWD: OWL_UPDATE_RUN, OWL_CLOUD_CMDS
+${CURRENT_USER} ALL=(ALL) NOPASSWD: OWL_CLOUD_UPDATE_RUN, OWL_CLOUD_CMDS
 EOF
 if visudo -cf "$SUDOERS_TMP" >/dev/null; then
     install -m 440 -o root -g root "$SUDOERS_TMP" "$SUDOERS_FILE"

@@ -22,9 +22,10 @@ _SESSION_PATTERN = re.compile(r'^session_\d{6}$')
 
 
 def _is_session_metadata_file(filename):
-    """Location sidecar / GPS track files that ride along with a session's
-    images (included in ZIP downloads, excluded from image listings)."""
-    return (filename == 'locations.jsonl'
+    """Location sidecar / GPS track / farmer metadata files that ride along
+    with a session's images (included in ZIP downloads, excluded from image
+    listings)."""
+    return (filename in ('locations.jsonl', 'session_metadata.json')
             or (filename.startswith('track_') and filename.endswith('.geojson')))
 
 

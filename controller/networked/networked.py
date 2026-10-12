@@ -38,10 +38,13 @@ from werkzeug.utils import secure_filename
 from utils.config_manager import (
     build_config_filename, parse_config_meta, strip_geometry_keys, GEOMETRY_FILE,
     stamp_config_meta, atomic_write_config, strip_legacy_min_area, ConfigValidator,
+    write_ini_section,
 )
 # Shared with OWLs that time themselves from their own GPS
 from utils.actuation import GPS_STALE_AFTER_S, SpeedAverager, ActuationCalculator
-from utils.session_metadata import clean_session_metadata, CAPTURE_PARAM_KEYS
+from utils.session_metadata import (clean_session_metadata, CAPTURE_PARAM_KEYS, COLLECT_CAPTURE_DEFAULTS,
+                                    COLLECT_LANGUAGES, capture_settings_from, coerce_capture_value,
+                                    ini_value, last_pick_values, load_last_pick, presets_from_config)
 from utils.mqtt_manager import CloudFeed, cloud_state_out_topic
 try:
     from version import VERSION as _OWL_VERSION, APP_CONTRACT_VERSION
@@ -50,9 +53,8 @@ except Exception:
     CONTROLLER_VERSION = 'unknown'
     APP_CONTRACT_VERSION = 1
 
-from controller.networked.collect import (CollectSession, collect_warnings, presets_from_config,
-                                          thresholds_from_config, update_ini_text,
-                                          parse_provision_command)
+from controller.networked.collect import (CollectSession, collect_warnings,
+                                          thresholds_from_config, parse_provision_command)
 from controller.networked.fleet_roster import (FleetRosterError,
                                                FleetPersistenceError,
                                                RESERVATION_TTL_S)
@@ -1491,83 +1493,24 @@ def collect_page():
 # Data collection screen (templates/collect.html, controller/networked/collect.py)
 # ---------------------------------------------------------------------------
 
-# [Collect] capture defaults: what the collect screen pushes to every OWL.
-# Distance spacing and the shutter cap are on here; on a bare OWL they are
-# off unless set in its own config.
-COLLECT_CAPTURE_DEFAULTS = {
-    'sample_mode': 'distance',
-    'sample_distance_m': 1.0,
-    'sample_interval_s': 2.0,
-    'jpeg_quality': 95,
-    'record_mode': 'images',
-    'video_max_s': 60,
-    # Off until tools/shutter_cap_probe.py has passed on the rig's camera.
-    'shutter_cap': False,
-    'smear_limit_mm': 2.0,
-    'max_gain': 'auto',
-}
-COLLECT_LANGUAGES = ('en', 'da')
 # Camera keys the collect screen may change on every OWL ([Camera] section).
 COLLECT_CAMERA_KEYS = ('exp_compensation', 'awb_mode', 'rotation',
                        'resolution_width', 'resolution_height')
-# Record modal choices remembered as [Collect] last_<key>
-COLLECT_LAST_PICK_KEYS = ('crop', 'crop_season', 'weather', 'lighting', 'purpose')
 
 
 def _collect_capture_settings():
+    """[Collect] capture settings (COLLECT_CAPTURE_DEFAULTS where unset):
+    what the collect screen pushes to every OWL."""
     cfg = controller.config
-    out = dict(COLLECT_CAPTURE_DEFAULTS)
-    if cfg.has_section('Collect'):
-        for key, default in COLLECT_CAPTURE_DEFAULTS.items():
-            raw = cfg.get('Collect', key, fallback='').strip()
-            if not raw:
-                continue
-            try:
-                out[key] = _coerce_capture_value(key, raw)
-            except ValueError:
-                logger.warning(f"[Collect] {key}={raw!r} ignored")
-    return out
-
-
-def _coerce_capture_value(key, value):
-    """Validate one capture setting; raises ValueError."""
-    text = str(value).strip().lower()
-    if key == 'sample_mode':
-        if text not in ('frames', 'distance', 'time'):
-            raise ValueError('sample_mode must be frames, distance or time')
-        return text
-    if key == 'record_mode':
-        if text not in ('images', 'video'):
-            raise ValueError('record_mode must be images or video')
-        return text
-    if key == 'shutter_cap':
-        if text in ('true', '1', 'yes', 'on'):
-            return True
-        if text in ('false', '0', 'no', 'off'):
-            return False
-        raise ValueError('shutter_cap must be true or false')
-    if key == 'max_gain':
-        if text in ('auto', ''):
-            return 'auto'
-        gain = float(text)
-        if not 1.0 <= gain <= 64.0:
-            raise ValueError('max_gain must be auto or 1-64')
-        return gain
-    limits = {'sample_distance_m': (0.1, 50.0), 'sample_interval_s': (0.2, 60.0),
-              'jpeg_quality': (50, 100), 'video_max_s': (5, 60), 'smear_limit_mm': (0.2, 20.0)}
-    lo, hi = limits[key]
-    number = float(text)
-    if not lo <= number <= hi:
-        raise ValueError(f'{key} must be between {lo} and {hi}')
-    return int(number) if key in ('jpeg_quality', 'video_max_s') else number
+    return capture_settings_from(
+        lambda key: cfg.get('Collect', key, fallback='') if cfg.has_section('Collect') else '',
+        COLLECT_CAPTURE_DEFAULTS,
+        on_invalid=lambda key, raw: logger.warning(f"[Collect] {key}={raw!r} ignored"))
 
 
 def _write_collect_section(values):
     """Save [Collect] keys into CONTROLLER.ini without losing its comments."""
-    path = controller.config_file
-    text = path.read_text(encoding='utf-8') if path.exists() else ''
-    new_text = update_ini_text(text, 'Collect', {k: str(v) for k, v in values.items()})
-    atomic_write_config(path, lambda f: f.write(new_text))
+    write_ini_section(controller.config_file, 'Collect', {k: str(v) for k, v in values.items()})
     if not controller.config.has_section('Collect'):
         controller.config.add_section('Collect')
     for key, value in values.items():
@@ -1658,13 +1601,11 @@ def collect_config():
     """Presets, capture settings and language for the screen."""
     presets = presets_from_config(controller.config)
     language = controller.config.get('Collect', 'language', fallback='en').strip().lower()
-    last = {key: controller.config.get('Collect', 'last_' + key, fallback='').strip()
-            for key in COLLECT_LAST_PICK_KEYS}
     return jsonify({
         'presets': {k: list(v) for k, v in presets.items()},
         'capture': _collect_capture_settings(),
         'language': language if language in COLLECT_LANGUAGES else 'en',
-        'last_pick': {k: v for k, v in last.items() if v},
+        'last_pick': load_last_pick(controller.config),
     })
 
 
@@ -1677,7 +1618,7 @@ def collect_settings():
         if key not in COLLECT_CAPTURE_DEFAULTS:
             continue
         try:
-            values[key] = _coerce_capture_value(key, raw)
+            values[key] = coerce_capture_value(key, raw)
         except (TypeError, ValueError) as e:
             return jsonify({'success': False, 'error': str(e)}), 400
     if 'language' in data:
@@ -1688,8 +1629,7 @@ def collect_settings():
     if not values:
         return jsonify({'success': False, 'error': 'No settings given'}), 400
     try:
-        _write_collect_section({k: (str(v).lower() if isinstance(v, bool) else v)
-                                for k, v in values.items()})
+        _write_collect_section({k: ini_value(v) for k, v in values.items()})
     except OSError as e:
         logger.error(f"Could not save [Collect]: {e}")
         return jsonify({'success': False, 'error': 'Could not save settings on the controller'}), 500
@@ -1700,15 +1640,9 @@ def collect_settings():
 
 def _save_last_pick(metadata):
     """Remember the record modal's choices as [Collect] last_* keys (the
-    kiosk browser runs incognito and forgets everything at each boot).
-    Only plain values are kept: CONTROLLER.ini is hand-edited and read
-    with % interpolation."""
-    values = {}
-    for key in COLLECT_LAST_PICK_KEYS:
-        value = metadata.get(key, '')
-        values['last_' + key] = value if re.fullmatch(r'[\w .,/()-]{0,60}', value) else ''
+    kiosk browser runs incognito and forgets everything at each boot)."""
     try:
-        _write_collect_section(values)
+        _write_collect_section(last_pick_values(metadata))
     except OSError as e:
         logger.warning(f"Could not save the last record choices: {e}")
 
@@ -1893,7 +1827,7 @@ def collect_camera_set():
         params[key] = text
     if 'max_gain' in (data.get('params') or {}):
         try:
-            gain = _coerce_capture_value('max_gain', data['params']['max_gain'])
+            gain = coerce_capture_value('max_gain', data['params']['max_gain'])
         except (TypeError, ValueError) as e:
             return jsonify({'success': False, 'error': str(e)}), 400
         _write_collect_section({'max_gain': gain})

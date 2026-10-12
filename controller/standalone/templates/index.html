@@ -21,6 +21,8 @@
     <script src="/shared/js/painter.js" defer></script>
     <script src="/shared/js/resolution_warning.js" defer></script>
     <script src="/shared/js/high_res_warning.js" defer></script>
+    <script src="/shared/js/collect_i18n.js" defer></script>
+    <script src="/shared/js/collect_form.js" defer></script>
 
     <!-- App-specific JS modules -->
     <script src="{{ url_for('static', filename='js/modules/_core.js') }}" defer></script>
@@ -32,6 +34,7 @@
     <script src="{{ url_for('static', filename='js/modules/_config_tab.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/modules/_lut_panel.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/modules/_config.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/modules/_data_collection.js') }}" defer></script>
     <script src="/shared/js/widgets.js" defer></script>
     <script>var isStandalone = true;</script>
     <script src="/shared/js/agent.js" defer></script>
@@ -161,39 +164,8 @@
                         </button>
                     </div>
 
-                    <!-- Session info (collapsible) -->
-                    <div class="session-info" id="sessionInfo">
-                        <button class="session-info-toggle" id="sessionInfoToggle" type="button">
-                            <span>Session info</span>
-                            <svg class="session-chevron" id="sessionChevron" width="16" height="16" viewBox="0 0 24 24">
-                                <path fill="currentColor" d="M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"/>
-                            </svg>
-                        </button>
-                        <div class="session-info-body" id="sessionInfoBody" style="display: none;">
-                            <div class="session-fields">
-                                <div class="session-field">
-                                    <label for="metaFieldName">Field name</label>
-                                    <input type="text" id="metaFieldName" placeholder="e.g., North paddock">
-                                </div>
-                                <div class="session-field">
-                                    <label for="metaCrop">Crop</label>
-                                    <input type="text" id="metaCrop" placeholder="e.g., Wheat, Canola">
-                                </div>
-                                <div class="session-field">
-                                    <label for="metaWeather">Weather</label>
-                                    <input type="text" id="metaWeather" placeholder="e.g., Sunny, 22C">
-                                </div>
-                                <div class="session-field">
-                                    <label for="metaVehicle">Vehicle</label>
-                                    <input type="text" id="metaVehicle" placeholder="e.g., John Deere 6120M">
-                                </div>
-                            </div>
-                            <div class="session-actions-row">
-                                <button class="session-save-btn" id="sessionSaveBtn" onclick="saveSessionMetadata()">Save</button>
-                                <button class="session-edit-btn" id="sessionEditBtn" onclick="editSessionMetadata()" style="display: none;">Edit</button>
-                            </div>
-                        </div>
-                    </div>
+                    <!-- Current run's crop and conditions (set in the record form) -->
+                    <div class="c-scope session-chips" id="sessionChips"></div>
                 </div>
 
                 <!-- Pipeline Mode Selector -->
@@ -672,6 +644,15 @@
                         <button class="fine-btn" data-delta="1">+</button>
                     </div>
                 </div>
+            </div>
+
+            <!-- Data collection: the same capture form as the networked
+                 collect screen (/shared/js/collect_form.js); saves to the
+                 active config and applies live -->
+            <div class="card c-scope dc-card" id="data-collection-card">
+                <h2 data-i18n="data_collection">Data collection</h2>
+                <div class="c-form" id="dcCaptureForm"></div>
+                <p class="c-hint" data-i18n="dc_hint"></p>
             </div>
 
             <!-- Widget slot: before advanced settings -->

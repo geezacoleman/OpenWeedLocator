@@ -1,5 +1,7 @@
 // ============================================
-// Collect screen - English / Danish strings
+// Data collection - English / Danish strings
+// Shared by the networked collect screen and the standalone dashboard
+// (collect_form.js).
 // Values sent to the OWLs are slugs (wheat, natural_sun, ...); only the
 // labels here are translated. Sentence case, no all-caps.
 // ============================================
@@ -46,6 +48,9 @@
             cloud_needed: 'Connect to Noktura first (Settings, Noktura).',
             record_as: 'Record as', stills: 'Still images', video: 'Video clip',
             spacing_mode: 'Take images', by_distance: 'By distance', by_time: 'By time',
+            by_frames: 'Every Nth frame', data_collection: 'Data collection',
+            dc_hint: 'Changes apply straight away and are saved to the active config.',
+            dc_failed: 'Could not start recording',
             every_m: 'Every (metres)', every_s: 'Without GPS, every (seconds)',
             quality: 'Image quality (JPEG)', video_len: 'Video clip length (5 to 60 s)',
             smear: 'Blur limit (mm of movement per image)', shutter_cap: 'Limit shutter time for speed',
@@ -135,6 +140,9 @@
             cloud_needed: 'Forbind til Noktura først (Indstillinger, Noktura).',
             record_as: 'Optag som', stills: 'Stillbilleder', video: 'Videoklip',
             spacing_mode: 'Tag billeder', by_distance: 'Efter afstand', by_time: 'Efter tid',
+            by_frames: 'Hvert N. billede', data_collection: 'Dataindsamling',
+            dc_hint: 'Ændringer gælder med det samme og gemmes i den aktive konfiguration.',
+            dc_failed: 'Kunne ikke starte optagelsen',
             every_m: 'Hver (meter)', every_s: 'Uden GPS, hver (sekunder)',
             quality: 'Billedkvalitet (JPEG)', video_len: 'Videoklip længde (5 til 60 s)',
             smear: 'Slørgrænse (mm bevægelse pr. billede)', shutter_cap: 'Begræns lukkertid efter hastighed',

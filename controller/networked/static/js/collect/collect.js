@@ -3,23 +3,26 @@
 // Polls /api/collect/state once a second; everything on screen is drawn
 // from that, so a reload or a second browser always shows the same thing.
 // Routes: controller/networked/networked.py (/api/collect/*).
+// The capture form and record modal are shared with the standalone
+// dashboard: /shared/js/collect_form.js.
 // ============================================
 
 (function () {
     'use strict';
 
     const I = window.CollectI18n;
+    const F = window.CollectForm;
     const t = I.t;
     const STATE_MS = 1000;
     const POINTS_MS = 4000;
     const OWL_COLOURS = ['#1f6fd1', '#d1611f', '#2e8b57', '#8e44ad', '#b8860b', '#c0392b'];
     const MAX_WARNINGS = 3;
-    const PICK_KEYS = ['crop', 'crop_season', 'weather', 'lighting', 'purpose'];
 
     let config = { presets: {}, capture: {}, language: 'en' };
     let state = null;
     let starting = false;
-    let pick = defaultPick();
+    let recordModal = null;
+    let captureForm = null;
     let ticked = {};
     let thumbSeq = {};
     let map = null, mapLayer = null, mapFitted = false;
@@ -64,14 +67,6 @@
     function storageSet(key, value) {
         try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* kiosk incognito */ }
     }
-    // Last choices come from the controller ([Collect] last_*): the kiosk
-    // browser runs incognito, so local storage is empty after every boot.
-    // No crop is chosen until the driver taps one.
-    function defaultPick(last) {
-        return Object.assign({ crop: '', crop_season: 'winter', weather: 'dry',
-                               lighting: 'natural_sun', purpose: 'herbicide', notes: '' }, last || {});
-    }
-
     function shutterText(us) {
         if (!us) return '-';
         return '1/' + Math.round(1000000 / us);
@@ -87,12 +82,6 @@
         const m = Math.floor(s / 60);
         return String(m).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
     }
-    function cropLabel(crop) {
-        if (!crop) return '';
-        const known = (config.presets.crops || []).indexOf(crop) !== -1 || t('crop_' + crop) !== crop;
-        return known ? t('crop_' + crop) : crop;
-    }
-
     // ---------- language ----------
     function setLanguage(lang, persist) {
         I.setLang(lang);
@@ -103,7 +92,7 @@
         if (typeof Numpad !== 'undefined' && Numpad.setLocale) Numpad.setLocale(lang, { cancel: t('cancel'), ok: t('ok') });
         storageSet('collect.lang', lang);
         if (persist) api('/api/collect/settings', { language: lang }).catch(() => {});
-        buildModalOptions();
+        if (recordModal) recordModal.refresh();
         render();
     }
 
@@ -180,19 +169,8 @@
         return '<span><span class="c-k">' + esc(label) + '</span><span class="c-num">' + esc(value) + '</span></span>';
     }
 
-    function metadataChips(md) {
-        if (!md || !md.crop) return null;
-        const chips = [];
-        let crop = cropLabel(md.crop);
-        if (md.crop_season) crop = t('season_' + md.crop_season) + ' ' + crop.toLowerCase();
-        chips.push(crop);
-        if (md.weather) chips.push(t('weather_' + md.weather));
-        if (md.lighting) chips.push(t('lighting_' + md.lighting));
-        if (md.purpose) chips.push(t('purpose_' + md.purpose));
-        return chips;
-    }
     function renderChips() {
-        const chips = state.recording ? metadataChips(state.run.metadata) : null;
+        const chips = state.recording ? F.metadataChips(state.run.metadata, config.presets) : null;
         $('meta-chips').innerHTML = chips
             ? chips.map((c) => '<span class="c-chip">' + esc(c) + '</span>').join('')
             : '<span class="c-chip c-chip--muted">' + esc(t('meta_hint')) + '</span>';
@@ -287,70 +265,10 @@
     function onRecordPress() {
         if (!state) return;
         if (state.recording) { $('stop-modal').hidden = false; return; }
-        buildModalOptions();
-        $('meta-notes').value = pick.notes || '';
-        $('record-modal').hidden = false;
+        recordModal.open();
     }
 
-    function buildModalOptions() {
-        const p = config.presets || {};
-        const lists = {
-            crop: (p.crops || []).concat(['__other']),
-            crop_season: ['winter', 'spring'],
-            weather: p.weather || [],
-            lighting: p.lighting || [],
-            purpose: p.purposes || [],
-        };
-        PICK_KEYS.forEach((key) => {
-            const box = document.querySelector('[data-pick="' + key + '"]');
-            if (!box) return;
-            box.innerHTML = '';
-            lists[key].forEach((value) => {
-                const b = document.createElement('button');
-                b.type = 'button';
-                b.className = 'c-opt';
-                const isOtherCustom = key === 'crop' && value === '__other' && pick.crop && lists.crop.indexOf(pick.crop) === -1;
-                if (value === '__other') b.textContent = isOtherCustom ? t('other') + ': ' + pick.crop : t('other') + '…';
-                else b.textContent = t((key === 'crop_season' ? 'season' : key) + '_' + value);
-                b.setAttribute('aria-pressed', String(pick[key] === value || isOtherCustom));
-                b.addEventListener('click', () => onPick(key, value));
-                box.appendChild(b);
-            });
-        });
-        const seasonal = (p.seasonal_crops || []).indexOf(pick.crop) !== -1;
-        $('season-row').classList.toggle('is-hidden', !seasonal);
-        $('modal-start').disabled = !pick.crop;
-    }
-
-    function onPick(key, value) {
-        if (key === 'crop' && value === '__other') {
-            const input = $('meta-other-crop');
-            input.value = (config.presets.crops || []).indexOf(pick.crop) === -1 ? pick.crop : '';
-            input.dataset.label = t('other_ph');
-            // The field stays hidden: the on-screen keyboard is the editor
-            if (typeof Numpad !== 'undefined') Numpad.open(input);
-            else { input.hidden = false; input.focus(); }
-            return;
-        }
-        pick[key] = value;
-        buildModalOptions();
-    }
-
-    function onOtherCropChanged() {
-        const value = $('meta-other-crop').value.trim();
-        $('meta-other-crop').hidden = true;
-        if (value) { pick.crop = value.toLowerCase(); buildModalOptions(); }
-    }
-
-    function startRecording() {
-        if (!pick.crop) return;
-        pick.notes = $('meta-notes').value.trim();
-        const seasonal = (config.presets.seasonal_crops || []).indexOf(pick.crop) !== -1;
-        const metadata = {
-            crop: pick.crop, crop_season: seasonal ? pick.crop_season : '',
-            weather: pick.weather, lighting: pick.lighting, purpose: pick.purpose, notes: pick.notes,
-        };
-        $('record-modal').hidden = true;
+    function startRecording(metadata) {
         starting = true;
         renderRecordButton();
         api('/api/collect/start', { metadata: metadata })
@@ -544,26 +462,14 @@
     }
 
     // ---------- capture settings ----------
-    function renderCaptureForm() {
-        const c = config.capture || {};
-        document.querySelectorAll('#pane-capture [data-setting]').forEach((el) => {
-            const key = el.dataset.setting;
-            if (el.classList.contains('c-seg')) {
-                el.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(String(c[key]) === b.dataset.value)));
-            } else if (c[key] !== undefined) {
-                el.value = c[key];
-            }
-        });
-    }
-
     function saveCapture(key, value) {
         const capture = {}; capture[key] = value;
         api('/api/collect/settings', { capture: capture }).then((data) => {
             config.capture = data.capture;
-            renderCaptureForm();
+            captureForm.render(config.capture);
             renderMapSide();
             toast(t('saved'), 'success');
-        }).catch((e) => { toast(e.message, 'error'); renderCaptureForm(); });
+        }).catch((e) => { toast(e.message, 'error'); captureForm.render(config.capture); });
     }
 
     // ---------- camera ----------
@@ -709,11 +615,8 @@
         document.querySelectorAll('.c-lang button').forEach((b) => b.addEventListener('click', () => setLanguage(b.dataset.lang, true)));
         $('cloud-pill').addEventListener('click', () => { showView('settings'); showPane('sessions'); });
         $('record-btn').addEventListener('click', onRecordPress);
-        $('modal-cancel').addEventListener('click', () => { $('record-modal').hidden = true; });
-        $('modal-start').addEventListener('click', startRecording);
         $('stop-no').addEventListener('click', () => { $('stop-modal').hidden = true; });
         $('stop-yes').addEventListener('click', stopRecording);
-        $('meta-other-crop').addEventListener('change', onOtherCropChanged);
         $('map-centre').addEventListener('click', centreMap);
         $('sessions-refresh').addEventListener('click', refreshSessions);
         $('upload-btn').addEventListener('click', onUpload);
@@ -726,10 +629,6 @@
             ticked[b.dataset.key] = !ticked[b.dataset.key];
             renderSessions();
         });
-        document.querySelectorAll('#pane-capture .c-seg').forEach((seg) => seg.querySelectorAll('button').forEach((b) =>
-            b.addEventListener('click', () => saveCapture(seg.dataset.setting, b.dataset.value))));
-        document.querySelectorAll('#pane-capture input[data-setting]').forEach((input) =>
-            input.addEventListener('change', () => saveCapture(input.dataset.setting, input.value)));
         document.querySelectorAll('#pane-camera [data-camera]').forEach((seg) => seg.querySelectorAll('button').forEach((b) =>
             b.addEventListener('click', () => {
                 const key = seg.dataset.camera, value = b.dataset.value;
@@ -757,12 +656,14 @@
     }
 
     function init() {
+        recordModal = F.mountRecordModal({ presets: () => config.presets, onStart: startRecording });
+        captureForm = F.mountCapture($('capture-form'), { onChange: saveCapture });
         if (typeof Numpad !== 'undefined') Numpad.init();
         bind();
         api('/api/collect/config').then((data) => {
             config = data;
-            pick = defaultPick(data.last_pick);
-            renderCaptureForm();
+            recordModal.setPick(data.last_pick);
+            captureForm.render(config.capture);
             setLanguage(storageGet('collect.lang', data.language || 'en'), false);
         }).catch(() => setLanguage(storageGet('collect.lang', 'en'), false));
         poll();

@@ -2,31 +2,11 @@
    OWL Controller - Data collection screen (layout A)
    Kiosk-first: fits the 7" EDATEC (1024x600) without scrolling and grows
    on the 10" HMI3010 (1280x800). Sentence case only, no emojis, top-aligned.
+   Tokens, buttons, the capture form and the record modal live in
+   /shared/css/_collect.css (also used by the standalone dashboard).
    ========================================================================== */
 
 .collect {
-    --c-navy: var(--owl-primary, #022775);
-    --c-navy-2: var(--owl-primary-light, #034694);
-    --c-ink: var(--owl-text-dark, #2c3e50);
-    --c-muted: #5d6d82;
-    --c-line: var(--owl-border, #dce1e8);
-    --c-bg: #eef1f5;
-    --c-card: #ffffff;
-    --c-ok: #1e9e5a;
-    --c-warn: #c77700;
-    --c-warn-bg: #fff4e0;
-    --c-bad: #c0392b;
-    --c-bad-bg: #fdecea;
-    --c-rec: #d93025;
-    --c-sel: #e6eefb;
-    /* 7" sizing (the tighter screen) */
-    --c-fs: 16px;
-    --c-bar: 56px;
-    --c-tap: 48px;
-    --c-pad: 10px;
-    --c-big: 30px;
-    --c-radius: var(--radius-md, 8px);
-
     height: 100vh;
     overflow: hidden;
     display: flex;
@@ -36,16 +16,6 @@
     font-size: var(--c-fs);
     font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
 }
-
-/* 10" and larger: bigger type and touch targets */
-@media (min-width: 1200px) and (min-height: 760px) {
-    .collect { --c-fs: 19px; --c-bar: 66px; --c-tap: 58px; --c-pad: 14px; --c-big: 38px; }
-}
-
-/* :where keeps this at class specificity so component font sizes win */
-.collect :where(button, input, textarea, a.c-btn) { font: inherit; }
-.collect [hidden] { display: none !important; }
-.c-num { font-variant-numeric: tabular-nums; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
 
 /* --- Top bar ------------------------------------------------------------- */
 .c-top {
@@ -78,28 +48,7 @@
 .c-main { flex: 1; min-height: 0; display: flex; }
 .c-view { flex: 1; min-height: 0; min-width: 0; padding: var(--c-pad); gap: var(--c-pad); display: none; }
 .c-view.is-on { display: grid; }
-.c-card {
-    background: var(--c-card); border: 1px solid var(--c-line); border-radius: var(--c-radius);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08); min-width: 0;
-}
-.c-btn {
-    min-height: var(--c-tap); padding: 0 16px; border: 1px solid var(--c-line); border-radius: var(--c-radius);
-    background: #fff; color: var(--c-navy); font-weight: 700; cursor: pointer;
-    display: inline-flex; align-items: center; justify-content: center; text-decoration: none;
-}
-.c-btn--small { min-height: calc(var(--c-tap) - 8px); padding: 0 12px; font-size: 0.9em; }
-.c-btn--primary { background: var(--c-navy); border-color: var(--c-navy); color: #fff; }
-.c-btn--go { background: var(--c-ok); border-color: var(--c-ok); color: #fff; }
-.c-btn--stop { background: var(--c-rec); border-color: var(--c-rec); color: #fff; }
-.c-btn--danger { color: var(--c-bad); border-color: #f2b8b2; }
-.c-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-.c-hint { color: var(--c-muted); font-size: 0.8em; margin: 0; line-height: 1.35; }
-.c-label { font-weight: 600; font-size: 0.85em; }
-.c-tag { display: inline-block; padding: 0 8px; border-radius: 999px; background: var(--c-warn-bg); color: #6b4300; border: 1px solid #f0d19a; font-size: 0.8em; font-weight: 600; }
 .c-stat { display: flex; justify-content: space-between; gap: 10px; padding-bottom: 5px; border-bottom: 1px solid var(--c-line); }
-.c-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.c-chip { padding: 4px 10px; border-radius: 999px; background: var(--c-sel); color: var(--c-navy); font-weight: 600; font-size: 0.85em; white-space: nowrap; }
-.c-chip--muted { background: transparent; color: var(--c-muted); padding-left: 0; white-space: normal; }
 
 /* --- Record view (layout A) ------------------------------------------------ */
 .c-view--record { grid-template-columns: 34% minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
@@ -179,37 +128,12 @@
 .c-state--bad { color: var(--c-bad); }
 .c-bar { height: 6px; background: var(--c-line); border-radius: 3px; overflow: hidden; margin-top: 3px; }
 .c-bar i { display: block; height: 100%; background: var(--c-navy-2); }
-.c-form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
-.c-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.c-seg { display: flex; border: 1px solid var(--c-line); border-radius: var(--c-radius); overflow: hidden; }
-.c-seg button { flex: 1; min-height: var(--c-tap); border: 0; background: #fff; color: var(--c-ink); font-weight: 600; cursor: pointer; padding: 0 6px; }
-.c-seg button + button { border-left: 1px solid var(--c-line); }
-.c-seg button[aria-pressed="true"] { background: var(--c-navy); color: #fff; }
-.c-input { min-height: var(--c-tap); border: 1px solid var(--c-line); border-radius: var(--c-radius); padding: 0 12px; background: #fff; color: var(--c-ink); width: 100%; }
-.c-stepper { display: grid; grid-template-columns: var(--c-tap) 1fr var(--c-tap); align-items: center; text-align: center; border: 1px solid var(--c-line); border-radius: var(--c-radius); overflow: hidden; }
-.c-stepper button { min-height: var(--c-tap); border: 0; background: var(--c-sel); color: var(--c-navy); font-size: 1.3em; font-weight: 700; cursor: pointer; }
 .c-live { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px; padding: 6px 10px; background: var(--c-bg); border-radius: var(--c-radius); font-size: 0.85em; }
 .c-paste { min-height: 84px; width: 100%; border: 1px solid var(--c-line); border-radius: var(--c-radius); padding: 8px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; resize: vertical; }
 .c-check { display: inline-flex; gap: 8px; align-items: center; font-size: 0.9em; }
 .c-check input { width: 24px; height: 24px; }
 
 /* --- Modals ---------------------------------------------------------------- */
-.c-scrim { position: fixed; inset: 0; z-index: 2000; background: rgba(10, 20, 40, 0.45); display: flex; align-items: center; justify-content: center; padding: 8px; }
-.c-scrim[hidden] { display: none; }
-.c-modal { width: 100%; max-width: 1220px; max-height: 100%; overflow-y: auto; background: #fff; border-radius: 12px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
-.c-modal--small { max-width: 520px; }
-.c-modal h2 { margin: 0; font-size: 1.2em; }
-.c-mrow { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; align-items: start; }
-.c-mrow > span, .c-mrow > label { font-weight: 700; color: var(--c-muted); font-size: 0.9em; padding-top: 10px; }
-.c-mrow.is-hidden { visibility: hidden; }
-.c-opts { display: flex; flex-wrap: wrap; gap: 6px; }
-.c-opt {
-    min-height: var(--c-tap); min-width: 96px; padding: 0 12px; border: 2px solid var(--c-line);
-    border-radius: var(--c-radius); background: #fff; color: var(--c-ink); font-size: 0.92em; font-weight: 600; cursor: pointer;
-}
-.c-opt[aria-pressed="true"] { border-color: var(--c-navy); background: var(--c-sel); color: var(--c-navy); }
-.c-mfoot { display: flex; justify-content: flex-end; gap: 10px; padding-top: 6px; border-top: 1px solid var(--c-line); }
-.c-mfoot .c-btn { min-width: 170px; }
 
 /* Live view: per-OWL button in the status rows, full-height stream modal */
 .c-owl-row { grid-template-columns: 14px 78px repeat(4, minmax(0, 1fr)) auto; }
@@ -226,5 +150,4 @@
 .c-live-frame img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .c-live-error { position: absolute; margin: 0; padding: 0 24px; color: #fff; text-align: center; font-weight: 600; }
 
-.collect button:focus-visible, .collect a:focus-visible, .collect input:focus-visible { outline: 3px solid #6fb4ff; outline-offset: 2px; }
 @media (prefers-reduced-motion: no-preference) { .c-bar i { transition: width 0.6s ease; } }

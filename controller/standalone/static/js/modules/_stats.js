@@ -139,9 +139,9 @@ function updateSystemStats() {
             syncSwitch('nozzleSwitch', nozzlesOn);
             syncSwitch('trackingSwitch', !!data.tracking_enabled);
 
-            // Sync session metadata panel visibility with recording state
-            if (typeof syncSessionMetadataPanel === 'function') {
-                syncSessionMetadataPanel(recordingOn);
+            // Current run's crop and conditions under the Record switch
+            if (typeof renderSessionChips === 'function') {
+                renderSessionChips(recordingOn, data.session_metadata);
             }
 
             // Show/hide track stability panel based on tracking state

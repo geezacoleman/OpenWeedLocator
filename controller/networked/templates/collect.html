@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="/shared/css/_reset.css" />
     <link rel="stylesheet" href="/shared/css/_toast.css" />
     <link rel="stylesheet" href="/shared/css/numpad.css" />
+    <link rel="stylesheet" href="/shared/css/_collect.css" />
     <link rel="stylesheet" href="{{ url_for('static', filename='lib/leaflet/leaflet.css') }}" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/collect.css') }}" />
 </head>
@@ -79,24 +80,7 @@
 
             <div class="c-pane" id="pane-capture">
                 <h2 data-i18n="s_capture">Capture</h2>
-                <div class="c-form">
-                    <div class="c-field"><span class="c-label" data-i18n="record_as">Record as</span>
-                        <div class="c-seg" data-setting="record_mode"><button type="button" data-value="images" data-i18n="stills">Still images</button><button type="button" data-value="video" data-i18n="video">Video clip</button></div></div>
-                    <div class="c-field"><span class="c-label" data-i18n="spacing_mode">Take images</span>
-                        <div class="c-seg" data-setting="sample_mode"><button type="button" data-value="distance" data-i18n="by_distance">By distance</button><button type="button" data-value="time" data-i18n="by_time">By time</button></div></div>
-                    <div class="c-field"><label class="c-label" for="set-distance" data-i18n="every_m">Every (metres)</label>
-                        <input class="c-input" id="set-distance" type="number" step="0.1" min="0.1" max="50" data-numpad data-setting="sample_distance_m" /></div>
-                    <div class="c-field"><label class="c-label" for="set-interval" data-i18n="every_s">Without GPS, every (seconds)</label>
-                        <input class="c-input" id="set-interval" type="number" step="0.1" min="0.2" max="60" data-numpad data-setting="sample_interval_s" /></div>
-                    <div class="c-field"><label class="c-label" for="set-quality" data-i18n="quality">Image quality (JPEG)</label>
-                        <input class="c-input" id="set-quality" type="number" step="1" min="50" max="100" data-numpad data-setting="jpeg_quality" /></div>
-                    <div class="c-field"><label class="c-label" for="set-video" data-i18n="video_len">Video clip length</label>
-                        <input class="c-input" id="set-video" type="number" step="1" min="5" max="60" data-numpad data-setting="video_max_s" /></div>
-                    <div class="c-field"><label class="c-label" for="set-smear" data-i18n="smear">Blur limit</label>
-                        <input class="c-input" id="set-smear" type="number" step="0.1" min="0.2" max="20" data-numpad data-setting="smear_limit_mm" /></div>
-                    <div class="c-field"><span class="c-label" data-i18n="shutter_cap">Limit shutter time for speed</span>
-                        <div class="c-seg" data-setting="shutter_cap"><button type="button" data-value="true" data-i18n="on">On</button><button type="button" data-value="false" data-i18n="off">Off</button></div></div>
-                </div>
+                <div class="c-form" id="capture-form"></div>
                 <p class="c-hint" data-i18n="capture_hint"></p>
             </div>
 
@@ -147,21 +131,7 @@
     </section>
 </main>
 
-<!-- Record modal: big tap rows -->
-<div class="c-scrim" id="record-modal" hidden>
-    <div class="c-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-        <h2 id="modal-title" data-i18n="m_title">What are you recording?</h2>
-        <div class="c-mrow"><span data-i18n="crop">Crop</span><div class="c-opts" data-pick="crop"></div></div>
-        <div class="c-mrow" id="season-row"><span data-i18n="season">Season</span><div class="c-opts" data-pick="crop_season"></div></div>
-        <div class="c-mrow"><span data-i18n="weather">Weather</span><div class="c-opts" data-pick="weather"></div></div>
-        <div class="c-mrow"><span data-i18n="lighting">Light</span><div class="c-opts" data-pick="lighting"></div></div>
-        <div class="c-mrow"><span data-i18n="purpose">Purpose</span><div class="c-opts" data-pick="purpose"></div></div>
-        <div class="c-mrow"><label for="meta-notes" data-i18n="notes">Notes</label>
-            <input class="c-input c-input--wide" id="meta-notes" type="text" maxlength="200" data-numpad data-i18n-ph="notes_ph" /></div>
-        <input type="text" id="meta-other-crop" data-numpad hidden maxlength="60" />
-        <div class="c-mfoot"><button class="c-btn" type="button" id="modal-cancel" data-i18n="cancel">Cancel</button><button class="c-btn c-btn--go" type="button" id="modal-start" data-i18n="start">Start recording</button></div>
-    </div>
-</div>
+<!-- Record modal: built by /shared/js/collect_form.js -->
 
 <!-- Stop confirmation -->
 <div class="c-scrim" id="stop-modal" hidden>
@@ -201,7 +171,8 @@
 <script src="/shared/js/toast.js"></script>
 <script src="/shared/js/numpad.js"></script>
 <script src="{{ url_for('static', filename='lib/leaflet/leaflet.js') }}"></script>
-<script src="{{ url_for('static', filename='js/collect/i18n.js') }}"></script>
+<script src="/shared/js/collect_i18n.js"></script>
+<script src="/shared/js/collect_form.js"></script>
 <script src="{{ url_for('static', filename='js/collect/collect.js') }}"></script>
 </body>
 </html>

@@ -71,7 +71,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initHardwareControllerCheck();
     initSwitchPurposeToggle();
     initDashboardControls();
-    initSessionMetadata();
+    initDataCollection();
     initConfigEditor();
     initSliders();
 

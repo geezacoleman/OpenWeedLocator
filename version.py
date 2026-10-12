@@ -10,7 +10,7 @@ from typing import Optional
 @dataclass
 class Version:
     major: int = 3
-    minor: int = 22
+    minor: int = 23
     patch: int = 0
     tag: Optional[str] = None
 
@@ -45,6 +45,10 @@ VERSION = Version()
 #    unit, and /api/settings/cloud/provision needs a device token (403
 #    device_token_missing). The app talks https first and falls back to http
 #    for contract <= 4 firmware.
+# (3.23.0 data collection: /api/collect/config|settings|start|stop on the
+#    standalone dashboard, GET/POST /api/downloads/session/<id>/metadata and
+#    system_stats capture/session_metadata are ADDITIVE — the app
+#    feature-detects them (404 on older firmware) and stays at 5.)
 APP_CONTRACT_VERSION = 5
 
 class SystemInfo:

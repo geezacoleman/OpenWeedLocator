@@ -619,6 +619,28 @@ class TestUpdateSudoersRule:
         content = self._read('controller/shared/setup.sh')
         assert 'restart owl-dash.service' in content
 
+
+@pytest.mark.unit
+def test_sudoers_alias_names_are_unique_across_scripts():
+    """sudo reads every /etc/sudoers.d file into one policy, so an alias
+    defined by two scripts is a duplicate (owl-1, 2026-10-11: 98-owl-cloud
+    redefined 96-owl-update's OWL_UPDATE_RUN, logged on every sudo call and
+    failed `visudo -c`). Each script checks only its own file with visudo -cf."""
+    root = os.path.join(os.path.dirname(__file__), '..', '..')
+    seen = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in ('.git', 'readthedocs', 'node_modules', '.venv')]
+        for name in filenames:
+            if not name.endswith('.sh'):
+                continue
+            path = os.path.join(dirpath, name)
+            with open(path, encoding='utf-8', errors='replace') as f:
+                for alias in re.findall(r'^\s*Cmnd_Alias\s+(\w+)\s*=', f.read(), re.MULTILINE):
+                    rel = os.path.relpath(path, root)
+                    assert alias not in seen, f'{alias} defined in {seen[alias]} and {rel}'
+                    seen[alias] = rel
+    assert 'OWL_UPDATE_RUN' in seen and 'OWL_CLOUD_UPDATE_RUN' in seen
+
 # ---------------------------------------------------------------------------
 # Reused Pis: a leftover first-boot flag locks detection off and restarts the
 # setup hotspot on every boot. Hand setups offer to disarm it; factory runs,

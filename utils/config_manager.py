@@ -270,6 +270,61 @@ def atomic_write_config(path, write_fn):
         raise
 
 
+def update_ini_text(text, section, values):
+    """Set keys in one INI section, keeping every comment and other line.
+
+    configparser rewrites drop comments, and CONTROLLER.ini is meant to be
+    hand-edited, so settings saved from the screen edit lines in place:
+    existing keys are replaced, missing keys go at the end of the section,
+    and a missing section is appended to the file.
+    """
+    lines = text.splitlines()
+    remaining = {k: str(v) for k, v in values.items()}
+    out, in_section, section_seen = [], False, False
+
+    def flush():
+        for key, value in remaining.items():
+            out.append(f'{key} = {value}')
+        remaining.clear()
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith('[') and stripped.endswith(']'):
+            if in_section:
+                # Keep a blank line between the new keys and the next header
+                while out and not out[-1].strip():
+                    out.pop()
+                flush()
+                out.append('')
+            in_section = stripped[1:-1].strip() == section
+            section_seen = section_seen or in_section
+            out.append(line)
+            continue
+        if in_section and '=' in stripped and not stripped.startswith('#'):
+            key = stripped.split('=', 1)[0].strip()
+            if key in remaining:
+                out.append(f'{key} = {remaining.pop(key)}')
+                continue
+        out.append(line)
+    if in_section:
+        flush()
+    elif not section_seen:
+        if out and out[-1].strip():
+            out.append('')
+        out.append(f'[{section}]')
+        flush()
+    return '\n'.join(out) + '\n'
+
+
+def write_ini_section(path, section, values):
+    """Set keys in one section of a hand-edited INI file (comments kept,
+    atomic write). A missing file is created."""
+    path = os.fspath(path)
+    text = Path(path).read_text(encoding='utf-8') if os.path.exists(path) else ''
+    new_text = update_ini_text(text, section, values)
+    atomic_write_config(path, lambda f: f.write(new_text))
+
+
 class ConfigValidator:
     """Validates OWL configuration files"""
 
