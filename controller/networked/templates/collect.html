@@ -28,6 +28,10 @@
         <button type="button" data-lang="en" aria-pressed="true">EN</button>
         <button type="button" data-lang="da" aria-pressed="false">DK</button>
     </div>
+    <button class="c-power" id="power-btn" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9M6.3 6.8a8 8 0 1 0 11.4 0" /></svg>
+        <span data-i18n="power_off">Turn off</span>
+    </button>
 </header>
 
 <main class="c-main">
@@ -138,6 +142,22 @@
     <div class="c-modal c-modal--small" role="dialog" aria-modal="true">
         <h2 data-i18n="confirm_stop">Stop recording on all OWLs?</h2>
         <div class="c-mfoot"><button class="c-btn" type="button" id="stop-no" data-i18n="confirm_no">Keep recording</button><button class="c-btn c-btn--stop" type="button" id="stop-yes" data-i18n="confirm_yes">Stop</button></div>
+    </div>
+</div>
+
+<!-- Turn off everything: POST /api/system/shutdown (all OWLs, then this controller) -->
+<div class="c-scrim" id="power-modal" hidden>
+    <div class="c-modal c-modal--small" role="dialog" aria-modal="true" aria-labelledby="power-title">
+        <h2 id="power-title" data-i18n="power_title">Turn off all OWLs and this screen?</h2>
+        <p class="c-hint" id="power-recording" data-i18n="power_recording" hidden>Recording stops first. Images already saved are kept.</p>
+        <p class="c-hint" data-i18n="power_hint">Wait 30 seconds after the screen goes dark before you switch off the power.</p>
+        <div class="c-mfoot"><button class="c-btn" type="button" id="power-no" data-i18n="cancel">Cancel</button><button class="c-btn c-btn--stop" type="button" id="power-yes" data-i18n="power_yes">Turn off</button></div>
+    </div>
+</div>
+<div class="c-scrim c-scrim--dark" id="power-done" hidden>
+    <div class="c-modal c-modal--small" role="status">
+        <h2 data-i18n="power_done">Turning off</h2>
+        <p class="c-hint" data-i18n="power_hint">Wait 30 seconds after the screen goes dark before you switch off the power.</p>
     </div>
 </div>
 

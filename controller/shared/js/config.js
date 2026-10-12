@@ -93,7 +93,8 @@ const CONFIG_FIELD_DEFS = {
         'record_mode': { type: 'select', options: ['images', 'video'], help: 'images, or one video clip per recording that stops at video_max_s' },
         'video_max_s': { type: 'number', min: 5, max: 60, help: 'Video clip length limit (seconds)' },
         'shutter_cap': { type: 'boolean', help: 'Limit the shutter time so ground movement during one exposure stays under smear_limit_mm; gain rises instead. Released when GPS speed is missing.' },
-        'smear_limit_mm': { type: 'number', step: 0.1, min: 0.1, max: 20, help: 'Blur limit: millimetres of ground movement per image (GPS speed x exposure)' }
+        'smear_limit_mm': { type: 'number', step: 0.1, min: 0.1, max: 20, help: 'Blur limit: millimetres of ground movement per image (GPS speed x exposure)' },
+        'min_speed_kmh': { type: 'number', step: 0.1, min: 0, max: 20, help: 'No still images while GPS speed is below this (km/h). 0 = never pause. Without GPS, images keep coming.' }
     },
     'Controller': {
         'controller_type': { type: 'select', options: ['none', 'ute', 'advanced', 'networked'] },

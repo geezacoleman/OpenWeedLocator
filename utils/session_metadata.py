@@ -30,7 +30,8 @@ SESSION_METADATA_MAX_LEN = 500
 # Applied live only: the controller keeps them in its own [Collect] and
 # re-sends them on every reconnect, so collect settings never reach spray mode.
 CAPTURE_PARAM_KEYS = ('sample_mode', 'sample_distance_m', 'sample_interval_s', 'jpeg_quality',
-                      'record_mode', 'video_max_s', 'shutter_cap', 'smear_limit_mm', 'max_gain')
+                      'record_mode', 'video_max_s', 'shutter_cap', 'smear_limit_mm', 'max_gain',
+                      'min_speed_kmh')
 
 
 def clean_session_metadata(source):
@@ -72,6 +73,9 @@ COLLECT_CAPTURE_DEFAULTS = {
     'shutter_cap': False,
     'smear_limit_mm': 2.0,
     'max_gain': 'auto',
+    # No still images below this GPS speed (0 = never pause). Without a
+    # fresh GPS speed images keep coming.
+    'min_speed_kmh': 1.0,
 }
 OWL_CAPTURE_DEFAULTS = dict(COLLECT_CAPTURE_DEFAULTS, sample_mode='frames')
 
@@ -119,7 +123,8 @@ def coerce_capture_value(key, value):
             raise ValueError('max_gain must be auto or 1-64')
         return gain
     limits = {'sample_distance_m': (0.1, 50.0), 'sample_interval_s': (0.2, 60.0),
-              'jpeg_quality': (50, 100), 'video_max_s': (5, 60), 'smear_limit_mm': (0.2, 20.0)}
+              'jpeg_quality': (50, 100), 'video_max_s': (5, 60), 'smear_limit_mm': (0.2, 20.0),
+              'min_speed_kmh': (0.0, 20.0)}
     if key not in limits:
         raise ValueError(f'{key} is not a capture setting')
     lo, hi = limits[key]

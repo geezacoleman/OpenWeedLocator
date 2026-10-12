@@ -467,3 +467,28 @@ def test_spray_window_delivers_the_full_configured_duration(owl_factory, config_
         assert window_ms == pytest.approx(150, abs=5), (
             f'spray window is {window_ms:.1f} ms, expected ~150 ms - the '
             f'actuation timestamp is lagging the receive() call')
+
+
+# --------------------------------------------------------------------------
+# Data collection: pause below a minimum GPS speed
+# --------------------------------------------------------------------------
+
+def test_min_speed_pause_from_config_live_and_in_state(owl_factory, config_factory, input_dir):
+    """min_speed_kmh is read at start, changed live by set_capture_params,
+    and capture_state says when recording is paused for it."""
+    config = config_factory(overrides=[('DataCollection', 'min_speed_kmh', '2.5')])
+    instance = owl_factory(config, input_file_or_directory=str(input_dir))
+    assert instance.capture_scheduler.min_speed_kmh == 2.5
+
+    assert instance.apply_capture_params({'min_speed_kmh': '1.0'}) == {'min_speed_kmh': 1.0}
+
+    instance._image_sample_enable = True
+    instance.gps_data = {'speed_kmh': 0.4}
+    state = instance.capture_state()
+    assert state['min_speed_kmh'] == 1.0 and state['paused_slow'] is True
+
+    instance.gps_data = {'speed_kmh': 6.0}
+    assert instance.capture_state()['paused_slow'] is False
+    # No fresh GPS speed: images keep coming, so not paused
+    instance.gps_data = None
+    assert instance.capture_state()['paused_slow'] is False

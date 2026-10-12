@@ -289,15 +289,20 @@ class CaptureScheduler:
               fresh speed below STATIONARY_KMH it saves nothing.
     time:     every `interval_s`
 
+    In every mode a fresh GPS speed below `min_speed_kmh` saves nothing
+    (0 = never pause). Without a fresh speed images keep coming.
+
     Pure (no camera, no cv2) so the spacing rules are unit-testable.
     """
 
-    def __init__(self, mode='frames', frequency=30, distance_m=1.0, interval_s=2.0):
+    def __init__(self, mode='frames', frequency=30, distance_m=1.0, interval_s=2.0,
+                 min_speed_kmh=0.0):
         self.configure(mode=mode, frequency=frequency, distance_m=distance_m,
-                       interval_s=interval_s)
+                       interval_s=interval_s, min_speed_kmh=min_speed_kmh)
         self.reset()
 
-    def configure(self, mode=None, frequency=None, distance_m=None, interval_s=None):
+    def configure(self, mode=None, frequency=None, distance_m=None, interval_s=None,
+                  min_speed_kmh=None):
         if mode is not None:
             self.mode = mode if mode in SAMPLE_MODES else 'frames'
         if frequency is not None:
@@ -307,6 +312,12 @@ class CaptureScheduler:
             self.distance_m = min(50.0, max(0.05, _finite(distance_m)))
         if interval_s is not None:
             self.interval_s = min(60.0, max(0.1, _finite(interval_s)))
+        if min_speed_kmh is not None:
+            self.min_speed_kmh = min(20.0, max(0.0, _finite(min_speed_kmh)))
+
+    def too_slow(self, speed_kmh):
+        """True when a fresh GPS speed is under the pause limit."""
+        return speed_kmh is not None and speed_kmh < self.min_speed_kmh
 
     def reset(self):
         """Start of a session: the first eligible frame is saved straight away."""
@@ -318,6 +329,8 @@ class CaptureScheduler:
         """True when this frame should be saved. `speed_kmh` is None when
         there is no fresh GPS speed. `frequency` overrides the frame interval
         (the live sample_frequency, which the dashboards still set directly)."""
+        if self.too_slow(speed_kmh):
+            return False
         if self.mode == 'frames':
             return frame_count % max(1, int(frequency or self.frequency)) == 0
 

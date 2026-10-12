@@ -1902,7 +1902,8 @@ class Owl:
             mode=self.sample_mode,
             frequency=int(float(get('DataCollection', 'sample_frequency', 30))),
             distance_m=float(get('DataCollection', 'sample_distance_m', 1.0)),
-            interval_s=float(get('DataCollection', 'sample_interval_s', 2.0)))
+            interval_s=float(get('DataCollection', 'sample_interval_s', 2.0)),
+            min_speed_kmh=float(get('DataCollection', 'min_speed_kmh', 1.0)))
         try:
             max_gain = parse_max_gain(get('Camera', 'max_gain', 'auto'))
         except ValueError:
@@ -1938,6 +1939,9 @@ class Owl:
         if 'sample_interval_s' in params:
             self.capture_scheduler.configure(interval_s=params['sample_interval_s'])
             applied['sample_interval_s'] = self.capture_scheduler.interval_s
+        if 'min_speed_kmh' in params:
+            self.capture_scheduler.configure(min_speed_kmh=params['min_speed_kmh'])
+            applied['min_speed_kmh'] = self.capture_scheduler.min_speed_kmh
         if 'jpeg_quality' in params:
             self.jpeg_quality = min(100, max(50, int(float(params['jpeg_quality']))))
             if getattr(self, 'image_recorder', None):
@@ -2124,6 +2128,11 @@ class Owl:
             'sample_mode': self.capture_scheduler.mode,
             'sample_distance_m': self.capture_scheduler.distance_m,
             'sample_interval_s': self.capture_scheduler.interval_s,
+            'min_speed_kmh': self.capture_scheduler.min_speed_kmh,
+            # Recording stills but parked or creeping: the screens say so,
+            # or a driver at a headland thinks recording has broken
+            'paused_slow': bool(self._image_sample_enable and self.record_mode != 'video'
+                            and self.capture_scheduler.too_slow(speed)),
             'jpeg_quality': self.jpeg_quality,
             'record_mode': self.record_mode,
             'video_max_s': self.video_max_s,

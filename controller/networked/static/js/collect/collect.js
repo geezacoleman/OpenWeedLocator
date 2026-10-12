@@ -186,6 +186,7 @@
         if (w.code === 'recording_blocked') v.reason = String(w.reason || '').replace(/_/g, ' ');
         if (w.code === 'video_limit') v.s = w.seconds;
         if (w.code === 'not_saving') v.s = w.seconds;
+        if (w.code === 'paused_slow') v.kmh = w.kmh;
         if (w.code === 'fault') v.message = w.message || '';
         return t('w_' + w.code, v);
     }
@@ -279,6 +280,29 @@
     function stopRecording() {
         $('stop-modal').hidden = true;
         api('/api/collect/stop', {}).catch((e) => toast(e.message, 'error')).finally(poll);
+    }
+
+    // ---------- turn off ----------
+    function onPowerPress() {
+        $('power-recording').hidden = !(state && state.recording);
+        $('power-yes').disabled = false;
+        $('power-modal').hidden = false;
+    }
+
+    // Stop the run first so the controller closes it and the OWLs finish
+    // their last image, then shut down every OWL and this controller
+    function powerOff() {
+        $('power-yes').disabled = true;
+        const stopped = state && state.recording
+            ? api('/api/collect/stop', {}).catch(() => {}) : Promise.resolve();
+        stopped.then(() => api('/api/system/shutdown', {})).then(() => {
+            $('power-modal').hidden = true;
+            $('power-done').hidden = false;
+            $('power-btn').disabled = true;
+        }).catch((e) => {
+            $('power-yes').disabled = false;
+            toast(e.message, 'error');
+        });
     }
 
     // ---------- map ----------
@@ -617,6 +641,9 @@
         $('record-btn').addEventListener('click', onRecordPress);
         $('stop-no').addEventListener('click', () => { $('stop-modal').hidden = true; });
         $('stop-yes').addEventListener('click', stopRecording);
+        $('power-btn').addEventListener('click', onPowerPress);
+        $('power-no').addEventListener('click', () => { $('power-modal').hidden = true; });
+        $('power-yes').addEventListener('click', powerOff);
         $('map-centre').addEventListener('click', centreMap);
         $('sessions-refresh').addEventListener('click', refreshSessions);
         $('upload-btn').addEventListener('click', onUpload);

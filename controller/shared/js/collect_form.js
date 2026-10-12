@@ -68,6 +68,7 @@
             seg('sample_mode', modes.map((m) => [m, MODE_LABELS[m]])) + '</div>';
         html += numberField('set-distance', 'sample_distance_m', 'every_m', '0.1', '0.1', '50');
         html += numberField('set-interval', 'sample_interval_s', 'every_s', '0.1', '0.2', '60');
+        html += numberField('set-min-speed', 'min_speed_kmh', 'min_speed', '0.1', '0', '20');
         html += numberField('set-quality', 'jpeg_quality', 'quality', '1', '50', '100');
         html += numberField('set-video', 'video_max_s', 'video_len', '1', '5', '60');
         html += numberField('set-smear', 'smear_limit_mm', 'smear', '0.1', '0.2', '20');
@@ -114,6 +115,8 @@
             showField('sample_distance_m', mode === 'distance');
             showField('sample_interval_s', mode === 'distance' || mode === 'time');
             showField('video_max_s', c.record_mode === 'video');
+            // Only still images pause when slow; a video clip keeps running
+            showField('min_speed_kmh', c.record_mode !== 'video');
         }
         function showField(setting, visible) {
             const input = container.querySelector('input[data-setting="' + setting + '"]');

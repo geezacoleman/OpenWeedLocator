@@ -43,6 +43,16 @@
 .c-lang { display: flex; border: 1px solid rgba(255, 255, 255, 0.45); border-radius: 999px; overflow: hidden; flex: none; }
 .c-lang button { width: 50px; height: calc(var(--c-bar) - 18px); border: 0; background: transparent; color: #fff; font-weight: 700; cursor: pointer; }
 .c-lang button[aria-pressed="true"] { background: #fff; color: var(--c-navy); }
+/* Turn off: the one red control in the bar, full bar height, so it is found
+   without looking for it */
+.c-power {
+    display: inline-flex; align-items: center; gap: 8px; height: calc(var(--c-bar) - 12px); flex: none;
+    padding: 0 18px; border: 2px solid #ff8a80; border-radius: var(--c-radius); background: var(--c-rec);
+    color: #fff; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.c-power svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; }
+.c-power:disabled { opacity: 0.5; cursor: not-allowed; }
+.c-scrim--dark { background: rgba(10, 20, 40, 0.85); }
 
 /* --- Shared pieces --------------------------------------------------------- */
 .c-main { flex: 1; min-height: 0; display: flex; }

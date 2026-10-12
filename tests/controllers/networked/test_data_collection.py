@@ -79,8 +79,27 @@ class TestCaptureScheduler:
         s.reset()
         assert s.should_capture(2, now=1.5)
 
+    @pytest.mark.parametrize('mode', ['frames', 'distance', 'time'])
+    def test_below_min_speed_saves_nothing_in_every_mode(self, mode):
+        s = CaptureScheduler(mode=mode, frequency=1, interval_s=0.1, min_speed_kmh=1.0)
+        assert not any(s.should_capture(i, now=i * 0.5, speed_kmh=0.8) for i in range(20))
+        # Speeding up again starts saving straight away
+        assert s.should_capture(20, now=10.0, speed_kmh=5.0)
+
+    def test_min_speed_ignored_without_gps_and_when_zero(self):
+        s = CaptureScheduler(mode='time', interval_s=1.0, min_speed_kmh=1.0)
+        assert s.should_capture(0, now=0.0, speed_kmh=None)
+        assert not s.too_slow(None)
+        s.configure(min_speed_kmh=0)
+        assert not s.too_slow(0.0)
+        assert s.should_capture(1, now=2.0, speed_kmh=0.0)
+
     def test_configure_clamps(self):
         s = CaptureScheduler()
+        s.configure(min_speed_kmh=-3)
+        assert s.min_speed_kmh == 0.0
+        s.configure(min_speed_kmh=99)
+        assert s.min_speed_kmh == 20.0
         s.configure(distance_m=0, interval_s=-1, frequency=0)
         assert s.distance_m >= 0.05 and s.interval_s >= 0.1 and s.frequency == 1
         s.configure(distance_m=1e9, interval_s=1e9)
@@ -430,6 +449,18 @@ class TestCollectWarnings:
         assert 'not_saving' in self.codes({'o': _owl(last_capture_at=50.0)})
         assert 'not_saving' not in self.codes({'o': _owl(last_capture_at=50.0, capture={'speed_kmh': 0.2})})
         assert 'not_saving' not in self.codes({'o': _owl(last_capture_at=50.0, capture={'record_mode': 'video'})})
+
+    def test_paused_slow_is_one_line_and_not_a_fault(self):
+        paused = {'paused_slow': True, 'min_speed_kmh': 1.0, 'speed_kmh': 0.5, 'ground_smear_mm': 4.0}
+        warnings = collect_warnings({'owl-1': _owl(capture=paused), 'owl-2': _owl(capture=paused)}, now=101.0)
+        assert [(w['code'], w['owl'], w['kmh']) for w in warnings] == [('paused_slow', None, 1.0)]
+
+    def test_not_saving_waits_for_the_pause_speed(self):
+        # 2 km/h is moving by the default rule, but under a 3 km/h pause
+        # speed the OWL is meant to be idle
+        slow = {'speed_kmh': 2.0, 'min_speed_kmh': 3.0}
+        assert 'not_saving' not in self.codes({'o': _owl(last_capture_at=50.0, capture=slow)})
+        assert 'not_saving' in self.codes({'o': _owl(last_capture_at=50.0, capture=dict(slow, speed_kmh=4.0))})
 
     def test_quality_checks_skip_when_not_recording(self):
         assert self.codes({'o': _owl(image_sample_enable=False, capture={'ground_smear_mm': 9})}) == []

@@ -59,6 +59,7 @@
 .c-tag { display: inline-block; padding: 0 8px; border-radius: 999px; background: var(--c-warn-bg); color: #6b4300; border: 1px solid #f0d19a; font-size: 0.8em; font-weight: 600; }
 .c-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .c-chip { padding: 4px 10px; border-radius: 999px; background: var(--c-sel); color: var(--c-navy); font-weight: 600; font-size: 0.85em; white-space: nowrap; }
+.c-chip--paused { background: var(--c-warn-bg); color: #5a3900; }
 .c-chip--muted { background: transparent; color: var(--c-muted); padding-left: 0; white-space: normal; }
 .c-form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
 .c-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }

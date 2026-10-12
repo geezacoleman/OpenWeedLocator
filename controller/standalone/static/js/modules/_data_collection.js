@@ -98,11 +98,18 @@ function startCollectRecording(metadata) {
         .catch(err => showNotification('Error', err.message || 'Could not start recording', 'error'));
 }
 
-function renderSessionChips(isRecording, metadata) {
+function renderSessionChips(isRecording, metadata, capture) {
     const box = document.getElementById('sessionChips');
     if (!box || !window.CollectForm) return;
     const chips = isRecording ? CollectForm.metadataChips(metadata, _dcConfig.presets) : null;
     box.innerHTML = '';
+    // Parked or turning: say so, or recording looks broken
+    if (isRecording && capture && capture.paused_slow) {
+        const paused = document.createElement('span');
+        paused.className = 'c-chip c-chip--paused';
+        paused.textContent = CollectI18n.t('paused_chip', { kmh: capture.min_speed_kmh });
+        box.appendChild(paused);
+    }
     (chips || []).forEach((text) => {
         const chip = document.createElement('span');
         chip.className = 'c-chip';

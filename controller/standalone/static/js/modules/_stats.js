@@ -141,7 +141,7 @@ function updateSystemStats() {
 
             // Current run's crop and conditions under the Record switch
             if (typeof renderSessionChips === 'function') {
-                renderSessionChips(recordingOn, data.session_metadata);
+                renderSessionChips(recordingOn, data.session_metadata, data.capture);
             }
 
             // Show/hide track stability panel based on tracking state

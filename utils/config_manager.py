@@ -418,7 +418,7 @@ class ConfigValidator:
                               # string keys - optional_keys only.
                               'sample_mode', 'sample_distance_m', 'sample_interval_s',
                               'jpeg_quality', 'record_mode', 'video_max_s',
-                              'shutter_cap', 'smear_limit_mm'}
+                              'shutter_cap', 'smear_limit_mm', 'min_speed_kmh'}
         },
         'Relays': {
             'required_keys': set(),
@@ -465,6 +465,7 @@ class ConfigValidator:
         'jpeg_quality': ('int', 50, 100),
         'video_max_s': ('int', 5, 60),
         'smear_limit_mm': ('float', 0.1, 20),
+        'min_speed_kmh': ('float', 0, 20),
         # Min weed size as % of the detection (cropped) frame area.
         # 0 disables it (legacy min_detection_area px value applies instead).
         'min_detection_area_percent': ('float', 0, 5),

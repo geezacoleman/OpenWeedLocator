@@ -128,6 +128,7 @@ def collect_warnings(owls, now, thresholds=None, cloud_configured=False, gps_fix
     if any_recording and not gps_fix:
         add(None, 'no_gps', 'warn')
 
+    paused_kmh = []
     for owl_id in sorted(owls):
         s = owls[owl_id]
         if not s.get('connected'):
@@ -161,6 +162,12 @@ def collect_warnings(owls, now, thresholds=None, cloud_configured=False, gps_fix
                     and not s.get('recording_blocked_reason')
                     and capture.get('stopped_reason') != 'video_limit'):
                 add(owl_id, 'not_recording', 'bad')
+            continue
+
+        if capture.get('paused_slow'):
+            # Every OWL shares the controller's GPS speed: one line, not one per OWL
+            paused_kmh.append(capture.get('min_speed_kmh'))
+            # Nothing is being saved, so image-quality warnings don't apply
             continue
 
         smear = capture.get('ground_smear_mm')
@@ -197,9 +204,14 @@ def collect_warnings(owls, now, thresholds=None, cloud_configured=False, gps_fix
         speed = capture.get('speed_kmh')
         interval = expected_interval_s(capture_settings, speed)
         limit = max(t['not_saving_s'], 3 * interval) if interval else t['not_saving_s']
-        if (capture.get('record_mode') != 'video' and speed is not None and speed >= MOVING_KMH
+        # Below the pause speed the OWL is meant to be idle
+        moving_kmh = max(MOVING_KMH, float(capture.get('min_speed_kmh') or 0))
+        if (capture.get('record_mode') != 'video' and speed is not None and speed >= moving_kmh
                 and last_at is not None and now - last_at > limit):
             add(owl_id, 'not_saving', 'bad', seconds=int(now - last_at))
+
+    if paused_kmh:
+        add(None, 'paused_slow', 'warn', kmh=paused_kmh[0])
 
     order = {'bad': 0, 'warn': 1}
     warnings.sort(key=lambda w: order.get(w['severity'], 2))

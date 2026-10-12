@@ -140,6 +140,39 @@ def run_checks():
             if 'blur risk' not in page.inner_text('#warnings').lower():
                 problems.append(f'{name}: blur warning missing')
 
+            # Turn off: in the bar, on screen, asks first, then stops the run
+            power = page.locator('#power-btn').bounding_box()
+            if not power or power['x'] + power['width'] > width or power['height'] < 44:
+                problems.append(f'{name}: Turn off button not fully in the bar ({power})')
+            shutdowns = []
+            page.route('**/api/system/shutdown', lambda route: (
+                shutdowns.append(1), route.fulfill(json={'success': True})))
+            page.click('#power-btn')
+            page.wait_for_selector('#power-modal:not([hidden])')
+            if page.locator('#power-recording').is_hidden():
+                problems.append(f'{name}: Turn off does not say recording will stop')
+            page.screenshot(path=str(SCREENSHOT_DIR / f'collect_power_{name}.png'))
+            page.click('#power-no')
+            if shutdowns:
+                problems.append(f'{name}: Cancel still shut down')
+            page.click('#power-btn')
+            page.click('#power-yes')
+            page.wait_for_selector('#power-done:not([hidden])')
+            if not shutdowns or not [a for d, a, v in SENT if a == 'toggle_recording' and v is False]:
+                problems.append(f'{name}: Turn off did not stop recording then shut down')
+            page.reload()
+            page.wait_for_selector('.c-owl-row')
+
+            # Paused below the minimum speed: one plain line
+            ctrl_paused = __import__('networked').controller
+            for s in ctrl_paused.owls_state.values():
+                s['capture'].update(paused_slow=True, min_speed_kmh=1.0, speed_kmh=0.4)
+            page.wait_for_function("document.getElementById('warnings').innerText.includes('Paused below 1')",
+                                   timeout=5000)
+            page.screenshot(path=str(SCREENSHOT_DIR / f'collect_paused_{name}.png'))
+            for s in ctrl_paused.owls_state.values():
+                s['capture'].update(paused_slow=False, speed_kmh=9.8)
+
             # Stop then start: modal + metadata
             page.click('#record-btn')
             page.wait_for_selector('#stop-modal:not([hidden])')
@@ -173,6 +206,10 @@ def run_checks():
             page.click('#upload-btn')
             page.wait_for_timeout(300)
 
+            page.click('.c-setnav [data-pane="capture"]')
+            if not page.locator('#set-min-speed').is_visible():
+                problems.append(f'{name}: pause speed setting missing from Capture')
+            page.screenshot(path=str(SCREENSHOT_DIR / f'collect_capture_{name}.png'))
             page.click('.c-setnav [data-pane="camera"]')
             page.screenshot(path=str(SCREENSHOT_DIR / f'collect_camera_{name}.png'))
             page.click('.c-tab[data-view="map"]')
