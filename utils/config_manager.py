@@ -153,7 +153,7 @@ class ConfigValidator:
         return valid
     VALID_CONTROLLER_TYPES = {'none', 'ute', 'advanced'}
     VALID_SWITCH_PURPOSES = {'recording', 'detection'}
-    VALID_ACTUATION_MODES = {'centre', 'zone'}
+    VALID_ACTUATION_MODES = {'centre', 'edge', 'zone'}
     VALID_CAMERA_TYPES = {'rpi', 'usb', 'auto'}
     VALID_SAMPLE_METHODS = {'bbox', 'square', 'whole'}
     VALID_BOOLEANS = {'true', 'false', '1', '0', 'yes', 'no', 'on', 'off'}

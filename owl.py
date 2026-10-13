@@ -76,6 +76,7 @@ try:
     from utils.video_manager import VideoStream, StreamingHandler, ThreadedHTTPServer
     from utils.image_sampler import ImageRecorder
     from utils.algorithms import fft_blur
+    from utils.actuation import relay_ids_for_detections
     from utils.greenonbrown import GreenOnBrown
     from utils.frame_reader import FrameReader
     from utils.config_manager import ConfigValidator
@@ -571,7 +572,8 @@ class Owl:
         detect_classes_str = self.config.get('GreenOnGreen', 'detect_classes', fallback='')
         self._detect_classes_list = [c.strip() for c in detect_classes_str.split(',') if c.strip()]
         detect_classes = self._detect_classes_list or None
-        actuation_mode = self.config.get('GreenOnGreen', 'actuation_mode', fallback='centre')
+        actuation_mode = self.config.get(
+            'GreenOnGreen', 'actuation_mode', fallback='centre').strip().lower()
         min_detection_pixels = self.config.getint('GreenOnGreen', 'min_detection_pixels', fallback=50)
         _zone_tracking_warned = False
 
@@ -870,16 +872,20 @@ class Owl:
                                     time_stamp=actuation_time,
                                     duration=self.actuation_duration)
                     else:
-                        # Centre-based actuation (default, works for all model types)
+                        # Bounding-box actuation (centre is the default; edge
+                        # additionally samples both horizontal box edges).
                         # One timestamp per frame, deduplicated relay calls (at most relay_num)
                         if weed_centres:
                             actuation_time = time.time()
-                            fired = set()
-                            for centre in weed_centres:
-                                if centre[1] >= self.actuation_y_thresh:
-                                    relay_id = min(int(centre[0] / self.lane_width), self.relay_num - 1)
-                                    fired.add(relay_id)
-                            for relay_id in fired:
+                            relay_ids = relay_ids_for_detections(
+                                boxes=boxes,
+                                weed_centres=weed_centres,
+                                lane_width=self.lane_width,
+                                relay_num=self.relay_num,
+                                actuation_y_thresh=self.actuation_y_thresh,
+                                mode=actuation_mode,
+                            )
+                            for relay_id in relay_ids:
                                 self.relay_controller.receive(
                                     relay=relay_id,
                                     delay=self.delay,
