@@ -1972,8 +1972,10 @@ class OWLMQTTPublisher:
             active_path = os.path.join(config_dir, 'active_config.txt')
 
             with self.config_lock:
-                with open(active_path, 'w') as f:
-                    f.write(config_path.strip() + '\n')
+                # Atomic: a plain rewrite truncates first, and a reader in
+                # that gap sees no active config
+                atomic_write_config(active_path,
+                                    lambda f: f.write(config_path.strip() + '\n'))
                 if seed:
                     seed_autosave(config_dir,
                                   os.path.join(config_dir,

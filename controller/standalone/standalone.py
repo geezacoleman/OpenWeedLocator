@@ -2741,8 +2741,9 @@ class OWLDashboard:
         config_dir = self._get_config_dir()
         pointer_path = os.path.join(config_dir, 'active_config.txt')
 
-        with open(pointer_path, 'w') as f:
-            f.write(config_path)
+        # Atomic: a plain rewrite truncates first, and a reader in that gap
+        # (owl.py at boot, a dashboard request) sees no active config
+        atomic_write_config(pointer_path, lambda f: f.write(config_path))
 
         if seed:
             seed_autosave(config_dir,
