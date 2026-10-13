@@ -149,13 +149,13 @@ def run_browser_test():
         print(f'[2] _findClampedOWLs returned: {owl}')
 
         # Click Start Recording
-        rec_btn = page.locator('#main-recording-btn')
+        rec_btn = page.locator('#recordSwitch')
         rec_btn.wait_for(state='visible', timeout=5000)
         print('[3] Clicking Start Recording ...')
         rec_btn.click()
 
         # Modal should appear
-        modal = page.locator('.config-modal')
+        modal = page.locator('.config-modal:has(.high-res-cancel)')
         modal.wait_for(state='visible', timeout=5000)
         modal_text = modal.inner_text()
         print(f'    Modal text snippet: {modal_text.splitlines()[0] if modal_text else "<empty>"}')
@@ -168,7 +168,7 @@ def run_browser_test():
         # Cancel and verify no recording state change
         page.locator('.high-res-cancel').click()
         modal.wait_for(state='detached', timeout=3000)
-        rec_active = page.evaluate("document.getElementById('main-recording-btn').classList.contains('active')")
+        rec_active = page.evaluate("document.getElementById('recordSwitch').getAttribute('aria-pressed') === 'true'")
         assert not rec_active, 'Recording should NOT be active after cancel'
         print('[4] Cancel verified — recording not started')
 

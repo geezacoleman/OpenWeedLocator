@@ -87,6 +87,8 @@ def build_app_with_mocks():
     fake_mqtt.get_weed_detect_indicator.return_value = False
     fake_mqtt.get_image_write_indicator.return_value = False
     fake_mqtt.set_image_sample_enable.return_value = {'success': True}
+    fake_mqtt.get_cloud_connected.return_value = None
+    fake_mqtt.get_and_clear_errors.return_value = []
 
     dashboard.mqtt_client = fake_mqtt
 

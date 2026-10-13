@@ -98,7 +98,7 @@ class TestMinDetectionAreaPercent:
 class TestSetAlgorithmLut:
     def test_lut_is_a_valid_algorithm(self, mqtt_publisher, mock_owl):
         mqtt_publisher._handle_command({'action': 'set_algorithm', 'value': 'lut'})
-        assert mqtt_publisher.state['algorithm'] == 'lut'
+        assert mqtt_publisher.state['algorithm_pending'] == 'lut'
         assert mock_owl._pending_algorithm == 'lut'
 
 

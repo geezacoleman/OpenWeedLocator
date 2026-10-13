@@ -33,6 +33,7 @@ from utils.session_metadata import (clean_session_metadata, COLLECT_CAPTURE_DEFA
 from utils.input_manager import get_rpi_version
 from utils.device_identity import get_device_serial, read_identity
 from utils import cloud_provision
+from utils.ai_capability import algorithm_refusal
 from utils.directory_manager import (scan_sessions, stream_zip,
                                      read_session_locations,
                                      scan_exif_locations, read_session_tracks)
@@ -60,6 +61,12 @@ except Exception:
 # /api/config/param route is an integer threshold.
 FLOAT_CONFIG_PARAMS = {'min_detection_area_percent'}
 
+# How long /api/algorithm/set waits for the OWL to report the new detector
+# running before giving up on saving it. Loading ultralytics on a Pi 4 can
+# take tens of seconds.
+ALGORITHM_CONFIRM_TIMEOUT_S = 180
+ALGORITHM_CONFIRM_POLL_S = 1.0
+
 try:
     from flask import Flask, Response, render_template, request, jsonify, send_from_directory, send_file
     import psutil
@@ -83,6 +90,8 @@ class OWLDashboard:
         self.disconnect_threshold = 2.0  # seconds without new frame => disconnected placeholder
 
         self.fan_state = 'auto'
+        # Latest /api/algorithm/set request still waiting to be saved
+        self._algorithm_request = None
 
         self.logger = logging.getLogger(__name__)
         self.load_config()
@@ -988,8 +997,15 @@ class OWLDashboard:
             cloud = cloud_provision.read_cloud_config(self.controller_ini_path)
             stats.update({
                 'detection_mode': mqtt_state.get('detection_mode', 1),  # 0=spot, 1=off, 2=blanket
+                # The detector the OWL is running, a switch it is still
+                # loading, and why the last load failed (None = fine)
                 'algorithm': mqtt_state.get('algorithm', 'exhsv'),
+                'algorithm_pending': mqtt_state.get('algorithm_pending'),
                 'model_available': mqtt_state.get('model_available', False),
+                # What AI this OWL can run (utils/ai_capability.py); None
+                # until the OWL reports it
+                'ai': mqtt_state.get('ai'),
+                'model_download': mqtt_state.get('model_download'),
                 # AI tab data
                 'available_models': mqtt_state.get('available_models', []),
                 'current_model': mqtt_state.get('current_model', ''),
@@ -1075,17 +1091,29 @@ class OWLDashboard:
 
         @self.app.route('/api/algorithm/set', methods=['POST'])
         def set_algorithm():
-            """Set detection algorithm via MQTT command."""
+            """Set detection algorithm via MQTT command.
+
+            Refused (400, plain reason) when this OWL cannot run it: AI on a
+            unit with no AI installed, or lut with no painted profile. lut
+            uses the OWL's current profile. The config is saved only once the
+            OWL reports the new detector running
+            (_persist_algorithm_when_running).
+            """
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             try:
                 data = request.get_json() or {}
                 algorithm = data.get('algorithm', '').lower()
-                valid = {'exg', 'exhsv', 'hsv', 'gog', 'gog-hybrid'}
-                if algorithm not in valid:
+                if algorithm not in ConfigValidator.VALID_ALGORITHMS:
                     return jsonify({'success': False, 'error': f'Invalid algorithm: {algorithm}'}), 400
+                owl_state = self.mqtt_client.get_state()
+                reason = algorithm_refusal(algorithm, owl_state.get('ai'),
+                                           owl_state.get('lut_profile'))
+                if reason:
+                    return jsonify({'success': False, 'error': reason}), 400
                 result = self.mqtt_client._send_command('set_algorithm', value=algorithm)
-                self._persist_config_change('System', 'algorithm', algorithm)
+                if result.get('success'):
+                    self._persist_algorithm_when_running(algorithm)
                 return jsonify(result)
             except Exception as e:
                 self.logger.error(f"Error setting algorithm: {e}")
@@ -2748,6 +2776,34 @@ class OWLDashboard:
 
         return configs
 
+    def _persist_algorithm_when_running(self, algorithm):
+        """Save [System] algorithm once the OWL reports it running.
+
+        The OWL can fail to load a detector (AI without ultralytics, a
+        missing model or painted profile). Saving at request time is how
+        owl-1 came back from a restart with gog in its config and no
+        detection. The OWL's state says what runs ('algorithm') and what is
+        still loading ('algorithm_pending'), so this waits in the background
+        for the requested algorithm with nothing pending. A newer request
+        replaces the wait; a failed load or a timeout saves nothing, so the
+        file keeps the last mode that worked.
+        """
+        self._algorithm_request = algorithm
+
+        def wait():
+            deadline = time.monotonic() + ALGORITHM_CONFIRM_TIMEOUT_S
+            while time.monotonic() < deadline and self._algorithm_request == algorithm:
+                state = self.mqtt_client.get_state()
+                if state.get('algorithm') == algorithm and not state.get('algorithm_pending'):
+                    self._persist_config_change('System', 'algorithm', algorithm)
+                    return
+                time.sleep(ALGORITHM_CONFIRM_POLL_S)
+            if self._algorithm_request == algorithm:
+                self.logger.warning(f"Algorithm '{algorithm}' not confirmed running; "
+                                    f"config left unchanged")
+
+        threading.Thread(target=wait, daemon=True, name='algorithm-confirm').start()
+
     def _apply_lut_profile(self, name, sensitivity):
         """Make a painted profile the live detector: set profile + sensitivity,
         switch the algorithm to 'lut', and persist all three."""
@@ -2756,6 +2812,9 @@ class OWLDashboard:
         self.mqtt_client._send_command('set_algorithm', value='lut')
         self._persist_config_change('GreenOnBrown', 'lut_profile', name)
         self._persist_config_change('GreenOnBrown', 'lut_sensitivity', str(sensitivity))
+        # Saved at once (unlike /api/algorithm/set): the profile is on this
+        # unit, and a lut that fails to load at startup falls back to exhsv
+        # with algorithm_error set.
         self._persist_config_change('System', 'algorithm', 'lut')
 
     def _read_controller_ini(self):

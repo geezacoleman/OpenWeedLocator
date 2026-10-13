@@ -387,7 +387,7 @@ var LUT_LEVEL_TOLERANCE = 2;
 var confidenceLevels = { low: 0.65, medium: 0.50, high: 0.35 };
 var CONFIDENCE_TOLERANCE = 0.02;
 var sensitivityModeCaptions = {
-    gob: 'Colour sensitivity',
+    gob: 'Sensitivity',
     lut: 'Painted sensitivity',
     gog: 'AI sensitivity',
     hybrid: 'Colour + AI sensitivity'
@@ -489,8 +489,8 @@ function setSensitivityLevel(level) {
     var mode = dialMode();
 
     if (mode === 'gob' || mode === 'hybrid') {
-        // Broadcast GoB preset to all OWLs
-        sendCommand('all', 'set_sensitivity', level);
+        // GoB preset to the selected OWL(s)
+        sendCommand(typeof scopeTarget === 'function' ? scopeTarget() : 'all', 'set_sensitivity', level);
     }
     if (mode === 'lut') {
         // Same path as the config-tab slider so both stay in step
@@ -559,6 +559,11 @@ function updateSensitivityDial(level) {
     if (!level) return;
 
     currentSensitivity = level;
+
+    // Field: the Low / Medium / High segmented control (no match = Custom)
+    document.querySelectorAll('#sensitivity-seg [data-level]').forEach(function(b) {
+        b.classList.toggle('active', b.dataset.level === level);
+    });
 
     // Highlight active segment, dim others
     var segments = document.querySelectorAll('.sensitivity-segment');

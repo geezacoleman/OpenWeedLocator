@@ -345,6 +345,9 @@ class Owl:
 
         ####################### DASHBOARD ############################
         self.dash = None
+        # The detector hoot() is actually running (None until it builds
+        # one). Read by the dashboard heartbeat thread, so set before it starts.
+        self.running_algorithm = None
         self.stream_active = None
         self.latest_stream_frame = None
         mqtt_enable = self.config.getboolean('MQTT', 'enable', fallback=False)
@@ -1015,19 +1018,22 @@ class Owl:
             weed_detector = None
             if self.dash:
                 self.dash.state['algorithm_error'] = str(e)
-            if algorithm == 'lut':
-                # Fail-safe: a missing/corrupt painted profile must not leave
-                # the unit without detection in the field — fall back to exhsv.
+            if algorithm in ('lut', 'gog', 'gog-hybrid'):
+                # Fail-safe: a missing/corrupt painted profile, or AI on a
+                # unit without ultralytics or a model, must not leave the unit
+                # without detection in the field — fall back to exhsv. The
+                # config file keeps its value; algorithm_error says why.
                 try:
                     algorithm = 'exhsv'
                     weed_detector = _create_detector(algorithm)
                     self.logger.error("[ERROR] Falling back to 'exhsv' detection")
-                    if self.dash:
-                        self.dash.state['algorithm'] = algorithm
                 except Exception as fallback_error:
                     self.logger.error(f"[ERROR] exhsv fallback also failed: {fallback_error}")
             if weed_detector is None:
                 self.logger.error("[ERROR] OWL will continue running without detection. Change algorithm via dashboard to recover.")
+        self.running_algorithm = algorithm if weed_detector is not None else None
+        if self.dash and self.running_algorithm:
+            self.dash.state['algorithm'] = self.running_algorithm
 
         if self.show_display:
             self.relay_vis = self.relay_controller.relay_vis
@@ -1214,7 +1220,7 @@ class Owl:
                             weed_detector.set_lut(lut_table)
                         self.logger.info(f"LUT profile switched to: {new_lut_profile}")
                         if self.dash:
-                            self.dash.state.pop('algorithm_error', None)
+                            self.dash.state['algorithm_error'] = None
                     except Exception as e:
                         self.logger.error(f"Failed to load LUT profile '{new_lut_profile}': {e}")
                         if self.dash:
@@ -1230,9 +1236,15 @@ class Owl:
                         algorithm = self._pending_algorithm
                         if algorithm in ('gog', 'gog-hybrid'):
                             self._gog_detector = weed_detector
+                        self.running_algorithm = algorithm
+                        # Only now does the config say so: a later save, or the
+                        # dashboard persisting it, can never store a mode
+                        # this unit failed to load.
+                        self.config.set('System', 'algorithm', algorithm)
                         self.logger.info(f"Live algorithm switch to: {algorithm}")
                         if self.dash:
-                            self.dash.state.pop('algorithm_error', None)
+                            self.dash.state['algorithm'] = algorithm
+                            self.dash.state['algorithm_error'] = None
                     except Exception as e:
                         self.logger.error(f"Failed to load detector for {self._pending_algorithm}: {e}")
                         # Revert — keep using current weed_detector and algorithm
@@ -1240,6 +1252,8 @@ class Owl:
                             self.dash.state['algorithm'] = algorithm
                             self.dash.state['algorithm_error'] = str(e)
                     self._pending_algorithm = None
+                    if self.dash:
+                        self.dash.state['algorithm_pending'] = None
 
                 # Live model switching
                 if self._pending_model:
@@ -1252,7 +1266,7 @@ class Owl:
                             self._gog_detector = weed_detector
                         self.logger.info(f"Live model switch to: {new_model}")
                         if self.dash:
-                            self.dash.state.pop('algorithm_error', None)
+                            self.dash.state['algorithm_error'] = None
                     except Exception as e:
                         self.logger.error(f"Failed to switch model: {e}")
                         if self.dash:

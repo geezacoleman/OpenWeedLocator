@@ -46,6 +46,9 @@ from utils.session_metadata import (clean_session_metadata, CAPTURE_PARAM_KEYS, 
                                     COLLECT_LANGUAGES, capture_settings_from, coerce_capture_value,
                                     ini_value, last_pick_values, load_last_pick, presets_from_config)
 from utils.mqtt_manager import CloudFeed, cloud_state_out_topic
+from utils.ai_capability import algorithm_refusal
+from utils.model_archive import dir_sha256, extract_model_zip
+from utils import software_update
 try:
     from version import VERSION as _OWL_VERSION, APP_CONTRACT_VERSION
     CONTROLLER_VERSION = str(_OWL_VERSION)
@@ -1056,10 +1059,38 @@ class CentralController:
         """Tool-compatible sensitivity setter."""
         return self.send_command('all', 'set_sensitivity', level.lower())
 
+    def algorithm_refusal(self, device_id, algorithm):
+        """Plain reason the target OWL(s) cannot switch to `algorithm`, or
+        None. The standalone rule (utils/ai_capability.algorithm_refusal)
+        applied to each OWL's own reported state. A broadcast is refused
+        whole: a boom half on AI and half on colour is not what was asked."""
+        with self.mqtt_lock:
+            if device_id == 'all':
+                targets = {oid: dict(st) for oid, st in self.owls_state.items()
+                           if st.get('connected', False)}
+            else:
+                targets = {device_id: dict(self.owls_state.get(device_id, {}))}
+        refused = {}
+        for oid, state in targets.items():
+            reason = algorithm_refusal(algorithm, state.get('ai'), state.get('lut_profile'))
+            if reason:
+                refused[oid] = reason
+        if not refused:
+            return None
+        reason = next(iter(refused.values()))
+        if device_id == 'all':
+            return f"{', '.join(sorted(refused))}: {reason}"
+        return reason
+
     def send_command(self, device_id, action, value=None):
         """Send command to OWL(s)"""
         if not self.mqtt_connected or not self.mqtt_client:
             return {'success': False, 'error': 'MQTT not connected'}
+
+        if action == 'set_algorithm':
+            reason = self.algorithm_refusal(device_id, str(value or '').lower())
+            if reason:
+                return {'success': False, 'error': reason, 'refused': True}
 
         # Build payload
         payload = {'action': action}
@@ -1225,10 +1256,14 @@ class CentralController:
     UPDATE_REF_PATTERN = r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$'
     # Per-device ceiling: fetch + pip + restart + health check, on 4G
     FLEET_UPDATE_DEVICE_TIMEOUT = 900  # seconds
+    # Install AI pulls PyTorch: wait as long as the OWL's own unit may run
+    FLEET_AI_INSTALL_DEVICE_TIMEOUT = software_update.RUNTIME_MAX_S + 120
     FLEET_TERMINAL_STATUSES = ('complete', 'rolled_back', 'error')
 
-    def start_fleet_update(self, device_ids, ref, include_controller=False):
+    def start_fleet_update(self, device_ids, ref, include_controller=False, with_ai=False):
         """Kick off a rolling fleet update. Returns a result dict for the API.
+
+        with_ai: each OWL also installs AI (owl_update.sh --with-ai).
 
         Devices update one at a time; the first non-complete result aborts
         the remaining queue so a bad ref can't roll across the whole fleet.
@@ -1262,6 +1297,7 @@ class CentralController:
                 'queue': list(targets),
                 'current': '',
                 'include_controller': bool(include_controller),
+                'with_ai': bool(with_ai),
                 'results': {},
                 'error': '',
                 'started_at': int(time.time()),
@@ -1269,14 +1305,16 @@ class CentralController:
             }
 
         self._fleet_update_thread = threading.Thread(
-            target=self._fleet_update_worker, args=(targets, ref, bool(include_controller)),
+            target=self._fleet_update_worker,
+            args=(targets, ref, bool(include_controller), bool(with_ai)),
             daemon=True
         )
         self._fleet_update_thread.start()
-        logger.warning(f"Fleet update started: ref={ref} devices={targets} include_controller={include_controller}")
-        return {'success': True, 'queued': targets, 'ref': ref}
+        logger.warning(f"Fleet update started: ref={ref} devices={targets} "
+                       f"include_controller={include_controller} with_ai={with_ai}")
+        return {'success': True, 'queued': targets, 'ref': ref, 'with_ai': bool(with_ai)}
 
-    def _fleet_update_worker(self, targets, ref, include_controller):
+    def _fleet_update_worker(self, targets, ref, include_controller, with_ai=False):
         aborted = False
         try:
             for device_id in targets:
@@ -1284,7 +1322,7 @@ class CentralController:
                     self.fleet_update['current'] = device_id
                     self.fleet_update['queue'] = [d for d in self.fleet_update['queue'] if d != device_id]
 
-                result = self._update_one_device(device_id, ref)
+                result = self._update_one_device(device_id, ref, with_ai)
                 with self.fleet_update_lock:
                     self.fleet_update['results'][device_id] = result
 
@@ -1315,19 +1353,22 @@ class CentralController:
                 self.fleet_update['current'] = ''
                 self.fleet_update['finished_at'] = int(time.time())
 
-    def _update_one_device(self, device_id, ref):
+    def _update_one_device(self, device_id, ref, with_ai=False):
         """Update a single OWL and wait for its terminal status.
 
         Returns: complete | rolled_back | error | timeout | publish_failed
         """
         request_id = str(uuid.uuid4())
         payload = {'action': 'update_software', 'ref': ref, 'request_id': request_id}
+        if with_ai:
+            payload['with_ai'] = True
         result = self.mqtt_client.publish(f"owl/{device_id}/commands", json.dumps(payload))
         if result.rc != mqtt.MQTT_ERR_SUCCESS:
             return 'publish_failed'
         logger.info(f"Fleet update: sent update_software to {device_id} (request {request_id})")
 
-        deadline = time.time() + self.FLEET_UPDATE_DEVICE_TIMEOUT
+        timeout = self.FLEET_AI_INSTALL_DEVICE_TIMEOUT if with_ai else self.FLEET_UPDATE_DEVICE_TIMEOUT
+        deadline = time.time() + timeout
         while time.time() < deadline:
             time.sleep(2.0)
             with self.mqtt_lock:
@@ -1340,7 +1381,7 @@ class CentralController:
             if status in self.FLEET_TERMINAL_STATUSES:
                 logger.info(f"Fleet update: {device_id} -> {status}")
                 return status if status != 'error' else 'error'
-        logger.error(f"Fleet update: {device_id} timed out after {self.FLEET_UPDATE_DEVICE_TIMEOUT}s")
+        logger.error(f"Fleet update: {device_id} timed out after {timeout}s")
         return 'timeout'
 
     def _launch_controller_self_update(self, ref):
@@ -2067,7 +2108,7 @@ def send_command():
         if result['success']:
             return jsonify(result)
         else:
-            return jsonify(result), 500
+            return jsonify(result), (400 if result.get('refused') else 500)
 
     except Exception as e:
         logger.error(f"Error sending command: {e}")
@@ -2107,6 +2148,49 @@ def start_fleet_update():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/algorithm/set', methods=['POST'])
+def set_algorithm():
+    """Same contract as the standalone route. Body: {"algorithm": "gog",
+    "device_id": "owl-1" | "all" (default)}. 400 with a plain reason when
+    the OWL(s) cannot run it (no AI installed, no painted profile)."""
+    data = request.get_json(silent=True) or {}
+    algorithm = str(data.get('algorithm', '')).lower()
+    if algorithm not in ConfigValidator.VALID_ALGORITHMS:
+        return jsonify({'success': False, 'error': f'Invalid algorithm: {algorithm}'}), 400
+    result = controller.send_command(data.get('device_id') or 'all', 'set_algorithm', algorithm)
+    if result.get('success'):
+        return jsonify(result)
+    return jsonify(result), (400 if result.get('refused') else 500)
+
+
+@app.route('/api/ai/install', methods=['POST'])
+def install_ai():
+    """Install AI on OWLs: a fleet update that also installs
+    requirements-gog.txt (owl_update.sh --with-ai). Same path as the
+    standalone route. Body: {"device_ids": ["owl-1"] | "all" (default),
+    "ref": optional, default the branch the OWLs report}. Progress on
+    GET /api/update/status. Kiosk only (not in DEMO_PUBLIC_PREFIXES)."""
+    data = request.get_json(silent=True) or {}
+    device_ids = data.get('device_ids', 'all')
+    if device_ids != 'all' and not isinstance(device_ids, list):
+        return jsonify({'success': False, 'error': 'device_ids must be "all" or a list'}), 400
+    ref = data.get('ref')
+    if not ref:
+        with controller.mqtt_lock:
+            branches = {str(st.get('git_branch', '')) for oid, st in controller.owls_state.items()
+                        if st.get('connected', False) and (device_ids == 'all' or oid in device_ids)}
+        branches.discard('')
+        branches.discard('unknown')
+        if len(branches) > 1:
+            return jsonify({'success': False,
+                            'error': 'These OWLs run different branches. Choose one to install from.'}), 400
+        ref = branches.pop() if branches else 'main'
+        if ref in ('HEAD', 'detached'):
+            ref = 'main'
+    result = controller.start_fleet_update(device_ids, ref, with_ai=True)
+    return jsonify(result), (202 if result.get('success') else 400)
+
+
 @app.route('/api/update/status')
 def fleet_update_status():
     """Fleet update progress + per-device software_update state."""
@@ -2116,6 +2200,7 @@ def fleet_update_status():
         for oid, state in controller.owls_state.items():
             devices[oid] = {
                 'connected': state.get('connected', False),
+                'ai': state.get('ai'),
                 'version': state.get('version', 'unknown'),
                 'git_branch': state.get('git_branch', 'unknown'),
                 'git_commit': state.get('git_commit', 'unknown'),
@@ -2744,57 +2829,27 @@ def upload_model():
                 save_path.unlink()
                 return jsonify({'success': False, 'error': msg}), 400
 
-            # Extract to directory named after zip (without .zip)
+            # Extract to directory named after zip (without .zip),
+            # flattening a single top-level folder (utils/model_archive.py,
+            # the same extraction the OWL does on download)
             dir_name = filename.rsplit('.', 1)[0]
             extract_dir = UPLOADS_DIR / dir_name
             if extract_dir.exists():
                 shutil.rmtree(extract_dir)
-            extract_dir.mkdir()
-
-            with zipfile.ZipFile(str(save_path), 'r') as zf:
-                # Extract files, flattening if all in a single subdirectory
-                members = zf.namelist()
-                # Check if all members share a common directory prefix
-                top_dirs = set()
-                for m in members:
-                    parts = m.split('/')
-                    if len(parts) > 1:
-                        top_dirs.add(parts[0])
-                    else:
-                        top_dirs.add('')
-
-                if len(top_dirs) == 1 and '' not in top_dirs:
-                    # All files in a single subdir — flatten
-                    prefix = top_dirs.pop() + '/'
-                    for member in zf.infolist():
-                        if member.is_dir():
-                            continue
-                        member_name = member.filename[len(prefix):]
-                        if not member_name:
-                            continue
-                        target = extract_dir / member_name
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        with zf.open(member) as src, open(target, 'wb') as dst:
-                            shutil.copyfileobj(src, dst)
-                else:
-                    zf.extractall(str(extract_dir))
+            try:
+                extract_model_zip(str(save_path), str(extract_dir))
+            except (zipfile.BadZipFile, ValueError) as e:
+                shutil.rmtree(extract_dir, ignore_errors=True)
+                save_path.unlink()
+                return jsonify({'success': False, 'error': f'Invalid model zip: {e}'}), 400
 
             # Remove the zip after extraction
             save_path.unlink()
             result_name = dir_name
             result_type = 'ncnn'
 
-            # Compute SHA256 of the whole directory (hash all files sorted)
-            h = hashlib.sha256()
-            for fp in sorted(extract_dir.rglob('*')):
-                if fp.is_file():
-                    with open(fp, 'rb') as hf:
-                        while True:
-                            chunk = hf.read(65536)
-                            if not chunk:
-                                break
-                            h.update(chunk)
-            sha256 = h.hexdigest()
+            # The directory hash OWLs fall back to (the zip is gone)
+            sha256 = dir_sha256(extract_dir)
             sha_path = UPLOADS_DIR / f'{dir_name}.sha256'
             sha_path.write_text(sha256)
         else:

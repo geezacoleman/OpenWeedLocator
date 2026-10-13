@@ -1,6 +1,6 @@
 // ============================================
 // OWL Central Controller - Dashboard
-// Dashboard polling loop, OWL grid rendering
+// Dashboard polling loop (the screens are drawn by _shell.js)
 // ============================================
 
 // ============================================
@@ -171,11 +171,8 @@ async function updateDashboard() {
 
         updateMQTTStatus();
         updateCloudStatus(data);
-        updateOWLGrid();
-        // Update config editor device selector if it exists
-        if (typeof updateConfigEditorDevices === 'function') {
-            updateConfigEditorDevices();
-        }
+        // Config editor device selector + preview selector
+        if (typeof updateConfigEditorDevices === 'function') updateConfigEditorDevices();
         // White balance readout + calibration progress for the editor's device
         if (typeof updateAwbReadout === 'function' && typeof getConfigEditorTarget === 'function') {
             const editorTarget = getConfigEditorTarget();
@@ -187,275 +184,62 @@ async function updateDashboard() {
             }
         }
         // Show/hide the restart-required notice based on OWL state
-        if (typeof updateRestartNotice === 'function') {
-            updateRestartNotice();
-        }
-        if (typeof syncMainButtons === 'function') {
-            syncMainButtons();
-        }
+        if (typeof updateRestartNotice === 'function') updateRestartNotice();
 
-        // Sync pipeline mode from first connected OWL
-        var firstOwl = null;
-        for (var id in owlsData) {
-            if (owlsData[id] && owlsData[id].connected) {
-                firstOwl = owlsData[id];
-                break;
-            }
-        }
+        // The OWL the controls follow: the selected one, or the first
+        // connected OWL when All OWLs is selected
+        const firstOwl = (typeof Shell !== 'undefined') ? Shell.scopeOwl() : null;
         if (firstOwl) {
             if (typeof updatePipelineModeUI === 'function' && firstOwl.algorithm) {
                 updatePipelineModeUI(firstOwl.algorithm);
             }
-            if (typeof updateModeAvailability === 'function') {
-                updateModeAvailability(!!firstOwl.model_available);
-            }
             if (typeof updatePaintedChipHint === 'function') {
                 updatePaintedChipHint((firstOwl.available_lut_profiles || []).length > 0);
             }
-            if (typeof syncLutPanelFromOwl === 'function') {
-                syncLutPanelFromOwl(firstOwl);
-            }
+            if (typeof syncLutPanelFromOwl === 'function') syncLutPanelFromOwl(firstOwl);
             if (typeof setHighResContextBadge === 'function' && firstOwl.rpi_version) {
                 setHighResContextBadge(firstOwl.rpi_version);
             }
-            // Sync slider values from OWL state so dashboard matches device
+            // Sync slider values from OWL state so the controls match the device
             syncConfigFromOWLState(firstOwl);
-            // Check for config mismatch across OWLs
             checkConfigMismatch();
-            // Sync sensitivity dial from OWL state (mode-aware: reads the
-            // axis matching the active mode, shows Custom on no match)
-            if (typeof syncSensitivityFromOwl === 'function') {
-                syncSensitivityFromOwl(firstOwl);
+            // Sensitivity (mode-aware: reads the axis matching the active mode)
+            if (typeof syncSensitivityFromOwl === 'function') syncSensitivityFromOwl(firstOwl);
+            if (!mainPressRecent()) {
+                const scoped = scopedOwls();
+                globalNozzlesActive = scoped.some((o) => o.detection_mode === 2);
+                globalDetectionEnabled = scoped.some((o) => o.detection_enable) && !globalNozzlesActive;
+                globalTrackingEnabled = !!firstOwl.tracking_enabled;
             }
-            // Sync nozzle button state from OWL
-            const nozzleBtn = document.getElementById('main-nozzles-btn');
-            if (nozzleBtn) {
-                const nozzlesOn = firstOwl.detection_mode === 2;
-                nozzleBtn.classList.toggle('active', nozzlesOn);
-                nozzleBtn.textContent = nozzlesOn ? 'Nozzles ON' : 'All Nozzles';
-                globalNozzlesActive = nozzlesOn;
-            }
-            // Sync tracking button state from OWL
-            const trackingBtn = document.getElementById('main-tracking-btn');
-            if (trackingBtn) {
-                const trackingOn = !!firstOwl.tracking_enabled;
-                globalTrackingEnabled = trackingOn;
-                trackingBtn.classList.toggle('active', trackingOn);
-                trackingBtn.textContent = trackingOn ? 'Tracking ON' : 'Tracking';
-            }
-
-            // Show/hide track stability panel based on tracking state
+            globalRecordingEnabled = Object.values(owlsData).some((o) => o && o.connected && o.image_sample_enable);
             const stabilityPanel = document.getElementById('track-stability-panel');
-            if (stabilityPanel) {
-                stabilityPanel.style.display = globalTrackingEnabled ? '' : 'none';
-            }
+            if (stabilityPanel) stabilityPanel.style.display = globalTrackingEnabled ? '' : 'none';
         }
         // Broadcast to widget state listeners
-        if (typeof OWLWidget !== 'undefined' && firstOwl) {
-            OWLWidget._broadcastState(firstOwl);
-        }
+        if (typeof OWLWidget !== 'undefined' && firstOwl) OWLWidget._broadcastState(firstOwl);
 
-        // Sync AI tab if it's active
-        if (typeof syncAITabFromDashboard === 'function') syncAITabFromDashboard();
+        // The redesigned screens: rail, switches, notices, stat cells
+        if (typeof Shell !== 'undefined') Shell.update(data);
     } catch (err) {
         console.error('Dashboard update error:', err);
         mqttConnected = false;
         owlsData = {}; // Clear all OWLs on error
         updateMQTTStatus();
+        if (typeof Shell !== 'undefined') Shell.update({ owls: {} });
     }
 }
 
 function updateMQTTStatus() {
-    const dot = document.getElementById('mqtt-status-dot');
     const txt = document.getElementById('mqtt-status-text');
-
-    if (!dot || !txt) return;
-
-    if (mqttConnected) {
-        dot.classList.add('connected');
-        txt.textContent = 'MQTT Connected';
-    } else {
-        dot.classList.remove('connected');
-        txt.textContent = 'MQTT Disconnected';
-    }
+    if (txt) txt.textContent = mqttConnected ? 'Broker connected' : 'Broker not connected';
 }
 
-// Cloud (Noktura) link — fleet-level, independent of per-OWL online state.
+// Cloud (Noktura) link: fleet-level, independent of per-OWL online state.
 function updateCloudStatus(data) {
     renderCloudStatus(
         document.getElementById('cloud-status-dot'),
         document.getElementById('cloud-status-text'),
         data
     );
-    if (typeof updateCloudManageBlock === 'function') {
-        updateCloudManageBlock(data);
-    }
+    if (typeof updateCloudManageBlock === 'function') updateCloudManageBlock(data);
 }
-
-function updateOWLGrid() {
-    const grid = document.getElementById('owls-column');
-    if (!grid) return;
-
-    // Show OWLs seen recently (connected=true) plus fleet-registered units
-    // (registered=true) — a registered OWL that goes quiet shows as an
-    // Offline card instead of vanishing.
-    const ids = Object.keys(owlsData).filter(id => {
-        const owl = owlsData[id];
-        return owl && (owl.connected === true || owl.registered === true);
-    });
-
-    if (ids.length === 0) {
-        grid.innerHTML = `
-            <div class="empty-state">
-                <div class="empty-state-text">No OWLs Connected</div>
-                <div class="empty-state-subtext">Waiting for MQTT...</div>
-            </div>
-        `;
-        return;
-    }
-
-    grid.innerHTML = ids.map(id => buildOWLCard(id, owlsData[id])).join('');
-}
-
-function buildMiniDial(opts) {
-    // Automotive micro-dial: fixed grey band with painted amber/red zones,
-    // needle at the value. Baked as a static SVG string because the card
-    // list is rebuilt via innerHTML every update cycle.
-    // opts: {value (null = idle), min, max, amber: [a,b], red: [a,b],
-    //        display, label, endLabels: [lo,hi]}
-    const span = opts.max - opts.min;
-    const frac = v => Math.max(0, Math.min(1, (v - opts.min) / span));
-    const arc = (f0, f1, cls) =>
-        `<path class="${cls}" d="${describeArc(70, 80, 55, -90 + f0 * 180, -90 + f1 * 180)}"></path>`;
-
-    const hasValue = opts.value !== null && opts.value !== undefined;
-    const angle = -90 + (hasValue ? frac(opts.value) : 0) * 180;
-
-    let zones = arc(0, 1, 'mini-dial-track');
-    if (opts.amber) zones += arc(frac(opts.amber[0]), frac(opts.amber[1]), 'mini-dial-amber');
-    if (opts.red) zones += arc(frac(opts.red[0]), frac(opts.red[1]), 'mini-dial-red');
-
-    const within = z => hasValue && z && opts.value >= z[0] && opts.value <= z[1];
-    const stateClass = !hasValue ? ' idle'
-        : within(opts.red) ? ' in-red'
-        : within(opts.amber) ? ' in-amber' : '';
-
-    const ends = opts.endLabels
-        ? `<text x="6" y="76" class="mini-dial-end">${opts.endLabels[0]}</text>` +
-          `<text x="134" y="76" class="mini-dial-end" text-anchor="end">${opts.endLabels[1]}</text>`
-        : '';
-
-    return `
-        <div class="owl-mini-dial${stateClass}">
-            <svg viewBox="0 0 140 90">
-                ${zones}
-                ${ends}
-                <g transform="rotate(${angle} 70 80)">
-                    <line class="mini-dial-needle" x1="70" y1="80" x2="70" y2="34"></line>
-                    <circle class="mini-dial-hub" cx="70" cy="80" r="8"></circle>
-                </g>
-            </svg>
-            <div class="mini-dial-value">${opts.display}</div>
-            <div class="mini-dial-label">${opts.label}</div>
-        </div>`;
-}
-
-function buildOWLCard(deviceId, owl) {
-    const isOnline = !!owl.connected;
-    const onlineClass = isOnline ? 'online' : 'offline';
-
-    // Get stats
-    const temp = owl.cpu_temp ?? 0;
-    const cpu = owl.cpu_percent ?? 0;
-    const mem = owl.memory_percent ?? 0;
-    const loopMs = owl.avg_loop_time_ms ?? 0;
-    const fps = loopMs > 0 ? 1000 / loopMs : null;  // null while not detecting
-    // AI inference legitimately runs ~8-15 fps on a Pi — judge it on its own scale
-    const aiAlgo = owl.algorithm === 'gog' || owl.algorithm === 'gog-hybrid';
-    const fpsDial = aiAlgo
-        ? {max: 20, red: [0, 4], amber: [4, 8]}
-        : {max: 40, red: [0, 10], amber: [10, 20]};
-
-    const disAttr = isOnline ? '' : 'disabled';
-    const ctrlType = owl.controller_type || 'none';
-    const hwWarning = (ctrlType !== 'none')
-        ? '<div class="device-warning-badge">Hardware controller (' + ctrlType + '). Use standalone dashboard</div>'
-        : '';
-
-    // Active config "Running: <name>" (prefer the friendly [Meta] name).
-    // The autosave working file displays as its source preset; the unsaved
-    // marker appears only when its content actually differs from that source.
-    let cfgName = owl.config_source || owl.config_name || '';
-    if (cfgName && typeof prettyConfigName === 'function') cfgName = prettyConfigName(cfgName);
-    if (cfgName && owl.config_unsaved) cfgName += ' - unsaved changes';
-    const esc = (typeof escapeConfigLabel === 'function') ? escapeConfigLabel : (s) => s;
-    const cfgLine = (isOnline && cfgName)
-        ? '<div class="owl-compact-config" title="Config loaded on this OWL">Running: ' + esc(cfgName) + '</div>'
-        : '';
-
-    // Spray timing: speed and processing time, and the source only when the
-    // OWL times itself from its own GPS (controller timing is the default here)
-    const timingParts = [];
-    if (isOnline && typeof owl.speed_kmh === 'number') timingParts.push(owl.speed_kmh.toFixed(1) + ' km/h');
-    if (isOnline && owl.actuation_source === 'device-gps') timingParts.push('OWL GPS timing');
-    if (isOnline && typeof owl.latency_ms === 'number') timingParts.push('Processing ' + Math.round(owl.latency_ms) + ' ms');
-    const timingLine = timingParts.length
-        ? '<div class="owl-compact-config" title="Spray timing on this OWL">' + esc(timingParts.join(' · ')) + '</div>'
-        : '';
-    const speedWarning = (isOnline && owl.speed_warning)
-        ? '<div class="device-warning-badge">' + esc(owl.speed_warning) + '</div>'
-        : '';
-    // Spraying fault and refused recording: the OWL says why, show it
-    const faultWarning = (isOnline && owl.fault)
-        ? '<div class="device-warning-badge">Fault: ' + esc(owl.fault.message) + '</div>'
-        : '';
-    const blockedWarning = (isOnline && owl.recording_blocked_reason && !owl.image_sample_enable)
-        ? '<div class="device-warning-badge">Cannot record: '
-            + esc(String(owl.recording_blocked_reason).replace(/_/g, ' ')) + '</div>'
-        : '';
-
-    // friendly_name is user-typed via the fleet API — must be escaped.
-    // deviceId comes from MQTT topic names (anonymous broker), so it is
-    // just as untrusted.
-    const displayName = esc(owl.friendly_name || deviceId);
-    const nameTitle = owl.assigned_ip
-        ? ` title="${esc(deviceId)} - ${esc(owl.assigned_ip)}"` : '';
-
-    return `
-        <div class="owl-card-compact ${onlineClass}">
-            <div class="owl-card-compact-header">
-                <h4${nameTitle}>${displayName}</h4>
-                <span class="owl-status-badge ${onlineClass}">
-                    <span class="badge-dot"></span>
-                    ${isOnline ? 'Online' : 'Offline'}
-                </span>
-                ${hwWarning}
-            </div>
-            ${cfgLine}
-            ${timingLine}
-            ${speedWarning}
-            ${faultWarning}
-            ${blockedWarning}
-            <div class="owl-mini-dials">
-                ${buildMiniDial({value: isOnline ? temp : null, min: 30, max: 90,
-                                 amber: [60, 70], red: [70, 90], endLabels: ['C', 'H'],
-                                 display: isOnline ? temp.toFixed(0) + '°C' : '--', label: 'CPU'})}
-                ${buildMiniDial({value: isOnline ? cpu : null, min: 0, max: 100,
-                                 amber: [80, 90], red: [90, 100],
-                                 display: isOnline ? cpu.toFixed(0) + '%' : '--', label: 'Load'})}
-                ${buildMiniDial({value: isOnline ? mem : null, min: 0, max: 100,
-                                 amber: [80, 90], red: [90, 100],
-                                 display: isOnline ? mem.toFixed(0) + '%' : '--', label: 'Mem'})}
-                ${buildMiniDial({value: isOnline ? fps : null, min: 0, max: fpsDial.max,
-                                 red: fpsDial.red, amber: fpsDial.amber,
-                                 display: (isOnline && fps) ? fps.toFixed(0) : '--', label: 'FPS'})}
-            </div>
-            <div class="owl-compact-actions">
-                <button class="owl-compact-btn btn-video" onclick="openVideoFeed('${deviceId}')" ${disAttr}>Video</button>
-                <button class="owl-compact-btn btn-frame" onclick="grabFrame('${deviceId}')" ${disAttr}>Frame</button>
-                <button class="owl-compact-btn btn-restart" onclick="restartOWL('${deviceId}')" ${disAttr}>Restart</button>
-            </div>
-        </div>
-    `;
-}
-

@@ -27,6 +27,8 @@ NOKTURA_OWL_FIELDS = {
     'memory_percent', 'disk_percent', 'gps_latitude', 'gps_longitude', 'gps_available',
     'version', 'git_branch', 'git_commit', 'pi_model', 'os_pretty', 'software_update',
     'data_transfer', 'preview_upload', 'available_models', 'current_model', 'model_download',
+    # AI capability block (spec section on 'ai', Noktura ai-capability.ts, 2026-10-12)
+    'ai',
 }
 
 SESSION = {'session_id': '20261009/session_101500', 'date': '20261009', 'time': '101500',

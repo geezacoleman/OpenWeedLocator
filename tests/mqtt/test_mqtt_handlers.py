@@ -132,7 +132,7 @@ class TestSetAlgorithm:
         """set_algorithm updates state and owl instance."""
         mqtt_publisher._handle_command({'action': 'set_algorithm', 'value': 'gog-hybrid'})
 
-        assert mqtt_publisher.state['algorithm'] == 'gog-hybrid'
+        assert mqtt_publisher.state['algorithm_pending'] == 'gog-hybrid'
         assert mock_owl._pending_algorithm == 'gog-hybrid'
 
     def test_set_algorithm_invalid_rejected(self, mqtt_publisher, mock_owl):

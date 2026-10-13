@@ -26,8 +26,7 @@ html {
 }
 
 body {
-    font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, 
-                 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--font-body, 'Inter', 'Segoe UI', system-ui, sans-serif);
     background-color: var(--background);
     color: var(--text);
     line-height: 1.6;

@@ -7,62 +7,20 @@
    3. _controls.js   - Dashboard controls, power, detection, recording, preview
    4. _storage.js    - File browser, USB devices
    5. _stats.js      - System status polling
-   6. _ai_tab.js     - AI model selection and class filtering
-   7. _config_tab.js  - Config tab range sliders
-   8. _config.js     - Configuration editor (INI)
-   9. main.js        - This file (initialization)
+   6. _config_tab.js - range sliders (Colour tuning, AI models)
+   7. _lut_panel.js  - painted profiles
+   8. _config.js     - profiles and the INI editor
+   9. _data_collection.js - shared capture form and record modal
+  10. _shell.js      - the redesigned screens (Field, Data, Settings)
+  11. main.js        - This file (initialization)
    ========================================================================== */
-
-/**
- * Initialize tab navigation
- */
-function initTabs() {
-    const tabLinks = document.querySelectorAll('.nav-tab');
-    tabLinks.forEach(tab => {
-        tab.addEventListener('click', function(e) {
-            if (this.classList.contains('disabled')) {
-                e.preventDefault();
-                e.stopPropagation();
-                return;
-            }
-
-            // Tabs with data-href navigate to a separate page (e.g. /downloads)
-            const href = this.getAttribute('data-href');
-            if (href) {
-                window.location.href = href;
-                return;
-            }
-
-            tabLinks.forEach(t => t.classList.remove('active'));
-            this.classList.add('active');
-
-            const tabContents = document.querySelectorAll('.tab-content');
-            tabContents.forEach(content => content.classList.remove('active'));
-
-            const targetId = this.getAttribute('data-tab');
-            document.getElementById(targetId).classList.add('active');
-
-            // Reload data when tabs are clicked
-            if (targetId === 'storage') {
-                document.getElementById('usbDevices').innerHTML = '<p>Scanning for USB devices...</p>';
-                document.getElementById('fileList').innerHTML = '<p>Click Refresh to browse recordings</p>';
-                loadStorageData();
-            } else if (targetId === 'ai') {
-                refreshAITab();
-            }
-        });
-    });
-
-    const firstTab = document.querySelector('.nav-tab');
-    if (firstTab) firstTab.click();
-}
 
 /**
  * Main initialization on DOM ready
  */
 document.addEventListener('DOMContentLoaded', function() {
-    // Initialize all modules
-    initTabs();
+    // Initialize all modules; the redesigned screens first (_shell.js)
+    Shell.init();
     initControlButtons();
     initStorageTab();
     initPreview();

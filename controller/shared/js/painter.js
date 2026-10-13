@@ -485,7 +485,7 @@ const Painter = (function () {
         var ready = counts.weed >= counts.required && counts.background >= counts.required;
         els.saveBtn.disabled = !ready;
         els.counts.textContent =
-            'Weed: ' + counts.weed.toLocaleString() + ' px · ' +
+            'Weed: ' + counts.weed.toLocaleString() + ' px | ' +
             'Background: ' + counts.background.toLocaleString() + ' px';
         if (!_allStrokes().length) {
             _setHint('Paint over weeds with the green brush, then paint soil and stubble with the red brush.');

@@ -361,11 +361,9 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
                 'git': {'branch': git_info.get('branch'),
                         'commit': git_info.get('commit')}}
 
-    @bp.route('/api/settings/update/start', methods=['POST'])
-    @guard
-    def update_start():
-        data = request.get_json(silent=True) or {}
-        ref = str(data.get('ref') or _default_ref())
+    def _launch_update(ref, with_ai=False):
+        """Checks, then owl_update.sh in its transient unit. Shared by
+        Update and Install AI, which is the same update plus --with-ai."""
         if not software_update.valid_ref(ref):
             return _fail(400, 'invalid_ref', f'Invalid ref: {ref!r}')
         current = software_update.read_status(update_status_file)
@@ -382,7 +380,8 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
                          'The OWL has no internet connection')
         request_id = secrets.token_hex(8)
         argv = software_update.update_argv(ref, request_id,
-                                           status_file=update_status_file)
+                                           status_file=update_status_file,
+                                           with_ai=with_ai)
         if not software_update.sudo_permits(argv, runner):
             return _fail(503, 'permissions_missing',
                          UPDATE_PERMISSIONS_MISSING_ERROR)
@@ -394,9 +393,23 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
             return _fail(500, 'launch_failed',
                          f'Failed to launch the updater: {e}')
         log.warning(f"Software update launched from dashboard: ref={ref} "
-                    f"request_id={request_id}")
+                    f"request_id={request_id} with_ai={with_ai}")
         return jsonify({'success': True, 'request_id': request_id, 'ref': ref,
-                        'status': 'starting'}), 202
+                        'with_ai': with_ai, 'status': 'starting'}), 202
+
+    @bp.route('/api/settings/update/start', methods=['POST'])
+    @guard
+    def update_start():
+        data = request.get_json(silent=True) or {}
+        return _launch_update(str(data.get('ref') or _default_ref()))
+
+    @bp.route('/api/ai/install', methods=['POST'])
+    @guard
+    def ai_install():
+        """Install AI (ultralytics, torch, ncnn): a software update at the
+        current branch that also installs requirements-gog.txt. Progress is
+        the update's: GET /api/settings/update/status. Needs internet."""
+        return _launch_update(_default_ref(), with_ai=True)
 
     @bp.route('/api/settings/update/status')
     def update_status():

@@ -167,6 +167,39 @@ class TestUpdateStart:
 
 
 @pytest.mark.unit
+class TestAiInstall:
+    def test_launches_the_update_with_ai_at_the_current_branch(self, mgr, tmp_path):
+        popen = MagicMock()
+        client = build_client(mgr, tmp_path, popen=popen)
+        response = client.post('/api/ai/install', json={})
+        assert response.status_code == 202
+        data = response.get_json()
+        assert data['with_ai'] is True
+        assert data['ref'] == 'main'
+        assert popen.call_args[0][0] == swu.update_argv(
+            'main', data['request_id'], status_file=tmp_path / '.update_status.json',
+            with_ai=True)
+        # Progress is the ordinary update status
+        status = client.get('/api/settings/update/status').get_json()
+        assert status['update']['request_id'] == data['request_id']
+
+    def test_same_checks_as_update(self, mgr, tmp_path):
+        client = build_client(mgr, tmp_path, internet=NO_INTERNET)
+        response = client.post('/api/ai/install', json={})
+        assert response.status_code == 409
+        assert response.get_json()['code'] == 'no_internet'
+
+    def test_token_guarded(self, mgr, tmp_path):
+        popen = MagicMock()
+        client = build_client(mgr, tmp_path, token='secret-token', popen=popen)
+        assert client.post('/api/ai/install', json={}).status_code == 403
+        popen.assert_not_called()
+        response = client.post('/api/ai/install', json={},
+                               headers={'X-Device-Token': 'secret-token'})
+        assert response.status_code == 202
+
+
+@pytest.mark.unit
 class TestUpdateStatus:
     def _write(self, tmp_path, status, updated_at):
         (tmp_path / '.update_status.json').write_text(json.dumps(

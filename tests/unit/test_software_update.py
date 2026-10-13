@@ -45,6 +45,27 @@ class TestUpdateArgv:
             '--status-file', str(tmp_path / '.update_status.json'),
         ]
 
+    def test_with_ai_appends_the_flag_after_the_script(self, tmp_path):
+        """Install AI: --with-ai goes where the sudoers rule has its `*`;
+        everything up to the script stays byte-for-byte the same."""
+        kwargs = dict(script=tmp_path / 'owl_update.sh',
+                      status_file=tmp_path / '.update_status.json', user='owl')
+        plain = swu.update_argv('main', 'req-1', **kwargs)
+        with_ai = swu.update_argv('main', 'req-1', with_ai=True, **kwargs)
+        assert with_ai == plain + ['--with-ai']
+        assert swu.update_argv('main', 'req-1', with_ai=False, **kwargs) == plain
+
+    @pytest.mark.parametrize('script', ['controller/shared/setup.sh', 'owl_cloud_provision.sh'])
+    def test_sudoers_rule_matches_the_argv_prefix(self, script):
+        """The sudoers rule is literal up to owl_update.sh and `*` after it,
+        so with_ai needs no sudoers change but RuntimeMaxSec must match."""
+        root = swu.repo_root()
+        text = (root / script).read_text(encoding='utf-8')
+        rule = next(line for line in text.splitlines()
+                    if 'Cmnd_Alias' in line and 'owl_update.sh' in line)
+        assert rule.rstrip().endswith('owl_update.sh *')
+        assert f'--property=RuntimeMaxSec={swu.RUNTIME_MAX_S} ' in rule
+
     def test_defaults_point_at_the_repo(self):
         argv = swu.update_argv('main', 'r', user='owl')
         assert argv[9].endswith('owl_update.sh')

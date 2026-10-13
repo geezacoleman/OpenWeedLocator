@@ -59,10 +59,19 @@ def valid_ref(ref):
     return bool(re.match(UPDATE_REF_PATTERN, ref)) and '..' not in ref
 
 
-def update_argv(ref, request_id, script=None, status_file=None, user=None):
-    """The exact argv the sudoers rule permits (literal up to the script)."""
+def update_argv(ref, request_id, script=None, status_file=None, user=None,
+                with_ai=False):
+    """The exact argv the sudoers rule permits (literal up to the script).
+
+    with_ai adds --with-ai (Install AI: requirements-gog.txt as well). It
+    goes after the script, where the sudoers rule has its `*`. RuntimeMaxSec
+    stays RUNTIME_MAX_S even for AI installs: it sits before the script, so
+    the sudoers rule on every unit in the field matches it literally and a
+    different value would be refused by sudo. owl_update.sh rolls back if
+    systemd stops it at that limit.
+    """
     user = user or getpass.getuser()
-    return [
+    argv = [
         'sudo', '-n', SYSTEMD_RUN,
         f'--unit={UNIT_NAME}', '--collect',
         f'--property=RuntimeMaxSec={RUNTIME_MAX_S}',
@@ -72,6 +81,9 @@ def update_argv(ref, request_id, script=None, status_file=None, user=None):
         '--request-id', str(request_id),
         '--status-file', str(status_file or status_path()),
     ]
+    if with_ai:
+        argv.append('--with-ai')
+    return argv
 
 
 def normalise_status(data):

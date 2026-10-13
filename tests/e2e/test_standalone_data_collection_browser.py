@@ -5,7 +5,7 @@ shared collect pieces (/shared/js/collect_form.js) the networked collect
 screen uses. Runs the standalone Flask app with a mocked MQTT client and
 drives Playwright at the 7" (1024x600) and Touch Display 2 (1280x720) sizes:
 
-  - Config tab shows the Data collection card; tapping By distance saves it
+  - Settings > Data collection shows the capture form; tapping By distance saves it
     (persisted to the active config + set_capture_params sent live)
   - Record opens the form; Start sends the chosen slugs, then recording on
   - While recording, the crop/conditions chips show under the switch
@@ -120,9 +120,10 @@ def run_checks():
             page.goto(BASE_URL + '/')
             page.wait_for_selector('#dcCaptureForm .c-seg', state='attached')
 
-            # Config tab: the capture card
-            page.click('.nav-tab[data-tab="config"]')
-            card = page.locator('#data-collection-card')
+            # Settings > Data collection: the capture card
+            page.click('#mainNav [data-view="settings"]')
+            page.click('.ou-side [data-panel="collection"]')
+            card = page.locator('#panel-collection')
             card.scroll_into_view_if_needed()
             page.wait_for_function(
                 "document.querySelector('#dcCaptureForm [data-setting=\"sample_mode\"] [aria-pressed=\"true\"]')")
@@ -144,7 +145,7 @@ def run_checks():
                 problems.append(f'{name}: set_capture_params not sent {live}')
 
             # Dashboard: Record opens the form
-            page.click('.nav-tab[data-tab="dashboard"]')
+            page.click('#mainNav [data-view="field"]')
             page.click('#recordSwitch')
             page.wait_for_selector('#record-modal:not([hidden])')
             page.screenshot(path=str(SCREENSHOT_DIR / f'standalone_record_form_{name}.png'))
@@ -167,7 +168,7 @@ def run_checks():
 
             # Chips while recording
             STATE['session_metadata'] = meta[-1] if meta else {}
-            page.wait_for_selector('#sessionChips .c-chip', timeout=8000)
+            page.wait_for_selector('#sessionChips .ou-lab', timeout=8000)
             chips = page.inner_text('#sessionChips')
             if 'barley' not in chips.lower() or 'Windy' not in chips:
                 problems.append(f'{name}: chips wrong: {chips!r}')

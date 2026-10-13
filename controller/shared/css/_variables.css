@@ -9,10 +9,11 @@
     /* -------------------------------------------------------------------------
        Brand Colors
        ------------------------------------------------------------------------- */
-    --owl-primary: #022775;
-    --owl-primary-light: #034694;
-    --owl-secondary: #34495e;
-    --owl-accent: #3498db;
+    /* Noktura brand (same values as the owl-app theme.css and owl_ui.css) */
+    --owl-primary: #0F1F36;
+    --owl-primary-light: #1B3556;
+    --owl-secondary: #5C6B7A;
+    --owl-accent: #336AA3;
     
     /* -------------------------------------------------------------------------
        Semantic Colors
@@ -31,11 +32,13 @@
     --owl-light: #ecf0f1;
     --owl-dark: #1a252f;
     --owl-text: #808080;
-    --owl-text-dark: #2c3e50;
-    --owl-text-light: #7f8c8d;
-    --owl-background: #f5f7fa;
+    --owl-text-dark: #17212B;
+    --owl-text-light: #5C6B7A;
+    --owl-background: #F4F6F8;
     --owl-card-bg: #fff;
     --owl-border: #dce1e8;
+    --font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --font-display: 'Lexend Deca', 'Inter', system-ui, sans-serif;
 
     /* -------------------------------------------------------------------------
        Legacy aliases (for backward compatibility)
@@ -99,21 +102,5 @@
     --touch-target-kiosk: 64px;
 }
 
-/* -------------------------------------------------------------------------
-   Dark Mode Support
-   ------------------------------------------------------------------------- */
-@media (prefers-color-scheme: dark) {
-    :root {
-        --owl-background: #1a1a1a;
-        --owl-card-bg: #2d2d2d;
-        --owl-text: #e0e0e0;
-        --owl-border: #444;
-        
-        /* Update legacy aliases */
-        --background: var(--owl-background);
-        --card-bg: var(--owl-card-bg);
-        --text: var(--owl-text);
-        --border: var(--owl-border);
-    }
-}
-    
+/* No dark mode: the dashboards use one light palette on purpose (read in
+   direct sun, and the redesign's panels are fixed white). */

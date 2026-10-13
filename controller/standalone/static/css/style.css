@@ -1,27 +1,19 @@
 /* ==========================================================================
    OWL Dashboard (Standalone) - Main Stylesheet
 
-   This file imports shared foundation styles and app-specific components.
+   The redesign (2026-10-12) lives in /shared/css/owl_ui.css, shared with the
+   networked controller. This file adds only what the standalone keeps from
+   before: the INI editor, file browser and notification panel.
 
-   IMPORT ORDER MATTERS:
-   1. Shared foundation (variables, reset, animations, utilities)
-   2. Shared components (buttons, status, modal, toast, forms)
-   3. App-specific components (layout, cards, controls, etc.)
+   IMPORT ORDER MATTERS: shared foundation, shared components, owl_ui,
+   then the few standalone pieces.
    ========================================================================== */
 
-/* -------------------------------------------------------------------------
-   Shared Foundation
-   These provide the base design tokens, reset, and utilities
-   ------------------------------------------------------------------------- */
 @import '../../../shared/css/_variables.css';
 @import '../../../shared/css/_reset.css';
 @import '../../../shared/css/_animations.css';
 @import '../../../shared/css/_utilities.css';
 
-/* -------------------------------------------------------------------------
-   Shared Components
-   Common UI components used across both controllers
-   ------------------------------------------------------------------------- */
 @import '../../../shared/css/_buttons.css';
 @import '../../../shared/css/_status.css';
 @import '../../../shared/css/_modal.css';
@@ -30,18 +22,12 @@
 @import '../../../shared/css/_config.css';
 @import '../../../shared/css/_hardware.css';
 @import '../../../shared/css/_collect.css';
+@import '../../../shared/css/_sliders.css';
+@import '../../../shared/css/_widgets.css';
+@import '../../../shared/css/_agent.css';
 
-/* -------------------------------------------------------------------------
-   App-Specific Components
-   Standalone dashboard-specific styles
-   ------------------------------------------------------------------------- */
-@import 'components/_layout.css';
-@import 'components/_cards.css';
-@import 'components/_controls.css';
+@import '../../../shared/css/owl_ui.css';
+
 @import 'components/_storage.css';
 @import 'components/_notifications.css';
 @import 'components/_config.css';
-@import 'components/_config_tab.css';
-@import 'components/_ai_tab.css';
-@import '../../../shared/css/_widgets.css';
-@import '../../../shared/css/_agent.css';

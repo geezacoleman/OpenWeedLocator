@@ -20,9 +20,7 @@ function initConfigEditor() {
     document.getElementById('saveConfig')?.addEventListener('click', saveConfig);
     document.getElementById('resetDefault')?.addEventListener('click', resetToDefault);
     document.getElementById('resetNetworkSetup')?.addEventListener('click', resetNetworkSetup);
-    document.querySelector('[data-tab="config"]')?.addEventListener('click', () => {
-        if (Object.keys(currentConfig).length === 0) loadConfig();
-    });
+    // Profiles and Advanced load the file when first opened (_shell.js)
 }
 
 async function calibrateWhiteBalance() {
@@ -388,10 +386,11 @@ async function toggleStandaloneGeometry() {
         return;
     }
 
-    // Make sure the feed is visible behind the overlay.
-    document.getElementById('previewContainer')?.classList.remove('hidden');
+    // The editor works on the Field live view: show it and keep it running.
+    if (typeof Shell !== 'undefined') { Shell.showView('field'); Shell.setStream(true); }
     var img = document.getElementById('stream-img');
     if (img && !img.getAttribute('src')) img.setAttribute('src', '/video_feed');
+    document.getElementById('view-field')?.classList.add('geo-on');
 
     var values = {
         crop_left: 0.02, crop_right: 0.02, crop_top: 0.02, crop_bottom: 0.02,
@@ -454,12 +453,13 @@ async function toggleStandaloneGeometry() {
         onClose: function () {
             standaloneGeometryActive = false;
             setPreviewMode('cropped');
-            if (btn) { btn.textContent = 'Adjust geometry'; btn.classList.remove('active'); }
+            document.getElementById('view-field')?.classList.remove('geo-on');
+            if (btn) btn.classList.remove('is-on');
         }
     });
 
     standaloneGeometryActive = true;
-    if (btn) { btn.textContent = 'Close geometry'; btn.classList.add('active'); }
+    if (btn) btn.classList.add('is-on');
     showNotification('Tip', 'Drag the edges and band on the feed. Done saves; Cancel reverts.', 'info');
 }
 

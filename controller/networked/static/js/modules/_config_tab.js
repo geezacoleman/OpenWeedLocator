@@ -310,7 +310,7 @@ function minSizeOverlayPing(param) {
 // ============================================
 
 function sendConfigUpdate(param, value) {
-    var target = 'all';
+    var target = (typeof scopeTarget === 'function') ? scopeTarget() : 'all';
 
     lastSliderSendTime = Date.now();
     if (param === 'lut_sensitivity' && typeof updateLutSwatch === 'function') {
@@ -424,7 +424,7 @@ function fleetSafeProfile(config) {
  * Live-updates the device — does NOT persist to disk.
  */
 function sendAllToDevice() {
-    var target = 'all';
+    var target = (typeof scopeTarget === 'function') ? scopeTarget() : 'all';
 
     lastSliderSendTime = Date.now();
 
@@ -458,7 +458,7 @@ function sendAllToDevice() {
         toastSkippedPerDevice(changes.skipped);
     }
 
-    showToast('Applied to all OWLs, not saved', 'info');
+    showToast('Applied to ' + (target === 'all' ? 'all OWLs' : target) + ', not saved', 'info');
 }
 
 // Which library profile the current settings derive from — set by an explicit
@@ -929,28 +929,6 @@ function enlargeConfigFeed() {
 }
 
 // ============================================
-// PROFILE CONTROL MENU (Load / Use on startup / Delete)
-// ============================================
-
-function toggleProfileMenu() {
-    var menu = document.getElementById('config-profile-menu');
-    if (menu) menu.classList.toggle('hidden');
-}
-
-function closeProfileMenu() {
-    var menu = document.getElementById('config-profile-menu');
-    if (menu) menu.classList.add('hidden');
-}
-
-// Close the profile menu on a click outside it.
-document.addEventListener('click', function (e) {
-    var wrap = document.getElementById('config-profile');
-    var menu = document.getElementById('config-profile-menu');
-    if (!wrap || !menu || menu.classList.contains('hidden')) return;
-    if (!wrap.contains(e.target)) menu.classList.add('hidden');
-});
-
-// ============================================
 // VISUAL GEOMETRY EDITOR (up to 2 feeds side by side)
 // ============================================
 
@@ -1126,7 +1104,7 @@ function geoCloseEditor() {
 
     geometryEditorActive = false;
     var btn = document.getElementById('config-geometry-btn');
-    if (btn) { btn.textContent = '◎ Crop & spray zone'; btn.classList.remove('active'); }
+    if (btn) { btn.textContent = 'Crop and spray zone'; btn.classList.remove('active'); }
 
     // Resume the mini-feed snapshot poll.
     pollConfigFeed();
@@ -1194,23 +1172,9 @@ async function toggleGeometryEditor() {
 
     var btn = document.getElementById('config-geometry-btn');
     if (btn) { btn.textContent = 'Close geometry'; btn.classList.add('active'); }
-    showToast('Drag the edges/band on each feed. Tap a feed to make it active. Done saves; Cancel reverts.', 'info');
+    showToast('Drag the edges and the band on each feed. Tap a feed to make it active. Done saves, Cancel reverts.', 'info');
 
     await geoBuildSlots();
-}
-
-// ============================================
-// ADVANCED SETTINGS TOGGLE
-// ============================================
-
-function toggleAdvancedSettings() {
-    var toggle = document.getElementById('config-advanced-toggle');
-    var body = document.getElementById('config-advanced-body');
-
-    if (!toggle || !body) return;
-
-    var isOpen = toggle.classList.toggle('open');
-    body.classList.toggle('open', isOpen);
 }
 
 // ============================================

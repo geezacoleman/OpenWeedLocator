@@ -677,32 +677,34 @@ class TestTrackingConfig:
 class TestSessionMetadataFlow:
     """Guard the session-metadata flow on the networked controller.
 
-    The flow is: Start Recording click -> modal collects
-    {field_name, crop, weather, vehicle} -> JS sendCommand('set_session_metadata')
-    -> networked.py send_command() publishes MQTT -> OWL-side handler in
-    utils/mqtt_manager.py writes session_metadata.json. A break in any layer
-    silently loses metadata, so we pin the key names at each boundary.
+    The flow is: Record -> the shared "What are you recording?" form ->
+    POST /api/collect/start -> networked.py send_command('set_session_metadata')
+    publishes MQTT -> OWL-side handler in utils/mqtt_manager.py writes
+    session_metadata.json. A break in any layer silently loses metadata, so
+    we pin the key names at each boundary.
     """
 
     METADATA_KEYS = ['field_name', 'crop', 'weather', 'vehicle']
     HTML_INPUT_IDS = ['meta-field-name', 'meta-crop', 'meta-weather', 'meta-vehicle']
 
-    def test_networked_template_has_metadata_modal(self):
+    def test_networked_template_loads_shared_record_form(self):
+        """Since the 2026-10-12 redesign the networked dashboard records with
+        the shared "What are you recording?" form, like the Collect screen."""
         html = (PROJECT_ROOT / 'controller' / 'networked' / 'templates' / 'index.html').read_text(encoding='utf-8')
-        assert 'id="session-metadata-modal"' in html, "Modal element missing from index.html"
-        for input_id in self.HTML_INPUT_IDS:
-            assert f'id="{input_id}"' in html, f"Input #{input_id} missing from modal"
+        assert '/shared/js/collect_form.js' in html
+        assert '/shared/js/collect_i18n.js' in html
+        assert 'id="session-metadata-modal"' not in html, "the old free-text modal must be gone"
 
-    def test_networked_controls_js_references_modal(self):
+    def test_networked_controls_js_starts_runs_through_collect_api(self):
         js = (PROJECT_ROOT / 'controller' / 'networked' / 'static' / 'js' / 'modules' / '_controls.js').read_text(encoding='utf-8')
-        assert 'openSessionMetadataModal' in js
-        assert 'closeSessionMetadataModal' in js
-        # Modal interception must be on the path into recording-on, not bypassed.
-        assert 'openSessionMetadataModal(btn)' in js, (
-            "toggleMainRecording must call openSessionMetadataModal instead of _doToggleRecordingOn directly"
-        )
-        for input_id in self.HTML_INPUT_IDS:
-            assert input_id in js, f"JS does not reference input #{input_id}"
+        assert 'CollectForm.mountRecordModal' in js
+        # Record opens the form; its Start posts the metadata with the run
+        rec = js[js.index('async function toggleMainRecording'):]
+        rec = rec[:rec.index('\nfunction ')]
+        assert 'openRecordModal()' in rec, "Record must open the shared form"
+        start = js[js.index('function startCollectRecording'):]
+        start = start[:start.index('\n}\n')]
+        assert "'/api/collect/start'" in start and 'metadata' in start
 
     def test_networked_send_command_has_metadata_case(self):
         """networked.py send_command must spread the fields flat into the MQTT

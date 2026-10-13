@@ -1,7 +1,7 @@
 /* ==========================================================================
    Data collection (standalone)
    Mounts the shared collect form (/shared/js/collect_form.js): the capture
-   settings card on the Config tab and the "What are you recording?" form
+   settings (Settings > Data collection) and the "What are you recording?" form
    that Record opens. Same /api/collect/* routes as the networked collect
    screen and owl-app. Settings save to the active config and apply live.
    ========================================================================== */
@@ -28,6 +28,7 @@ function initDataCollection() {
         _dcCapture = CollectForm.mountCapture(form, {
             sampleModes: ['frames', 'distance', 'time'],
             gain: true,
+            steppers: true,
             onChange: saveCaptureSetting,
         });
     }
@@ -37,7 +38,7 @@ function initDataCollection() {
         .then(data => {
             _dcConfig = data;
             CollectI18n.setLang(data.language || 'en');
-            CollectI18n.apply(document.getElementById('data-collection-card') || document);
+            CollectI18n.apply(document.getElementById('panel-collection') || document);
             CollectI18n.apply(scope);
             _dcRecordModal.setPick(data.last_pick);
             _dcRecordModal.refresh();
@@ -98,22 +99,5 @@ function startCollectRecording(metadata) {
         .catch(err => showNotification('Error', err.message || 'Could not start recording', 'error'));
 }
 
-function renderSessionChips(isRecording, metadata, capture) {
-    const box = document.getElementById('sessionChips');
-    if (!box || !window.CollectForm) return;
-    const chips = isRecording ? CollectForm.metadataChips(metadata, _dcConfig.presets) : null;
-    box.innerHTML = '';
-    // Parked or turning: say so, or recording looks broken
-    if (isRecording && capture && capture.paused_slow) {
-        const paused = document.createElement('span');
-        paused.className = 'c-chip c-chip--paused';
-        paused.textContent = CollectI18n.t('paused_chip', { kmh: capture.min_speed_kmh });
-        box.appendChild(paused);
-    }
-    (chips || []).forEach((text) => {
-        const chip = document.createElement('span');
-        chip.className = 'c-chip';
-        chip.textContent = text;
-        box.appendChild(chip);
-    });
-}
+// The crop and conditions of the current run show under the Recording
+// switch: drawn by _shell.js (renderRecordHint) from the polled stats.

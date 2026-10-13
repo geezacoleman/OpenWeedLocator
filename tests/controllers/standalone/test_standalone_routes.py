@@ -3,6 +3,7 @@
 import configparser
 import json
 import os
+import time
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -567,6 +568,121 @@ class TestAlgorithmRoute:
         data = resp.get_json()
         assert resp.status_code == 200
         assert data['success'] is True
+
+
+NO_AI = {'cpu': {'installed': False},
+         'hailo': {'present': False, 'chip': None, 'runtime': False},
+         'accelerator': None}
+CPU_AI = dict(NO_AI, cpu={'installed': True}, accelerator='cpu')
+
+
+def _owl_reports(dashboard, **state):
+    """The OWL's last published state, as the dashboard's subscriber holds it."""
+    sub = dashboard.mqtt_client
+    with sub.state_lock:
+        sub.current_state = dict(state)
+        sub.last_heartbeat = time.time() + 3600  # never goes silent mid-test
+
+
+def _saved_algorithm(tmp_dir):
+    active = (tmp_dir / 'active_config.txt').read_text().strip()
+    config = configparser.ConfigParser()
+    config.read(str(tmp_dir / active.split('/')[-1]))
+    return config.get('System', 'algorithm')
+
+
+@pytest.mark.unit
+class TestAlgorithmRouteHonesty:
+    """/api/algorithm/set refuses what the OWL cannot run, accepts lut, and
+    saves only once the OWL reports the new detector running."""
+
+    @pytest.fixture(autouse=True)
+    def fast_confirm(self, monkeypatch):
+        import controller.standalone.standalone as sa_mod
+        monkeypatch.setattr(sa_mod, 'ALGORITHM_CONFIRM_POLL_S', 0.01)
+        monkeypatch.setattr(sa_mod, 'ALGORITHM_CONFIRM_TIMEOUT_S', 0.5)
+
+    @pytest.mark.parametrize('algorithm', ['gog', 'gog-hybrid'])
+    def test_ai_refused_when_the_owl_has_no_ai(self, standalone_test_client, algorithm):
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        _owl_reports(dashboard, algorithm='exhsv', ai=NO_AI)
+        dashboard.mqtt_client.client.publish.reset_mock()
+
+        resp = client.post('/api/algorithm/set', json={'algorithm': algorithm})
+
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert data['success'] is False
+        assert 'not installed' in data['error']
+        dashboard.mqtt_client.client.publish.assert_not_called()
+
+    def test_ai_allowed_with_cpu_ai(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        _owl_reports(dashboard, algorithm='exhsv', ai=CPU_AI)
+        resp = client.post('/api/algorithm/set', json={'algorithm': 'gog'})
+        assert resp.status_code == 200
+
+    def test_lut_accepted_with_a_profile(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        _owl_reports(dashboard, algorithm='exhsv', lut_profile='paddock_a')
+        resp = client.post('/api/algorithm/set', json={'algorithm': 'lut'})
+        assert resp.status_code == 200
+        assert resp.get_json()['success'] is True
+
+    def test_lut_refused_without_a_profile(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        _owl_reports(dashboard, algorithm='exhsv', lut_profile='')
+        resp = client.post('/api/algorithm/set', json={'algorithm': 'lut'})
+        assert resp.status_code == 400
+        assert 'profile' in resp.get_json()['error']
+
+    def test_not_saved_when_the_owl_never_runs_it(self, standalone_test_client):
+        """The owl-1 case: AI requested, load fails, OWL stays on exhsv."""
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        before = _saved_algorithm(tmp_dir)
+        _owl_reports(dashboard, algorithm='exhsv', ai=CPU_AI,
+                     algorithm_error='ultralytics is required')
+
+        assert client.post('/api/algorithm/set', json={'algorithm': 'gog'}).status_code == 200
+        time.sleep(0.8)  # past the confirm timeout
+
+        assert _saved_algorithm(tmp_dir) == before
+
+    def test_saved_once_the_owl_reports_it_running(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        _owl_reports(dashboard, algorithm='exhsv', algorithm_pending='hsv')
+
+        assert client.post('/api/algorithm/set', json={'algorithm': 'hsv'}).status_code == 200
+        time.sleep(0.05)
+        assert _saved_algorithm(tmp_dir) != 'hsv', 'still loading: nothing saved yet'
+
+        _owl_reports(dashboard, algorithm='hsv', algorithm_pending=None)
+        deadline = time.time() + 2
+        while _saved_algorithm(tmp_dir) != 'hsv' and time.time() < deadline:
+            time.sleep(0.02)
+        assert _saved_algorithm(tmp_dir) == 'hsv'
+
+
+@pytest.mark.unit
+class TestSystemStatsAiFields:
+    def test_relays_the_owl_ai_state(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        download = {'status': 'error', 'model_name': 'weeds.zip', 'progress': 0,
+                    'error': 'Checksum mismatch'}
+        _owl_reports(dashboard, algorithm='exhsv', algorithm_pending='gog', ai=CPU_AI,
+                     model_download=download, algorithm_error='ultralytics is required')
+        data = client.get('/api/system_stats').get_json()
+        assert data['ai'] == CPU_AI
+        assert data['model_download'] == download
+        assert data['algorithm_error'] == 'ultralytics is required'
+        assert data['algorithm_pending'] == 'gog'
+        assert data['algorithm'] == 'exhsv'
 
 
 @pytest.mark.unit

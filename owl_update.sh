@@ -21,6 +21,9 @@
 #   --request-id ID    Correlation id echoed into the status file
 #   --status-file F    JSON status file path (default: <repo>/.update_status.json)
 #   --no-restart       Skip the service restart + health check
+#   --with-ai          Also install AI (requirements-gog.txt: ultralytics,
+#                      torch, ncnn) into the same venv. OWL profile only.
+#                      Inside the same rollback handling as everything else.
 #   --yes              Manual mode: don't prompt before restarting the service
 #
 # STATUS FILE
@@ -69,6 +72,7 @@ REQUEST_ID=""
 STATUS_FILE="$REPO_DIR/.update_status.json"
 NO_RESTART=0
 ASSUME_YES=0
+WITH_AI=0
 
 SERVICE=""
 VENV=""
@@ -150,6 +154,15 @@ on_failure() {
 }
 trap 'on_failure "${BASH_LINENO[0]}" "$BASH_COMMAND"' ERR
 
+on_terminated() {
+    # systemd stops the unit at RuntimeMaxSec (an AI install over a slow
+    # link can get there). Every process in the unit gets SIGTERM, tee
+    # included, so log straight to the file from here on, then roll back.
+    exec >>"$LOG_FILE" 2>&1
+    on_failure "$LINENO" "stopped by systemd: the update ran past its time limit"
+}
+trap on_terminated TERM
+
 rollback() {
     local original_error="$1"
     IN_ROLLBACK=1
@@ -204,6 +217,7 @@ while [[ $# -gt 0 ]]; do
         --status-file)  STATUS_FILE="$2"; shift 2 ;;
         --no-restart)   NO_RESTART=1; shift ;;
         --yes)          ASSUME_YES=1; shift ;;
+        --with-ai)      WITH_AI=1; shift ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -249,6 +263,9 @@ main() {
             ;;
         *) fail_terminal "invalid profile: $PROFILE" ;;
     esac
+    if [[ "$WITH_AI" == "1" && "$PROFILE" != "owl" ]]; then
+        fail_terminal "--with-ai installs AI on an OWL, not on the $PROFILE"
+    fi
     log "Profile: $PROFILE (service=$SERVICE, venv=$VENV, deps=$REQUIREMENTS)"
 
     # --- Preflight ---------------------------------------------------------------
@@ -263,9 +280,11 @@ main() {
         fail_terminal "invalid ref: $REF"
     fi
 
-    local avail_kb
+    # AI (PyTorch + ultralytics) needs about 2 GB more
+    local avail_kb need_gb=1
+    if [[ "$WITH_AI" == "1" ]]; then need_gb=3; fi
     avail_kb="$(df --output=avail -k "$REPO_DIR" | tail -1 | tr -d ' ')"
-    [[ "$avail_kb" -ge 1048576 ]] || fail_terminal "insufficient disk space (need 1 GB free, have $((avail_kb / 1024)) MB)"
+    [[ "$avail_kb" -ge $((need_gb * 1048576)) ]] || fail_terminal "insufficient disk space (need ${need_gb} GB free, have $((avail_kb / 1024)) MB)"
 
     [[ -x "$VENV/bin/pip" ]] || fail_terminal "venv pip not found at $VENV/bin/pip"
     if [[ "$NO_RESTART" != "1" ]]; then
@@ -355,7 +374,15 @@ main() {
     write_status installing_deps
     log "Installing Python dependencies ($REQUIREMENTS)..."
     "$VENV/bin/pip" install --no-input -r "$REPO_DIR/$REQUIREMENTS"
-    if [[ "$PROFILE" == "owl" && -f "$REPO_DIR/requirements-gog.txt" ]] \
+    if [[ "$WITH_AI" == "1" ]]; then
+        if [[ ! -f "$REPO_DIR/requirements-gog.txt" ]]; then
+            log "ERROR: requirements-gog.txt not found on $REF"
+            false  # -> ERR trap -> rollback
+        fi
+        log "Installing AI (requirements-gog.txt). This can take 20 minutes or more..."
+        "$VENV/bin/pip" install --no-input -r "$REPO_DIR/requirements-gog.txt"
+        "$VENV/bin/python" -c 'import ultralytics' >/dev/null
+    elif [[ "$PROFILE" == "owl" && -f "$REPO_DIR/requirements-gog.txt" ]] \
        && "$VENV/bin/python" -c 'import ultralytics' >/dev/null 2>&1; then
         log "Green-on-Green detected — updating GoG dependencies..."
         "$VENV/bin/pip" install --no-input -r "$REPO_DIR/requirements-gog.txt"

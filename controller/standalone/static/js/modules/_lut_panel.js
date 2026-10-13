@@ -30,7 +30,7 @@ function setLutPanelVisible(show) {
 }
 
 /* Tapping the Painted mode button: apply the selected profile, or reveal
-   the panel (on the config tab) when nothing is painted yet. */
+   the panel (Settings > Colour tuning) when nothing is painted yet. */
 function activateLutMode() {
     lutPanelState.forced = true;
     setLutPanelVisible(true);
@@ -52,9 +52,8 @@ function activateLutMode() {
             }
         }).catch(function () { });
     } else {
-        // Jump to the config tab where the panel lives
-        var configTab = document.querySelector('.nav-tab[data-tab="config"]');
-        if (configTab && !configTab.classList.contains('active')) configTab.click();
+        // Open Settings > Colour tuning, where the panel lives
+        if (typeof Shell !== 'undefined') Shell.openSettings('colour');
         showNotification('Painted detection',
             'No painted profiles yet. Press Paint weeds to create one', 'info', 4000);
     }

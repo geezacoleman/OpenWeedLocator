@@ -158,7 +158,7 @@
                 '<span class="c-owl-name" style="color:' + colour + '">' + esc(o.id) + '</span>' +
                 cell(t('images'), images) +
                 cell(t('speed'), o.speed_kmh === null || o.speed_kmh === undefined ? '-' : o.speed_kmh.toFixed(1) + ' km/h') +
-                cell(t('shutter'), shutterText(o.exposure_time_us) + (o.analogue_gain ? ' · ' + o.analogue_gain.toFixed(1) + '×' : '')) +
+                cell(t('shutter'), shutterText(o.exposure_time_us) + (o.analogue_gain ? ' | ' + o.analogue_gain.toFixed(1) + '×' : '')) +
                 cell(t('free'), freeText(o.storage_free_mb)) +
                 '<button class="c-btn c-btn--small c-live-btn" type="button" data-live="' + esc(o.id) + '">' +
                 esc(t('live')) + '</button></div>';
@@ -544,8 +544,8 @@
     function renderCameraLive() {
         const live = state.owls.filter((o) => o.connected).map((o) =>
             '<div><span class="c-k">' + esc(o.id) + '</span><span class="c-num">' +
-            esc(shutterText(o.exposure_time_us)) + ' s · ' + (o.analogue_gain ? o.analogue_gain.toFixed(1) + '×' : '-') +
-            (o.colour_temperature ? ' · ' + Math.round(o.colour_temperature) + ' K' : '') + '</span></div>');
+            esc(shutterText(o.exposure_time_us)) + ' s | ' + (o.analogue_gain ? o.analogue_gain.toFixed(1) + '×' : '-') +
+            (o.colour_temperature ? ' | ' + Math.round(o.colour_temperature) + ' K' : '') + '</span></div>');
         $('camera-live').innerHTML = live.join('');
         $('restart-row').hidden = !state.owls.some((o) => o.connected && o.restart_required);
     }
@@ -604,7 +604,7 @@
         $('cloud-status').textContent = status;
         $('cloud-site').textContent = c.site || '-';
         $('cloud-owls').textContent = state.owls.map((o) =>
-            o.id + ' ' + (o.internet_ok === true ? t('ok_short') : o.internet_ok === false ? t('no_route') : '-')).join(' · ') || '-';
+            o.id + ' ' + (o.internet_ok === true ? t('ok_short') : o.internet_ok === false ? t('no_route') : '-')).join(' | ') || '-';
         $('replace-row').hidden = !c.configured;
         // Shown as text: a link would open a window the kiosk cannot close
         const link = $('portal-link');

@@ -278,11 +278,11 @@ function updateSlider(param) {
             var pMin = configParams[minParam];
             var pMax = configParams[maxParam];
             if (pMin && pMax) {
-                var minPct = sliderValueToPct(pMin, pMin.value);
-                var maxPct = sliderValueToPct(pMax, pMax.value);
-                fill.style.left = minPct + '%';
-                fill.style.width = Math.max(0, maxPct - minPct) + '%';
-            }
+        var minPct = sliderValueToPct(pMin, pMin.value);
+        var maxPct = sliderValueToPct(pMax, pMax.value);
+        fill.style.left = minPct + '%';
+        fill.style.width = Math.max(0, maxPct - minPct) + '%';
+    }
         } else {
             fill.style.left = '0';
             fill.style.width = pct + '%';
@@ -345,9 +345,9 @@ function syncSlidersFromStats(data) {
         if (data[key] !== undefined && data[key] !== null && configParams[key]) {
             var val = parseInt(data[key]);
             if (!isNaN(val) && val !== configParams[key].value) {
-                configParams[key].value = val;
-                changed = true;
-            }
+        configParams[key].value = val;
+        changed = true;
+    }
         }
     }
 
@@ -397,7 +397,6 @@ function updateSliderVisibility(algorithm) {
     var gobSliders = document.querySelectorAll('.config-slider-group:not(#crop-buffer-slider-group):not(#confidence-slider-group):not(#lut-sensitivity-slider-group)');
     var bufferSlider = document.getElementById('crop-buffer-slider-group');
     var confidenceSlider = document.getElementById('confidence-slider-group');
-    var dashConfidence = document.getElementById('dash-confidence-group');
     var lutSlider = document.getElementById('lut-sensitivity-slider-group');
     if (lutSlider) lutSlider.style.display = (algorithm === 'lut') ? '' : 'none';
 
@@ -409,8 +408,7 @@ function updateSliderVisibility(algorithm) {
             el.style.display = (el === minSizeGroup) ? '' : 'none';
         });
         if (bufferSlider) bufferSlider.style.display = 'none';
-        if (confidenceSlider) confidenceSlider.style.display = 'none';
-        if (dashConfidence) dashConfidence.style.display = 'none';
+        if (confidenceSlider) confidenceSlider.style.display = '';
         return;
     }
 
@@ -418,30 +416,13 @@ function updateSliderVisibility(algorithm) {
         gobSliders.forEach(function(el) { el.style.display = 'none'; });
         if (bufferSlider) bufferSlider.style.display = 'none';
         if (confidenceSlider) confidenceSlider.style.display = '';
-        if (dashConfidence) dashConfidence.style.display = '';
     } else if (algorithm === 'gog-hybrid') {
         gobSliders.forEach(function(el) { el.style.display = ''; });
         if (bufferSlider) bufferSlider.style.display = '';
         if (confidenceSlider) confidenceSlider.style.display = '';
-        if (dashConfidence) dashConfidence.style.display = '';
     } else {
         gobSliders.forEach(function(el) { el.style.display = ''; });
         if (bufferSlider) bufferSlider.style.display = 'none';
-        if (confidenceSlider) confidenceSlider.style.display = 'none';
-        if (dashConfidence) dashConfidence.style.display = 'none';
+        if (confidenceSlider) confidenceSlider.style.display = '';
     }
-}
-
-// ============================================
-// ADVANCED SETTINGS TOGGLE
-// ============================================
-
-function toggleAdvancedSettings() {
-    var toggle = document.getElementById('config-advanced-toggle');
-    var body = document.getElementById('config-advanced-body');
-
-    if (!toggle || !body) return;
-
-    var isOpen = toggle.classList.toggle('open');
-    body.classList.toggle('open', isOpen);
 }

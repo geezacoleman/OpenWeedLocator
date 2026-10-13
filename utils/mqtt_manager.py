@@ -28,6 +28,8 @@ from utils.config_manager import (
 )
 from utils.directory_manager import scan_sessions, collect_session_files, select_preview_images
 from utils import software_update
+from utils import ai_capability
+from utils.model_archive import dir_sha256, extract_model_zip, file_sha256, replace_dir
 from utils.session_metadata import clean_session_metadata, CAPTURE_PARAM_KEYS
 
 # Config keys whose live change requires re-deriving crop/lane/actuation geometry.
@@ -150,7 +152,7 @@ CLOUD_STATE_FIELDS = (
     'gps_latitude', 'gps_longitude', 'gps_available',
     'version', 'git_branch', 'git_commit', 'pi_model', 'os_pretty',
     'software_update', 'data_transfer', 'preview_upload',
-    'available_models', 'current_model', 'model_download',
+    'available_models', 'current_model', 'model_download', 'ai',
 )
 # Telemetry rides along but never counts as a change by itself.
 CLOUD_VOLATILE_FIELDS = frozenset({
@@ -283,6 +285,10 @@ def cloud_command_urls(command):
         if command.get('url'):
             urls.append(command['url'])
     return urls
+
+
+CHECKSUM_MISMATCH = ('Checksum mismatch: the download is damaged or is not '
+                     'the model that was sent. The previous model is kept.')
 
 
 def model_path_in(models_dir, name):
@@ -553,9 +559,16 @@ class OWLMQTTPublisher:
             'networked_mode': self.networked_mode,
             'broker_host': broker_host,
             'static_ip': static_ip or '',
-            # Algorithm state
+            # Algorithm state. 'algorithm' is the detector actually running;
+            # algorithm_pending is a requested switch the OWL has not loaded
+            # yet; algorithm_error is why the last load failed (None = fine,
+            # always present so controllers merging state drop a stale one).
             'algorithm': 'exhsv',
+            'algorithm_pending': None,
+            'algorithm_error': None,
             'model_available': False,
+            # What AI this unit can run (utils/ai_capability.py)
+            'ai': ai_capability.detect(),
             'crop_buffer_px': 20,
             'inference_resolution': 320,
             # Painted LUT detection profiles
@@ -1116,13 +1129,15 @@ class OWLMQTTPublisher:
                 except Exception:
                     valid = {'exg', 'exhsv', 'hsv', 'lut', 'gog', 'gog-hybrid'}
                 if value in valid:
-                    self.state['algorithm'] = value
+                    # Queued only. owl.py writes [System] algorithm into its
+                    # config once the detector has loaded: setting it here
+                    # first put gog into the config of units that cannot run
+                    # it, and they came back from a restart with no detection.
+                    with self.state_lock:
+                        self.state['algorithm_pending'] = value
                     if self.owl_instance:
                         self.owl_instance._pending_algorithm = value
-                        # Update config so heartbeat reads new value immediately
-                        if hasattr(self.owl_instance, 'config'):
-                            self.owl_instance.config.set('System', 'algorithm', value)
-                    self.logger.info(f"Algorithm set to: {value}")
+                    self.logger.info(f"Algorithm switch requested: {value}")
                 else:
                     self.logger.error(f"Invalid algorithm: {value}")
 
@@ -2024,6 +2039,8 @@ class OWLMQTTPublisher:
 
         ref = str(command.get('ref', 'main'))
         request_id = str(command.get('request_id', ''))
+        # Install AI: the same update, plus requirements-gog.txt
+        with_ai = command.get('with_ai') is True
 
         def _refuse(msg):
             self.logger.warning(f"update_software refused: {msg}")
@@ -2067,9 +2084,10 @@ class OWLMQTTPublisher:
         try:
             argv = software_update.update_argv(
                 ref, request_id, script=script,
-                status_file=self._update_status_path)
+                status_file=self._update_status_path, with_ai=with_ai)
             software_update.launch(argv, subprocess.Popen)
-            self.logger.warning(f"Software update launched: ref={ref} request_id={request_id}")
+            self.logger.warning(f"Software update launched: ref={ref} request_id={request_id} "
+                                f"with_ai={with_ai}")
         except Exception as e:
             _refuse(f"failed to launch updater: {e}")
 
@@ -2093,6 +2111,12 @@ class OWLMQTTPublisher:
             self.logger.debug("Could not read update status file")
             return  # keep previous state, retry next heartbeat
         self._update_status_stamp = stamp
+        # An update (Install AI included) can add or remove ultralytics, so
+        # the capability block is re-read once it completes.
+        if data['status'] == 'complete':
+            ai = ai_capability.detect()
+            with self.state_lock:
+                self.state['ai'] = ai
         with self.state_lock:
             self.state['software_update'] = data
 
@@ -2246,8 +2270,6 @@ class OWLMQTTPublisher:
         """Download a model file from the controller. Runs in background thread."""
         import urllib.request
         import ssl
-        import hashlib
-        import tempfile
 
         models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')
         os.makedirs(models_dir, exist_ok=True)
@@ -2301,67 +2323,17 @@ class OWLMQTTPublisher:
                             self.state['model_download']['progress'] = progress
                         self._publish_state()
 
-            # Place the file, then verify SHA256
+            # Verify first, then swap: the previous model is only removed
+            # once the new one has passed its checksum and is extracted.
             if is_archive:
-                # Extract zip to a directory
-                import zipfile
-                extract_dir = target
-                if os.path.isdir(extract_dir):
-                    import shutil
-                    shutil.rmtree(extract_dir)
-                os.makedirs(extract_dir)
-
-                with zipfile.ZipFile(tmp_path, 'r') as zf:
-                    zf.extractall(extract_dir)
-
-                os.unlink(tmp_path)
+                self._place_model_archive(tmp_path, target, expected_sha256)
                 tmp_path = None
-
-                # Verify SHA256 of extracted directory contents (matches
-                # how the controller computed it at upload time)
-                if expected_sha256:
-                    h = hashlib.sha256()
-                    for fp in sorted(Path(extract_dir).rglob('*')):
-                        if fp.is_file():
-                            with open(fp, 'rb') as hf:
-                                while True:
-                                    chunk = hf.read(65536)
-                                    if not chunk:
-                                        break
-                                    h.update(chunk)
-                    actual_sha256 = h.hexdigest()
-                    if actual_sha256 != expected_sha256:
-                        import shutil
-                        shutil.rmtree(extract_dir)
-                        raise ValueError(
-                            f'SHA256 mismatch: expected {expected_sha256[:12]}..., '
-                            f'got {actual_sha256[:12]}...'
-                        )
-                self.logger.info(f"Model extracted to {extract_dir}")
             else:
-                # Verify SHA256 of the file directly
-                if expected_sha256:
-                    h = hashlib.sha256()
-                    with open(tmp_path, 'rb') as f:
-                        while True:
-                            chunk = f.read(65536)
-                            if not chunk:
-                                break
-                            h.update(chunk)
-                    actual_sha256 = h.hexdigest()
-                    if actual_sha256 != expected_sha256:
-                        raise ValueError(
-                            f'SHA256 mismatch: expected {expected_sha256[:12]}..., '
-                            f'got {actual_sha256[:12]}...'
-                        )
-
-                # Atomic rename
-                final_path = target
-                if os.path.exists(final_path):
-                    os.unlink(final_path)
-                os.rename(tmp_path, final_path)
+                if expected_sha256 and file_sha256(tmp_path) != expected_sha256:
+                    raise ValueError(CHECKSUM_MISMATCH)
+                os.replace(tmp_path, target)
                 tmp_path = None
-                self.logger.info(f"Model saved to {final_path}")
+                self.logger.info(f"Model saved to {target}")
 
             # Update state: complete
             with self.state_lock:
@@ -2392,6 +2364,36 @@ class OWLMQTTPublisher:
                     'error': str(e)
                 }
             self._publish_state()
+
+    def _place_model_archive(self, zip_path, target, expected_sha256):
+        """Verify a downloaded NCNN zip and move its contents into `target`.
+
+        Noktura hashes the zip file itself, so that is checked first; the
+        networked controller hashes the extracted files (it deletes the zip
+        after upload), which is the fallback. Extraction goes to a dot-named
+        staging folder that is renamed into place, so any failure keeps the
+        previous model. The zip is always deleted.
+        """
+        import shutil
+        import zipfile
+
+        staging = tempfile.mkdtemp(dir=os.path.dirname(target), prefix='.staging-')
+        try:
+            zip_matches = not expected_sha256 or file_sha256(zip_path) == expected_sha256
+            try:
+                extract_model_zip(zip_path, staging)
+            except zipfile.BadZipFile:
+                raise ValueError('The model zip is damaged (not a valid zip file)')
+            if not zip_matches and dir_sha256(staging) != expected_sha256:
+                raise ValueError(CHECKSUM_MISMATCH)
+            replace_dir(staging, target)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+            try:
+                os.unlink(zip_path)
+            except OSError:
+                pass
+        self.logger.info(f"Model extracted to {target}")
 
     def _download_lut_profile(self, url, filename, expected_sha256,
                               apply_profile=False, apply_sensitivity=50):
@@ -2458,7 +2460,7 @@ class OWLMQTTPublisher:
                         name = name[:-4]
                     self.state['lut_profile'] = name
                     self.state['lut_sensitivity'] = apply_sensitivity
-                    self.state['algorithm'] = 'lut'
+                    self.state['algorithm_pending'] = 'lut'
                     self.owl_instance._pending_lut_sensitivity = apply_sensitivity
                     self.owl_instance._pending_lut_profile = name
                     self.owl_instance._pending_algorithm = 'lut'
@@ -2466,7 +2468,7 @@ class OWLMQTTPublisher:
                         self.owl_instance.config.set('GreenOnBrown', 'lut_profile', name)
                         self.owl_instance.config.set('GreenOnBrown', 'lut_sensitivity',
                                                      str(apply_sensitivity))
-                        self.owl_instance.config.set('System', 'algorithm', 'lut')
+                        # [System] algorithm is set by owl.py once lut loads
                     self.logger.info(f"LUT profile '{name}' queued for activation "
                                      f"(sensitivity {apply_sensitivity})")
             self._sync_parameters_to_state()
@@ -3153,8 +3155,11 @@ class OWLMQTTPublisher:
             models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')
             if not os.path.isdir(models_dir):
                 return False
-            # Check for NCNN subdirs (have .param files) or .pt files
+            # Check for NCNN subdirs (have .param files) or .pt files.
+            # Dot names are download staging / replaced folders.
             for item in os.listdir(models_dir):
+                if item.startswith('.'):
+                    continue
                 item_path = os.path.join(models_dir, item)
                 if item.endswith('.pt'):
                     return True
@@ -3174,6 +3179,8 @@ class OWLMQTTPublisher:
             if not os.path.isdir(models_dir):
                 return models
             for item in sorted(os.listdir(models_dir)):
+                if item.startswith('.'):
+                    continue
                 item_path = os.path.join(models_dir, item)
                 if item.endswith('.pt'):
                     models.append(item)
@@ -3348,10 +3355,19 @@ class OWLMQTTPublisher:
         """Refresh AI tab state from live OWL detector. Called every heartbeat."""
         if self.owl_instance is None:
             return
+        owl = self.owl_instance
+        running = getattr(owl, 'running_algorithm', None)
+        pending = getattr(owl, '_pending_algorithm', None)
+        model_available = self._check_model_available()
         with self.state_lock:
-            # Refresh algorithm from live config (handles runtime changes)
-            self.state['algorithm'] = self.owl_instance.config.get(
-                'System', 'algorithm', fallback=self.state.get('algorithm', 'exhsv'))
+            # The detector actually running (set by owl.py once it loads),
+            # never the config value: a failed AI load falls back to exhsv
+            # and the dashboards must show that. Until hoot() has built a
+            # detector the value from _sync_parameters_to_state stands.
+            if isinstance(running, str):
+                self.state['algorithm'] = running
+            self.state['algorithm_pending'] = pending if isinstance(pending, str) else None
+            self.state['model_available'] = model_available
 
             gog = getattr(self.owl_instance, '_gog_detector', None)
             # Use pending model name if OWL hasn't processed the swap yet,

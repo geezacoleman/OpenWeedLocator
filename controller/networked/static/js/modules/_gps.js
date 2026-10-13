@@ -6,58 +6,8 @@ let gpsPollingInterval = null;
 let gpsEnabled = false;
 const GPS_POLL_MS = 1000;
 
-// ============================================
-// TAB SWITCHING
-// ============================================
-
-function switchToOWLTab() {
-    document.getElementById('tab-owls').classList.add('active');
-    document.getElementById('tab-gps').classList.remove('active');
-    document.getElementById('tab-ai').classList.remove('active');
-    document.getElementById('tab-config').classList.remove('active');
-    document.getElementById('tab-agent').classList.remove('active');
-    document.getElementById('view-owls').style.display = '';
-    document.getElementById('view-gps').style.display = 'none';
-    document.getElementById('view-ai').style.display = 'none';
-    document.getElementById('view-config').style.display = 'none';
-    document.getElementById('view-agent').style.display = 'none';
-    aiTabActive = false;
-    stopGPSPolling();
-    stopConfigPreview();
-}
-
-function switchToGPSTab() {
-    document.getElementById('tab-gps').classList.add('active');
-    document.getElementById('tab-owls').classList.remove('active');
-    document.getElementById('tab-ai').classList.remove('active');
-    document.getElementById('tab-config').classList.remove('active');
-    document.getElementById('tab-agent').classList.remove('active');
-    document.getElementById('view-gps').style.display = '';
-    document.getElementById('view-owls').style.display = 'none';
-    document.getElementById('view-ai').style.display = 'none';
-    document.getElementById('view-config').style.display = 'none';
-    document.getElementById('view-agent').style.display = 'none';
-    aiTabActive = false;
-    startGPSPolling();
-    stopConfigPreview();
-    if (typeof window.gpsMapShow === 'function') window.gpsMapShow();
-}
-
-function switchToConfigTab() {
-    document.getElementById('tab-config').classList.add('active');
-    document.getElementById('tab-owls').classList.remove('active');
-    document.getElementById('tab-gps').classList.remove('active');
-    document.getElementById('tab-ai').classList.remove('active');
-    document.getElementById('tab-agent').classList.remove('active');
-    document.getElementById('view-config').style.display = '';
-    document.getElementById('view-owls').style.display = 'none';
-    document.getElementById('view-gps').style.display = 'none';
-    document.getElementById('view-ai').style.display = 'none';
-    document.getElementById('view-agent').style.display = 'none';
-    aiTabActive = false;
-    stopGPSPolling();
-    if (typeof startConfigPreview === 'function') startConfigPreview();
-}
+// Tab switching lives in _shell.js: Map starts GPS polling and the map,
+// leaving Map stops them.
 
 // ============================================
 // GPS POLLING

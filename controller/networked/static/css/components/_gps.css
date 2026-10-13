@@ -238,12 +238,17 @@
     background: white;
     border: 1px solid #dce1e8;
     border-radius: var(--radius-md);
-    padding: 0.4rem 0.7rem;
-    font-size: 0.8rem;
+    min-height: 44px;
+    min-width: 64px;
+    padding: 0 0.9rem;
+    font-size: 0.9rem;
     font-weight: 700;
     color: var(--text-dark);
     cursor: pointer;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+    display: block;
 }
+/* Glove-sized zoom buttons (leaflet.css draws 30 px under .leaflet-touch) */
+.leaflet-touch .leaflet-bar a, .leaflet-bar a { width: 44px; height: 44px; line-height: 44px; font-size: 22px; }
 .gps-map-btn:hover { background: #f5f7fa; }
 .gps-map-btn + .gps-map-btn { margin-top: 0.4rem; }

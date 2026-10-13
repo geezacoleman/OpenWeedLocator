@@ -3,27 +3,25 @@
 // Initialization, event listeners, cleanup
 //
 // Load order (all scripts loaded before this):
-//   1. /shared/js/api.js        - apiRequest(), abortAllRequests()
-//   2. /shared/js/utils.js      - formatUptime(), formatFileSize(), etc.
-//   3. /shared/js/toast.js      - showToast()
-//   4. /shared/js/config.js     - createConfigSection(), CONFIG_FIELD_DEFS
-//   5. modules/_core.js         - state vars, sendCommand()
-//   6. modules/_dashboard.js    - updateDashboard(), loadConfigDefaults()
-//   7. modules/_controls.js     - toggleMainDetection(), restartOWL()
-//   8. modules/_config_tab.js   - slider controls, preview, advanced
-//   9. modules/_video.js        - openVideoFeed(), downloadVideoFrame()
-//  10. modules/_config_editor.js - config editor, save as modal
-//  11. modules/_gps.js          - GPS tab, polling, tab switching
-//  12. modules/_actuation.js    - Actuation sliders, speed-adaptive
-//  13. modules/_ai_tab.js       - AI tab, model selection, class filtering
-// ============================================
-
-// ============================================
-// INITIALIZATION
+//   1. /shared/js/api.js, utils.js, toast.js, config.js, numpad.js, ...
+//   2. /shared/js/collect_i18n.js + collect_form.js - the shared record form
+//   3. /shared/js/owl_ui.js     - the redesign's shared components
+//   4. modules/_core.js         - state vars, sendCommand()
+//   5. modules/_dashboard.js    - updateDashboard() poll, loadConfigDefaults()
+//   6. modules/_controls.js     - spraying, recording, modes, power
+//   7. modules/_config_tab.js   - sliders, preview, geometry, profiles
+//   8. modules/_lut_panel.js    - painted profiles
+//   9. modules/_video.js        - video modal, frame grab
+//  10. modules/_config_editor.js - per-OWL INI editor, library
+//  11. modules/_gps.js + _gps_map.js - Map
+//  12. modules/_actuation.js    - Spraying (speed-adaptive), sensitivity
+//  13. modules/_shell.js        - the redesigned screens and the OWL rail
 // ============================================
 
 document.addEventListener('DOMContentLoaded', async () => {
+    Shell.init();
     setupEventListeners();
+    initRecordModal();
     await loadConfigDefaults();
     updateAllSliders();
     initConfigEditor();
@@ -53,29 +51,14 @@ function initGaugeArcs() {
     }
 }
 
-function switchToAgentTab() {
-    document.getElementById('tab-agent').classList.add('active');
-    document.getElementById('tab-owls').classList.remove('active');
-    document.getElementById('tab-gps').classList.remove('active');
-    document.getElementById('tab-ai').classList.remove('active');
-    document.getElementById('tab-config').classList.remove('active');
-    document.getElementById('view-agent').style.display = '';
-    document.getElementById('view-owls').style.display = 'none';
-    document.getElementById('view-gps').style.display = 'none';
-    document.getElementById('view-ai').style.display = 'none';
-    document.getElementById('view-config').style.display = 'none';
-    aiTabActive = false;
-    stopGPSPolling();
-    stopConfigPreview();
-}
-
 function setupEventListeners() {
     // Range/single sliders (knob drag, track click, fine-tune)
     initSliders();
 
-    // Config action buttons — broadcast to all OWLs
+    // Colour tuning / Profiles actions (scoped by the OWL rail)
     document.getElementById('apply-all-btn')?.addEventListener('click', sendAllToDevice);
     document.getElementById('save-all-btn')?.addEventListener('click', openSaveModal);
+    document.getElementById('profilesSave')?.addEventListener('click', openSaveModal);
     document.getElementById('load-preset-btn')?.addEventListener('click', loadPresetToDevice);
     document.getElementById('set-default-btn')?.addEventListener('click', setDefaultConfig);
 
@@ -86,25 +69,17 @@ function setupEventListeners() {
     // Restart-required notice
     document.getElementById('config-restart-btn')?.addEventListener('click', () => {
         sendCommand('all', 'restart_service');
-        showToast('Restarting OWLs…', 'info');
+        showToast('Restarting OWLs', 'info');
     });
 
-    // Advanced Settings — send to single device
+    // Advanced: send to one OWL
     document.getElementById('send-to-single-device-btn')?.addEventListener('click', sendToSingleDevice);
 
     // Delete preset from library
     document.getElementById('delete-preset-btn')?.addEventListener('click', deleteLibraryConfig);
 
-    // Preview device selector — swap feed live
+    // Preview device selector: swap feed live
     document.getElementById('config-preview-device')?.addEventListener('change', onPreviewDeviceChanged);
-
-    // Noktura cloud details — revealed on demand by clicking the cloud status
-    document.getElementById('cloud-status')?.addEventListener('click', function () {
-        document.getElementById('cloud-manage-block')?.classList.toggle('hidden');
-    });
-    document.getElementById('cloud-manage-close')?.addEventListener('click', function () {
-        document.getElementById('cloud-manage-block')?.classList.add('hidden');
-    });
 }
 
 // ============================================
@@ -115,7 +90,6 @@ window.addEventListener('beforeunload', () => {
     if (updateInterval) {
         clearInterval(updateInterval);
     }
-    aiTabActive = false;
     stopGPSPolling();
     stopActuationPolling();
     stopConfigPreview();

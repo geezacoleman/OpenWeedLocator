@@ -14,7 +14,7 @@
     background: var(--c-bg);
     color: var(--c-ink);
     font-size: var(--c-fs);
-    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-family: var(--font-body, "Inter", system-ui, sans-serif);
 }
 
 /* --- Top bar ------------------------------------------------------------- */

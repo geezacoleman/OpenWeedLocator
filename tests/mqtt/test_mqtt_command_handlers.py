@@ -436,9 +436,13 @@ class TestSaveConfigCommand:
 class TestSetAlgorithm:
     """Tests for set_algorithm command handler."""
 
-    def test_valid_algorithm_updates_state(self, mqtt_publisher, mock_owl):
+    def test_valid_algorithm_is_pending_until_loaded(self, mqtt_publisher, mock_owl):
+        """'algorithm' is what runs; a request is only pending until owl.py
+        has loaded the detector."""
+        mqtt_publisher.state['algorithm'] = 'exhsv'
         mqtt_publisher._handle_command({'action': 'set_algorithm', 'value': 'exg'})
-        assert mqtt_publisher.state['algorithm'] == 'exg'
+        assert mqtt_publisher.state['algorithm_pending'] == 'exg'
+        assert mqtt_publisher.state['algorithm'] == 'exhsv'
 
     def test_valid_algorithm_queues_on_owl(self, mqtt_publisher, mock_owl):
         mqtt_publisher._handle_command({'action': 'set_algorithm', 'value': 'hsv'})
@@ -456,7 +460,7 @@ class TestSetAlgorithm:
         assert algorithms, 'no valid algorithms reported'
         for algo in algorithms:
             mqtt_publisher._handle_command({'action': 'set_algorithm', 'value': algo})
-            assert mqtt_publisher.state['algorithm'] == algo
+            assert mqtt_publisher.state['algorithm_pending'] == algo
 
     def test_retired_algorithms_rejected(self, mqtt_publisher, mock_owl):
         """Algorithms deleted in v3.16 must not be selectable.
@@ -469,6 +473,7 @@ class TestSetAlgorithm:
         for algo in ('maxg', 'gndvi', 'exgr', 'nexg'):
             mqtt_publisher._handle_command({'action': 'set_algorithm', 'value': algo})
             assert mqtt_publisher.state['algorithm'] == 'exhsv'
+            assert mqtt_publisher.state['algorithm_pending'] is None
 
     def test_invalid_algorithm_rejected(self, mqtt_publisher, mock_owl):
         mqtt_publisher.state['algorithm'] = 'exhsv'
@@ -477,11 +482,14 @@ class TestSetAlgorithm:
 
     def test_case_insensitive(self, mqtt_publisher, mock_owl):
         mqtt_publisher._handle_command({'action': 'set_algorithm', 'value': 'EXG'})
-        assert mqtt_publisher.state['algorithm'] == 'exg'
+        assert mqtt_publisher.state['algorithm_pending'] == 'exg'
 
-    def test_updates_config_object(self, mqtt_publisher, mock_owl):
-        mqtt_publisher._handle_command({'action': 'set_algorithm', 'value': 'hsv'})
-        assert mock_owl.config.get('System', 'algorithm') == 'hsv'
+    def test_does_not_touch_config_before_the_detector_loads(self, mqtt_publisher, mock_owl):
+        """owl.py sets [System] algorithm only after a successful load; the
+        handler setting it first is how owl-1 kept gog without ultralytics."""
+        before = mock_owl.config.get('System', 'algorithm')
+        mqtt_publisher._handle_command({'action': 'set_algorithm', 'value': 'gog'})
+        assert mock_owl.config.get('System', 'algorithm') == before
 
 
 # ---------------------------------------------------------------------------
@@ -586,7 +594,8 @@ class TestSetConfigSection:
             'section': 'System',
             'params': {'algorithm': 'hsv'}
         })
-        assert mqtt_publisher.state['algorithm'] == 'hsv'
+        assert mqtt_publisher.state['algorithm_pending'] == 'hsv'
+        assert mock_owl._pending_algorithm == 'hsv'
 
     def test_generic_attribute_type_conversion(self, mqtt_publisher, mock_owl):
         """Generic section params with int/float types auto-convert from strings."""
@@ -948,6 +957,24 @@ class TestUpdateSoftware:
         mock_popen.assert_called_once()
         argv = mock_popen.call_args[0][0]
         assert argv == self._expected_argv(mqtt_publisher, 'main', 'req-1')
+
+    def test_with_ai_adds_the_flag(self, mqtt_publisher, mock_owl):
+        """Install AI from the networked controller or the cloud."""
+        with patch('subprocess.Popen') as mock_popen:
+            mqtt_publisher._handle_command({
+                'action': 'update_software', 'ref': 'main', 'request_id': 'req-ai',
+                'with_ai': True,
+            })
+        argv = mock_popen.call_args[0][0]
+        assert argv == self._expected_argv(mqtt_publisher, 'main', 'req-ai') + ['--with-ai']
+
+    def test_with_ai_must_be_true_not_truthy(self, mqtt_publisher, mock_owl):
+        with patch('subprocess.Popen') as mock_popen:
+            mqtt_publisher._handle_command({
+                'action': 'update_software', 'ref': 'main', 'request_id': 'r',
+                'with_ai': 'yes',
+            })
+        assert '--with-ai' not in mock_popen.call_args[0][0]
 
     def test_seeds_starting_state_with_request_id(self, mqtt_publisher, mock_owl):
         with patch('subprocess.Popen'):

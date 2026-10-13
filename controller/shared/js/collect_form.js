@@ -49,10 +49,15 @@
             '<button type="button" data-value="' + o[0] + '"' + (o[1] ? ' data-i18n="' + o[1] + '"' : '') + '>' +
             (o[2] || '') + '</button>').join('') + '</div>';
     }
+    // steppers: wrap the number in − / + buttons (the standalone and
+    // networked Settings panels); the input still opens the numpad.
+    let steppers = false;
     function numberField(id, setting, label, step, min, max) {
+        const input = '<input class="c-input" id="' + id + '" type="number" step="' + step + '" min="' + min + '" max="' + max +
+            '" data-numpad data-setting="' + setting + '" />';
         return '<div class="c-field"><label class="c-label" for="' + id + '" data-i18n="' + label + '"></label>' +
-            '<input class="c-input" id="' + id + '" type="number" step="' + step + '" min="' + min + '" max="' + max +
-            '" data-numpad data-setting="' + setting + '" /></div>';
+            (steppers ? '<div class="c-stepper"><button type="button" data-step="-1" aria-label="Less">−</button>' + input +
+                '<button type="button" data-step="1" aria-label="More">+</button></div>' : input) + '</div>';
     }
 
     // opts.sampleModes: which "Take images" choices to offer (networked:
@@ -61,6 +66,7 @@
     function captureFormHTML(opts) {
         const o = opts || {};
         const modes = o.sampleModes || ['distance', 'time'];
+        steppers = !!o.steppers;
         let html = '';
         html += '<div class="c-field"><span class="c-label" data-i18n="record_as"></span>' +
             seg('record_mode', [['images', 'stills'], ['video', 'video']]) + '</div>';
@@ -96,6 +102,15 @@
             b.addEventListener('click', () => o.onChange(s.dataset.setting, b.dataset.value))));
         container.querySelectorAll('input[data-setting]').forEach((input) =>
             input.addEventListener('change', () => o.onChange(input.dataset.setting, input.value)));
+        container.querySelectorAll('.c-stepper button[data-step]').forEach((b) => b.addEventListener('click', () => {
+            const input = b.parentElement.querySelector('input');
+            const step = parseFloat(input.step) || 1;
+            const cur = parseFloat(input.value);
+            if (isNaN(cur)) return;
+            const next = Math.min(parseFloat(input.max), Math.max(parseFloat(input.min), cur + step * Number(b.dataset.step)));
+            input.value = String(Math.round(next * 100) / 100);
+            input.dispatchEvent(new Event('change'));
+        }));
 
         function render(capture) {
             const c = capture || {};
@@ -207,24 +222,31 @@
             if (value) { pick.crop = value.toLowerCase(); refresh(); }
         });
         $in(scrim, '#modal-cancel').addEventListener('click', close);
+        // open(lastPick, {startLabel, onStart}) reuses the form for other
+        // jobs, e.g. adding details to a session already recorded
+        let onStart = o.onStart;
         startBtn.addEventListener('click', () => {
             if (!pick.crop) return;
             pick.notes = $in(scrim, '#meta-notes').value.trim();
             const seasonal = (presets().seasonal_crops || []).indexOf(pick.crop) !== -1;
+            const handler = onStart;
             close();
-            o.onStart({
+            handler({
                 crop: pick.crop, crop_season: seasonal ? pick.crop_season : '',
                 weather: pick.weather, lighting: pick.lighting, purpose: pick.purpose, notes: pick.notes,
             });
         });
 
-        function open(lastPick) {
-            if (lastPick) pick = defaultPick(Object.assign({}, lastPick, { notes: pick.notes }));
+        function open(lastPick, mode) {
+            const m = mode || {};
+            if (lastPick) pick = defaultPick(Object.assign({}, lastPick, { notes: m.onStart ? (lastPick.notes || '') : pick.notes }));
+            onStart = m.onStart || o.onStart;
+            startBtn.textContent = m.startLabel || t('start');
             refresh();
             $in(scrim, '#meta-notes').value = pick.notes || '';
             scrim.hidden = false;
         }
-        function close() { scrim.hidden = true; }
+        function close() { scrim.hidden = true; onStart = o.onStart; }
         function setPick(last) { pick = defaultPick(last); }
 
         return { el: scrim, open: open, close: close, refresh: refresh, setPick: setPick };

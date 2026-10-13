@@ -89,7 +89,6 @@ function initDashboardControls() {
  */
 function initControlButtons() {
     const buttons = {
-        'downloadFrame': downloadFrame,
         'start-recording': startRecording,
         'stop-recording': stopRecording,
         'start-detection': startDetection,
@@ -571,7 +570,7 @@ const confidenceLevels = { low: 0.65, medium: 0.50, high: 0.35 };
 const CONFIDENCE_TOLERANCE = 0.02;
 const BUILTIN_SENSITIVITY_NAMES = ['low', 'medium', 'high'];
 const sensitivityModeCaptions = {
-    gob: 'Colour sensitivity',
+    gob: 'Sensitivity',
     lut: 'Painted sensitivity',
     gog: 'AI sensitivity',
     hybrid: 'Colour + AI sensitivity'
@@ -668,7 +667,7 @@ function renderSensitivityButtons(presets, active) {
 
     container.innerHTML = '';
     // Builtin labels
-    const builtinLabels = { low: 'Low', medium: 'Med', high: 'High' };
+    const builtinLabels = { low: 'Low', medium: 'Medium', high: 'High' };
 
     // Builtins first, then custom
     const builtins = presets.filter(p => p.is_builtin);
@@ -676,9 +675,7 @@ function renderSensitivityButtons(presets, active) {
     const ordered = [...builtins, ...custom];
 
     // Adjust segmented class for button count
-    container.className = 'segmented';
-    if (ordered.length === 2) container.classList.add('segmented--two');
-    else if (ordered.length === 3) container.classList.add('segmented--three');
+    container.className = 'ou-seg';
 
     ordered.forEach(preset => {
         const btn = document.createElement('button');
@@ -1069,13 +1066,15 @@ function updatePipelineModeUI(algorithm) {
     }
 }
 
-function updateModeAvailability(modelAvailable) {
+// AI and Hybrid get an amber dot (not a disabled grey) when this OWL can't
+// run them; tapping one then explains why (_shell.js renderDetectNotice).
+function updateModeAvailability(canRun) {
     // querySelectorAll: keep every copy of the mode selector in sync
     document.querySelectorAll(
         '.mode-btn[data-mode="gog"], .mode-btn[data-mode="hybrid"]'
     ).forEach(function(btn) {
-        btn.classList.toggle('disabled', !modelAvailable);
-        btn.title = modelAvailable ? '' : 'Needs an AI model on the OWL';
+        btn.classList.toggle('blocked', !canRun);
+        btn.title = canRun ? '' : 'AI can not run on this OWL yet';
     });
 }
 
@@ -1086,91 +1085,19 @@ function updatePaintedChipHint(hasProfiles) {
     });
 }
 
-/* --------------------------------------------------------------------------
-   Algorithm Error State
-   -------------------------------------------------------------------------- */
-
-// Show (text) or hide (null) a banner under the detection mode row.
-function setModeBanner(id, text) {
-    var banner = document.getElementById(id);
-    if (text) {
-        if (!banner) {
-            banner = document.createElement('div');
-            banner.id = id;
-            banner.className = 'algorithm-error-banner';
-            var modeRow = document.querySelector('.pipeline-mode');
-            if (modeRow) modeRow.parentNode.insertBefore(banner, modeRow.nextSibling);
-        }
-        banner.textContent = text;
-        banner.style.display = '';
-    } else if (banner) {
-        banner.style.display = 'none';
-    }
-}
-
-function updateAlgorithmError(error) {
-    setModeBanner('algorithmErrorBanner',
-        error ? 'Detection unavailable: ' + error + '. Switch algorithm to recover.' : null);
-}
-
-// OWL spraying fault (camera lost, control lost, relay stuck)
-const FAULT_ACTIONS = {
-    nozzles_off: 'Nozzles are off.',
-    blanket: 'Blanket spraying while spraying is switched on.',
-    spot_spray: 'Spot spraying continues.'
-};
-function updateFault(fault) {
-    setModeBanner('faultBanner', fault
-        ? 'Fault: ' + fault.message + '. ' + (FAULT_ACTIONS[fault.action] || '')
-        : null);
-}
+/* Algorithm errors, faults and speed warnings are drawn as notices on
+   Field by _shell.js from the polled stats. */
 
 /* --------------------------------------------------------------------------
    Preview (Dashboard inline stream)
    -------------------------------------------------------------------------- */
 
-let previewActive = false;
-
 function initPreview() {
-    const toggleBtn = document.getElementById('previewToggle');
-    if (toggleBtn) {
-        toggleBtn.addEventListener('click', togglePreview);
-    }
-
+    // The live view on Field is always on while Field is open (_shell.js)
     const fullscreenBtn = document.getElementById('fullscreenBtn');
-    if (fullscreenBtn) {
-        fullscreenBtn.addEventListener('click', toggleFullscreen);
-    }
-
+    if (fullscreenBtn) fullscreenBtn.addEventListener('click', toggleFullscreen);
     const downloadBtn = document.getElementById('downloadFrame');
-    if (downloadBtn) {
-        downloadBtn.addEventListener('click', downloadFrame);
-    }
-}
-
-function togglePreview() {
-    const container = document.getElementById('previewContainer');
-    const btn = document.getElementById('previewToggle');
-    const img = document.getElementById('stream-img');
-    if (!container) return;
-
-    previewActive = !previewActive;
-    container.classList.toggle('hidden', !previewActive);
-    if (btn) btn.classList.toggle('active', previewActive);
-
-    if (previewActive && img) {
-        img.src = '/video_feed?t=' + Date.now();
-        img.onerror = function() {
-            var overlay = document.getElementById('stream-status-overlay');
-            if (overlay) overlay.classList.remove('hidden');
-            img.style.display = 'none';
-        };
-        img.onload = function() {
-            var overlay = document.getElementById('stream-status-overlay');
-            if (overlay) overlay.classList.add('hidden');
-            img.style.display = 'block';
-        };
-    }
+    if (downloadBtn) downloadBtn.addEventListener('click', downloadFrame);
 }
 
 function toggleFullscreen() {
@@ -1203,6 +1130,7 @@ function setGPS(enabled) {
     if (container) {
         container.querySelectorAll('.seg-btn[data-gps]').forEach(b => {
             b.classList.toggle('active', (b.dataset.gps === 'on') === enabled);
+            b.classList.toggle('on', (b.dataset.gps === 'on') === enabled);
         });
     }
     if (enabled) startGPS();
@@ -1270,7 +1198,7 @@ function updateGPSIndicator() {
     if (!isGpsEnabled || !gpsData) {
         indicator.classList.remove('gps-active', 'gps-good', 'gps-medium', 'gps-poor');
         indicator.classList.add('gps-off');
-        if (statusText) statusText.textContent = isGpsEnabled ? 'Acquiring…' : 'Off';
+        if (statusText) statusText.textContent = isGpsEnabled ? 'Looking for a position' : 'Off';
         return;
     }
 

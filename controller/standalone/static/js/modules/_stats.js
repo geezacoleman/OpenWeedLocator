@@ -38,42 +38,12 @@ function watchStorageWarning(data) {
     }
 }
 
-// Spray timing labels (farmer wording). Keys are the OWL's actuation_source.
-const SPRAY_TIMING_LABELS = {
-    'device-gps': 'OWL GPS timing',
-    controller: 'Controller timing',
-    config: 'Fixed timing'
-};
-
-// Last seen speed warning; notifications fire on transitions only
+// Last seen speed warning; notifications fire on transitions only (the
+// warning itself shows as a notice on Field, drawn by _shell.js)
 let lastSpeedWarning = null;
 
-function updateSprayTiming(data) {
-    const line = document.getElementById('sprayTimingLine');
-    if (line) {
-        const parts = [];
-        if (typeof data.speed_kmh === 'number') parts.push(data.speed_kmh.toFixed(1) + ' km/h');
-        if (SPRAY_TIMING_LABELS[data.actuation_source]) parts.push(SPRAY_TIMING_LABELS[data.actuation_source]);
-        if (typeof data.latency_ms === 'number') parts.push('Processing ' + Math.round(data.latency_ms) + ' ms');
-        // Only worth a line once there is a speed or a measured processing time
-        const show = typeof data.speed_kmh === 'number' || typeof data.latency_ms === 'number';
-        line.textContent = show ? parts.join(' · ') : '';
-        line.classList.toggle('hidden', !show);
-    }
-
+function watchSpeedWarning(data) {
     const warning = data.speed_warning || '';
-    let banner = document.getElementById('speedWarningBanner');
-    if (warning && !banner && line) {
-        banner = document.createElement('div');
-        banner.id = 'speedWarningBanner';
-        banner.className = 'algorithm-error-banner';
-        line.parentNode.insertBefore(banner, line.nextSibling);
-    }
-    if (banner) {
-        banner.textContent = warning;
-        banner.style.display = warning ? '' : 'none';
-    }
-
     if (warning === lastSpeedWarning) return;
     const previous = lastSpeedWarning;
     lastSpeedWarning = warning;
@@ -85,7 +55,8 @@ function updateSprayTiming(data) {
 }
 
 /**
- * Update system stats from API
+ * Update system stats from API. The redesigned screens are drawn by
+ * Shell.update (_shell.js); the older modules sync their own pieces here.
  */
 function updateSystemStats() {
     apiRequest('/api/system_stats')
@@ -103,155 +74,55 @@ function updateSystemStats() {
                 setHighResContextBadge(lastRpiVersion);
             }
 
-            // Gradient chips
-            setText('cpuChipVal', `${data.cpu_percent}%`);
-            setText('memChipVal', `${data.memory_percent}%`);
-            setText('tempChipVal', `${data.cpu_temp}°C`);
-
-            // Active config indicator (subtle line below the feed). Trim the
-            // .ini and the _YYYYMMDD_HHMMSS timestamp to a readable name.
-            const cfgLine = document.getElementById('activeConfigLine');
-            if (cfgLine) {
-                // The autosave working file displays as its source preset; the
-                // unsaved marker only shows when content differs from the source
-                const rawName = data.config_source || data.config_name || '';
-                let cfgName = rawName.replace(/\.ini$/, '');
-                cfgName = cfgName.replace(/_\d{8}_\d{6}$/, '').replace(/[-_]+/g, ' ').trim();
-                if (cfgName && data.config_unsaved) cfgName += ' - unsaved changes';
-                if (cfgName) {
-                    setText('activeConfigName', cfgName);
-                    cfgLine.classList.remove('hidden');
-                } else {
-                    cfgLine.classList.add('hidden');
-                }
-            }
-
-            // Power button reflects owl_running
-            setPowerButtonState(!!data.owl_running);
-
-            // Detection & recording big switches (and status chip)
-            const detectionOn = !!(data.detection_running ?? data.detection_enable);
-            const recordingOn = !!(data.recording ?? data.image_sample_enable);
-
-            const nozzlesOn = data.detection_mode === 2;
-            syncSwitch('detectSwitch', nozzlesOn ? false : detectionOn);
-            syncSwitch('recordSwitch', recordingOn);
-            syncSwitch('nozzleSwitch', nozzlesOn);
-            syncSwitch('trackingSwitch', !!data.tracking_enabled);
-
-            // Current run's crop and conditions under the Record switch
-            if (typeof renderSessionChips === 'function') {
-                renderSessionChips(recordingOn, data.session_metadata, data.capture);
-            }
-
-            // Show/hide track stability panel based on tracking state
-            var stabilityTile = document.getElementById('track-stability-tile');
-            if (stabilityTile) {
-                stabilityTile.style.display = data.tracking_enabled ? '' : 'none';
-            }
-
-            // OWL service status chip
-            const owlChip = document.getElementById('owlStatusChip');
-            const owlText = document.getElementById('owlStatusText');
-            if (owlChip && owlText) {
-                if (data.owl_running) {
-                    owlChip.classList.add('on');
-                    owlChip.classList.remove('off');
-                    owlText.textContent = 'Running';
-                } else {
-                    owlChip.classList.remove('on');
-                    owlChip.classList.add('off');
-                    owlText.textContent = 'Stopped';
-                }
-            }
+            // Track stability only matters while tracking is on
+            const stabilityTile = document.getElementById('track-stability-tile');
+            if (stabilityTile) stabilityTile.style.display = data.tracking_enabled ? '' : 'none';
 
             // Sensitivity buttons (mode-aware: reads the axis matching the
             // active detection mode, highlights nothing on a custom value)
-            if (typeof syncSensitivityFromStats === 'function') {
-                syncSensitivityFromStats(data);
-            }
+            if (typeof syncSensitivityFromStats === 'function') syncSensitivityFromStats(data);
 
-            // Fan Auto/100 + RPM
+            // Fan Auto / full speed + RPM
             const fanMode = normalizeFanMode(data.fan_status);
             document.querySelectorAll('.seg-btn[data-fan]').forEach(b => {
                 b.classList.toggle('active', b.dataset.fan === fanMode);
             });
             const rpmEl = document.getElementById('fanRpmReadout');
             if (rpmEl) {
-                const rpm = data?.fan_status?.rpm;
-                rpmEl.textContent = (typeof rpm === 'number') ? `${rpm} rpm` : '--';
+                const fan = data.fan_status || {};
+                rpmEl.textContent = fan.is_rpi5
+                    ? ((typeof fan.rpm === 'number') ? `${fan.rpm} rpm` : '--')
+                    : 'Fan control needs a Raspberry Pi 5';
             }
 
-            // Storage warning transitions (internal/eMMC mode): notify once
-            // per state change, never per poll
+            // Storage and speed warnings: notify once per state change
             watchStorageWarning(data);
+            watchSpeedWarning(data);
 
-            // Spray timing line + forward-speed warning
-            updateSprayTiming(data);
+            if (typeof updateCloudManageBlock === 'function') updateCloudManageBlock(data);
+            if (typeof syncSlidersFromStats === 'function') syncSlidersFromStats(data);
+            if (typeof syncLutPanelFromStats === 'function') syncLutPanelFromStats(data);
 
-            // Header online/offline
-            const statusDot = document.getElementById('statusDot');
-            const statusText = document.getElementById('statusText');
-            if (statusDot && statusText) {
-                statusDot.classList.toggle('connected', !!data.owl_running);
-                statusText.textContent = data.owl_running ? 'Online' : 'Offline';
-            }
-
-            // Header cloud (Noktura) link status
-            renderCloudStatus(
-                document.getElementById('cloudStatusDot'),
-                document.getElementById('cloudStatusText'),
-                data
-            );
-            if (typeof updateCloudManageBlock === 'function') {
-                updateCloudManageBlock(data);
-            }
-
-            // Sync AI tab if function exists
-            if (typeof syncAITabFromStats === 'function') {
-                syncAITabFromStats(data);
-            }
-
-            // Sync config sliders from MQTT state
-            if (typeof syncSlidersFromStats === 'function') {
-                syncSlidersFromStats(data);
-            }
-
-            // Sync painted LUT panel (config tab)
-            if (typeof syncLutPanelFromStats === 'function') {
-                syncLutPanelFromStats(data);
-            }
-
-            // Update hardware lock UI based on controller status
+            // Hardware lock UI based on controller status
             updateHardwareLockUI();
 
             // Pipeline mode selector
             if (typeof updatePipelineModeUI === 'function' && data.algorithm) {
                 updatePipelineModeUI(data.algorithm);
             }
-            if (typeof updateModeAvailability === 'function') {
-                updateModeAvailability(!!data.model_available);
-            }
             if (typeof updatePaintedChipHint === 'function') {
                 updatePaintedChipHint((data.available_lut_profiles || []).length > 0);
             }
+            if (typeof OWLWidget !== 'undefined') OWLWidget._broadcastState(data);
 
-            // Algorithm error banner
-            if (typeof updateAlgorithmError === 'function') {
-                updateAlgorithmError(data.algorithm_error);
-            }
-            if (typeof updateFault === 'function') {
-                updateFault(data.fault);
-            }
-            if (typeof OWLWidget !== 'undefined') {
-                OWLWidget._broadcastState(data);
-            }
-
-            // Live white balance readout + calibration progress (Config tab)
+            // Live white balance readout + calibration progress (Camera page)
             if (typeof updateAwbReadout === 'function') {
                 updateAwbReadout(data.camera, data.awb_calibration,
                     typeof onAwbCalibrationComplete === 'function' ? onAwbCalibrationComplete : null);
             }
+
+            // The redesigned screens (switches, notices, stat cells, AI page)
+            if (typeof Shell !== 'undefined') Shell.update(data);
         })
         .catch(err => {
             // Silent fail for stats polling
@@ -259,29 +130,6 @@ function updateSystemStats() {
         .finally(() => {
             checkForErrors();
         });
-
-    // Helper functions
-    function setText(id, text) {
-        const el = document.getElementById(id);
-        if (el) el.textContent = text;
-    }
-
-    function syncSwitch(id, on) {
-        const btn = document.getElementById(id);
-        if (!btn) return;
-        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-        const state = btn.querySelector('.switch-state');
-        if (state) state.textContent = on ? 'ON' : 'OFF';
-    }
-
-    function setPowerButtonState(on) {
-        const btn = document.getElementById('owlPowerBtn');
-        if (!btn) return;
-
-        btn.classList.remove('booting', 'stopping');
-        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-        btn.classList.toggle('on', on);
-    }
 }
 
 /**

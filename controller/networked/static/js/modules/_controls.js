@@ -1,212 +1,164 @@
 // ============================================
-// OWL Central Controller - Main Action Buttons
-// Detection/recording toggles, OWL restart
+// OWL Central Controller - main controls
+// Spraying, recording, nozzles, tracking, detection mode, restart, power.
+// Every control acts on the rail selection: currentScope() is 'all' or one
+// OWL's id (_shell.js). Recording stays fleet-wide: one run, one run id,
+// started and stopped through /api/collect/* like the Collect screen.
 // ============================================
 
-// Main buttons follow what the OWLs report, not only what was last pressed:
-// an OWL that refused (no drive), faulted or rebooted otherwise still showed
+function scopeTarget() {
+    return (typeof currentScope === 'function') ? currentScope() : 'all';
+}
+
+function scopeName() {
+    const t = scopeTarget();
+    if (t === 'all') return 'all OWLs';
+    const owl = owlsData[t] || {};
+    return owl.friendly_name || t;
+}
+
+// Connected OWLs the current selection covers
+function scopedOwls() {
+    const t = scopeTarget();
+    return Object.keys(owlsData).filter((id) => owlsData[id] && owlsData[id].connected &&
+        (t === 'all' || id === t)).map((id) => Object.assign({ _id: id }, owlsData[id]));
+}
+
+// Switches follow what the OWLs report, not only what was last pressed: an
+// OWL that refused (no drive), faulted or rebooted otherwise still showed
 // as running. Skipped briefly after a press while the OWLs catch up.
 let _mainPressAt = 0;
-function syncMainButtons() {
-    if (Date.now() - _mainPressAt < 3000) return;
-    const online = Object.values(owlsData).filter((o) => o && o.connected);
-    if (!online.length) return;
-    const detecting = online.some((o) => o.detection_enable);
-    const recording = online.some((o) => o.image_sample_enable);
-    const det = document.getElementById('main-detection-btn');
-    if (det) {
-        det.classList.toggle('off', detecting);
-        det.textContent = detecting ? 'Stop Detection' : 'Start Detection';
-    }
-    const rec = document.getElementById('main-recording-btn');
-    if (rec) {
-        rec.classList.toggle('active', recording);
-        rec.textContent = recording ? 'Stop Recording' : 'Start Recording';
-    }
-    globalDetectionEnabled = detecting;
-    globalRecordingEnabled = recording;
-}
+function mainPressRecent() { return Date.now() - _mainPressAt < 3000; }
 
 function toggleMainDetection() {
     _mainPressAt = Date.now();
-    const btn = document.getElementById('main-detection-btn');
-    const nozzleBtn = document.getElementById('main-nozzles-btn');
-
-    if (btn.classList.contains('off')) {
-        // Currently stopping, so start
-        btn.classList.remove('off');
-        btn.textContent = 'Start Detection';
+    const target = scopeTarget();
+    if (globalDetectionEnabled) {
         globalDetectionEnabled = false;
-        sendCommand('all', 'toggle_detection', false);
-        showToast('Detection stopped on all OWLs', 'info');
+        sendCommand(target, 'toggle_detection', false);
+        showToast('Spraying off on ' + scopeName(), 'info');
     } else {
-        // Starting detection — turn off nozzles if active
-        if (globalNozzlesActive && nozzleBtn) {
-            nozzleBtn.classList.remove('active');
-            nozzleBtn.textContent = 'All Nozzles';
+        // Starting detection turns blanket spraying off first
+        if (globalNozzlesActive) {
             globalNozzlesActive = false;
-            sendCommand('all', 'toggle_all_nozzles', false);
+            sendCommand(target, 'toggle_all_nozzles', false);
         }
-        btn.classList.add('off');
-        btn.textContent = 'Stop Detection';
         globalDetectionEnabled = true;
-        sendCommand('all', 'toggle_detection', true);
-        showToast('Detection started on all OWLs', 'success');
+        sendCommand(target, 'toggle_detection', true);
+        showToast('Spraying on ' + scopeName(), 'success');
     }
-}
-
-function toggleMainRecording() {
-    _mainPressAt = Date.now();
-    const btn = document.getElementById('main-recording-btn');
-
-    if (btn.classList.contains('active')) {
-        // Currently on, so turn off
-        btn.classList.remove('active');
-        btn.textContent = 'Start Recording';
-        globalRecordingEnabled = false;
-        sendCommand('all', 'toggle_recording', false);
-        showToast('Recording stopped on all OWLs', 'info');
-    } else {
-        // Check if any connected OWL is silently clamping its configured
-        // resolution (Pi 3/4 safety limit). Override + restart only the OWLs
-        // that are actually being clamped — don't push the flag to Pi 5s that
-        // never had a clamp to bypass.
-        var clampedOwls = _findClampedOWLs();
-        if (clampedOwls.length > 0 && typeof showHighResWarningModal === 'function') {
-            var first = clampedOwls[0];
-            showHighResWarningModal(
-                first.rpi,
-                first.requestedW, first.requestedH,
-                first.actualW, first.actualH,
-                function onCancel() { /* recording stays off */ },
-                function onOverride() {
-                    var ids = clampedOwls.map(function(o) { return o.deviceId; });
-                    var pending = ids.map(function(id) {
-                        return sendCommand(id, 'set_config_section', {
-                                section: 'Camera',
-                                params: {allow_high_resolution: 'True'}
-                            })
-                            .then(function() { return sendCommand(id, 'save_config', {}); })
-                            .then(function() { return restartOWL(id); });
-                    });
-                    Promise.all(pending).then(function() {
-                        showToast(
-                            'High-resolution override saved on ' + ids.join(', ') +
-                            '. Restarting. Start recording when back online.',
-                            'info'
-                        );
-                    });
-                }
-            );
-            return;
-        }
-
-        // Check if any connected OWL has resolution below max
-        var lowResOwl = _findLowResolutionOWL();
-        if (lowResOwl && typeof showResolutionWarningModal === 'function') {
-            showResolutionWarningModal(lowResOwl.w, lowResOwl.h,
-                function onAccept() {
-                    // Change resolution on all OWLs, save (copy-on-write), then restart
-                    sendCommand('all', 'set_config_section', {
-                        section: 'Camera',
-                        params: {resolution_width: String(OWL_MAX_RES_WIDTH), resolution_height: String(OWL_MAX_RES_HEIGHT)}
-                    })
-                    .then(function() { return sendCommand('all', 'save_config', {}); })
-                    .then(function() {
-                        for (var id in owlsData) {
-                            if (owlsData[id] && owlsData[id].connected) {
-                                restartOWL(id);
-                            }
-                        }
-                        showToast('Resolution changed. Restarting all OWLs. Start recording when they are back online.', 'info');
-                    });
-                },
-                function onContinue() {
-                    openSessionMetadataModal(btn);
-                }
-            );
-            return;
-        }
-
-        openSessionMetadataModal(btn);
-    }
-}
-
-function _doToggleRecordingOn(btn) {
-    _mainPressAt = Date.now();
-    btn.classList.add('active');
-    btn.textContent = 'Stop Recording';
-    globalRecordingEnabled = true;
-    sendCommand('all', 'toggle_recording', true);
-    showToast('Recording started on all OWLs', 'success');
+    if (typeof Shell !== 'undefined') Shell.render();
 }
 
 // ============================================
-// SESSION METADATA MODAL
-// Ports the standalone session-info flow. OWL-side handler
-// (`set_session_metadata` in utils/mqtt_manager.py) writes
-// session_metadata.json into the active session directory.
+// RECORDING: the shared "What are you recording?" form (collect_form.js),
+// started with /api/collect/start like the Collect screen and standalone.
 // ============================================
 
-var _pendingRecordingBtn = null;
+let _recordModal = null;
+let _collectConfig = { presets: {}, capture: {}, last_pick: null };
 
-function openSessionMetadataModal(btn) {
-    var modal = document.getElementById('session-metadata-modal');
-    if (!modal) {
-        // Fallback: no modal rendered — start recording without metadata
-        _doToggleRecordingOn(btn);
+function initRecordModal() {
+    if (!window.CollectForm || !window.CollectI18n) return;
+    const scope = document.createElement('div');
+    scope.className = 'c-scope';
+    document.body.appendChild(scope);
+    _recordModal = CollectForm.mountRecordModal({
+        parent: scope,
+        presets: () => _collectConfig.presets,
+        onStart: startCollectRecording,
+    });
+    fetch('/api/collect/config').then((r) => r.json()).then((data) => {
+        _collectConfig = data;
+        CollectI18n.setLang(data.language || 'en');
+        CollectI18n.apply(scope);
+        _recordModal.setPick(data.last_pick);
+        _recordModal.refresh();
+        if (typeof Shell !== 'undefined') Shell.onCollectConfig(data);
+    }).catch(() => CollectI18n.apply(scope));
+}
+
+function openRecordModal() {
+    if (_recordModal) _recordModal.open();
+    else startCollectRecording({});
+}
+
+function startCollectRecording(metadata) {
+    _mainPressAt = Date.now();
+    fetch('/api/collect/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ metadata: metadata }),
+    }).then((r) => r.json().then((data) => ({ ok: r.ok, data: data }))).then(({ ok, data }) => {
+        if (!ok || !data.success) throw new Error(data.error || 'Could not start recording');
+        globalRecordingEnabled = true;
+        _collectConfig.last_pick = metadata;
+        showToast('Recording on all OWLs', 'success');
+        setTimeout(updateDashboard, 400);
+    }).catch((e) => showToast(e.message, 'error'));
+}
+
+async function toggleMainRecording() {
+    if (globalRecordingEnabled) {
+        const ok = await OwlUI.confirm({ title: 'Stop recording on all OWLs?', ok: 'Stop', okClass: 'stop', cancel: 'Keep recording' });
+        if (!ok) return;
+        _mainPressAt = Date.now();
+        fetch('/api/collect/stop', { method: 'POST' }).then((r) => r.json()).then((data) => {
+            if (!data.success) throw new Error(data.error || 'Could not stop recording');
+            globalRecordingEnabled = false;
+            showToast('Recording stopped', 'info');
+            setTimeout(updateDashboard, 400);
+        }).catch((e) => showToast(e.message, 'error'));
         return;
     }
 
-    _pendingRecordingBtn = btn;
-
-    // Reset inputs each open — no pre-fill (N-OWL, last-used is ambiguous).
-    var ids = ['meta-field-name', 'meta-crop', 'meta-weather', 'meta-vehicle'];
-    for (var i = 0; i < ids.length; i++) {
-        var el = document.getElementById(ids[i]);
-        if (el) el.value = '';
+    // Any connected OWL silently clamping its configured resolution (Pi 3/4
+    // safety limit): offer the override + restart for those OWLs only.
+    var clampedOwls = _findClampedOWLs();
+    if (clampedOwls.length > 0 && typeof showHighResWarningModal === 'function') {
+        var first = clampedOwls[0];
+        showHighResWarningModal(
+            first.rpi, first.requestedW, first.requestedH, first.actualW, first.actualH,
+            function onCancel() { /* recording stays off */ },
+            function onOverride() {
+                var ids = clampedOwls.map(function(o) { return o.deviceId; });
+                var pending = ids.map(function(id) {
+                    return sendCommand(id, 'set_config_section', {
+                        section: 'Camera', params: {allow_high_resolution: 'True'}
+                    })
+                        .then(function() { return sendCommand(id, 'save_config', {}); })
+                        .then(function() { return restartOWL(id); });
+                });
+                Promise.all(pending).then(function() {
+                    showToast('High-resolution override saved on ' + ids.join(', ') +
+                        '. Restarting. Start recording when they are back online.', 'info');
+                });
+            }
+        );
+        return;
     }
 
-    // Save disabled until Field name has non-empty trimmed value.
-    // Using .oninput overwrites any prior listener, so this stays idempotent
-    // across repeated opens without DOM cloning (which would temporarily
-    // detach the input from Numpad's focusin delegation).
-    var saveBtn = document.getElementById('session-metadata-save-btn');
-    var fieldNameEl = document.getElementById('meta-field-name');
-    if (saveBtn) saveBtn.disabled = true;
-    if (fieldNameEl) {
-        fieldNameEl.oninput = function () {
-            if (saveBtn) saveBtn.disabled = fieldNameEl.value.trim().length === 0;
-        };
+    var lowResOwl = _findLowResolutionOWL();
+    if (lowResOwl && typeof showResolutionWarningModal === 'function') {
+        showResolutionWarningModal(lowResOwl.w, lowResOwl.h,
+            function onAccept() {
+                sendCommand('all', 'set_config_section', {
+                    section: 'Camera',
+                    params: {resolution_width: String(OWL_MAX_RES_WIDTH), resolution_height: String(OWL_MAX_RES_HEIGHT)}
+                })
+                    .then(function() { return sendCommand('all', 'save_config', {}); })
+                    .then(function() {
+                        for (var id in owlsData) {
+                            if (owlsData[id] && owlsData[id].connected) restartOWL(id);
+                        }
+                        showToast('Resolution changed. Restarting all OWLs. Start recording when they are back online.', 'info');
+                    });
+            },
+            function onContinue() { openRecordModal(); }
+        );
+        return;
     }
 
-    // Do NOT auto-focus — we don't want the on-screen keyboard popping up
-    // unrequested. User taps the field they want to fill; Numpad auto-attaches
-    // via data-numpad and opens its own keyboard overlay on focusin.
-    modal.classList.add('show');
-}
-
-function closeSessionMetadataModal(didSave) {
-    var modal = document.getElementById('session-metadata-modal');
-    if (modal) modal.classList.remove('show');
-
-    var btn = _pendingRecordingBtn;
-    _pendingRecordingBtn = null;
-    if (!btn) return;
-
-    if (didSave) {
-        var meta = {
-            field_name: (document.getElementById('meta-field-name') || {}).value || '',
-            crop:       (document.getElementById('meta-crop') || {}).value || '',
-            weather:    (document.getElementById('meta-weather') || {}).value || '',
-            vehicle:    (document.getElementById('meta-vehicle') || {}).value || '',
-        };
-        // Fire metadata first so it's on the OWL when recording begins. Fan-out
-        // publishes to every connected OWL; the OWL handler writes session_metadata.json.
-        sendCommand('all', 'set_session_metadata', meta);
-    }
-
-    _doToggleRecordingOn(btn);
+    openRecordModal();
 }
 
 /**
@@ -245,72 +197,50 @@ function _findLowResolutionOWL() {
         if (owl && owl.connected) {
             var w = owl.resolution_width || 0;
             var h = owl.resolution_height || 0;
-            if (isResolutionBelowMax(w, h)) {
-                return {w: w, h: h};
-            }
+            if (isResolutionBelowMax(w, h)) return {w: w, h: h};
         }
     }
     return null;
 }
 
 // ============================================
-// ALL NOZZLES TOGGLE
+// ALL NOZZLES (blanket spray) AND HOLD TO SPRAY
 // ============================================
 
 function toggleAllNozzles() {
-    const btn = document.getElementById('main-nozzles-btn');
-    const detBtn = document.getElementById('main-detection-btn');
-
-    if (btn.classList.contains('active')) {
-        // Turn off
-        btn.classList.remove('active');
-        btn.textContent = 'All Nozzles';
+    _mainPressAt = Date.now();
+    const target = scopeTarget();
+    if (globalNozzlesActive) {
         globalNozzlesActive = false;
-        sendCommand('all', 'toggle_all_nozzles', false);
-        showToast('All nozzles OFF', 'info');
+        sendCommand(target, 'toggle_all_nozzles', false);
+        showToast('Blanket spray off', 'info');
     } else {
-        // Turn on — also disable detection
-        btn.classList.add('active');
-        btn.textContent = 'Nozzles ON';
         globalNozzlesActive = true;
-        sendCommand('all', 'toggle_all_nozzles', true);
-        // Visual: show detection as off
-        if (detBtn) {
-            detBtn.classList.remove('off');
-            detBtn.textContent = 'Start Detection';
-        }
         globalDetectionEnabled = false;
-        showToast('All nozzles ON, detection disabled', 'warning');
+        sendCommand(target, 'toggle_all_nozzles', true);
+        showToast('Blanket spray on ' + scopeName() + ', detection off', 'warning');
     }
+    if (typeof Shell !== 'undefined') Shell.render();
 }
 
 // ============================================
-// TRACKING TOGGLE
+// TRACKING
 // ============================================
 
 function toggleTracking() {
-    const btn = document.getElementById('main-tracking-btn');
-    if (!btn) return;
-
-    if (btn.classList.contains('active')) {
-        btn.classList.remove('active');
-        btn.textContent = 'Tracking';
+    const target = scopeTarget();
+    if (globalTrackingEnabled) {
         globalTrackingEnabled = false;
-        sendCommand('all', 'set_tracking', false);
-        showToast('Tracking disabled', 'info');
+        sendCommand(target, 'set_tracking', false);
+        showToast('Tracking off', 'info');
     } else {
-        btn.classList.add('active');
-        btn.textContent = 'Tracking ON';
         globalTrackingEnabled = true;
-        sendCommand('all', 'set_tracking', true);
-        showToast('Tracking enabled', 'success');
+        sendCommand(target, 'set_tracking', true);
+        showToast('Tracking on', 'success');
     }
-
-    // Show/hide track stability panel
     const stabilityPanel = document.getElementById('track-stability-panel');
-    if (stabilityPanel) {
-        stabilityPanel.style.display = globalTrackingEnabled ? '' : 'none';
-    }
+    if (stabilityPanel) stabilityPanel.style.display = globalTrackingEnabled ? '' : 'none';
+    if (typeof Shell !== 'undefined') Shell.render();
 }
 
 // ============================================
@@ -328,16 +258,10 @@ var TRACK_STABILITY_PRESETS = {
 function setTrackStability(level) {
     const selector = document.getElementById('track-stability-selector');
     if (!selector) return;
-
-    selector.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
-    const target = selector.querySelector(`[data-stability="${level}"]`);
-    if (target) target.classList.add('active');
-
+    selector.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.stability === level));
     const preset = TRACK_STABILITY_PRESETS[level];
-    if (preset) {
-        sendCommand('all', 'set_config_section', { section: 'Tracking', params: preset });
-    }
-    showToast(`Track stability: ${level}`, 'info');
+    if (preset) sendCommand(scopeTarget(), 'set_config_section', { section: 'Tracking', params: preset });
+    showToast('Track stability: ' + level, 'info');
 }
 
 // ============================================
@@ -345,256 +269,169 @@ function setTrackStability(level) {
 // ============================================
 
 async function restartOWL(deviceId) {
-    // btn may be null when called programmatically (e.g. resolution change)
-    const btn = (typeof event !== 'undefined' && event && event.currentTarget)
-        ? event.currentTarget : null;
-    if (btn) {
-        btn.disabled = true;
-        btn.textContent = 'Restarting...';
-    }
-
     try {
         const res = await fetch('/api/owl/' + deviceId + '/restart', { method: 'POST' });
         const data = await res.json();
-
-        if (data.success) {
-            showToast('Restart command sent to ' + deviceId, 'success');
-        } else {
-            showToast('Restart failed: ' + (data.error || 'Unknown'), 'error');
-        }
+        if (data.success) showToast('Restarting ' + deviceId, 'success');
+        else showToast('Restart failed: ' + (data.error || 'unknown'), 'error');
     } catch (err) {
-        showToast('Error restarting ' + deviceId, 'error');
-    }
-
-    // Re-enable after 10 seconds (OWL needs time to restart)
-    if (btn) {
-        setTimeout(() => {
-            btn.disabled = false;
-            btn.textContent = 'Restart';
-        }, 10000);
+        showToast('Could not reach ' + deviceId, 'error');
     }
 }
 
 // ============================================
-// PIPELINE MODE SELECTOR
+// DETECTION MODE (Detect with)
 // ============================================
 
 // Remember GoB algorithm when switching modes
 let lastGoBAlgorithm = 'exhsv';
 let pendingMode = null;
-// Active mode — the sensitivity dial reads this to know which axis it drives
+let pendingModeAt = 0;
+// Active mode: the sensitivity control reads this to know which axis it drives
 let currentPipelineMode = 'gob';
 
+// Same contract as the standalone: /api/algorithm/set, 400 + a plain reason
+// when an OWL can't run it. Blocked AI is caught before asking (_shell.js).
 function setPipelineMode(mode) {
     var btn = document.querySelector('.mode-btn[data-mode="' + mode + '"]');
-    if (!btn || btn.classList.contains('disabled') || btn.classList.contains('loading')) return;
+    if (!btn || btn.classList.contains('loading')) return;
 
     if (mode === 'lut') {
         // Painted mode activates via profile apply (a profile must exist);
         // with none saved, reveal the panel so Paint weeds is reachable.
         if (btn.classList.contains('no-profiles')) {
             showToast('No painted profiles yet. Use Paint weeds to create one', 'info');
+            if (typeof Shell !== 'undefined') Shell.openSettings('colour');
         }
         if (typeof activateLutMode === 'function') activateLutMode();
         return;
     }
     if (typeof clearLutPanelForced === 'function') clearLutPanelForced();
 
-    // Map mode to algorithm value
-    var algorithm;
-    if (mode === 'gob') {
-        algorithm = lastGoBAlgorithm;
-    } else if (mode === 'gog') {
-        algorithm = 'gog';
-    } else if (mode === 'hybrid') {
-        algorithm = 'gog-hybrid';
-    } else {
-        return;
-    }
+    var algorithm = mode === 'gob' ? lastGoBAlgorithm : mode === 'gog' ? 'gog' : mode === 'hybrid' ? 'gog-hybrid' : null;
+    if (!algorithm) return;
 
-    // Show loading state
     pendingMode = mode;
+    pendingModeAt = Date.now();
     btn.classList.add('loading');
-
-    // Send command to all OWLs
-    sendCommand('all', 'set_algorithm', algorithm);
+    fetch('/api/algorithm/set', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ algorithm: algorithm, device_id: scopeTarget() }),
+    }).then((r) => r.json().then((data) => ({ ok: r.ok, data: data }))).then(({ ok, data }) => {
+        if (!ok || !data.success) throw new Error(data.error || 'The OWLs did not switch');
+        setTimeout(updateDashboard, 400);
+    }).catch((e) => {
+        pendingMode = null;
+        btn.classList.remove('loading');
+        if (typeof Shell !== 'undefined') Shell.modeRefused(mode, e.message);
+        else showToast(e.message, 'error');
+    });
 }
 
 function updatePipelineModeUI(algorithm) {
+    // Don't overwrite the buttons while a switch is loading (10 s at most)
+    if (pendingMode && Date.now() - pendingModeAt < 10000) return;
     var mode;
-    if (algorithm === 'gog') {
-        mode = 'gog';
-    } else if (algorithm === 'gog-hybrid') {
-        mode = 'hybrid';
-    } else if (algorithm === 'lut') {
-        mode = 'lut';   // never remember 'lut' as a GoB algorithm
-    } else {
+    if (algorithm === 'gog') mode = 'gog';
+    else if (algorithm === 'gog-hybrid') mode = 'hybrid';
+    else if (algorithm === 'lut') mode = 'lut';   // never remember 'lut' as a GoB algorithm
+    else {
         mode = 'gob';
-        // Remember the GoB algorithm for switching back
         if (algorithm) lastGoBAlgorithm = algorithm;
     }
 
     // A locally-forced Painted panel (no profiles applied yet) keeps its
     // button lit even though the fleet still reports a GoB algorithm.
-    if (mode === 'gob' && typeof isLutPanelForced === 'function' && isLutPanelForced()) {
-        mode = 'lut';
-    }
+    if (mode === 'gob' && typeof isLutPanelForced === 'function' && isLutPanelForced()) mode = 'lut';
 
-    // Update button states (pipeline buttons only — not e.g. stability .mode-btn)
+    // Pipeline buttons only, not the stability .mode-btn
     document.querySelectorAll('.mode-btn[data-mode]').forEach(function(btn) {
         btn.classList.remove('active', 'loading');
-        if (btn.dataset.mode === mode) {
-            btn.classList.add('active');
-        }
+        if (btn.dataset.mode === mode) btn.classList.add('active');
     });
 
     pendingMode = null;
     currentPipelineMode = mode;
-    if (typeof updateSensitivityModeCaption === 'function') {
-        updateSensitivityModeCaption();
-    }
-
-    // Update slider visibility ('lut' also covers the forced-panel case)
-    if (typeof updateSliderVisibility === 'function') {
-        updateSliderVisibility(mode === 'lut' ? 'lut' : algorithm);
-    }
+    if (typeof updateSensitivityModeCaption === 'function') updateSensitivityModeCaption();
+    if (typeof updateSliderVisibility === 'function') updateSliderVisibility(mode === 'lut' ? 'lut' : algorithm);
 }
 
 // ============================================
-// SYSTEM SHUTDOWN
+// POWER: all OWLs and this controller
 // ============================================
 
-var _shutdownTimer = null;
-
-function initiateShutdown() {
-    var overlay = document.getElementById('shutdown-overlay');
-    var confirmBtn = document.getElementById('btn-confirm-shutdown');
-    var countdownEl = document.getElementById('shutdown-countdown');
-    if (!overlay) return;
-
-    overlay.classList.add('visible');
-    confirmBtn.disabled = true;
-
-    var remaining = 3;
-    countdownEl.textContent = remaining;
-
-    _shutdownTimer = setInterval(function() {
-        remaining--;
-        countdownEl.textContent = remaining;
-        if (remaining <= 0) {
-            clearInterval(_shutdownTimer);
-            _shutdownTimer = null;
-            confirmBtn.disabled = false;
-            confirmBtn.textContent = 'Confirm';
-        }
-    }, 1000);
+async function initiateShutdown() {
+    const recording = Object.values(owlsData).some((o) => o && o.connected && o.image_sample_enable);
+    const ok = await OwlUI.confirm({
+        title: 'Turn off all OWLs and this screen?',
+        body: (recording ? 'Recording stops first. Photos already saved are kept. ' : '') +
+            'Wait 30 seconds after the screen goes dark before you switch off the power.',
+        ok: 'Turn off', okClass: 'stop', countdown: 3,
+    });
+    if (ok) executeShutdown();
 }
 
 function executeShutdown() {
-    var confirmBtn = document.getElementById('btn-confirm-shutdown');
     var powerBtn = document.getElementById('power-btn');
-    if (confirmBtn) {
-        confirmBtn.disabled = true;
-        confirmBtn.textContent = 'Shutting down...';
-    }
     if (powerBtn) powerBtn.disabled = true;
-
     fetch('/api/system/shutdown', { method: 'POST' })
         .then(function(res) { return res.json(); })
         .then(function(data) {
-            if (data.success) {
-                showToast('Shutting down all OWLs and controller...', 'info');
-            } else {
-                showToast('Shutdown failed: ' + (data.error || 'Unknown'), 'error');
-                cancelShutdown();
+            if (data.success) showToast('Turning off all OWLs and this screen', 'info');
+            else {
+                showToast('Could not turn off: ' + (data.error || 'unknown'), 'error');
+                if (powerBtn) powerBtn.disabled = false;
             }
         })
-        .catch(function() {
-            showToast('Shutdown request sent', 'info');
-        });
-}
-
-function cancelShutdown() {
-    var overlay = document.getElementById('shutdown-overlay');
-    var confirmBtn = document.getElementById('btn-confirm-shutdown');
-    var countdownEl = document.getElementById('shutdown-countdown');
-
-    if (_shutdownTimer) {
-        clearInterval(_shutdownTimer);
-        _shutdownTimer = null;
-    }
-
-    if (overlay) overlay.classList.remove('visible');
-    if (confirmBtn) {
-        confirmBtn.disabled = true;
-        confirmBtn.textContent = 'Confirm (3)';
-    }
-    if (countdownEl) countdownEl.textContent = '3';
+        .catch(function() { showToast('Turn off sent', 'info'); });
 }
 
 // ============================================
-// FIX SCREEN
+// FIX SCREEN (Maintenance)
 // ============================================
 
-function fixScreen() {
-    if (!confirm('Reinstall touchscreen firmware?\n\nThis may take up to 2 minutes. A reboot will be needed after.')) {
-        return;
-    }
-
-    var btn = document.getElementById('btn-fix-screen');
-    if (btn) {
-        btn.disabled = true;
-        btn.textContent = 'Fixing...';
-    }
-
+async function fixScreen() {
+    const ok = await OwlUI.confirm({
+        title: 'Reinstall the touchscreen firmware?',
+        body: 'This can take up to 2 minutes. The controller needs a restart after it.',
+        ok: 'Reinstall',
+    });
+    if (!ok) return;
+    const row = document.getElementById('btn-fix-screen');
+    const meta = row ? row.querySelector('.meta') : null;
+    if (row) row.disabled = true;
+    if (meta) meta.textContent = 'Reinstalling';
     fetch('/api/system/fix-screen', { method: 'POST' })
         .then(function(res) { return res.json(); })
         .then(function(data) {
             if (data.success && data.needs_reboot) {
-                showToast('Firmware reinstalled. Reboot needed.', 'success');
-                if (btn) {
-                    btn.textContent = 'Reboot Now';
-                    btn.disabled = false;
-                    btn.onclick = function() {
-                        btn.disabled = true;
-                        btn.textContent = 'Rebooting...';
-                        fetch('/api/system/reboot', { method: 'POST' })
-                            .then(function() {
-                                showToast('Rebooting controller...', 'info');
-                            })
-                            .catch(function() {
-                                showToast('Reboot request sent', 'info');
-                            });
-                    };
-                }
+                showToast('Firmware reinstalled. Restart the controller.', 'success');
+                if (meta) meta.textContent = 'Done. Restart the controller to finish.';
             } else {
-                showToast('Fix screen failed: ' + (data.error || 'Unknown'), 'error');
-                if (btn) {
-                    btn.disabled = false;
-                    btn.textContent = 'Fix Screen';
-                }
+                showToast('Fix screen failed: ' + (data.error || 'unknown'), 'error');
+                if (meta) meta.textContent = 'Reinstalls the touchscreen firmware';
             }
         })
         .catch(function(err) {
             showToast('Error: ' + err.message, 'error');
-            if (btn) {
-                btn.disabled = false;
-                btn.textContent = 'Fix Screen';
-            }
-        });
+            if (meta) meta.textContent = 'Reinstalls the touchscreen firmware';
+        })
+        .finally(function() { if (row) row.disabled = false; });
 }
 
 // ============================================
 // MODE AVAILABILITY
 // ============================================
 
-function updateModeAvailability(modelAvailable) {
-    // querySelectorAll: the mode selector is duplicated on the config tab
+// AI and Hybrid get an amber dot (not a disabled grey) when an OWL in the
+// selection can't run them; tapping one then explains why (_shell.js).
+function updateModeAvailability(canRun) {
+    // querySelectorAll: every copy of the mode selector stays in sync
     document.querySelectorAll(
         '.mode-btn[data-mode="gog"], .mode-btn[data-mode="hybrid"]'
     ).forEach(function(btn) {
-        btn.classList.toggle('disabled', !modelAvailable);
-        btn.title = modelAvailable ? '' : 'Needs an AI model on the OWL';
+        btn.classList.toggle('blocked', !canRun);
+        btn.title = canRun ? '' : 'AI can not run on every OWL yet';
     });
 }
 
