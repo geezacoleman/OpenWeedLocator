@@ -176,6 +176,24 @@ def cloud_state_out_topic(networked_mode, device_id):
     return f'cloud_out/{device_id}/state' if networked_mode else 'cloud_out/state'
 
 
+TRANSFER_IDLE_STATUSES = (None, '', 'idle', 'complete', 'error')
+
+
+def transfer_covers(transfer, session_id):
+    """True while `transfer` (the OWL's data_transfer state) is uploading
+    session_id, a run inside it, or the day folder that holds it. Deleting
+    any of those mid-upload would corrupt the zip Noktura receives."""
+    transfer = transfer or {}
+    if transfer.get('status') in TRANSFER_IDLE_STATUSES:
+        return False
+    uploading = str(transfer.get('session_date') or '')
+    if not uploading:
+        return True   # busy but unnamed: refuse rather than guess
+    return (uploading == session_id
+            or uploading.startswith(session_id + '/')
+            or session_id.startswith(uploading + '/'))
+
+
 def trim_sessions(sessions):
     """data_sessions reduced to the keys Noktura uses. Always the full list:
     Noktura treats a missing session as deleted from the device."""
@@ -2931,9 +2949,7 @@ class OWLMQTTPublisher:
             real_active = os.path.realpath(active)
             if real_active == real_target or real_active.startswith(real_target + os.sep):
                 return 'recording into it'
-        uploading = str(transfer.get('session_date') or '')
-        if (transfer.get('status') not in (None, 'idle', 'complete', 'error')
-                and (uploading == session_id or uploading.startswith(session_id + '/'))):
+        if transfer_covers(transfer, session_id):
             return 'uploading it'
         return ''
 
@@ -3891,6 +3907,10 @@ class DashMQTTSubscriber:
         if silent:
             state['detection_enable'] = False
             state['image_sample_enable'] = False
+            # ...nor uploads: a stale "uploading" must not block deletes and
+            # updates forever (owl.py restarts with an idle transfer)
+            if isinstance(state.get('data_transfer'), dict):
+                state['data_transfer'] = dict(state['data_transfer'], status='idle')
         return state
 
     def get_weed_detect_indicator(self):

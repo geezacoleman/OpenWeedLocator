@@ -25,7 +25,7 @@ import urllib.request
 import urllib.error
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-from utils.mqtt_manager import DashMQTTSubscriber
+from utils.mqtt_manager import DashMQTTSubscriber, transfer_covers
 from utils.session_metadata import (clean_session_metadata, COLLECT_CAPTURE_DEFAULTS, COLLECT_LANGUAGES,
                                     OWL_CAPTURE_DEFAULTS, capture_settings_from, coerce_capture_value,
                                     ini_value, last_pick_values, load_last_pick, merge_session_file,
@@ -1578,6 +1578,13 @@ class OWLDashboard:
             if _is_recording_into(session_id):
                 return jsonify({'error': 'This session is recording now. '
                                          'Stop recording first.'}), 409
+
+            # Nor the run the OWL is uploading to Noktura itself (or its day
+            # folder): the phone's "Free up space on the OWL" lands here.
+            mqtt_state = self.mqtt_client.get_state() if self.mqtt_client else {}
+            if transfer_covers(mqtt_state.get('data_transfer'), session_id):
+                return jsonify({'error': 'The OWL is uploading this run to Noktura now. '
+                                         'Try again when it has finished.'}), 409
 
             try:
                 shutil.rmtree(session_path)
