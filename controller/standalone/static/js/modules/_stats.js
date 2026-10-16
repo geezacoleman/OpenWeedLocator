@@ -74,10 +74,6 @@ function updateSystemStats() {
                 setHighResContextBadge(lastRpiVersion);
             }
 
-            // Track stability only matters while tracking is on
-            const stabilityTile = document.getElementById('track-stability-tile');
-            if (stabilityTile) stabilityTile.style.display = data.tracking_enabled ? '' : 'none';
-
             // Sensitivity buttons (mode-aware: reads the axis matching the
             // active detection mode, highlights nothing on a custom value)
             if (typeof syncSensitivityFromStats === 'function') syncSensitivityFromStats(data);

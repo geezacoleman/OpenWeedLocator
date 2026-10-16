@@ -48,7 +48,7 @@
     <img class="ou-logo" src="/shared/images/owl-face-white.svg" alt="">
     <div class="ou-title"><b id="unitName">OWL</b><span id="activeConfigName"></span></div>
     <nav class="ou-nav" id="mainNav" role="tablist" aria-label="Pages">
-        <button type="button" role="tab" data-view="field" aria-selected="true"><span data-icon="field"></span>Field</button>
+        <button type="button" role="tab" data-view="field" aria-selected="true"><span data-icon="field"></span>Dashboard</button>
         <button type="button" role="tab" data-view="data" aria-selected="false"><span data-icon="data"></span>Data</button>
         <button type="button" role="tab" data-view="settings" aria-selected="false"><span data-icon="settings"></span>Settings</button>
     </nav>
@@ -57,26 +57,16 @@
 </header>
 
 <main class="ou-main">
-    <!-- ============ FIELD ============ -->
+    <!-- ============ DASHBOARD ============ -->
+    <!-- view id stays 'field' (nav, tests and the app share it) -->
     <section class="ou-view ou-body ou-field is-on" id="view-field">
         <div class="ou-col">
-            <div class="ou-live" id="previewContainer">
-                <div class="config-preview-frame" id="stream-frame">
-                    <img id="stream-img" class="ou-feed" alt="Camera view">
-                </div>
-                <p class="ou-live-empty" id="stream-status-overlay" hidden>No picture from the camera. Check the OWL is running.</p>
-                <span class="ou-chip tl"><span class="ou-dot rec"></span>Live</span>
-                <div class="ou-live-tools">
-                    <button type="button" class="ou-tool" id="geometryBtn" aria-label="Adjust crop and spray zone" onclick="toggleStandaloneGeometry()"><span data-icon="crop"></span></button>
-                    <button type="button" class="ou-tool" id="downloadFrame" aria-label="Save frame"><span data-icon="down"></span></button>
-                    <button type="button" class="ou-tool" id="fullscreenBtn" aria-label="Full screen"><span data-icon="full"></span></button>
-                </div>
-                <span class="ou-chip br" id="liveMode">Colour detection</span>
-            </div>
-        </div>
-        <div class="ou-col ou-ctrl" id="fieldControls">
             <button type="button" class="ou-card ou-prime is-big" id="detectSwitch" aria-pressed="false">
                 <span class="txt"><span class="ttl">Spraying</span><span class="hint" id="sprayHint">Off</span></span>
+                <span class="ou-sw"></span>
+            </button>
+            <button type="button" class="ou-card ou-prime" id="nozzleSwitch" aria-pressed="false">
+                <span class="txt"><span class="ttl">Blanket spray</span><span class="hint" id="blanketHint">Every nozzle on, detection off</span></span>
                 <span class="ou-sw"></span>
             </button>
             <button type="button" class="ou-card ou-prime" id="recordSwitch" aria-pressed="false">
@@ -85,6 +75,12 @@
                 <span class="ou-sw"></span>
             </button>
             <div class="ou-notices" id="fieldNotices"></div>
+            <button type="button" class="ou-card ou-prime ou-liveb" id="liveOpen">
+                <span class="ou-liveic"><span data-icon="cam"></span></span>
+                <span class="txt"><span class="ttl">Live view</span><span class="hint" id="liveMode">Colour detection</span></span>
+            </button>
+        </div>
+        <div class="ou-col" id="fieldControls">
             <div class="ou-group">
                 <span class="ou-label">Detect with</span>
                 <div class="ou-seg pipeline-mode" id="pipeline-mode-selector">
@@ -103,11 +99,39 @@
                     <button type="button" class="seg-btn" data-sens="high">High</button>
                 </div>
             </div>
+            <div class="ou-f"><span class="lbl">AI confidence <span class="ou-why" hidden></span></span>
+                <div class="ou-kstep" data-pstep="confidence" data-step="1" data-label="AI confidence (%)"></div></div>
+            <div class="ou-f"><span class="lbl">Crop buffer (px) <span class="ou-why" hidden></span></span>
+                <div class="ou-kstep" data-pstep="crop_buffer_px" data-step="1" data-label="Crop buffer (px)"></div></div>
             <div data-widget-slot="dashboard_controls" class="widget-slot"></div>
             <div class="ou-stats ou-push" id="fieldStats"></div>
-            <div class="geo-panel" id="standalone-geometry-panel"></div>
         </div>
     </section>
+
+    <!-- Live view: a pop-up over the page (the camera stream only runs
+         while it is open). The crop and spray zone is edited in it. -->
+    <div class="ou-livepop" id="livePop" hidden>
+        <div class="ou-livepop-head">
+            <b>Live view</b>
+            <button type="button" class="ou-btn ghost slim" data-close>Close</button>
+        </div>
+        <div class="ou-livepop-body">
+            <div class="ou-live" id="previewContainer">
+                <div class="config-preview-frame" id="stream-frame">
+                    <img id="stream-img" class="ou-feed" alt="Camera view">
+                </div>
+                <p class="ou-live-empty" id="stream-status-overlay" hidden>No picture from the camera. Check the OWL is running.</p>
+                <span class="ou-chip tl"><span class="ou-dot rec"></span>Live</span>
+                <div class="ou-live-tools">
+                    <button type="button" class="ou-tool" id="geometryBtn" aria-label="Adjust crop and spray zone" onclick="toggleStandaloneGeometry()"><span data-icon="crop"></span></button>
+                    <button type="button" class="ou-tool" id="downloadFrame" aria-label="Save frame"><span data-icon="down"></span></button>
+                    <button type="button" class="ou-tool" id="fullscreenBtn" aria-label="Full screen"><span data-icon="full"></span></button>
+                </div>
+                <span class="ou-chip br" id="liveModeChip">Colour detection</span>
+            </div>
+            <div class="geo-panel" id="standalone-geometry-panel"></div>
+        </div>
+    </div>
 
     <!-- ============ DATA ============ -->
     <section class="ou-view ou-body ou-data" id="view-data">
@@ -142,7 +166,7 @@
             <button type="button" data-panel="nozzles" aria-selected="false"><span data-icon="nozzle"></span><span class="t">Test nozzles</span></button>
             <button type="button" data-panel="noktura" aria-selected="false"><span data-icon="cloud"></span><span class="t">Noktura</span></button>
             <button type="button" data-panel="maint" aria-selected="false"><span data-icon="tool"></span><span class="t">Maintenance</span></button>
-            <button type="button" data-panel="advanced" aria-selected="false"><span data-icon="code"></span><span class="t">Advanced</span></button>
+            <button type="button" data-panel="assistant" aria-selected="false"><span data-icon="chat"></span><span class="t">Assistant</span></button>
         </nav>
 
         <!-- Colour tuning -->
@@ -159,50 +183,26 @@
                     <button id="deleteLutProfileBtn" class="ou-btn danger slim" type="button">Delete</button>
                 </div>
             </div>
-            <div class="config-sliders-grid">
-                <div class="config-slider-group">
-                    <div class="slider-header"><span class="slider-title">Green (ExG)</span>
-                        <span class="slider-values"><span class="slider-val" id="exg_min-value">--</span><span class="slider-val-sep">to</span><span class="slider-val" id="exg_max-value">--</span></span></div>
-                    <div class="range-slider" data-param-min="exg_min" data-param-max="exg_max"><div class="slider-rail"><div class="slider-track"><div class="slider-fill"></div></div>
-                        <div class="slider-knob active" data-param="exg_min" id="exg_min-knob"></div><div class="slider-knob" data-param="exg_max" id="exg_max-knob"></div></div></div>
-                    <div class="slider-fine-tune"><button class="fine-btn" type="button" data-delta="-1" aria-label="Less">&minus;</button><button class="fine-btn" type="button" data-delta="1" aria-label="More">+</button></div>
-                </div>
-                <div class="config-slider-group">
-                    <div class="slider-header"><span class="slider-title">Hue</span>
-                        <span class="slider-values"><span class="slider-val" id="hue_min-value">--</span><span class="slider-val-sep">to</span><span class="slider-val" id="hue_max-value">--</span></span></div>
-                    <div class="range-slider" data-param-min="hue_min" data-param-max="hue_max"><div class="slider-rail"><div class="slider-track"><div class="slider-fill"></div></div>
-                        <div class="slider-knob active" data-param="hue_min" id="hue_min-knob"></div><div class="slider-knob" data-param="hue_max" id="hue_max-knob"></div></div></div>
-                    <div class="slider-fine-tune"><button class="fine-btn" type="button" data-delta="-1" aria-label="Less">&minus;</button><button class="fine-btn" type="button" data-delta="1" aria-label="More">+</button></div>
-                </div>
-                <div class="config-slider-group">
-                    <div class="slider-header"><span class="slider-title">Saturation</span>
-                        <span class="slider-values"><span class="slider-val" id="saturation_min-value">--</span><span class="slider-val-sep">to</span><span class="slider-val" id="saturation_max-value">--</span></span></div>
-                    <div class="range-slider" data-param-min="saturation_min" data-param-max="saturation_max"><div class="slider-rail"><div class="slider-track"><div class="slider-fill"></div></div>
-                        <div class="slider-knob active" data-param="saturation_min" id="saturation_min-knob"></div><div class="slider-knob" data-param="saturation_max" id="saturation_max-knob"></div></div></div>
-                    <div class="slider-fine-tune"><button class="fine-btn" type="button" data-delta="-1" aria-label="Less">&minus;</button><button class="fine-btn" type="button" data-delta="1" aria-label="More">+</button></div>
-                </div>
-                <div class="config-slider-group">
-                    <div class="slider-header"><span class="slider-title">Brightness</span>
-                        <span class="slider-values"><span class="slider-val" id="brightness_min-value">--</span><span class="slider-val-sep">to</span><span class="slider-val" id="brightness_max-value">--</span></span></div>
-                    <div class="range-slider" data-param-min="brightness_min" data-param-max="brightness_max"><div class="slider-rail"><div class="slider-track"><div class="slider-fill"></div></div>
-                        <div class="slider-knob active" data-param="brightness_min" id="brightness_min-knob"></div><div class="slider-knob" data-param="brightness_max" id="brightness_max-knob"></div></div></div>
-                    <div class="slider-fine-tune"><button class="fine-btn" type="button" data-delta="-1" aria-label="Less">&minus;</button><button class="fine-btn" type="button" data-delta="1" aria-label="More">+</button></div>
-                </div>
-                <div class="config-slider-group" id="min-weed-size-slider-group"
-                     title="Detections smaller than this share of the camera frame are ignored.">
-                    <div class="slider-header"><span class="slider-title">Smallest weed</span>
-                        <span class="slider-values"><span class="slider-val" id="min_detection_area_percent-value">--</span></span></div>
-                    <div class="single-slider" data-param="min_detection_area_percent"><div class="slider-rail"><div class="slider-track"><div class="slider-fill"></div></div>
-                        <div class="slider-knob active" data-param="min_detection_area_percent" id="min_detection_area_percent-knob"></div></div></div>
-                    <div class="slider-fine-tune"><button class="fine-btn" type="button" data-delta="-1" aria-label="Less">&minus;</button><button class="fine-btn" type="button" data-delta="1" aria-label="More">+</button></div>
-                </div>
-                <div class="config-slider-group" id="lut-sensitivity-slider-group" style="display:none;"
-                     title="Low: only the exact colours painted as weed are sprayed. High: anything close to them is sprayed.">
-                    <div class="slider-header"><span class="slider-title">Painted sensitivity</span>
-                        <span class="slider-values"><span class="slider-val" id="lut_sensitivity-value">--</span></span></div>
-                    <div class="single-slider" data-param="lut_sensitivity"><div class="slider-rail"><div class="slider-track"><div class="slider-fill"></div></div>
-                        <div class="slider-knob active" data-param="lut_sensitivity" id="lut_sensitivity-knob"></div></div></div>
-                    <div class="slider-fine-tune"><button class="fine-btn" type="button" data-delta="-1" aria-label="Less">&minus;</button><button class="fine-btn" type="button" data-delta="1" aria-label="More">+</button></div>
+            <div class="ou-notices" id="colourNotices"></div>
+            <div class="ou-pgrid" id="colourSteppers">
+                <div class="ou-pcard" data-gob><span class="lbl">Green (ExG)</span>
+                    <div class="pair"><div><span>From</span><div class="ou-kstep" data-pstep="exg_min" data-label="Green from"></div></div>
+                        <div><span>To</span><div class="ou-kstep" data-pstep="exg_max" data-label="Green to"></div></div></div></div>
+                <div class="ou-pcard" data-gob><span class="lbl">Hue</span>
+                    <div class="pair"><div><span>From</span><div class="ou-kstep" data-pstep="hue_min" data-label="Hue from"></div></div>
+                        <div><span>To</span><div class="ou-kstep" data-pstep="hue_max" data-label="Hue to"></div></div></div></div>
+                <div class="ou-pcard" data-gob><span class="lbl">Saturation</span>
+                    <div class="pair"><div><span>From</span><div class="ou-kstep" data-pstep="saturation_min" data-label="Saturation from"></div></div>
+                        <div><span>To</span><div class="ou-kstep" data-pstep="saturation_max" data-label="Saturation to"></div></div></div></div>
+                <div class="ou-pcard" data-gob><span class="lbl">Brightness</span>
+                    <div class="pair"><div><span>From</span><div class="ou-kstep" data-pstep="brightness_min" data-label="Brightness from"></div></div>
+                        <div><span>To</span><div class="ou-kstep" data-pstep="brightness_max" data-label="Brightness to"></div></div></div></div>
+                <div class="ou-pcard" id="min-weed-size-slider-group" title="Detections smaller than this share of the camera frame are ignored.">
+                    <span class="lbl">Smallest weed (share of the picture)</span>
+                    <div class="ou-kstep" data-pstep="min_detection_area_percent" data-label="Smallest weed (%)"></div></div>
+                <div class="ou-pcard" id="lut-sensitivity-slider-group" style="display:none;" title="Low: only the exact colours painted as weed are sprayed. High: anything close to them is sprayed.">
+                    <span class="lbl">Painted sensitivity</span>
+                    <div class="ou-kstep" data-pstep="lut_sensitivity" data-label="Painted sensitivity"></div>
                     <div class="lut-swatch-row">
                         <div class="lut-coverage" title="Share of all colours this profile sprays at the current sensitivity">
                             <div class="lut-coverage-square"><div class="lut-coverage-fill" id="lutCoverageFill"></div></div>
@@ -226,30 +226,25 @@
                         <span class="txt"><span class="ttl" style="font-size:18px">Track weeds</span><span class="hint" id="trackingHint">Steadier boxes between frames</span></span>
                         <span class="ou-sw"></span>
                     </button>
-                    <div class="ou-group" id="track-stability-tile" style="display:none;">
-                        <span class="ou-label">Track stability</span>
-                        <div id="track-stability-buttons" class="ou-seg">
-                            <button type="button" class="seg-btn" data-stability="low" onclick="setTrackStability('low')">Low</button>
-                            <button type="button" class="seg-btn active" data-stability="medium" onclick="setTrackStability('medium')">Medium</button>
-                            <button type="button" class="seg-btn" data-stability="high" onclick="setTrackStability('high')">High</button>
-                        </div>
-                    </div>
+                    <div class="ou-f"><span class="lbl">Track stability <span class="ou-hint" id="trackCustom"></span></span>
+                        <div class="ou-seg" id="track-stability-selector">
+                            <button type="button" data-stability="low">Low</button>
+                            <button type="button" data-stability="medium">Medium</button>
+                            <button type="button" data-stability="high">High</button>
+                        </div></div>
+                    <div class="ou-f"><span class="lbl">Spray a lost weed for (frames)</span>
+                        <div class="ou-kstep" id="trackPersist"></div></div>
+                    <div class="ou-f"><span class="lbl">Remember a lost track for (frames)</span>
+                        <div class="ou-kstep" id="trackBuffer"></div>
+                        <p class="ou-why" id="trackWhy" hidden></p></div>
                 </div>
                 <div class="ou-stack">
-                    <div class="config-slider-group" id="confidence-slider-group" style="display:none;">
-                        <div class="slider-header"><span class="slider-title">AI confidence</span>
-                            <span class="slider-values"><span class="slider-val" id="confidence-value">--</span><span class="slider-val-sep">%</span></span></div>
-                        <div class="single-slider" data-param="confidence"><div class="slider-rail"><div class="slider-track"><div class="slider-fill"></div></div>
-                            <div class="slider-knob active" data-param="confidence" id="confidence-knob"></div></div></div>
-                        <div class="slider-fine-tune"><button class="fine-btn" type="button" data-delta="-5" aria-label="Less">&minus;</button><button class="fine-btn" type="button" data-delta="5" aria-label="More">+</button></div>
-                    </div>
-                    <div class="config-slider-group" id="crop-buffer-slider-group" style="display:none;">
-                        <div class="slider-header"><span class="slider-title">Crop buffer</span>
-                            <span class="slider-values"><span class="slider-val" id="crop_buffer_px-value">--</span><span class="slider-val-sep">px</span></span></div>
-                        <div class="single-slider" data-param="crop_buffer_px"><div class="slider-rail"><div class="slider-track"><div class="slider-fill"></div></div>
-                            <div class="slider-knob active" data-param="crop_buffer_px" id="crop_buffer_px-knob"></div></div></div>
-                        <div class="slider-fine-tune"><button class="fine-btn" type="button" data-delta="-1" aria-label="Less">&minus;</button><button class="fine-btn" type="button" data-delta="1" aria-label="More">+</button></div>
-                    </div>
+                    <span class="ou-list-head">Detection</span>
+                    <div class="ou-f"><span class="lbl">AI confidence (%) <span class="ou-why" hidden></span></span>
+                        <div class="ou-kstep" data-pstep="confidence" data-step="1" data-label="AI confidence (%)"></div></div>
+                    <div class="ou-f"><span class="lbl">Crop buffer (px) <span class="ou-why" hidden></span></span>
+                        <div class="ou-kstep" data-pstep="crop_buffer_px" data-step="1" data-label="Crop buffer (px)"></div></div>
+                    <p class="ou-hint">Lower confidence sprays more. The crop buffer keeps colour detection this far from crop the AI found (Hybrid).</p>
                 </div>
             </div>
             <div data-widget-slot="ai_after_classes" class="widget-slot"></div>
@@ -268,11 +263,12 @@
                 <div class="ou-f"><span class="lbl">Crop and spray zone</span>
                     <button type="button" class="ou-btn ghost slim" id="camGeometry">Adjust on the live view</button>
                     <span class="ou-hint">Drag the edges and the spray band on the camera picture.</span></div>
-                <div class="ou-f"><span class="lbl">Size <span class="ou-lab warn">Restarts the OWL</span></span>
-                    <div class="ou-kseg" id="camRes"><button type="button" data-value="728x544">728×544</button><button type="button" data-value="1456x1088">1456×1088</button></div></div>
                 <div class="ou-f"><span class="lbl">Rotate <span class="ou-lab warn">Restarts the OWL</span></span>
                     <div class="ou-kseg" id="camRot"><button type="button" data-value="auto">Auto</button><button type="button" data-value="0">0°</button><button type="button" data-value="180">180°</button></div></div>
             </div>
+            <div class="ou-f"><span class="lbl">Image size <span class="ou-lab warn">Restarts the OWL</span> <span class="ou-hint" id="camResNow"></span></span>
+                <div class="ou-resgrid" id="camRes"></div>
+                <span class="ou-hint">Smaller is faster. 1456×1088 is the full camera picture.</span></div>
             <div class="ou-notices" id="cameraNotices"></div>
         </div>
 
@@ -305,16 +301,22 @@
                 <button type="button" id="resetDefault" class="ou-btn danger slim">Reset to default</button>
             </div>
             <p class="ou-hint">Default profiles are protected. Changes are saved as a new profile, which can start on boot.</p>
+
+            <!-- The whole settings file (was Advanced) -->
+            <span class="ou-list-head">Edit the settings file</span>
+            <div id="adv-config" class="ou-stack">
+                <div class="config-warning hidden" id="configWarning"><span>MQTT, network and controller settings need an OWL restart.</span></div>
+                <div class="config-unsaved hidden" id="configUnsaved"><span>You have unsaved changes. Save them as a new profile above.</span></div>
+                <div data-widget-slot="config_before_advanced" class="widget-slot"></div>
+                <div class="config-sections" id="configSections"><div class="config-loading"><div class="spinner"></div><span>Loading configuration</span></div></div>
+            </div>
         </div>
 
         <!-- Test nozzles -->
         <div class="ou-panel" id="panel-nozzles">
-            <div class="ou-panel-head"><h2>Test nozzles</h2><small>All nozzles</small></div>
-            <button type="button" class="ou-hold" id="holdSpray">Hold to spray<small>Stops when you let go, or after 10 s</small></button>
-            <button type="button" class="ou-card ou-prime" id="nozzleSwitch" aria-pressed="false">
-                <span class="txt"><span class="ttl">Blanket spray</span><span class="hint">Every nozzle stays on and detection is off</span></span>
-                <span class="ou-sw"></span>
-            </button>
+            <div class="ou-panel-head"><h2>Test nozzles</h2><small>This OWL</small></div>
+            <button type="button" class="ou-hold" id="holdSpray">Hold to spray every nozzle<small>Stops when you let go, or after 10 s</small></button>
+            <div class="ou-stack" id="nozzleTest"></div>
             <div class="ou-stats" id="timingStats"></div>
         </div>
 
@@ -374,20 +376,10 @@
             </div>
         </div>
 
-        <!-- Advanced -->
-        <div class="ou-panel" id="panel-advanced">
-            <div class="ou-panel-head"><h2>Advanced</h2><small>For experienced users</small></div>
-            <div class="ou-mini" id="advancedTabs" style="align-self:flex-start">
-                <button type="button" class="on" data-adv="config">Config file</button>
-                <button type="button" data-adv="agent">Assistant</button>
-            </div>
-            <div id="adv-config" class="ou-stack">
-                <div class="config-warning hidden" id="configWarning"><span>MQTT, network and controller settings need an OWL restart.</span></div>
-                <div class="config-unsaved hidden" id="configUnsaved"><span>You have unsaved changes. Save them under Profiles.</span></div>
-                <div data-widget-slot="config_before_advanced" class="widget-slot"></div>
-                <div class="config-sections" id="configSections"><div class="config-loading"><div class="spinner"></div><span>Loading configuration</span></div></div>
-            </div>
-            <div id="adv-agent" hidden>
+        <!-- Assistant: AI chat with your own API key -->
+        <div class="ou-panel" id="panel-assistant">
+            <div class="ou-panel-head"><h2>Assistant</h2><small>Uses your own API key</small></div>
+            <div id="adv-agent">
                 <div class="agent-panel" id="agent">
                     <div class="agent-setup" id="agentSetup">
                         <div class="agent-setup-title">Connect AI assistant</div>

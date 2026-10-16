@@ -557,16 +557,16 @@ class TestTrackerParamApplication:
         assert gog._pending_tracker_params is None
 
     def test_preset_values_match_ui_presets(self):
-        """Python presets must stay in sync with the JS UI presets."""
+        """Python presets must stay in sync with the JS UI presets (one
+        shared copy in owl_ui.js, used by both dashboards)."""
         import re
         for js_file in (
-            PROJECT_ROOT / 'controller/standalone/static/js/modules/_controls.js',
-            PROJECT_ROOT / 'controller/networked/static/js/modules/_controls.js',
+            PROJECT_ROOT / 'controller/shared/js/owl_ui.js',
         ):
             text = js_file.read_text(encoding='utf-8')
-            m = re.search(r'TRACK_STABILITY_PRESETS = \{(.*?)\};', text,
+            m = re.search(r'TRACK_PRESETS = \{(.*?)\};', text,
                           re.DOTALL)
-            assert m, f'TRACK_STABILITY_PRESETS not found in {js_file.name}'
+            assert m, f'TRACK_PRESETS not found in {js_file.name}'
             block = m.group(1)
             for level, preset in GreenOnGreen.TRACK_STABILITY_PRESETS.items():
                 line = re.search(level + r':\s*\{([^}]*)\}', block)

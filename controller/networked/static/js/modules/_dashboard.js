@@ -212,8 +212,6 @@ async function updateDashboard() {
                 globalTrackingEnabled = !!firstOwl.tracking_enabled;
             }
             globalRecordingEnabled = Object.values(owlsData).some((o) => o && o.connected && o.image_sample_enable);
-            const stabilityPanel = document.getElementById('track-stability-panel');
-            if (stabilityPanel) stabilityPanel.style.display = globalTrackingEnabled ? '' : 'none';
         }
         // Broadcast to widget state listeners
         if (typeof OWLWidget !== 'undefined' && firstOwl) OWLWidget._broadcastState(firstOwl);

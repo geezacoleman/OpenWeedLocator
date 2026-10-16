@@ -386,11 +386,12 @@ async function toggleStandaloneGeometry() {
         return;
     }
 
-    // The editor works on the Field live view: show it and keep it running.
-    if (typeof Shell !== 'undefined') { Shell.showView('field'); Shell.setStream(true); }
+    // The editor works on the live view pop-up: open it (that starts the
+    // stream) and give the editor's controls the column beside the picture.
+    if (typeof Shell !== 'undefined') Shell.openLive();
     var img = document.getElementById('stream-img');
     if (img && !img.getAttribute('src')) img.setAttribute('src', '/video_feed');
-    document.getElementById('view-field')?.classList.add('geo-on');
+    document.getElementById('livePop')?.classList.add('geo-on');
 
     var values = {
         crop_left: 0.02, crop_right: 0.02, crop_top: 0.02, crop_bottom: 0.02,
@@ -453,7 +454,7 @@ async function toggleStandaloneGeometry() {
         onClose: function () {
             standaloneGeometryActive = false;
             setPreviewMode('cropped');
-            document.getElementById('view-field')?.classList.remove('geo-on');
+            document.getElementById('livePop')?.classList.remove('geo-on');
             if (btn) btn.classList.remove('is-on');
         }
     });

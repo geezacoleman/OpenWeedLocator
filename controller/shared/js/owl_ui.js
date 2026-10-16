@@ -33,6 +33,7 @@
         tool: SVG('<path d="M14.5 6.5a4 4 0 0 0 5 5L13 18a2.1 2.1 0 1 1-3-3l6.5-6.5Z"/><path d="M4 20l5-5"/>', STROKE),
         cloud: SVG('<path d="M7 18.5h10.5a4 4 0 0 0 .4-8 5.5 5.5 0 0 0-10.6-1.3A4.7 4.7 0 0 0 7 18.5Z"/>', STROKE),
         code: SVG('<path d="M8.5 7L3.5 12l5 5M15.5 7l5 5-5 5"/>', STROKE),
+        chat: SVG('<path d="M4.5 5.5h15v10h-9l-4.5 3.5v-3.5h-1.5Z"/><path d="M8.5 9.5h7M8.5 12.5h4.5"/>', STROKE),
         full: SVG('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', STROKE),
         down: SVG('<path d="M12 4v11"/><path d="M7.5 11 12 15.5 16.5 11"/><path d="M5 19.5h14"/>', STROKE),
         crop: SVG('<path d="M6 3v13a2 2 0 0 0 2 2h13"/><path d="M3 6h13a2 2 0 0 1 2 2v13"/>', STROKE),
@@ -522,28 +523,333 @@
         return { stop: stop };
     }
 
+    // ---------- press and hold to repeat (stepper − / +) ----------
+    // One step on press; held, it repeats and speeds up, so a gloved finger
+    // can make one small change or a large one.
+    function repeatPress(btn, fn) {
+        let timer = null;
+        let count = 0;
+        function stop() { clearTimeout(timer); timer = null; }
+        function tick() {
+            count += 1;
+            fn();
+            timer = setTimeout(tick, count < 6 ? 140 : 50);
+        }
+        btn.addEventListener('pointerdown', (e) => {
+            if (e.button !== undefined && e.button !== 0) return;
+            e.preventDefault();
+            stop();
+            count = 0;
+            fn();
+            timer = setTimeout(tick, 420);
+        });
+        ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => btn.addEventListener(ev, stop));
+        btn.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); fn(); } });
+        window.addEventListener('blur', stop);
+    }
+
+    // Type a number on the kiosk numpad (or a plain prompt off the kiosk).
+    // o: {label, value, min, max, decimals} -> Promise<number|null>
+    function typeNumber(o) {
+        return new Promise((resolve) => {
+            if (typeof Numpad === 'undefined') {
+                promptSheet({ title: o.label || 'Value', label: o.label }).then((text) => {
+                    const n = parseFloat(text);
+                    resolve(text === null || isNaN(n) ? null : Math.min(o.max, Math.max(o.min, n)));
+                });
+                return;
+            }
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.min = o.min;
+            input.max = o.max;
+            input.step = o.decimals ? 'any' : '1';
+            input.value = o.value === null || o.value === undefined ? '' : o.value;
+            input.dataset.label = o.label || '';
+            input.addEventListener('change', () => {
+                const n = parseFloat(input.value);
+                resolve(isNaN(n) ? null : n);
+            }, { once: true });
+            Numpad.open(input);
+        });
+    }
+
     // ---------- stepper (kstep) ----------
+    // o: {value, min, max, step, format, unit, label, settleMs, onChange}.
+    // settleMs: onChange once the taps stop, not on every step. A value
+    // pushed in by a poll (set) waits until the last tap is 4 s old.
     function stepper(el, o) {
-        el.innerHTML = '<button type="button" aria-label="Less">−</button><span></span><button type="button" aria-label="More">+</button>';
-        const [minus, plus] = el.querySelectorAll('button');
-        const out = el.querySelector('span');
+        el.innerHTML = '<button type="button" aria-label="Less">−</button><button type="button" class="v" aria-label="Type a value"></button><button type="button" aria-label="More">+</button>';
+        const [minus, out, plus] = el.querySelectorAll('button');
         let value = o.value;
+        let touchedAt = 0;
+        let settle = null;
         function render() {
             out.innerHTML = (value === null || value === undefined ? '--' : esc(o.format ? o.format(value) : value)) +
                 (o.unit ? '<small>' + esc(o.unit) + '</small>' : '');
         }
-        function bump(d) {
-            if (value === null || value === undefined) return;
-            const next = Math.round(Math.min(o.max, Math.max(o.min, value + d * o.step)) * 1000) / 1000;
+        function change(next) {
+            next = Math.round(Math.min(o.max, Math.max(o.min, next)) * 1000) / 1000;
             if (next === value) return;
             value = next;
+            touchedAt = Date.now();
             render();
-            o.onChange(value);
+            if (!o.settleMs) { o.onChange(value); return; }
+            clearTimeout(settle);
+            settle = setTimeout(() => o.onChange(value), o.settleMs);
         }
-        minus.addEventListener('click', () => bump(-1));
-        plus.addEventListener('click', () => bump(1));
+        const off = () => el.classList.contains('is-off') || value === null || value === undefined;
+        repeatPress(minus, () => { if (!off()) change(value - o.step); });
+        repeatPress(plus, () => { if (!off()) change(value + o.step); });
+        out.addEventListener('click', async () => {
+            if (off()) return;
+            const n = await typeNumber({ label: o.label, value: value, min: o.min, max: o.max, decimals: o.step < 1 });
+            if (n !== null) change(n);
+        });
         render();
-        return { set: (v) => { value = v; render(); }, get: () => value };
+        return {
+            set: (v) => { if (Date.now() - touchedAt < 4000) return; value = v; render(); },
+            get: () => value,
+            disable: (yes) => el.classList.toggle('is-off', !!yes),
+        };
+    }
+
+    // ---------- parameter steppers (Colour tuning, AI confidence, crop buffer) ----------
+    // Markup: <div class="ou-kstep" data-pstep="exg_min" data-step="1" data-label="Green from"></div>
+    // Values live in the dashboard's configParams. o: {params,
+    // stepValue(p, value, delta), render(name), commit(name, value),
+    // touched(name)}: render on every step, touched on every user change
+    // (snap-back guard), commit once the taps stop.
+    // A colour minimum never passes its maximum (RANGE_PAIRS).
+    const RANGE_PAIRS = { exg_min: 'exg_max', hue_min: 'hue_max', saturation_min: 'saturation_max', brightness_min: 'brightness_max' };
+    const RANGE_PAIRS_REV = Object.keys(RANGE_PAIRS).reduce((m, k) => { m[RANGE_PAIRS[k]] = k; return m; }, {});
+
+    function paramSteppers(root, o) {
+        const timers = {};
+        function set(name, val) {
+            const p = o.params[name];
+            if (!p) return;
+            if (RANGE_PAIRS[name] && o.params[RANGE_PAIRS[name]]) val = Math.min(val, o.params[RANGE_PAIRS[name]].value);
+            if (RANGE_PAIRS_REV[name] && o.params[RANGE_PAIRS_REV[name]]) val = Math.max(val, o.params[RANGE_PAIRS_REV[name]].value);
+            val = Math.min(p.max, Math.max(p.min, val));
+            if (val === p.value) return;
+            p.value = val;
+            o.render(name);
+            o.touched(name);
+            clearTimeout(timers[name]);
+            timers[name] = setTimeout(() => o.commit(name, p.value), 350);
+        }
+        root.querySelectorAll('[data-pstep]').forEach((el) => {
+            const name = el.dataset.pstep;
+            const step = Number(el.dataset.step || 1);
+            el.innerHTML = '<button type="button" data-d="-1" aria-label="Less">−</button>' +
+                '<button type="button" class="v" data-pval="' + esc(name) + '" aria-label="Type a value">--</button>' +
+                '<button type="button" data-d="1" aria-label="More">+</button>';
+            el.querySelectorAll('[data-d]').forEach((b) => repeatPress(b, () => {
+                const p = o.params[name];
+                if (!p || el.classList.contains('is-off')) return;
+                set(name, o.stepValue(p, p.value, Number(b.dataset.d) * step));
+            }));
+            el.querySelector('.v').addEventListener('click', async () => {
+                const p = o.params[name];
+                if (!p || el.classList.contains('is-off')) return;
+                const n = await typeNumber({ label: el.dataset.label, value: p.value, min: p.min, max: p.max, decimals: p.decimals });
+                if (n !== null) set(name, p.decimals ? n : Math.round(n));
+            });
+            o.render(name);
+        });
+    }
+
+    // Colour tuning shows the settings the running mode uses (Painted: its
+    // sensitivity and the smallest weed; AI: none, it says where to look).
+    // AI confidence and crop buffer stay on screen, greyed with the reason,
+    // wherever the mode does not use them. algorithm: the [System] value,
+    // or 'lut' while the Painted panel is open.
+    function showModeSettings(algorithm) {
+        document.querySelectorAll('#colourSteppers [data-gob]').forEach((el) => {
+            el.style.display = (algorithm === 'lut' || algorithm === 'gog') ? 'none' : '';
+        });
+        const minSize = document.getElementById('min-weed-size-slider-group');
+        if (minSize) minSize.style.display = algorithm === 'gog' ? 'none' : '';
+        const lut = document.getElementById('lut-sensitivity-slider-group');
+        if (lut) lut.style.display = algorithm === 'lut' ? '' : 'none';
+        const notes = document.getElementById('colourNotices');
+        if (notes) {
+            const html = algorithm === 'gog' ? notice('info', '<b>AI detection is on.</b> Colour settings are not used. ' +
+                'AI confidence is on the Dashboard and under AI models.') : '';
+            if (notes.dataset.html !== html) { notes.dataset.html = html; notes.innerHTML = html; }
+        }
+        const ai = algorithm === 'gog' || algorithm === 'gog-hybrid';
+        document.querySelectorAll('[data-pstep="confidence"]').forEach((el) => stepOff(el, !ai, 'AI and Hybrid only'));
+        document.querySelectorAll('[data-pstep="crop_buffer_px"]').forEach((el) => stepOff(el, algorithm !== 'gog-hybrid', 'Hybrid only'));
+    }
+
+    // Every value display of one parameter (data-pval), so the same value
+    // can sit on Dashboard and in Settings
+    function showParam(name, text) {
+        document.querySelectorAll('[data-pval="' + name + '"]').forEach((el) => { el.textContent = text; });
+    }
+
+    // Disable a stepper (shown greyed, never hidden) with a reason under it
+    function stepOff(el, off, why) {
+        if (!el) return;
+        el.classList.toggle('is-off', !!off);
+        const box = el.closest('.ou-f');
+        const hint = box ? box.querySelector('.ou-why') : null;
+        if (hint) { hint.textContent = off ? (why || '') : ''; hint.hidden = !off || !why; }
+    }
+
+    // ---------- tracking ----------
+    // Stability presets: must stay in sync with
+    // GreenOnGreen.TRACK_STABILITY_PRESETS (utils/greenongreen.py).
+    // match_thresh is a cost limit on (1 - IoU): higher = more lenient.
+    const TRACK_PRESETS = {
+        low: { track_high_thresh: 0.3, track_low_thresh: 0.15, new_track_thresh: 0.3, track_buffer: 30, match_thresh: 0.7 },
+        medium: { track_high_thresh: 0.2, track_low_thresh: 0.05, new_track_thresh: 0.2, track_buffer: 60, match_thresh: 0.8 },
+        high: { track_high_thresh: 0.15, track_low_thresh: 0.05, new_track_thresh: 0.15, track_buffer: 90, match_thresh: 0.9 },
+    };
+    // The preset the OWL's values match, or null (custom)
+    function trackPreset(params) {
+        const p = params || {};
+        return Object.keys(TRACK_PRESETS).find((k) => {
+            const t = TRACK_PRESETS[k];
+            return ['track_high_thresh', 'track_buffer', 'match_thresh'].every((key) =>
+                typeof p[key] === 'number' && Math.abs(p[key] - t[key]) < 0.001);
+        }) || null;
+    }
+
+    // ---------- camera sizes ----------
+    // The Camera page offers the same sizes as the settings file editor
+    // (config.js), smallest first.
+    const RESOLUTIONS = ((typeof CONFIG_FIELD_DEFS !== 'undefined' && CONFIG_FIELD_DEFS.Camera &&
+        CONFIG_FIELD_DEFS.Camera._resolution && CONFIG_FIELD_DEFS.Camera._resolution.options) || ['728x544', '1456x1088'])
+        .slice().sort((a, b) => parseInt(a, 10) - parseInt(b, 10) || parseInt(a.split('x')[1], 10) - parseInt(b.split('x')[1], 10));
+    function resolutionKey(w, h) {
+        return w && h ? String(parseInt(w, 10)) + 'x' + String(parseInt(h, 10)) : '';
+    }
+
+    // ---------- AI model on every OWL ----------
+    // owls: [{name, current_model, available_models}] (connected only).
+    // null when they all run the same model; otherwise who runs what and
+    // the models every OWL has, to offer "use it on all".
+    function modelMismatch(owls) {
+        const list = owls || [];
+        if (list.length < 2) return null;
+        const byModel = {};
+        list.forEach((o) => {
+            const m = o.current_model || '';
+            (byModel[m] = byModel[m] || []).push(o.name);
+        });
+        if (Object.keys(byModel).length < 2) return null;
+        const common = Object.keys(byModel).filter((m) => m && list.every((o) => (o.available_models || []).indexOf(m) !== -1));
+        common.sort((a, b) => byModel[b].length - byModel[a].length);
+        return { byModel: byModel, common: common };
+    }
+
+    // ---------- live view pop-up ----------
+    // el: .ou-livepop holding the live view and a [data-close] button.
+    function livePop(el, hooks) {
+        const h = hooks || {};
+        let open = false;
+        function show() {
+            if (open) return;
+            open = true;
+            el.hidden = false;
+            if (h.onOpen) h.onOpen();
+        }
+        function hide() {
+            if (!open) return;
+            open = false;
+            el.hidden = true;
+            if (h.onClose) h.onClose();
+        }
+        el.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', hide));
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && open) hide(); });
+        return { open: show, close: hide, isOpen: () => open };
+    }
+
+    // ---------- nozzle test ----------
+    // A numbered button per nozzle (hold to spray it) and a sequence that
+    // fires each nozzle in turn, OWL by OWL. The OWL switches every test
+    // off itself when its time runs out.
+    // o.owls() -> [{id, name, relays (count or null), busy (spraying)}]
+    // o.send(id, relays0based, ms) -> Promise; o.stopSpraying(ids)
+    const SEQ_ON_MS = 1000;
+    const SEQ_GAP_MS = 250;
+    function nozzleTest(el, o) {
+        let seq = null;          // {owl, nozzle} while the sequence runs
+        let holding = 0;
+        let key = '';
+        const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+        function render() {
+            const owls = o.owls();
+            const next = JSON.stringify(owls.map((w) => [w.id, w.name, w.relays, w.busy])) + (seq ? 'seq' : '');
+            if (holding || next === key) { mark(); return; }
+            key = next;
+            const busy = owls.filter((w) => w.busy);
+            let html = '';
+            if (busy.length) {
+                html += notice('warn', '<b>' + esc(busy.length === owls.length ? 'Spraying is on.' : busy.map((w) => w.name).join(', ') + ' spraying.') +
+                    '</b> Turn it off to test single nozzles. <button type="button" class="lnk" data-act="stop">Turn spraying off ›</button>');
+            }
+            html += '<div class="ou-actions"><span class="ou-list-head" style="flex:1">Nozzles</span>' +
+                (seq ? '<button type="button" class="ou-btn stop slim" data-act="seqstop">Stop sequence</button>'
+                     : '<button type="button" class="ou-btn navy slim" data-act="seq"' + (owls.some((w) => w.relays && !w.busy) ? '' : ' disabled') + '>Run sequence</button>') + '</div>';
+            if (!owls.length) html += '<p class="ou-hint">No OWLs connected.</p>';
+            owls.forEach((w) => {
+                html += '<div class="ou-nzrow"><span class="nm">' + esc(w.name) + '</span>';
+                if (!w.relays) {
+                    html += '<span class="ou-hint">Update this OWL to test nozzles one at a time.</span></div>';
+                    return;
+                }
+                html += '<div class="ou-nzgrid">';
+                for (let i = 0; i < w.relays; i += 1) {
+                    html += '<button type="button" class="ou-nz" data-owl="' + esc(w.id) + '" data-nz="' + i + '"' + (w.busy || seq ? ' disabled' : '') + '>' + (i + 1) + '</button>';
+                }
+                html += '</div></div>';
+            });
+            html += '<p class="ou-hint">Hold a number to spray that nozzle. Run sequence sprays each nozzle for 1 s in turn' +
+                (owls.length > 1 ? ', starting with ' + esc(owls[0].name) : '') + '.</p>';
+            el.innerHTML = html;
+            el.querySelectorAll('[data-nz]').forEach((b) => hold(b, {
+                maxMs: 10000,
+                start: () => { holding += 1; o.send(b.dataset.owl, [Number(b.dataset.nz)], 10000); },
+                stop: () => { holding = Math.max(0, holding - 1); o.send(b.dataset.owl, [], 0); },
+            }));
+            const act = (name) => el.querySelector('[data-act="' + name + '"]');
+            if (act('stop')) act('stop').addEventListener('click', () => o.stopSpraying(busy.map((w) => w.id)));
+            if (act('seq')) act('seq').addEventListener('click', runSequence);
+            if (act('seqstop')) act('seqstop').addEventListener('click', stopSequence);
+            mark();
+        }
+        function mark() {
+            el.querySelectorAll('[data-nz]').forEach((b) => b.classList.toggle('is-on',
+                !!seq && seq.owl === b.dataset.owl && seq.nozzle === Number(b.dataset.nz)));
+        }
+        async function runSequence() {
+            const owls = o.owls().filter((w) => w.relays && !w.busy);
+            const run = { owl: null, nozzle: -1 };
+            seq = run;
+            render();
+            for (const w of owls) {
+                for (let i = 0; i < w.relays; i += 1) {
+                    if (seq !== run) return;
+                    run.owl = w.id;
+                    run.nozzle = i;
+                    mark();
+                    o.send(w.id, [i], SEQ_ON_MS);
+                    await delay(SEQ_ON_MS + SEQ_GAP_MS);
+                }
+            }
+            if (seq === run) { seq = null; render(); }
+        }
+        function stopSequence() {
+            if (seq && seq.owl) o.send(seq.owl, [], 0);
+            seq = null;
+            render();
+        }
+        return { render: render, stop: stopSequence };
     }
 
     // <span data-icon="name"></span> placeholders in the templates
@@ -563,6 +869,10 @@
         canRunAI: canRunAI, aiReported: aiReported, isHailo: isHailo, aiRunBadge: aiRunBadge, aiSummary: aiSummary,
         modelRows: modelRows, renderAIModels: renderAIModels, toggleClass: toggleClass,
         confirm: confirmSheet, choose: choiceSheet, prompt: promptSheet,
-        guardedFetch: guardedFetch, hold: hold, stepper: stepper,
+        guardedFetch: guardedFetch, hold: hold, stepper: stepper, repeatPress: repeatPress, typeNumber: typeNumber,
+        paramSteppers: paramSteppers, showParam: showParam, stepOff: stepOff, showModeSettings: showModeSettings,
+        TRACK_PRESETS: TRACK_PRESETS, trackPreset: trackPreset,
+        livePop: livePop, nozzleTest: nozzleTest, RESOLUTIONS: RESOLUTIONS, resolutionKey: resolutionKey,
+        modelMismatch: modelMismatch,
     };
 })();

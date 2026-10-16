@@ -53,7 +53,8 @@ class TestFieldSet:
         assert cloud_state_out_topic(False, 'owl-1') == 'cloud_out/state'
 
     def test_sessions_trimmed_to_manifest_keys(self):
-        assert trim_sessions([SESSION]) == [{k: v for k, v in SESSION.items() if k != 'video_count'}]
+        # video_count rides along since 3.25.2 (Noktura shows video-only runs)
+        assert trim_sessions([SESSION]) == [dict(SESSION)]
 
 
 @pytest.mark.unit
@@ -191,7 +192,7 @@ class TestPublisherCloudState:
         sent = json.loads(self._cloud_calls(mqtt_publisher)[-1].args[1])
         assert sent['data_sessions'][0]['session_id'] == '20261009/session_101500'
         assert set(sent['data_sessions'][0]) <= {'session_id', 'date', 'time', 'image_count',
-                                                 'image_size', 'total_size'}
+                                                 'video_count', 'image_size', 'total_size'}
 
     def test_missing_storage_is_unknown_not_empty(self, mqtt_publisher, tmp_path):
         mqtt_publisher.owl_instance.save_directory = str(tmp_path / 'usb-not-present')

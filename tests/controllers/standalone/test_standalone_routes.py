@@ -757,6 +757,41 @@ class TestNozzleRoutes:
         resp = client.post('/api/nozzles/all-on')
         assert resp.status_code != 423
 
+    def test_nozzle_test_sends_relays_and_time(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        dashboard.mqtt_client._send_command = MagicMock(return_value={'success': True})
+        resp = client.post('/api/nozzles/test', json={'relays': [3], 'duration_ms': 1000})
+        assert resp.status_code == 200
+        dashboard.mqtt_client._send_command.assert_called_once_with(
+            'test_nozzles', value={'relays': [3], 'duration_ms': 1000})
+
+    def test_nozzle_test_empty_list_stops(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        dashboard.mqtt_client._send_command = MagicMock(return_value={'success': True})
+        resp = client.post('/api/nozzles/test', json={'relays': []})
+        assert resp.status_code == 200
+        dashboard.mqtt_client._send_command.assert_called_once_with(
+            'test_nozzles', value={'relays': [], 'duration_ms': 10000})
+
+    @pytest.mark.parametrize('body', [{'relays': '3'}, {'relays': ['3']}, {'relays': [True]},
+                                      {'relays': [1], 'duration_ms': 'soon'}])
+    def test_nozzle_test_rejects_bad_input(self, standalone_test_client, body):
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        dashboard.mqtt_client._send_command = MagicMock(return_value={'success': True})
+        resp = client.post('/api/nozzles/test', json=body)
+        assert resp.status_code == 400
+        dashboard.mqtt_client._send_command.assert_not_called()
+
+    def test_nozzle_test_undelivered_is_503(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        dashboard.mqtt_client._send_command = MagicMock(return_value={'success': False, 'error': 'down'})
+        resp = client.post('/api/nozzles/test', json={'relays': [0]})
+        assert resp.status_code == 503
+
 
 @pytest.mark.unit
 class TestConfigParamRoutes:

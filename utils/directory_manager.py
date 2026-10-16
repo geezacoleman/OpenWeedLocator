@@ -18,7 +18,35 @@ IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png')
 # Video-mode data collection records clips into the session folder
 VIDEO_EXTENSIONS = ('.mp4',)
 _DATE_PATTERN = re.compile(r'^\d{8}$')
-_SESSION_PATTERN = re.compile(r'^session_\d{6}$')
+# Session folder names. Before 3.25.2: session_HHMMSS. Since: sHHMMSS_<owl>_<serial4>
+# (s164025_owl-1_a3f9) so two OWLs started by one tap don't share a name.
+# HHMMSS is the OWL's local clock when recording started. Noktura validates
+# the same shapes (SESSION_ID_RE in its packages/shared/src/owl/session-upload.ts).
+SESSION_NAME_PATTERN = r'(?:session_\d{6}|s\d{6}_[a-z0-9-]{1,24}_[0-9a-f]{4})'
+_SESSION_PATTERN = re.compile(rf'^{SESSION_NAME_PATTERN}$')
+# "YYYYMMDD" (a whole day) or "YYYYMMDD/<session folder>"
+SESSION_ID_RE = re.compile(rf'^\d{{8}}(/{SESSION_NAME_PATTERN})?$')
+
+
+def is_session_id(value):
+    # fullmatch: '$' alone would also accept a trailing newline
+    return bool(SESSION_ID_RE.fullmatch(str(value or '')))
+
+
+def session_time(name):
+    """HHMMSS of a session folder name, '' when it isn't one."""
+    name = str(name or '')
+    if not _SESSION_PATTERN.fullmatch(name):
+        return ''
+    return name[8:14] if name.startswith('session_') else name[1:7]
+
+
+def session_folder_name(when, device_id, serial):
+    """sHHMMSS_<owl>_<serial4> for a recording started at `when` (local time)."""
+    owl = re.sub(r'[^a-z0-9-]+', '-', str(device_id or '').lower()).strip('-')[:24].strip('-') or 'owl'
+    hex_digits = re.sub(r'[^0-9a-f]', '', str(serial or '').lower())
+    serial4 = (hex_digits[-4:] if hex_digits else '').rjust(4, '0')
+    return f"s{when.strftime('%H%M%S')}_{owl}_{serial4}"
 
 
 def _is_session_metadata_file(filename):
@@ -33,7 +61,7 @@ def scan_sessions(save_dir):
     """Scan save_dir for recording sessions.
 
     Supports two directory structures:
-    - New: save_dir/YYYYMMDD/session_HHMMSS/ (per-recording sessions)
+    - New: save_dir/YYYYMMDD/<session folder>/ (per-recording sessions)
     - Legacy: save_dir/YYYYMMDD/ (flat, all images in date dir)
 
     Returns list of session dicts sorted newest-first, each with:
@@ -55,7 +83,8 @@ def scan_sessions(save_dir):
                    if os.path.isdir(os.path.join(date_path, d)) and _SESSION_PATTERN.match(d)]
 
         if subdirs:
-            for sess in sorted(subdirs, reverse=True):
+            # By start time, not name: old and new names sort differently
+            for sess in sorted(subdirs, key=lambda d: (session_time(d), d), reverse=True):
                 sess_path = os.path.join(date_path, sess)
                 image_files = [f for f in os.listdir(sess_path)
                                if f.lower().endswith(IMAGE_EXTENSIONS)]
@@ -69,7 +98,7 @@ def scan_sessions(save_dir):
                 sessions.append({
                     'session_id': f"{date_entry}/{sess}",
                     'date': date_entry,
-                    'time': sess.replace('session_', ''),
+                    'time': session_time(sess),
                     'image_count': len(image_files),
                     'video_count': len(video_files),
                     'image_size': image_size,
@@ -102,7 +131,7 @@ def collect_session_files(save_dir, session_id):
 
     session_id can be:
     - "YYYYMMDD" — all images under that date (legacy flat + all session subdirs)
-    - "YYYYMMDD/session_HHMMSS" — specific session only
+    - "YYYYMMDD/<session folder>" — specific session only
 
     Returns list of (archive_name, full_path) tuples.
     """
@@ -110,7 +139,7 @@ def collect_session_files(save_dir, session_id):
         return []
 
     # Validate format
-    if not re.match(r'^\d{8}(/session_\d{6})?$', session_id):
+    if not is_session_id(session_id):
         return []
 
     target = os.path.join(save_dir, session_id)
@@ -124,7 +153,7 @@ def collect_session_files(save_dir, session_id):
                 or _is_session_metadata_file(name))
 
     if '/' in session_id:
-        # Specific session: YYYYMMDD/session_HHMMSS
+        # Specific session: YYYYMMDD/<session folder>
         for f in os.listdir(target):
             fp = os.path.join(target, f)
             if os.path.isfile(fp) and _wanted(f):
@@ -143,7 +172,9 @@ def collect_session_files(save_dir, session_id):
                 # Legacy flat file
                 files.append((f'images/{entry}', entry_path))
 
-    return files
+    # Fixed order, so zipping an unchanged session twice gives the same bytes
+    # (a resumed cloud upload checks that with expect_md5)
+    return sorted(files)
 
 
 def select_preview_images(save_dir, session_id, count):

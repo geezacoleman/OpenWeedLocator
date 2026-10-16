@@ -4,7 +4,11 @@ Runs the standalone Flask app with a mocked MQTT client and drives Playwright
 at the kiosk sizes (EDATEC 7" 1024x600, Touch Display 2 1280x720, HMI3010
 1280x800) and a phone (390x844):
 
-  - no page scroll on the kiosk sizes; Field controls fully on screen
+  - no page scroll on the kiosk sizes; Dashboard controls fully on screen
+    (Blanket spray, Live view, AI confidence and crop buffer steppers)
+  - the first tab reads Dashboard; Live view opens the camera pop-up
+  - Test nozzles: a numbered button per nozzle, greyed while spraying;
+    holding one sends test_nozzles
   - every visible button is at least 44 px (gloves)
   - no ' · ' joining items anywhere in the visible text
   - Settings side list opens each panel; AI models shows "AI isn't
@@ -53,10 +57,13 @@ STATE = {
     'capture': {'saved_count': 214, 'paused_slow': False, 'record_mode': 'images', 'min_speed_kmh': 1.0},
     'speed_kmh': 9.8, 'storage_free_mb': 9830, 'storage_warning': 'ok',
     'config_name': 'GENERAL_CONFIG.ini', 'sensitivity_level': 'medium',
+    'relay_num': 8, 'nozzle_test': [],
+    'track_params': {'track_high_thresh': 0.3, 'track_buffer': 30, 'match_thresh': 0.7, 'detection_persist_frames': 5},
 }
+FAKE = {}
 TMP = Path(tempfile.mkdtemp(prefix='owl_e2e_'))
 VIEWPORTS = ((1024, 600, '7in'), (1280, 720, 'td2'), (1280, 800, 'hmi'))
-PANELS = ('colour', 'ai', 'camera', 'collection', 'profiles', 'nozzles', 'noktura', 'maint', 'advanced')
+PANELS = ('colour', 'ai', 'camera', 'collection', 'profiles', 'nozzles', 'noktura', 'maint', 'assistant')
 
 def build_app():
     import logging
@@ -74,6 +81,7 @@ def build_app():
     fake.get_and_clear_errors.return_value = []
     fake._send_command.side_effect = lambda action, **kw: {'success': True}
     dashboard.mqtt_client = fake
+    FAKE['mqtt'] = fake
 
     shutil.copy(REPO / 'config' / 'GENERAL_CONFIG.ini', TMP / 'GENERAL_CONFIG.ini')
     (TMP / 'CONTROLLER.ini').write_text('[Collect]\nlast_crop = wheat\n', encoding='utf-8')
@@ -145,11 +153,31 @@ def run_checks():
             page.wait_for_timeout(500)
             shot(page, f'field_{name}')
             check_screen(page, f'{name} field', problems)
-            for sel in ('#detectSwitch', '#recordSwitch', '#pipeline-mode-selector', '#sensitivity-buttons',
-                        '#fieldStats', '#powerBtn', '#mainNav'):
+            for sel in ('#detectSwitch', '#nozzleSwitch', '#recordSwitch', '#liveOpen', '#pipeline-mode-selector',
+                        '#sensitivity-buttons', '#view-field [data-pstep="confidence"]',
+                        '#view-field [data-pstep="crop_buffer_px"]', '#fieldStats', '#powerBtn', '#mainNav'):
                 where = page.evaluate(INSIDE_JS, sel)
                 if where != 'ok':
                     problems.append(f'{name}: {sel} {where}')
+            if page.inner_text('#mainNav [data-view="field"]').strip() != 'Dashboard':
+                problems.append(f'{name}: first tab is not labelled Dashboard')
+            for text in ('Speed', '9.8 km/h', 'Frame rate'):
+                if text not in page.inner_text('#fieldStats'):
+                    problems.append(f'{name}: Dashboard stats missing {text!r}')
+
+            # Live view pop-up: the stream only runs while it is open
+            if page.get_attribute('#stream-img', 'src'):
+                problems.append(f'{name}: camera stream runs with the pop-up closed')
+            page.click('#liveOpen')
+            page.wait_for_timeout(500)
+            if not page.is_visible('#livePop') or not page.get_attribute('#stream-img', 'src'):
+                problems.append(f'{name}: live view pop-up did not open the stream')
+            shot(page, f'live_{name}')
+            check_screen(page, f'{name} live view', problems)
+            page.click('#livePop [data-close]')
+            page.wait_for_timeout(200)
+            if page.is_visible('#livePop') or page.get_attribute('#stream-img', 'src'):
+                problems.append(f'{name}: live view pop-up did not close and stop the stream')
             if '214 photos' not in page.inner_text('#recordSwitch'):
                 problems.append(f'{name}: recording hint missing the photo count')
             if 'Wheat' not in page.inner_text('#sessionChips') and 'wheat' not in page.inner_text('#sessionChips').lower():
@@ -182,6 +210,35 @@ def run_checks():
             ai_text = page.inner_text('#panel-ai')
             if "AI isn't installed" not in ai_text or 'Install AI' not in ai_text:
                 problems.append(f'{name}: AI models page does not offer Install AI')
+            if 'Turn Track weeds on' not in ai_text:
+                problems.append(f'{name}: tracking settings not explained while tracking is off')
+
+            # Camera: every size from 320x240 up to the full picture
+            page.click('.ou-side [data-panel="camera"]')
+            sizes = page.eval_on_selector_all('#camRes button', 'bs => bs.map((b) => b.dataset.value)')
+            if sizes[:1] != ['320x240'] or sizes[-1:] != ['1456x1088'] or len(sizes) < 8:
+                problems.append(f'{name}: camera sizes {sizes}')
+
+            # Test nozzles: greyed while spraying; once off, holding 2 tests it
+            page.click('.ou-side [data-panel="nozzles"]')
+            page.wait_for_timeout(300)
+            if page.locator('#nozzleTest [data-nz]').count() != 8:
+                problems.append(f'{name}: nozzle test does not show 8 nozzles')
+            if not page.is_disabled('#nozzleTest [data-nz="0"]'):
+                problems.append(f'{name}: nozzle buttons usable while spraying')
+            STATE['detection_enable'] = False
+            page.wait_for_timeout(2600)
+            FAKE['mqtt']._send_command.reset_mock()
+            page.hover('#nozzleTest [data-nz="1"]')
+            page.mouse.down()
+            page.wait_for_timeout(300)
+            page.mouse.up()
+            page.wait_for_timeout(400)
+            calls = [(c.args, c.kwargs) for c in FAKE['mqtt']._send_command.call_args_list]
+            if (('test_nozzles',), {'value': {'relays': [1], 'duration_ms': 10000}}) not in calls \
+                    or (('test_nozzles',), {'value': {'relays': [], 'duration_ms': 0}}) not in calls:
+                problems.append(f'{name}: holding nozzle 2 sent {calls[:4]}')
+            STATE['detection_enable'] = True
 
             # Record modal opens from Field when recording is off
             STATE['image_sample_enable'] = False

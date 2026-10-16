@@ -51,6 +51,39 @@ class TestImageSampleEnable:
         assert mqtt_publisher.state['image_sample_enable'] is False
 
 
+@pytest.mark.unit
+class TestRecordingPaused:
+    """set_recording_paused: headland pause, same session (2026-10-15)."""
+
+    def test_pause_and_resume_while_recording(self, mqtt_publisher, mock_owl):
+        mqtt_publisher.state['image_sample_enable'] = True
+        mqtt_publisher._handle_command({'action': 'set_recording_paused', 'value': True})
+        assert mqtt_publisher.get_recording_paused() is True
+        mqtt_publisher._handle_command({'action': 'set_recording_paused', 'value': False})
+        assert mqtt_publisher.get_recording_paused() is False
+
+    def test_cannot_pause_when_not_recording(self, mqtt_publisher, mock_owl):
+        mqtt_publisher._handle_command({'action': 'set_recording_paused', 'value': True})
+        assert mqtt_publisher.get_recording_paused() is False
+
+    @pytest.mark.parametrize('value', [False, True])
+    def test_stop_or_start_clears_the_pause(self, mqtt_publisher, mock_owl, value):
+        mqtt_publisher.state['image_sample_enable'] = not value
+        mqtt_publisher.state['recording_paused'] = True
+        mqtt_publisher._handle_command({'action': 'set_image_sample_enable', 'value': value})
+        assert mqtt_publisher.get_recording_paused() is False
+
+    def test_internal_stop_clears_the_pause(self, mqtt_publisher, mock_owl):
+        mqtt_publisher.state['image_sample_enable'] = True
+        mqtt_publisher.state['recording_paused'] = True
+        mqtt_publisher.set_image_sample_enable(False)
+        assert mqtt_publisher.get_recording_paused() is False
+
+    def test_not_a_cloud_command(self):
+        from utils.mqtt_manager import CLOUD_ALLOWED_ACTIONS
+        assert 'set_recording_paused' not in CLOUD_ALLOWED_ACTIONS
+
+
 # ---------------------------------------------------------------------------
 # set_sensitivity_level
 # ---------------------------------------------------------------------------
@@ -278,6 +311,98 @@ class TestSetDetectionMode:
         })
         # Invalid mode returns early — state unchanged
         assert mqtt_publisher.state['detection_mode'] == 1
+
+
+# ---------------------------------------------------------------------------
+# test_nozzles (Test nozzles page: one nozzle, or each in turn)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestNozzleTest:
+    """test_nozzles turns the listed relays on, and the OWL itself turns
+    them off when the time runs out, whatever the dashboard does next."""
+
+    @pytest.fixture
+    def relays(self, mqtt_publisher, mock_owl):
+        mock_owl.relay_controller = MagicMock()
+        mock_owl.relay_num = 4
+        mock_owl._firstboot_active = False
+        mqtt_publisher.state['detection_enable'] = False
+        mqtt_publisher.state['detection_mode'] = 1
+        yield mock_owl.relay_controller.relay
+        mqtt_publisher._stop_nozzle_test()
+
+    def _test(self, publisher, relays, duration_ms=10000):
+        publisher._handle_command({'action': 'test_nozzles',
+                                   'value': {'relays': relays, 'duration_ms': duration_ms}})
+
+    def test_turns_listed_relays_on(self, mqtt_publisher, relays):
+        self._test(mqtt_publisher, [2, 0])
+        relays.relay_on.assert_has_calls([call(0, verbose=False), call(2, verbose=False)])
+        assert mqtt_publisher.state['nozzle_test'] == [0, 2]
+
+    def test_switches_off_when_time_runs_out(self, mqtt_publisher, relays):
+        self._test(mqtt_publisher, [1], duration_ms=100)
+        time.sleep(0.4)
+        relays.relay_off.assert_called_with(1, verbose=False)
+        assert mqtt_publisher.state['nozzle_test'] == []
+
+    def test_empty_list_stops_a_running_test(self, mqtt_publisher, relays):
+        self._test(mqtt_publisher, [3])
+        self._test(mqtt_publisher, [], duration_ms=0)
+        relays.relay_off.assert_called_with(3, verbose=False)
+        assert mqtt_publisher.state['nozzle_test'] == []
+        assert mqtt_publisher._nozzle_test_timer is None
+
+    def test_next_nozzle_switches_the_last_one_off(self, mqtt_publisher, relays):
+        self._test(mqtt_publisher, [0])
+        self._test(mqtt_publisher, [1])
+        relays.relay_off.assert_called_with(0, verbose=False)
+        assert mqtt_publisher.state['nozzle_test'] == [1]
+
+    def test_duration_is_capped_at_ten_seconds(self, mqtt_publisher, relays):
+        self._test(mqtt_publisher, [0], duration_ms=600000)
+        assert mqtt_publisher._nozzle_test_timer.interval == 10.0
+
+    @pytest.mark.parametrize('bad', [[4], [-1], [True], ['1'], [1.0]])
+    def test_ignores_relays_outside_this_owl(self, mqtt_publisher, relays, bad):
+        self._test(mqtt_publisher, bad)
+        relays.relay_on.assert_not_called()
+        assert mqtt_publisher.state['nozzle_test'] == []
+
+    @pytest.mark.parametrize('state', [{'detection_enable': True}, {'detection_mode': 2}])
+    def test_refused_while_spraying(self, mqtt_publisher, relays, state):
+        mqtt_publisher.state.update(state)
+        self._test(mqtt_publisher, [0])
+        relays.relay_on.assert_not_called()
+
+    def test_refused_during_first_boot_setup(self, mqtt_publisher, mock_owl, relays):
+        mock_owl._firstboot_active = True
+        self._test(mqtt_publisher, [0])
+        relays.relay_on.assert_not_called()
+
+    def test_spraying_on_ends_the_test(self, mqtt_publisher, relays):
+        self._test(mqtt_publisher, [2])
+        mqtt_publisher._handle_command({'action': 'set_detection_enable', 'value': True})
+        relays.relay_off.assert_called_with(2, verbose=False)
+        assert mqtt_publisher.state['nozzle_test'] == []
+
+    def test_blanket_spray_ends_the_test(self, mqtt_publisher, relays):
+        self._test(mqtt_publisher, [2])
+        mqtt_publisher._handle_command({'action': 'set_detection_mode', 'value': 2})
+        relays.relay_off.assert_called_with(2, verbose=False)
+        assert mqtt_publisher.state['nozzle_test'] == []
+
+    def test_no_relay_controller_is_not_a_crash(self, mqtt_publisher, mock_owl):
+        mock_owl.relay_controller = None
+        mqtt_publisher._handle_command({'action': 'test_nozzles', 'value': {'relays': [0]}})
+        assert mqtt_publisher.state['nozzle_test'] == []
+
+    def test_state_reports_nozzle_count(self, mqtt_publisher, mock_owl):
+        mock_owl.relay_num = 10
+        mqtt_publisher._sync_parameters_to_state()
+        assert mqtt_publisher.state['relay_num'] == 10
+        json.dumps(mqtt_publisher.state)
 
 
 # ---------------------------------------------------------------------------

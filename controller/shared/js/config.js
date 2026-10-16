@@ -31,7 +31,7 @@ const CONFIG_FIELD_DEFS = {
     'Camera': {
         '_resolution': {
             type: 'resolution',
-            options: ['1456x1088', '1280x960', '1280x720', '1024x768', '800x600', '640x480', '416x320', '320x240'],
+            options: ['1456x1088', '1280x960', '1280x720', '1024x768', '800x600', '728x544', '640x480', '416x320', '320x240'],
             help: 'Camera resolution (width x height)',
             keys: { width: 'resolution_width', height: 'resolution_height' }
         },

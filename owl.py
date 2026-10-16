@@ -2,6 +2,7 @@
 import os
 import sys
 import signal
+import socket
 
 import logging
 import argparse
@@ -81,7 +82,8 @@ try:
     import numpy as np
     from utils.input_manager import UteController, AdvancedController, get_rpi_version
     from utils.output_manager import RelayController, HeadlessStatusIndicator, UteStatusIndicator, AdvancedStatusIndicator, GPSStatusLED, GPSLEDState
-    from utils.directory_manager import DirectorySetup
+    from utils.directory_manager import DirectorySetup, session_folder_name
+    from utils.device_identity import get_device_serial
     from utils.video_manager import VideoStream, StreamingHandler, ThreadedHTTPServer
     from utils.image_sampler import ImageRecorder, CaptureScheduler
     from utils.exposure_governor import ExposureGovernor, ground_smear_mm, parse_max_gain
@@ -350,6 +352,19 @@ class Owl:
         self.running_algorithm = None
         self.stream_active = None
         self.latest_stream_frame = None
+        # Commands the dashboard queues for the main loop. Set before the MQTT
+        # client starts: the controller re-sends its choices (model,
+        # algorithm) the moment this OWL connects, and resetting these later
+        # in __init__ wiped them, so a rebooted OWL came back on another model.
+        self._pending_algorithm = None
+        self._pending_trackbar_updates = {}
+        self._pending_model = None
+        self._pending_detect_classes = None
+        self._pending_lut_profile = None
+        self._pending_lut_sensitivity = None
+        # Driver paused recording (dashboard): session stays open, nothing saved
+        self._recording_paused = False
+
         mqtt_enable = self.config.getboolean('MQTT', 'enable', fallback=False)
 
         broker_ip = self.config.get('MQTT', 'broker_ip', fallback='localhost')
@@ -730,12 +745,6 @@ class Owl:
         # GreenOnGreen / hybrid config
         self.inference_resolution = self.config.getint('GreenOnGreen', 'inference_resolution', fallback=320)
         self.crop_buffer_px = self.config.getint('GreenOnGreen', 'crop_buffer_px', fallback=20)
-        self._pending_algorithm = None
-        self._pending_trackbar_updates = {}
-        self._pending_model = None
-        self._pending_detect_classes = None
-        self._pending_lut_profile = None
-        self._pending_lut_sensitivity = None
         self._gog_detector = None
         # When True the dashboard preview streams the full uncropped frame (used by
         # the geometry editor so its overlay maps to the whole image). Default: the
@@ -1120,8 +1129,15 @@ class Owl:
                         self._retry_storage_setup()
 
                     if self._save_directory_writable():
-                        session_name = f"session_{datetime.now().strftime('%H%M%S')}"
-                        date_dir = os.path.join(self.save_directory, datetime.now().strftime('%Y%m%d'))
+                        # One clock reading for both, so a start at midnight
+                        # can't put the folder under the wrong day. The name
+                        # carries this OWL's id + serial: OWLs started by one
+                        # tap on the controller would otherwise collide.
+                        started = datetime.now()
+                        session_name = session_folder_name(
+                            started, self.dash.device_id if self.dash else socket.gethostname(),
+                            get_device_serial())
+                        date_dir = os.path.join(self.save_directory, started.strftime('%Y%m%d'))
                         session_dir = os.path.join(date_dir, session_name)
                         os.makedirs(session_dir, exist_ok=True)
                         # Stamped into every image's EXIF: the directory name is
@@ -1259,6 +1275,7 @@ class Owl:
                 if self._pending_model:
                     new_model = self._pending_model
                     self._pending_model = None
+                    previous_model = self._model_path
                     try:
                         self._model_path = new_model
                         weed_detector = _create_detector(algorithm)
@@ -1267,8 +1284,18 @@ class Owl:
                         self.logger.info(f"Live model switch to: {new_model}")
                         if self.dash:
                             self.dash.state['algorithm_error'] = None
+                            # Saved only once it has loaded, so a reboot comes
+                            # back on this model. With model_path = models
+                            # each OWL picked its own model at boot.
+                            with self.dash.config_lock:
+                                if not self.config.has_section('GreenOnGreen'):
+                                    self.config.add_section('GreenOnGreen')
+                                self.config.set('GreenOnGreen', 'model_path', new_model)
+                            self.dash._handle_save_config()
                     except Exception as e:
                         self.logger.error(f"Failed to switch model: {e}")
+                        # Keep the model that works for later detector rebuilds
+                        self._model_path = previous_model
                         if self.dash:
                             self.dash.state['algorithm_error'] = str(e)
 
@@ -1512,7 +1539,14 @@ class Owl:
 
                 ##### IMAGE SAMPLER #####
                 # record sample images if required of weeds detected. sampleFreq specifies how often
-                if self._image_sample_enable:
+                if self._image_sample_enable and self._recording_paused:
+                    # Paused at the headland: the session stays open and
+                    # nothing is saved. A clip ends here; resuming starts
+                    # the next one in the same session.
+                    if self._video_writer_clip is not None:
+                        self._close_video_clip()
+                        self._video_started_at = None
+                elif self._image_sample_enable:
                     # Video mode records every frame into a clip instead.
                     # Never while detecting: encoding every frame in the loop
                     # would cost spray latency, so save stills instead.
@@ -2146,7 +2180,9 @@ class Owl:
             # Recording stills but parked or creeping: the screens say so,
             # or a driver at a headland thinks recording has broken
             'paused_slow': bool(self._image_sample_enable and self.record_mode != 'video'
+                            and not self._recording_paused
                             and self.capture_scheduler.too_slow(speed)),
+            'paused': bool(self._image_sample_enable and self._recording_paused),
             'jpeg_quality': self.jpeg_quality,
             'record_mode': self.record_mode,
             'video_max_s': self.video_max_s,
@@ -2359,6 +2395,9 @@ class Owl:
                     sensitivity_int = self.sensitivity_level.value
                 self._sensitivity_level = Sensitivity(sensitivity_int).name.lower()
 
+        self._recording_paused = bool(self.dash and self._image_sample_enable
+                                      and self.dash.get_recording_paused())
+
         # First-boot setup mode: detection stays off no matter what the
         # hardware switch or dashboard said above — a flipped-on Ute
         # switch must not click relays on the bench. Runs only when the
@@ -2395,7 +2434,7 @@ class Owl:
 
         # Session GPS track: recorder throttles internally (1 s / 0.5 m)
         if (self.track_recorder.recording and self._image_sample_enable
-                and self.gps_data):
+                and not self._recording_paused and self.gps_data):
             self.track_recorder.add_point(
                 lat=self.gps_data.get('latitude'),
                 lon=self.gps_data.get('longitude'),

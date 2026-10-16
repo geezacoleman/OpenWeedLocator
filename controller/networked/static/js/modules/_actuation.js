@@ -1,26 +1,15 @@
 // ============================================
 // OWL Central Controller - Actuation Module
-// Speed gauges, actuation sliders, coverage warning
+// Speed gauges, spray length, coverage warning
 // ============================================
 
 let actuationPollInterval = null;
 const ACTUATION_POLL_MS = 1000;
 
-// Actuation slider state
-// actuation_length_cm: sent via /api/actuation/config (GPS-dependent)
-// crop_buffer_px, confidence: sent via sendConfigUpdate (synced from configParams)
-let actuationParams = {
-    actuation_length_cm: { value: 10, min: 2, max: 50 },
-    crop_buffer_px: { value: 20, min: 0, max: 50 },
-    confidence: { value: 50, min: 5, max: 100 }
-};
-
-// Unit labels for each slider
-var actuationUnits = {
-    actuation_length_cm: ' cm',
-    crop_buffer_px: ' px',
-    confidence: '%'
-};
+// Spray length (cm of ground per spray): only used with a GPS speed, sent
+// through /api/actuation/config. AI confidence and crop buffer live on the
+// Dashboard (configParams).
+let sprayLengthStep = null;
 
 // ============================================
 // SVG ARC GAUGE HELPERS
@@ -165,29 +154,12 @@ async function pollActuation() {
             srcEl.className = 'actuation-source ' + (data.source || 'config');
         }
 
-        // Sync actuation_length_cm from actuation API
-        if (typeof data.actuation_length_cm !== 'undefined') {
-            actuationParams.actuation_length_cm.value = data.actuation_length_cm;
+        // Spray length: greyed (never hidden) without a GPS speed
+        if (sprayLengthStep) {
+            if (typeof data.actuation_length_cm === 'number') sprayLengthStep.set(data.actuation_length_cm);
+            OwlUI.stepOff(document.getElementById('sprayLength'), (data.gps_status || 'no_gps') === 'no_gps',
+                'Used when there is a GPS speed. Without one the OWLs use their fixed spray time.');
         }
-
-        // Sync crop_buffer_px and confidence from configParams (kept in sync by dashboard)
-        actuationParams.crop_buffer_px.value = configParams.crop_buffer_px.value;
-        actuationParams.confidence.value = configParams.confidence.value;
-
-        updateActuationSliders();
-
-        // GPS disable state — only affects actuation length slider
-        var gpsGroup = document.querySelector('.actuation-gps-group');
-        if (gpsGroup) {
-            if ((data.gps_status || 'no_gps') === 'no_gps') {
-                gpsGroup.classList.add('no-gps');
-            } else {
-                gpsGroup.classList.remove('no-gps');
-            }
-        }
-
-        // AI confidence disable state — greyed when not AI mode
-        updateConfidenceSliderState();
 
         // Coverage warning
         var warnEl = document.getElementById('coverage-warning');
@@ -218,143 +190,24 @@ function stopActuationPolling() {
 }
 
 // ============================================
-// CONFIDENCE SLIDER STATE
+// SPRAY LENGTH (Settings, Spraying)
 // ============================================
 
-function updateConfidenceSliderState() {
-    var confGroup = document.getElementById('confidence-act-group');
-    if (!confGroup) return;
-
-    var activeBtn = document.querySelector('.mode-btn.active');
-    var mode = activeBtn ? activeBtn.dataset.mode : 'gob';
-
-    if (mode === 'gog' || mode === 'hybrid') {
-        confGroup.classList.remove('disabled');
-    } else {
-        confGroup.classList.add('disabled');
-    }
-}
-
-// ============================================
-// ACTUATION SLIDERS (pointer-capture drag)
-// ============================================
-
-function initActuationSliders() {
-    var sliders = document.querySelectorAll('.actuation-slider-wrap .single-slider');
-    sliders.forEach(function(slider) {
-        var knob = slider.querySelector('.slider-knob');
-        if (!knob) return;
-
-        var param = knob.getAttribute('data-param');
-        if (!param || !(param in actuationParams)) return;
-
-        // Pointer-capture drag
-        knob.addEventListener('pointerdown', function(e) {
-            e.preventDefault();
-            knob.setPointerCapture(e.pointerId);
-
-            function onMove(ev) {
-                var rail = slider.querySelector('.slider-rail');
-                if (!rail) return;
-                var rect = rail.getBoundingClientRect();
-                var pct = (ev.clientX - rect.left) / rect.width;
-                pct = Math.max(0, Math.min(1, pct));
-
-                var cfg = actuationParams[param];
-                var val = Math.round(cfg.min + pct * (cfg.max - cfg.min));
-                cfg.value = val;
-                positionActuationKnob(knob, param);
-                updateActuationValueDisplay(param);
-            }
-
-            function onUp() {
-                knob.removeEventListener('pointermove', onMove);
-                knob.removeEventListener('pointerup', onUp);
-                knob.removeEventListener('pointercancel', onUp);
-                sendActuationParam(param);
-            }
-
-            knob.addEventListener('pointermove', onMove);
-            knob.addEventListener('pointerup', onUp);
-            knob.addEventListener('pointercancel', onUp);
-        });
-
-        // Tap-to-jump on track
-        var rail = slider.querySelector('.slider-rail');
-        if (rail) {
-            rail.addEventListener('pointerdown', function(e) {
-                if (e.target.classList.contains('slider-knob')) return;
-                var rect = rail.getBoundingClientRect();
-                var pct = (e.clientX - rect.left) / rect.width;
-                pct = Math.max(0, Math.min(1, pct));
-
-                var cfg = actuationParams[param];
-                cfg.value = Math.round(cfg.min + pct * (cfg.max - cfg.min));
-                positionActuationKnob(knob, param);
-                updateActuationValueDisplay(param);
-                sendActuationParam(param);
+function initSprayLength() {
+    var el = document.getElementById('sprayLength');
+    if (!el) return;
+    sprayLengthStep = OwlUI.stepper(el, {
+        value: null, min: 2, max: 50, step: 1, unit: 'cm', label: 'Spray length (cm)', settleMs: 400,
+        onChange: function (val) {
+            fetch('/api/actuation/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ actuation_length_cm: val })
+            }).catch(function (err) {
+                console.error('Failed to send actuation config:', err);
             });
-        }
+        },
     });
-}
-
-function positionActuationKnob(knob, param) {
-    var cfg = actuationParams[param];
-    if (!cfg) return;
-    var pct = (cfg.value - cfg.min) / (cfg.max - cfg.min);
-    knob.style.left = (pct * 100) + '%';
-
-    // Update fill bar
-    var fill = knob.closest('.single-slider')?.querySelector('.slider-fill');
-    if (fill) {
-        fill.style.width = (pct * 100) + '%';
-    }
-}
-
-function updateActuationValueDisplay(param) {
-    var el = document.getElementById(param + '-act-value');
-    if (el && actuationParams[param]) {
-        el.textContent = actuationParams[param].value + (actuationUnits[param] || '');
-    }
-}
-
-function updateActuationSliders() {
-    for (var param in actuationParams) {
-        var knob = document.getElementById(param + '-act-knob');
-        if (knob) positionActuationKnob(knob, param);
-        updateActuationValueDisplay(param);
-    }
-}
-
-// ============================================
-// SEND PARAM UPDATES (per-param routing)
-// ============================================
-
-function sendActuationParam(param) {
-    var val = actuationParams[param].value;
-
-    if (param === 'actuation_length_cm') {
-        // Actuation geometry — POST to actuation API
-        fetch('/api/actuation/config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ actuation_length_cm: val })
-        }).catch(function(err) {
-            console.error('Failed to send actuation config:', err);
-        });
-    } else if (param === 'crop_buffer_px') {
-        // Keep configParams in sync, send via MQTT
-        configParams.crop_buffer_px.value = val;
-        sendCommand('all', 'set_crop_buffer', val);
-        // Update config tab slider if visible
-        if (typeof updateSlider === 'function') updateSlider(param);
-    } else if (param === 'confidence') {
-        // Keep configParams in sync, send via MQTT (convert % to 0.0-1.0)
-        configParams.confidence.value = val;
-        sendCommand('all', 'set_greenongreen_param', { key: 'confidence', value: val / 100 });
-        // Update config tab slider if visible
-        if (typeof updateSlider === 'function') updateSlider(param);
-    }
 }
 
 // ============================================
@@ -591,22 +444,4 @@ function updateSensitivityDial(level) {
         label.textContent = sensitivityLabels[level] || level.charAt(0).toUpperCase() + level.slice(1);
         label.style.color = sensitivityColors[level] || '#555';
     }
-}
-
-// ============================================
-// AVERAGE LOOP TIME FROM OWL STATES
-// (called from dashboard update for gauge when no actuation API)
-// ============================================
-
-function computeAvgLoopTimeFromOWLs() {
-    var total = 0;
-    var count = 0;
-    for (var id in owlsData) {
-        var lt = owlsData[id]?.avg_loop_time_ms;
-        if (lt && lt > 0) {
-            total += lt;
-            count++;
-        }
-    }
-    return count > 0 ? total / count : 0;
 }

@@ -28,7 +28,7 @@ const configParams = {
     confidence: { value: 50, min: 5, max: 100 }
 };
 
-// ── Log-scale aware slider maths (linear when p.scale is undefined) ──
+// ── Log-scale aware stepper maths (linear when p.scale is undefined) ──
 
 function roundParamValue(p, val) {
     if (p.decimals) {
@@ -38,22 +38,8 @@ function roundParamValue(p, val) {
     return Math.round(val);
 }
 
-function sliderPctToValue(p, pct) {
-    const val = (p.scale === 'log')
-        ? p.min * Math.pow(p.max / p.min, pct / 100)
-        : (pct / 100) * (p.max - p.min) + p.min;
-    return roundParamValue(p, Math.max(p.min, Math.min(p.max, val)));
-}
-
-function sliderValueToPct(p, val) {
-    const v = Math.max(p.min, Math.min(p.max, val));
-    return (p.scale === 'log')
-        ? Math.log(v / p.min) / Math.log(p.max / p.min) * 100
-        : ((v - p.min) / (p.max - p.min)) * 100;
-}
-
 function sliderStepValue(p, val, delta) {
-    // Fine-tune: additive for linear params, multiplicative for log params
+    // One step: additive for linear params, multiplicative for log params
     const next = (p.scale === 'log') ? val * Math.pow(1.12, delta) : val + delta;
     return roundParamValue(p, Math.max(p.min, Math.min(p.max, next)));
 }

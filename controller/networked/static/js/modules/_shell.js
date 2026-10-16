@@ -1,10 +1,11 @@
 // ============================================
 // OWL Central Controller - redesigned shell (2026-10-12)
 // "The standalone in horizontal, with more OWLs down one side": the OWL
-// rail, Field | Data | Map | Settings, the AI models page per OWL, camera,
-// data collection, test nozzles and maintenance. Built from
+// rail, Dashboard | Data | Map | Settings, the AI models page per OWL,
+// camera, data collection, test nozzles and maintenance. Built from
 // /shared/js/owl_ui.js; fed every poll by updateDashboard() -> Shell.update.
 // The rail selection is the scope every control acts on (currentScope()).
+// The live view is a pop-up (Live view on Dashboard), not a fixed panel.
 // ============================================
 
 let _scope = 'all';
@@ -31,6 +32,11 @@ const Shell = (function () {
     let camValues = null;
     let evStep = null;
     let dcForm = null;
+    let livePop = null;
+    let liveId = null;          // OWL picked in the live view pop-up (null = the selection)
+    let nozzleTester = null;
+    let trackPersistStep = null;
+    let trackBufferStep = null;
 
     // ---------- init ----------
     function init() {
@@ -46,28 +52,25 @@ const Shell = (function () {
             b.addEventListener('click', () => pickMode(b.dataset.mode)));
         document.querySelectorAll('#sensitivity-seg [data-level]').forEach((b) =>
             b.addEventListener('click', () => setSensitivityLevel(b.dataset.level)));
+        livePop = UI().livePop($('livePop'), { onOpen: startFeed, onClose: () => { stopFeed(); liveId = null; } });
+        $('liveOpen').addEventListener('click', () => livePop.open());
         $('feedFull').addEventListener('click', () => { const id = feedOwl(); if (id) openVideoFeed(id); });
         $('feedFrame').addEventListener('click', () => { const id = feedOwl(); if (id) grabFrame(id); });
         $('sessionsRefresh').addEventListener('click', () => { fetch('/api/collect/sessions/refresh', { method: 'POST' }).catch(() => {}); setTimeout(pollCollect, 1500); });
         $('camGeometry').addEventListener('click', () => { settings.open('colour', true); setTimeout(() => toggleGeometryEditor(), 100); });
         $('rebootController').addEventListener('click', rebootController);
         $('fleetUpdateBtn').addEventListener('click', fleetUpdateStart);
-        $('advancedTabs').querySelectorAll('[data-adv]').forEach((b) => b.addEventListener('click', () => {
-            $('advancedTabs').querySelectorAll('[data-adv]').forEach((x) => x.classList.toggle('on', x === b));
-            $('adv-config').hidden = b.dataset.adv !== 'config';
-            $('adv-agent').hidden = b.dataset.adv !== 'agent';
-        }));
         initCamera();
         initNozzles();
+        initTracking();
         initCapture();
-        startFeed();
         pollFleetUpdate();
     }
 
     function isView(name) { const v = $('view-' + name); return !!(v && v.classList.contains('is-on')); }
 
     function onView(name) {
-        if (name === 'field') startFeed(); else stopFeed();
+        livePop.close();
         if (name === 'map') { startGPSPolling(); if (typeof window.gpsMapShow === 'function') window.gpsMapShow(); }
         else stopGPSPolling();
         if (name === 'data') { pollCollect(); collectTimer = collectTimer || setInterval(pollCollect, 3000); }
@@ -80,6 +83,7 @@ const Shell = (function () {
         if (name === 'colour') startConfigPreview(); else stopConfigPreview();
         if (name === 'camera') loadCamera();
         if (name === 'ai') renderAIPanel();
+        if (name === 'nozzles') nozzleTester.render();
         if (name === 'maint') { renderMaint(); pollFleetUpdate(); }
     }
 
@@ -104,7 +108,8 @@ const Shell = (function () {
         lastSliderSendTime = 0;
         updateDashboard();
         render();
-        if (isView('field')) { stopFeed(); startFeed(); }
+        liveId = null;
+        if (livePop.isOpen()) { stopFeed(); startFeed(); }
         if (isView('settings') && (settings.current() || {}).panel === 'ai') renderAIPanel();
     }
     // The OWL the controls show: the selected one, or the first connected
@@ -117,6 +122,7 @@ const Shell = (function () {
         return Object.keys(owlsData).sort().find((id) => owlsData[id] && owlsData[id].connected) || null;
     }
     function feedOwl() {
+        if (liveId && owlsData[liveId] && owlsData[liveId].connected) return liveId;
         if (_scope !== 'all') return owlsData[_scope] && owlsData[_scope].connected ? _scope : null;
         return firstConnected();
     }
@@ -164,11 +170,14 @@ const Shell = (function () {
         });
     }
 
-    // ---------- live view ----------
-    // A snapshot every second (as the old config feed did): far lighter
-    // than an MJPEG stream through the controller.
+    // ---------- live view (pop-up) ----------
+    // A snapshot every second while the pop-up is open (as the old config
+    // feed did): far lighter than an MJPEG stream through the controller.
     function startFeed() {
         if (feedTimer) return;
+        $('fieldFeedEmpty').hidden = false;
+        $('fieldFeedEmpty').textContent = 'Loading the camera picture';
+        feedRetryAt = 0;
         feedTimer = setInterval(nextFrame, 1000);
         nextFrame();
     }
@@ -176,12 +185,30 @@ const Shell = (function () {
         clearInterval(feedTimer);
         feedTimer = null;
         feedBusy = false;
+        $('fieldFeed').removeAttribute('src');
+        $('fieldFeed').hidden = true;
+    }
+    // One button per online OWL in the pop-up head (two or more online)
+    function renderLivePick(id) {
+        const online = Object.keys(owlsData).sort().filter((k) => owlsData[k] && owlsData[k].connected);
+        const html = online.length < 2 ? '' : online.map((k) =>
+            '<button type="button" data-live="' + UI().esc(k) + '" class="' + (k === id ? 'on' : '') + '">' + UI().esc(owlName(k)) + '</button>').join('');
+        const box = $('livePick');
+        box.hidden = !html;
+        if (box.dataset.html === html) return;
+        box.dataset.html = html;
+        box.innerHTML = html;
+        box.querySelectorAll('[data-live]').forEach((b) => b.addEventListener('click', () => {
+            liveId = b.dataset.live;
+            feedRetryAt = 0;
+            nextFrame();
+        }));
     }
     function nextFrame() {
         const img = $('fieldFeed');
         const id = feedOwl();
-        $('feedLabel').textContent = id ? 'Showing ' + owlName(id) : '';
-        $('feedLabel').hidden = !id;
+        $('feedLabel').textContent = id ? owlName(id) : 'Live view';
+        renderLivePick(id);
         if (!id) {
             img.hidden = true;
             $('fieldFeedEmpty').hidden = false;
@@ -277,19 +304,24 @@ const Shell = (function () {
         const mode = one ? U.algoMode(one.algorithm) : 'gob';
         const spraying = globalDetectionEnabled && !globalNozzlesActive;
         U.setSwitch($('detectSwitch'), spraying, { go: spraying });
-        $('sprayHint').innerHTML = globalNozzlesActive ? U.esc('Blanket spray is on (Test nozzles)')
+        $('sprayHint').innerHTML = globalNozzlesActive ? U.esc('Off while blanket spray is on')
             : U.joinSep([scopeLabel, spraying && one ? U.MODE_LABELS[mode] : (spraying ? null : 'Off')]);
 
         // Recording (fleet-wide run)
         U.setSwitch($('recordSwitch'), globalRecordingEnabled, { rec: true });
         renderRecordHint();
         U.setSwitch($('nozzleSwitch'), globalNozzlesActive, { go: globalNozzlesActive });
+        $('blanketHint').textContent = globalNozzlesActive ? 'Every nozzle is spraying' : 'Every nozzle on, detection off';
         U.setSwitch($('trackingSwitch'), globalTrackingEnabled);
+        const liveOwl = feedOwl();
+        $('liveHint').textContent = liveOwl ? 'Camera picture from ' + owlName(liveOwl) : 'No OWL connected';
 
         renderNotices(scoped);
         renderDetectNotice();
+        renderOffline(scoped);
+        renderTracking(one);
 
-        // Stat cells
+        // Stat cells: speed and frame rate always; the slowest OWL sets the frame rate
         const faults = scoped.filter((o) => o.fault).length;
         let health;
         if (!scoped.length) health = { label: 'Status', value: _scope === 'all' ? 'No OWLs' : 'Offline', cls: 'warn' };
@@ -299,16 +331,13 @@ const Shell = (function () {
         const free = frees.length ? U.fmtGB(Math.min.apply(null, frees)) : null;
         const speeds = scoped.map((o) => o.speed_kmh).filter((v) => typeof v === 'number');
         const speed = speeds.length ? (speeds.reduce((a, b) => a + b, 0) / speeds.length).toFixed(1) + ' km/h' : null;
-        if (_scope === 'all') {
-            U.statCells($('fieldStats'), [health, { label: 'GPS', value: speed || 'No speed' }, { label: 'Free', value: free }]);
-        } else {
-            const o = one || {};
-            const fps = typeof o.avg_loop_time_ms === 'number' && o.avg_loop_time_ms > 0 ? Math.round(1000 / o.avg_loop_time_ms) : null;
-            U.statCells($('fieldStats'), [health,
-                { label: 'CPU', value: typeof o.cpu_temp === 'number' && o.cpu_temp > 0 ? Math.round(o.cpu_temp) + ' °C' : null },
-                { label: 'Frame rate', value: fps !== null ? fps + ' fps' : null },
-                { label: 'Free', value: free }]);
-        }
+        const loops = scoped.map((o) => o.avg_loop_time_ms).filter((v) => typeof v === 'number' && v > 0);
+        const fps = loops.length ? Math.round(1000 / Math.max.apply(null, loops)) + ' fps' : null;
+        U.statCells($('fieldStats'), [health,
+            { label: 'Speed', value: speed || (scoped.length ? 'No GPS' : null) },
+            { label: 'Frame rate', value: fps },
+            { label: 'Free', value: free }]);
+        if (isView('settings') && (settings.current() || {}).panel === 'nozzles') nozzleTester.render();
 
         // Side list badges: problems show on the row itself
         const needAI = online.filter((id) => U.aiReported(owlsData[id].ai) && !U.canRunAI(owlsData[id].ai)).length;
@@ -369,13 +398,98 @@ const Shell = (function () {
         if (scoped.some((o) => o.restart_required)) {
             out.push(U.notice('info', '<b>Restart needed.</b> New settings apply after the OWLs restart. <button type="button" class="lnk" data-act="restart">Restart OWLs ›</button>'));
         }
+        // Different AI models matter once an OWL sprays with AI
+        const mismatch = mismatchHTML();
+        if (mismatch && Object.keys(owlsData).some((id) => owlsData[id] && owlsData[id].connected &&
+                ['gog', 'gog-hybrid'].indexOf(owlsData[id].algorithm) !== -1)) out.unshift(mismatch);
         const html = out.slice(0, 3).join('');
         const box = $('fieldNotices');
-        if (box.dataset.html === html) return;
-        box.dataset.html = html;
-        box.innerHTML = html;
-        const r = box.querySelector('[data-act="restart"]');
-        if (r) r.addEventListener('click', () => { sendCommand(currentScope(), 'restart_service'); showToast('Restarting', 'info'); });
+        if (box.dataset.html !== html) {
+            box.dataset.html = html;
+            box.innerHTML = html;
+            const r = box.querySelector('[data-act="restart"]');
+            if (r) r.addEventListener('click', () => { sendCommand(currentScope(), 'restart_service'); showToast('Restarting', 'info'); });
+            wireUseModel(box);
+        }
+        const ai = $('aiNotices');
+        if (ai.dataset.html !== mismatch) {
+            ai.dataset.html = mismatch;
+            ai.innerHTML = mismatch;
+            wireUseModel(ai);
+        }
+    }
+
+    // No OWL in the selection: the settings that act on OWLs are greyed
+    // with the reason (never hidden). With OWLs, updateSliderVisibility
+    // (_config_tab.js) decides per detection mode.
+    function renderOffline(scoped) {
+        if (scoped.length) {
+            document.querySelectorAll('#colourSteppers [data-pstep]').forEach((el) => UI().stepOff(el, false));
+            return;
+        }
+        const why = _scope === 'all' ? 'No OWL connected' : owlName(_scope) + ' is offline';
+        document.querySelectorAll('[data-pstep]').forEach((el) => UI().stepOff(el, true, why));
+        const html = UI().notice('info', '<b>' + UI().esc(why) + '.</b> The values show the defaults until an OWL connects.');
+        const box = $('colourNotices');
+        if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
+    }
+
+    // ---------- tracking (AI models) ----------
+    function initTracking() {
+        document.querySelectorAll('#track-stability-selector [data-stability]').forEach((b) => b.addEventListener('click', () => {
+            const level = b.dataset.stability;
+            setTrackParams(UI().TRACK_PRESETS[level], 'Track stability ' + b.textContent.toLowerCase());
+        }));
+        trackPersistStep = UI().stepper($('trackPersist'), {
+            value: null, min: 0, max: 15, step: 1, label: 'Spray a lost weed for (frames)', settleMs: 400,
+            onChange: (v) => setTrackParams({ detection_persist_frames: String(v) }),
+        });
+        trackBufferStep = UI().stepper($('trackBuffer'), {
+            value: null, min: 10, max: 150, step: 10, label: 'Remember a lost track for (frames)', settleMs: 400,
+            onChange: (v) => setTrackParams({ track_buffer: String(v) }),
+        });
+    }
+    function renderTracking(one) {
+        const p = (one && one.track_params) || {};
+        const has = Object.keys(p).length > 0;
+        const on = !!one && globalTrackingEnabled;
+        const preset = has ? UI().trackPreset(p) : null;
+        document.querySelectorAll('#track-stability-selector [data-stability]').forEach((b) => {
+            b.classList.toggle('on', b.dataset.stability === preset);
+            b.disabled = !on;
+        });
+        $('trackCustom').textContent = has && !preset ? '(custom)' : '';
+        trackPersistStep.set(typeof p.detection_persist_frames === 'number' ? p.detection_persist_frames : null);
+        trackBufferStep.set(typeof p.track_buffer === 'number' ? p.track_buffer : null);
+        const why = !one ? 'No OWL connected' : !has ? 'Update this OWL to change these' : !on ? 'Turn Track weeds on to change these' : '';
+        trackPersistStep.disable(!!why);
+        trackBufferStep.disable(!!why);
+        $('trackWhy').textContent = why;
+        $('trackWhy').hidden = !why;
+    }
+
+    // ---------- one AI model on every OWL ----------
+    // The usual set-up is the same model on every OWL; a difference is
+    // allowed but always shown in red, with a one-tap fix.
+    function mismatchHTML() {
+        const online = Object.keys(owlsData).sort().filter((id) => owlsData[id] && owlsData[id].connected);
+        const mm = UI().modelMismatch(online.map((id) => ({
+            name: owlName(id), current_model: owlsData[id].current_model, available_models: owlsData[id].available_models,
+        })));
+        if (!mm) return '';
+        const who = Object.keys(mm.byModel).map((m) => mm.byModel[m].join(', ') + ': ' + (m || 'no model')).join('. ');
+        const fix = mm.common.length ? ' <button type="button" class="lnk" data-use-model="' + UI().esc(mm.common[0]) + '">Use ' + UI().esc(mm.common[0]) + ' on all ›</button>'
+            : ' Send one model to every OWL from the Model library.';
+        return UI().notice('bad', '<b>The OWLs run different AI models.</b> ' + UI().esc(who) + '.' + fix);
+    }
+    function wireUseModel(box) {
+        box.querySelectorAll('[data-use-model]').forEach((b) => b.addEventListener('click', async () => {
+            const name = b.dataset.useModel;
+            const ok = await UI().confirm({ title: 'Use ' + name + ' on every OWL?', body: 'Each OWL loads it now. Spraying carries on while it loads.', ok: 'Use on all' });
+            if (!ok) return;
+            sendCommand('all', 'set_model', name);
+            showToast('Loading ' + name + ' on every OWL', 'info');
+        }));
     }
 
     // ---------- AI models ----------
@@ -417,9 +531,10 @@ const Shell = (function () {
         });
         html += '</div>';
         const need = ids.filter((id) => owlsData[id] && owlsData[id].connected && U.aiReported(owlsData[id].ai) && !U.canRunAI(owlsData[id].ai));
-        html += '<a class="ou-btn navy slim wide" href="/models">Send model to all OWLs</a><div class="ou-actions">' +
-            (need.length ? '<button type="button" class="ou-btn ghost slim" id="installNeeded">Install AI on ' + need.length + (need.length === 1 ? ' OWL' : ' OWLs') + '</button>' : '') + '</div>' +
-            '<p class="ou-hint">Tap an OWL to choose its model and what it sprays. Models are uploaded on the Model library page.</p>';
+        html += '<p class="ou-hint" style="margin-top:8px">Tap an OWL to choose its model and what it sprays. The same model on every OWL is the usual set-up.</p>' +
+            '<div class="ou-actions" style="margin-top:10px"><a class="ou-btn navy slim" href="/models">Send a model to all OWLs</a>' +
+            (need.length ? '<button type="button" class="ou-btn ghost slim" id="installNeeded">Install AI on ' + need.length + (need.length === 1 ? ' OWL' : ' OWLs') + '</button>' : '') +
+            '<span class="ou-hint">Models are uploaded on the Model library page.</span></div>';
         if (el.dataset.html === html) return;
         el.dataset.html = html;
         el.innerHTML = html;
@@ -526,13 +641,14 @@ const Shell = (function () {
             setCamera({ awb_mode: b.dataset.value });
         }));
         $('camCalibrate').addEventListener('click', calibrate);
+        $('camRes').innerHTML = UI().RESOLUTIONS.map((r) => '<button type="button" data-value="' + r + '">' + r.replace('x', '×') + '</button>').join('');
         $('camRes').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
             const [w, h] = b.dataset.value.split('x');
             setCamera({ resolution_width: w, resolution_height: h }, true);
         }));
         $('camRot').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => setCamera({ rotation: b.dataset.value }, true)));
         evStep = UI().stepper($('camEv'), {
-            value: null, min: -10, max: 10, step: 1,
+            value: null, min: -10, max: 10, step: 1, label: 'Brightness', settleMs: 400,
             format: (v) => (v > 0 ? '+' + v : v < 0 ? '−' + Math.abs(v) : '0'),
             onChange: (v) => setCamera({ exp_compensation: String(v) }),
         });
@@ -544,15 +660,27 @@ const Shell = (function () {
             if (!camValues) setTimeout(() => { if ((settings.current() || {}).panel === 'camera' && isView('settings')) loadCamera(); }, 2000);
         }).catch(() => {});
     }
+    // The values come from a connected OWL's settings: with none connected
+    // nothing can show as selected, so the page says so and greys out.
     function renderCamera() {
         const c = camValues || {};
+        const none = !camValues;
         const awb = String(c.awb_mode || '').toLowerCase();
-        $('camAwb').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.value === awb));
+        $('camAwb').querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b.dataset.value === awb); b.disabled = none; });
         evStep.set(c.exp_compensation === undefined || c.exp_compensation === null || c.exp_compensation === '' ? null : parseInt(c.exp_compensation, 10) || 0);
-        const res = (c.resolution_width || '') + 'x' + (c.resolution_height || '');
-        $('camRes').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.value === res));
+        evStep.disable(none);
+        const res = UI().resolutionKey(c.resolution_width, c.resolution_height);
+        $('camRes').querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b.dataset.value === res); b.disabled = none; });
+        $('camResNow').textContent = res && UI().RESOLUTIONS.indexOf(res) === -1 ? 'Now ' + res.replace('x', '×') : '';
         const rot = String(c.rotation || '').toLowerCase();
-        $('camRot').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.value === rot));
+        $('camRot').querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b.dataset.value === rot); b.disabled = none; });
+        $('camCalibrate').disabled = none;
+        const online = Object.keys(owlsData).some((id) => owlsData[id] && owlsData[id].connected);
+        const html = !none ? '' : UI().notice('info', online
+            ? '<b>Waiting for the OWLs to send their camera settings.</b>'
+            : '<b>No OWL connected.</b> The camera settings show here when an OWL connects.');
+        const box = $('cameraState');
+        if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
     }
     function calibrate() {
         fetch('/api/collect/camera', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'calibrate_awb' }) })
@@ -621,6 +749,20 @@ const Shell = (function () {
                     restore.forEach((id) => sendCommand(id, 'toggle_detection', true));
                 });
             },
+        });
+        // One nozzle at a time, or each in turn (the OWL stops each test itself)
+        nozzleTester = UI().nozzleTest($('nozzleTest'), {
+            owls: () => scopedOwls().sort((a, b) => a._id.localeCompare(b._id)).map((o) => ({
+                id: o._id, name: o.friendly_name || o._id,
+                relays: typeof o.relay_num === 'number' && o.relay_num > 0 ? o.relay_num : null,
+                busy: !!o.detection_enable || o.detection_mode === 2,
+            })),
+            send: (id, relays, ms) => sendCommand(id, 'test_nozzles', { relays: relays, duration_ms: ms }),
+            stopSpraying: (ids) => ids.forEach((id) => {
+                const o = owlsData[id] || {};
+                if (o.detection_mode === 2) sendCommand(id, 'toggle_all_nozzles', false);
+                else if (o.detection_enable) sendCommand(id, 'toggle_detection', false);
+            }),
         });
     }
 

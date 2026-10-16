@@ -1,6 +1,8 @@
 /* ==========================================================================
    OWL Dashboard (standalone) - redesigned shell (2026-10-12)
-   Field | Data | Settings, built from /shared/js/owl_ui.js. The older
+   Dashboard | Data | Settings, built from /shared/js/owl_ui.js. The live
+   view is a pop-up (Live view on Dashboard); the camera stream only runs
+   while it is open. The older
    modules still own their jobs (_controls: switches and modes, _config_tab:
    sliders, _config: profiles and the INI editor, _data_collection: the
    shared record form); this file draws the new screens around them and is
@@ -24,6 +26,10 @@ const Shell = (function () {
     let evStep = null;
     let sessionsLoaded = false;
     let diskKnown = false;
+    let livePop = null;
+    let nozzleTester = null;
+    let trackPersistStep = null;
+    let trackBufferStep = null;
 
     // ---------- init ----------
     function init() {
@@ -36,21 +42,23 @@ const Shell = (function () {
         document.querySelectorAll('#pipeline-mode-selector .mode-btn').forEach((b) =>
             b.addEventListener('click', () => pickMode(b.dataset.mode)));
 
+        livePop = UI().livePop($('livePop'), {
+            onOpen: () => setStream(true),
+            onClose: () => {
+                if (typeof standaloneGeometryActive !== 'undefined' && standaloneGeometryActive) GeometryEditor.close();
+                setStream(false);
+            },
+        });
+        $('liveOpen').addEventListener('click', () => livePop.open());
         $('camGeometry').addEventListener('click', () => {
-            nav.show('field');
-            setTimeout(() => { if (typeof toggleStandaloneGeometry === 'function') toggleStandaloneGeometry(); }, 50);
+            if (typeof toggleStandaloneGeometry === 'function') toggleStandaloneGeometry();
         });
         initCamera();
         initNozzles();
+        initTracking();
         initMaintenance();
         initData();
-        $('advancedTabs').querySelectorAll('[data-adv]').forEach((b) => b.addEventListener('click', () => {
-            $('advancedTabs').querySelectorAll('[data-adv]').forEach((x) => x.classList.toggle('on', x === b));
-            $('adv-config').hidden = b.dataset.adv !== 'config';
-            $('adv-agent').hidden = b.dataset.adv !== 'agent';
-        }));
-        document.addEventListener('visibilitychange', () => setStream(!document.hidden && isView('field')));
-        setStream(true);
+        document.addEventListener('visibilitychange', () => setStream(!document.hidden && livePop.isOpen()));
     }
 
     function isView(name) {
@@ -59,18 +67,19 @@ const Shell = (function () {
     }
 
     function onView(name) {
-        setStream(name === 'field');
+        livePop.close();
         if (name === 'data') loadSessions();
     }
 
     function onPanel(name) {
-        if ((name === 'profiles' || name === 'advanced') && typeof loadConfig === 'function'
+        if (name === 'profiles' && typeof loadConfig === 'function'
                 && typeof currentConfig !== 'undefined' && Object.keys(currentConfig).length === 0) {
             loadConfig();
         }
         if (name === 'camera') loadCamera();
         if (name === 'maint' && typeof loadStorageData === 'function') loadStorageData();
         if (name === 'ai') renderAI(last);
+        if (name === 'nozzles') nozzleTester.render();
     }
 
     function openSettings(panel) {
@@ -78,8 +87,8 @@ const Shell = (function () {
         settings.open(panel, true);
     }
 
-    // ---------- live view ----------
-    // The MJPEG stream runs only while Field is on screen: encoding it costs
+    // ---------- live view (pop-up) ----------
+    // The MJPEG stream runs only while the pop-up is open: encoding it costs
     // the OWL CPU it would otherwise spend detecting.
     function setStream(on) {
         const img = $('stream-img');
@@ -199,24 +208,28 @@ const Shell = (function () {
         UI().setSwitch($('detectSwitch'), detecting && !blanket, { go: detecting && !blanket });
         $('sprayHint').innerHTML = detecting && !blanket
             ? UI().joinSep([UI().MODE_LABELS[mode], typeof d.relay_num === 'number' ? d.relay_num + ' nozzles' : null])
-            : UI().esc(blanket ? 'Blanket spray is on (Test nozzles)' : 'Off');
+            : UI().esc(blanket ? 'Off while blanket spray is on' : 'Off');
         UI().setSwitch($('recordSwitch'), recording, { rec: true });
         renderRecordHint(d, recording);
         UI().setSwitch($('nozzleSwitch'), blanket, { go: blanket });
+        $('blanketHint').textContent = blanket ? 'Every nozzle is spraying' : 'Every nozzle on, detection off';
         UI().setSwitch($('trackingSwitch'), !!d.tracking_enabled);
         $('liveMode').textContent = UI().MODE_LABELS[mode];
+        $('liveModeChip').textContent = UI().MODE_LABELS[mode];
 
         renderNotices(d);
         renderDetectNotice();
+        renderTracking(d);
 
-        // Stat cells
+        // Stat cells: speed and frame rate always on the Dashboard
         const health = !d.owl_running ? ['warn', 'Stopped'] : d.fault ? ['bad', 'Fault'] : ['ok', 'Healthy'];
         const free = typeof d.storage_free_mb === 'number' ? UI().fmtGB(d.storage_free_mb) : null;
+        const fps = typeof d.avg_loop_time_ms === 'number' && d.avg_loop_time_ms > 0 ? Math.round(1000 / d.avg_loop_time_ms) + ' fps' : null;
         UI().statCells($('fieldStats'), [
             { label: 'Status', value: health[1], cls: health[0] },
-            { label: 'CPU', value: temp(d), cls: 'opt' },
+            { label: 'Speed', value: typeof d.speed_kmh === 'number' ? d.speed_kmh.toFixed(1) + ' km/h' : 'No GPS' },
+            { label: 'Frame rate', value: fps },
             { label: 'Free', value: free },
-            { label: 'GPS', value: typeof d.speed_kmh === 'number' ? d.speed_kmh.toFixed(1) + ' km/h' : (d.gps_fix ? 'Fix' : 'No fix') },
         ]);
         UI().statCells($('timingStats'), [
             { label: 'Speed', value: typeof d.speed_kmh === 'number' ? d.speed_kmh.toFixed(1) + ' km/h' : null },
@@ -244,6 +257,7 @@ const Shell = (function () {
         $('aiPanelSub').textContent = UI().aiSummary(d.ai).title;
 
         if (isView('settings') && settings.current() && settings.current().panel === 'ai') renderAI(d);
+        if (isView('settings') && settings.current() && settings.current().panel === 'nozzles') nozzleTester.render();
         renderStorage(d);
         renderUpdate(d);
     }
@@ -413,13 +427,14 @@ const Shell = (function () {
             setCamera({ awb_mode: b.dataset.value });
         }));
         $('camCalibrate').addEventListener('click', calibrate);
+        $('camRes').innerHTML = UI().RESOLUTIONS.map((r) => '<button type="button" data-value="' + r + '">' + r.replace('x', '×') + '</button>').join('');
         $('camRes').querySelectorAll('button').forEach((b) => b.addEventListener('click', async () => {
             const [w, h] = b.dataset.value.split('x');
             setCamera({ resolution_width: w, resolution_height: h }, true);
         }));
         $('camRot').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => setCamera({ rotation: b.dataset.value }, true)));
         evStep = UI().stepper($('camEv'), {
-            value: null, min: -10, max: 10, step: 1,
+            value: null, min: -10, max: 10, step: 1, label: 'Brightness', settleMs: 400,
             format: (v) => (v > 0 ? '+' + v : v < 0 ? '−' + Math.abs(v) : '0'),
             onChange: (v) => setCamera({ exp_compensation: String(v) }),
         });
@@ -441,8 +456,9 @@ const Shell = (function () {
         $('camAwb').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.value === awb));
         const ev = live.exp_compensation !== undefined ? live.exp_compensation : c.exp_compensation;
         evStep.set(ev === undefined || ev === '' ? 0 : parseInt(ev, 10) || 0);
-        const res = (c.resolution_width || '') + 'x' + (c.resolution_height || '');
+        const res = UI().resolutionKey(c.resolution_width, c.resolution_height);
         $('camRes').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.value === res));
+        $('camResNow').textContent = res && UI().RESOLUTIONS.indexOf(res) === -1 ? 'Now ' + res.replace('x', '×') : '';
         const rot = String(c.rotation || 'auto').toLowerCase();
         $('camRot').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.value === rot));
         $('cameraSub').textContent = last.resolution_width ? 'Running ' + last.resolution_width + '×' + last.resolution_height : '';
@@ -479,6 +495,55 @@ const Shell = (function () {
                     .then(() => updateSystemStats()).catch(() => {});
             },
         });
+        // One nozzle at a time, or each in turn (the OWL stops each test itself)
+        nozzleTester = UI().nozzleTest($('nozzleTest'), {
+            owls: () => (last.owl_running ? [{
+                id: 'owl', name: 'Nozzles',
+                relays: typeof last.relay_num === 'number' && last.relay_num > 0 ? last.relay_num : null,
+                busy: !!last.detection_enable || last.detection_mode === 2,
+            }] : []),
+            send: (id, relays, ms) => apiRequest('/api/nozzles/test', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ relays: relays, duration_ms: ms }),
+            }).catch(() => {}),
+            stopSpraying: () => {
+                const fn = last.detection_mode === 2 ? stopAllNozzles : stopDetection;
+                fn().then(() => updateSystemStats()).catch(() => {});
+            },
+        });
+    }
+
+    // ---------- tracking (AI models) ----------
+    function initTracking() {
+        document.querySelectorAll('#track-stability-selector [data-stability]').forEach((b) => b.addEventListener('click', () => {
+            setTrackParams(UI().TRACK_PRESETS[b.dataset.stability], 'Track stability ' + b.textContent.toLowerCase());
+        }));
+        trackPersistStep = UI().stepper($('trackPersist'), {
+            value: null, min: 0, max: 15, step: 1, label: 'Spray a lost weed for (frames)', settleMs: 400,
+            onChange: (v) => setTrackParams({ detection_persist_frames: String(v) }),
+        });
+        trackBufferStep = UI().stepper($('trackBuffer'), {
+            value: null, min: 10, max: 150, step: 10, label: 'Remember a lost track for (frames)', settleMs: 400,
+            onChange: (v) => setTrackParams({ track_buffer: String(v) }),
+        });
+    }
+    function renderTracking(d) {
+        const p = d.track_params || {};
+        const has = Object.keys(p).length > 0;
+        const on = !!d.tracking_enabled;
+        const preset = has ? UI().trackPreset(p) : null;
+        document.querySelectorAll('#track-stability-selector [data-stability]').forEach((b) => {
+            b.classList.toggle('on', b.dataset.stability === preset);
+            b.disabled = !on;
+        });
+        $('trackCustom').textContent = has && !preset ? '(custom)' : '';
+        trackPersistStep.set(typeof p.detection_persist_frames === 'number' ? p.detection_persist_frames : null);
+        trackBufferStep.set(typeof p.track_buffer === 'number' ? p.track_buffer : null);
+        const why = !has ? 'Update this OWL to change these' : !on ? 'Turn Track weeds on to change these' : '';
+        trackPersistStep.disable(!!why);
+        trackBufferStep.disable(!!why);
+        $('trackWhy').textContent = why;
+        $('trackWhy').hidden = !why;
     }
 
     // ---------- maintenance ----------
@@ -601,5 +666,8 @@ const Shell = (function () {
         } catch (e) { showNotification('Data', e.message, 'error'); }
     }
 
-    return { init: init, update: update, openSettings: openSettings, showView: (v) => nav.show(v), setStream: setStream, _pendingModel: null };
+    return {
+        init: init, update: update, openSettings: openSettings, showView: (v) => nav.show(v), setStream: setStream,
+        openLive: () => livePop.open(), _pendingModel: null,
+    };
 })();

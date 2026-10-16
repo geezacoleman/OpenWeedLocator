@@ -27,7 +27,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initConfigEditor();
     checkGPSAvailability();
     initGaugeArcs();
-    initActuationSliders();
+    initSprayLength();
     initSensitivityDial();
     startActuationPolling();
     if (typeof Numpad !== 'undefined') Numpad.init();
@@ -52,8 +52,8 @@ function initGaugeArcs() {
 }
 
 function setupEventListeners() {
-    // Range/single sliders (knob drag, track click, fine-tune)
-    initSliders();
+    // − / + steppers for the detection settings (Dashboard and Settings)
+    initParamSteppers();
 
     // Colour tuning / Profiles actions (scoped by the OWL rail)
     document.getElementById('apply-all-btn')?.addEventListener('click', sendAllToDevice);
@@ -72,7 +72,7 @@ function setupEventListeners() {
         showToast('Restarting OWLs', 'info');
     });
 
-    // Advanced: send to one OWL
+    // Profiles, settings file: send to one OWL
     document.getElementById('send-to-single-device-btn')?.addEventListener('click', sendToSingleDevice);
 
     // Delete preset from library

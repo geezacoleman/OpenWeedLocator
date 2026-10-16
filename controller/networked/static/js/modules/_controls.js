@@ -238,30 +238,14 @@ function toggleTracking() {
         sendCommand(target, 'set_tracking', true);
         showToast('Tracking on', 'success');
     }
-    const stabilityPanel = document.getElementById('track-stability-panel');
-    if (stabilityPanel) stabilityPanel.style.display = globalTrackingEnabled ? '' : 'none';
     if (typeof Shell !== 'undefined') Shell.render();
 }
 
-// ============================================
-// TRACK STABILITY
-// ============================================
-
-// match_thresh is a cost limit on (1 - IoU): HIGHER = more lenient matching.
-// Must stay in sync with GreenOnGreen.TRACK_STABILITY_PRESETS (utils/greenongreen.py).
-var TRACK_STABILITY_PRESETS = {
-    low:    { track_high_thresh: 0.3,  track_low_thresh: 0.15, new_track_thresh: 0.3,  track_buffer: 30, match_thresh: 0.7 },
-    medium: { track_high_thresh: 0.2,  track_low_thresh: 0.05, new_track_thresh: 0.2,  track_buffer: 60, match_thresh: 0.8 },
-    high:   { track_high_thresh: 0.15, track_low_thresh: 0.05, new_track_thresh: 0.15, track_buffer: 90, match_thresh: 0.9 }
-};
-
-function setTrackStability(level) {
-    const selector = document.getElementById('track-stability-selector');
-    if (!selector) return;
-    selector.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.stability === level));
-    const preset = TRACK_STABILITY_PRESETS[level];
-    if (preset) sendCommand(scopeTarget(), 'set_config_section', { section: 'Tracking', params: preset });
-    showToast('Track stability: ' + level, 'info');
+// Tracking values (stability preset, or one key) on the selected OWLs.
+// Applied live; Save as profile keeps them.
+function setTrackParams(params, label) {
+    sendCommand(scopeTarget(), 'set_config_section', { section: 'Tracking', params: params });
+    if (label) showToast(label, 'info');
 }
 
 // ============================================

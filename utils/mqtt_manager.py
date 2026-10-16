@@ -26,7 +26,7 @@ from utils.config_manager import (
     AUTOSAVE_CONFIG, seed_autosave, parse_config_meta, config_unsaved_state,
     ConfigValidator,
 )
-from utils.directory_manager import scan_sessions, collect_session_files, select_preview_images
+from utils.directory_manager import scan_sessions, collect_session_files, select_preview_images, is_session_id
 from utils import software_update
 from utils import ai_capability
 from utils.model_archive import dir_sha256, extract_model_zip, file_sha256, replace_dir
@@ -162,7 +162,7 @@ CLOUD_VOLATILE_FIELDS = frozenset({
 # In-progress objects: a status change goes out at once, counters are throttled.
 CLOUD_PROGRESS_FIELDS = ('data_transfer', 'software_update', 'model_download', 'preview_upload')
 # The keys Noktura's manifest reconcile reads from each data_sessions entry.
-CLOUD_SESSION_KEYS = ('session_id', 'date', 'time', 'image_count', 'image_size', 'total_size')
+CLOUD_SESSION_KEYS = ('session_id', 'date', 'time', 'image_count', 'video_count', 'image_size', 'total_size')
 # Keepalive under Noktura's 30 s offline timeout (MQTT_STALENESS_MS).
 CLOUD_KEEPALIVE_S = 20
 CLOUD_PROGRESS_THROTTLE_S = 5
@@ -177,6 +177,13 @@ def cloud_state_out_topic(networked_mode, device_id):
 
 
 TRANSFER_IDLE_STATUSES = (None, '', 'idle', 'complete', 'error')
+# Upload abilities this firmware reports in data_transfer.caps (Noktura spec 6.3)
+TRANSFER_CAPS = ('resume',)
+# Cellular links drop: retry a part 5 times (2/4/8/16 s apart) and give up on a
+# stalled socket after 60 s rather than 300.
+PART_ATTEMPTS = 5
+UPLOAD_SOCKET_TIMEOUT_S = 60
+SINGLE_PUT_ATTEMPTS = 3
 
 
 def transfer_covers(transfer, session_id):
@@ -373,7 +380,10 @@ def _data_transfer_state(**overrides):
         'status': 'idle', 'session_date': '', 'progress': 0,
         'bytes_sent': 0, 'bytes_total': 0, 'error': '',
         'request_id': '', 'upload_id': '', 'parts': [],
-        'zip_bytes': 0, 'zip_md5': ''
+        'zip_bytes': 0, 'zip_md5': '',
+        # 'resume': understands upload.completed_parts + expect_md5, so the
+        # cloud can carry on a multipart upload after a dropped connection
+        'caps': list(TRANSFER_CAPS), 'retries': 0,
     }
     state.update(overrides)
     return state
@@ -390,11 +400,17 @@ def _preview_upload_state(**overrides):
 
 
 def _valid_multipart(upload):
-    """Check a transfer_session 'upload' object has usable parts + part_size."""
+    """Check a transfer_session 'upload' object has usable parts + part_size
+    (and, on a resume, a well-formed completed_parts list)."""
     if not isinstance(upload, dict):
         return False
     parts = upload.get('parts')
     if not isinstance(parts, list) or not parts:
+        return False
+    completed = upload.get('completed_parts', [])
+    if not isinstance(completed, list) or not all(
+            isinstance(p, dict) and str(p.get('part_number', '')).isdigit()
+            and isinstance(p.get('etag'), str) for p in completed):
         return False
     try:
         return int(upload.get('part_size', 0)) > 0
@@ -529,6 +545,10 @@ class OWLMQTTPublisher:
             'device_id': device_id,
             'detection_enable': False,
             'image_sample_enable': False,
+            # Recording paused by the driver (headland turn): same session,
+            # nothing saved until resumed. Cleared whenever recording
+            # starts or stops.
+            'recording_paused': False,
             # False when no writable USB drive is present — recording is
             # unavailable but detection runs normally (re-checked on every
             # record toggle in owl.py).
@@ -589,6 +609,12 @@ class OWLMQTTPublisher:
             'ai': ai_capability.detect(),
             'crop_buffer_px': 20,
             'inference_resolution': 320,
+            # Nozzles: how many this OWL drives (None until owl.py starts)
+            # and which are on for a nozzle test (0-based relay numbers)
+            'relay_num': None,
+            'nozzle_test': [],
+            # ByteTrack + persistence values in use (TRACK_PARAM_KEYS)
+            'track_params': {},
             # Painted LUT detection profiles
             'lut_profile': '',
             'lut_sensitivity': 50,
@@ -703,6 +729,9 @@ class OWLMQTTPublisher:
         # Thread safety
         self.state_lock = threading.RLock()
         self.config_lock = threading.Lock()
+
+        # Nozzle test: switches the tested relays off when it runs out
+        self._nozzle_test_timer = None
 
         # Config file path (set via set_owl_instance or directly)
         self.config_file = None
@@ -868,9 +897,20 @@ class OWLMQTTPublisher:
                 self.state['current_model'] = ''
                 self.state['model_classes'] = {}
 
-            # Tracking state
+            # Tracking state, and the values the dashboards' tracking
+            # controls show (stability preset or custom)
             self.state['tracking_enabled'] = getattr(
                 self.owl_instance, 'tracking_enabled', False)
+            track = {}
+            for key in self.TRACK_PARAM_KEYS:
+                val = getattr(self.owl_instance, key, None)
+                if isinstance(val, (int, float)) and not isinstance(val, bool):
+                    track[key] = val
+            self.state['track_params'] = track
+
+            # Nozzle count: the dashboards draw one test button per nozzle
+            relay_num = getattr(self.owl_instance, 'relay_num', None)
+            self.state['relay_num'] = relay_num if isinstance(relay_num, int) else None
 
             # Sensitivity presets
             if self.sensitivity_manager:
@@ -1084,6 +1124,83 @@ class OWLMQTTPublisher:
     # actuation loop) log at DEBUG; their handlers log real changes at INFO.
     HIGH_FREQUENCY_COMMANDS = {'set_actuation_params'}
 
+    # Tracking values reported in state['track_params'] (owl.py attributes)
+    TRACK_PARAM_KEYS = ('track_high_thresh', 'track_low_thresh', 'new_track_thresh',
+                        'track_buffer', 'match_thresh', 'detection_persist_frames')
+
+    # A nozzle test never runs longer than this, whatever the dashboard asks:
+    # a lost connection must not leave a nozzle open.
+    NOZZLE_TEST_MAX_MS = 10000
+
+    def _handle_test_nozzles(self, command):
+        """Nozzle test: turn the listed relays on for duration_ms, then off.
+
+        value: {'relays': [0-based relay numbers], 'duration_ms': int}. An
+        empty list stops a running test. Refused while spot or blanket
+        spraying, since the relay workers would fight the test. Caller holds
+        state_lock.
+        """
+        value = command.get('value') if isinstance(command.get('value'), dict) else {}
+        rc = getattr(self.owl_instance, 'relay_controller', None) if self.owl_instance else None
+        if rc is None:
+            self.logger.warning("Nozzle test refused: no relay controller")
+            return
+        wanted = value.get('relays') or []
+        if wanted and getattr(self.owl_instance, '_firstboot_active', False) is True:
+            self.logger.warning("Nozzle test refused: first-boot setup is active")
+            return
+        if wanted and (self.state.get('detection_enable') or self.state.get('detection_mode') == 2):
+            self.logger.warning("Nozzle test refused: turn spraying and blanket spray off first")
+            return
+        relay_num = getattr(self.owl_instance, 'relay_num', 0)
+        relays = sorted({r for r in wanted if isinstance(r, int) and not isinstance(r, bool)
+                         and 0 <= r < relay_num})
+        try:
+            duration_ms = int(value.get('duration_ms', self.NOZZLE_TEST_MAX_MS))
+        except (TypeError, ValueError):
+            duration_ms = self.NOZZLE_TEST_MAX_MS
+        duration_ms = max(100, min(self.NOZZLE_TEST_MAX_MS, duration_ms))
+
+        self._stop_nozzle_test()
+        if not relays:
+            return
+        for r in relays:
+            rc.relay.relay_on(r, verbose=False)
+        self.state['nozzle_test'] = relays
+        timer = threading.Timer(duration_ms / 1000.0, self._end_nozzle_test, args=(relays,))
+        timer.daemon = True
+        self._nozzle_test_timer = timer
+        timer.start()
+        self.logger.info(f"Nozzle test: relays {relays} on for {duration_ms} ms")
+
+    def _stop_nozzle_test(self):
+        """Switch off whatever a nozzle test turned on. Caller holds state_lock."""
+        if self._nozzle_test_timer:
+            self._nozzle_test_timer.cancel()
+            self._nozzle_test_timer = None
+        on = self.state.get('nozzle_test') or []
+        self.state['nozzle_test'] = []
+        rc = getattr(self.owl_instance, 'relay_controller', None) if self.owl_instance else None
+        if rc is None:
+            return
+        for r in on:
+            try:
+                rc.relay.relay_off(r, verbose=False)
+            except Exception as e:
+                self.logger.error(f"Nozzle test: relay {r} did not switch off: {e}")
+                if callable(getattr(rc, 'on_stuck', None)):
+                    rc.on_stuck(f"Relay {r} is stuck on: {e}")
+
+    def _end_nozzle_test(self, relays):
+        """Timer callback: the test ran out. A newer test owns the relays now
+        if state['nozzle_test'] has changed."""
+        with self.state_lock:
+            if self.state.get('nozzle_test') != relays:
+                return
+            self._nozzle_test_timer = None
+            self._stop_nozzle_test()
+        self._publish_state()
+
     def _handle_command(self, command):
         """Handle control commands from dashboard or central controller"""
         action = command.get('action')
@@ -1097,6 +1214,8 @@ class OWLMQTTPublisher:
             if action == 'set_detection_enable':
                 self.state['detection_enable'] = bool(command.get('value', False))
                 self.logger.info(f"Detection enable set to: {self.state['detection_enable']}")
+                if self.state['detection_enable']:
+                    self._stop_nozzle_test()
                 if self.state.get('detection_mode') == 2:
                     # Leaving blanket: all_on bypassed the relay workers, so
                     # nothing would switch the nozzles off again.
@@ -1107,11 +1226,20 @@ class OWLMQTTPublisher:
             elif action == 'set_image_sample_enable':
                 was_recording = self.state['image_sample_enable']
                 self.state['image_sample_enable'] = bool(command.get('value', False))
+                if was_recording != self.state['image_sample_enable']:
+                    self.state['recording_paused'] = False
                 self.logger.info(f"Image sample enable set to: {self.state['image_sample_enable']}")
 
                 # Auto-save session metadata when recording stops
                 if was_recording and not self.state['image_sample_enable']:
                     self._auto_save_session_metadata()
+
+            elif action == 'set_recording_paused':
+                # Only a running recording can be paused
+                paused = bool(command.get('value', False)) and self.state['image_sample_enable']
+                if paused != self.state['recording_paused']:
+                    self.state['recording_paused'] = paused
+                    self.logger.info(f"Recording {'paused' if paused else 'resumed'}")
 
             elif action == 'set_sensitivity_level':
                 level = command.get('level', '').lower()
@@ -1264,6 +1392,7 @@ class OWLMQTTPublisher:
                     self.logger.error(f"Invalid detection mode: {mode}")
                     return
                 self.state['detection_mode'] = mode
+                self._stop_nozzle_test()
                 if mode == 2:  # Blanket — all nozzles on
                     self.state['detection_enable'] = False
                     if getattr(self.owl_instance, '_firstboot_active', False) is True:
@@ -1284,6 +1413,9 @@ class OWLMQTTPublisher:
 
             elif action == 'set_actuation_params':
                 self._handle_set_actuation_params(command)
+
+            elif action == 'test_nozzles':
+                self._handle_test_nozzles(command)
 
             elif action == 'download_model':
                 url = command.get('url')
@@ -2543,23 +2675,10 @@ class OWLMQTTPublisher:
                 self.logger.warning("Cannot write session metadata: save_directory not available")
                 return
 
-            import re
-            date_pattern = re.compile(r'^\d{8}$')
-            session_pattern = re.compile(r'^session_\d{6}$')
-
-            for date_dir in sorted(os.listdir(save_dir), reverse=True):
-                date_path = os.path.join(save_dir, date_dir)
-                if not os.path.isdir(date_path) or not date_pattern.match(date_dir):
-                    continue
-                # Check for session subdirs
-                subdirs = sorted([d for d in os.listdir(date_path)
-                                  if os.path.isdir(os.path.join(date_path, d)) and session_pattern.match(d)],
-                                 reverse=True)
-                if subdirs:
-                    session_path = os.path.join(date_path, subdirs[0])
-                else:
-                    session_path = date_path
-                break
+            # Newest session (by date, then start time), or a legacy flat day
+            sessions = scan_sessions(save_dir)
+            if sessions:
+                session_path = os.path.join(save_dir, sessions[0]['session_id'])
 
         if not session_path:
             self.logger.warning("Cannot write session metadata: no session directories found")
@@ -2627,14 +2746,13 @@ class OWLMQTTPublisher:
         state.data_transfer.parts so the cloud side can call
         CompleteMultipartUpload — the device never needs S3 credentials.
         """
-        import re
         import tempfile
         import zipfile
 
         upload_id = str(upload.get('upload_id', '')) if upload else ''
 
         # Validate format: date or date/session
-        if not re.match(r'^\d{8}(/session_\d{6})?$', session_date):
+        if not is_session_id(session_date):
             self.logger.error(f"Invalid session identifier: {session_date}")
             with self.state_lock:
                 self.state['data_transfer'] = _data_transfer_state(
@@ -2695,10 +2813,22 @@ class OWLMQTTPublisher:
             zip_md5 = self._md5_file(tmp_path)
 
             with self.state_lock:
-                self.state['data_transfer']['status'] = 'uploading'
-                self.state['data_transfer']['bytes_total'] = zip_size
                 self.state['data_transfer']['zip_bytes'] = zip_size
                 self.state['data_transfer']['zip_md5'] = zip_md5
+
+            # A resume only works on the same bytes: the parts already in
+            # storage came from the first attempt's zip
+            expect_md5 = str((upload or {}).get('expect_md5') or '')
+            if expect_md5 and expect_md5 != zip_md5:
+                self.logger.warning(f"Resume refused for {session_date}: the session changed since the first attempt")
+                with self.state_lock:
+                    self.state['data_transfer'].update(status='error', error='zip_changed')
+                self._publish_state()
+                return
+
+            with self.state_lock:
+                self.state['data_transfer']['status'] = 'uploading'
+                self.state['data_transfer']['bytes_total'] = zip_size
             self._publish_state()
 
             if upload:
@@ -2717,10 +2847,10 @@ class OWLMQTTPublisher:
         except Exception as e:
             self.logger.error(f"Session upload failed: {e}")
             # Keep request_id/upload_id and any accumulated parts — the cloud
-            # side needs them to abort the multipart upload server-side
+            # side resumes (or aborts) the multipart upload with them — and
+            # bytes_sent, which shows how far the upload got before it broke
             with self.state_lock:
-                self.state['data_transfer'].update(
-                    status='error', progress=0, bytes_sent=0, error=str(e))
+                self.state['data_transfer'].update(status='error', error=str(e))
             self._publish_state()
 
         finally:
@@ -2765,21 +2895,35 @@ class OWLMQTTPublisher:
                 'Content-Length': str(zip_size),
             }
 
-        # Stream the file in chunks — never load entire ZIP into memory
-        with open(tmp_path, 'rb') as f:
-            progress_fh = _ProgressReader(f, zip_size, self)
-            req = urllib.request.Request(
-                upload_url,
-                data=progress_fh,
-                method=method,
-                headers=headers
-            )
-            response = urllib.request.urlopen(req, context=ssl_ctx, timeout=300)
-        resp_code = response.getcode()
+        # Only small sessions come this way (bigger ones are multipart), so a
+        # retry re-sends the whole zip. Stream it — never load it into memory.
+        last_error = None
+        for attempt in range(SINGLE_PUT_ATTEMPTS):
+            if attempt:
+                self._note_upload_retry()
+                time.sleep(2 ** attempt)  # 2 s, 4 s
+            try:
+                with open(tmp_path, 'rb') as f:
+                    progress_fh = _ProgressReader(f, zip_size, self)
+                    req = urllib.request.Request(upload_url, data=progress_fh,
+                                                 method=method, headers=headers)
+                    response = urllib.request.urlopen(req, context=ssl_ctx,
+                                                      timeout=UPLOAD_SOCKET_TIMEOUT_S)
+                # 204: some S3-compatible stores return No Content on PUT
+                if response.getcode() in (200, 201, 204):
+                    return
+                last_error = Exception(f"Upload failed with status {response.getcode()}")
+            except Exception as e:
+                last_error = e
+            self.logger.warning(f"Upload attempt {attempt + 1}/{SINGLE_PUT_ATTEMPTS} failed: {last_error}")
+        raise last_error
 
-        # 204: some S3-compatible stores return No Content on PUT
-        if resp_code not in (200, 201, 204):
-            raise Exception(f"Upload failed with status {resp_code}")
+    def _note_upload_retry(self):
+        """Count a retried PUT in state: Noktura reads it as link quality."""
+        with self.state_lock:
+            transfer = self.state['data_transfer']
+            transfer['retries'] = int(transfer.get('retries') or 0) + 1
+        self._publish_state()
 
     def _upload_multipart(self, tmp_path, zip_size, upload):
         """PUT each presigned part sequentially, accumulating ETags in state.
@@ -2787,29 +2931,41 @@ class OWLMQTTPublisher:
         Only a failed part is retried; raises once a part exhausts its
         retries. The cloud side calls CompleteMultipartUpload with the
         collected ETags after status reaches complete.
+
+        On a resume, upload['completed_parts'] lists the parts already in
+        storage from an earlier attempt (same zip, checked by expect_md5):
+        they are skipped and their ETags seed state, so the final list is whole.
         """
-        parts = sorted(upload['parts'], key=lambda p: int(p['part_number']))
+        urls = {int(p['part_number']): p['url'] for p in upload['parts']}
+        completed = {int(p['part_number']): p['etag'] for p in upload.get('completed_parts') or []}
         part_size = int(upload['part_size'])
+        part_count = -(-zip_size // part_size)
 
         # The cloud side sizes the part list from the session manifest, but
         # the zip is slightly larger (zip headers). Fail before uploading
         # anything rather than completing a silently truncated object.
-        if len(parts) * part_size < zip_size:
+        missing = [n for n in range(1, part_count + 1) if n not in urls and n not in completed]
+        if missing:
             raise Exception(
-                f"Parts cover only {len(parts) * part_size} of {zip_size} "
-                f"zip bytes; request more parts")
+                f"No upload URL for part(s) {missing[:5]} of {part_count} "
+                f"({zip_size} zip bytes); request more parts")
+
+        with self.state_lock:
+            self.state['data_transfer']['parts'] = [
+                {'part_number': n, 'etag': completed[n]}
+                for n in sorted(completed) if n <= part_count]
 
         with open(tmp_path, 'rb') as f:
             bytes_done = 0
-            for part in parts:
-                part_number = int(part['part_number'])
+            # Spare part URLs past the end of the zip (the cloud side may
+            # over-provision as a safety margin) are never used
+            for part_number in range(1, part_count + 1):
                 offset = (part_number - 1) * part_size
                 length = min(part_size, zip_size - offset)
-                if length <= 0:
-                    # Spare part URLs past the end of the zip (the cloud side
-                    # may over-provision as a safety margin) — done
-                    break
-                etag = self._put_part(f, offset, length, part['url'],
+                if part_number in completed:
+                    bytes_done += length
+                    continue
+                etag = self._put_part(f, offset, length, urls[part_number],
                                       bytes_done, zip_size)
                 bytes_done += length
                 with self.state_lock:
@@ -2819,7 +2975,7 @@ class OWLMQTTPublisher:
                     self.state['data_transfer']['progress'] = 50 + int(bytes_done / zip_size * 50)
                 self._publish_state()
 
-    def _put_part(self, fh, offset, length, url, base_sent, total, attempts=3):
+    def _put_part(self, fh, offset, length, url, base_sent, total, attempts=PART_ATTEMPTS):
         """PUT one multipart slice with retry/backoff. Returns the ETag.
 
         The ETag is kept verbatim — S3 returns it quoted and
@@ -2835,7 +2991,8 @@ class OWLMQTTPublisher:
         last_error = None
         for attempt in range(attempts):
             if attempt:
-                time.sleep(2 ** attempt)  # 2s, 4s
+                self._note_upload_retry()
+                time.sleep(2 ** attempt)  # 2, 4, 8, 16 s
             try:
                 # Re-stream just this part; rewind progress to the part start
                 # so a retry doesn't double-count bytes_sent
@@ -2847,7 +3004,7 @@ class OWLMQTTPublisher:
                 req = urllib.request.Request(url, data=reader, method='PUT',
                                              headers=headers)
                 response = urllib.request.urlopen(
-                    req, context=ssl.create_default_context(), timeout=300)
+                    req, context=ssl.create_default_context(), timeout=UPLOAD_SOCKET_TIMEOUT_S)
                 code = response.getcode()
                 if code in (200, 201, 204):
                     return response.headers.get('ETag', '')
@@ -2856,6 +3013,9 @@ class OWLMQTTPublisher:
             except Exception as e:
                 last_error = e
                 self.logger.warning(f"Part PUT attempt {attempt + 1}/{attempts} failed: {e}")
+        # What landed: the parts before this one
+        with self.state_lock:
+            self.state['data_transfer']['bytes_sent'] = base_sent
         raise last_error
 
     def _upload_previews(self, request_id, session_id, count, max_dimension, upload_urls):
@@ -2865,11 +3025,10 @@ class OWLMQTTPublisher:
         bounded (longest edge <= max_dimension, JPEG q70, ~200KB) so the whole
         job stays at a few hundred KB on metered cellular.
         """
-        import re
         import ssl
         import urllib.request
 
-        if not re.match(r'^\d{8}(/session_\d{6})?$', session_id):
+        if not is_session_id(session_id):
             self.logger.error(f"Invalid session identifier for previews: {session_id}")
             with self.state_lock:
                 self.state['preview_upload'] = _preview_upload_state(
@@ -2958,12 +3117,11 @@ class OWLMQTTPublisher:
     def _delete_session(self, session_date, data_types):
         """Delete a data session directory from the OWL. Runs in background thread.
 
-        session_date can be "YYYYMMDD" or "YYYYMMDD/session_HHMMSS".
+        session_date can be "YYYYMMDD" or "YYYYMMDD/<session folder>".
         """
-        import re
         import shutil
 
-        if not re.match(r'^\d{8}(/session_\d{6})?$', session_date):
+        if not is_session_id(session_date):
             self.logger.error(f"Invalid session identifier for deletion: {session_date}")
             return
 
@@ -3473,6 +3631,7 @@ class OWLMQTTPublisher:
             if was_recording == bool(value):
                 return  # change-guarded, as set_detection_enable
             self.state['image_sample_enable'] = bool(value)
+            self.state['recording_paused'] = False
             self.state['last_update'] = time.time()
 
         # Auto-save session metadata when recording stops (hardware switch path)
@@ -3629,6 +3788,10 @@ class OWLMQTTPublisher:
     def get_image_sample_enable(self):
         with self.state_lock:
             return self.state['image_sample_enable']
+
+    def get_recording_paused(self):
+        with self.state_lock:
+            return bool(self.state.get('recording_paused'))
 
     def get_sensitivity_level(self):
         with self.state_lock:
@@ -3958,6 +4121,10 @@ class DashMQTTSubscriber:
     def set_image_sample_enable(self, value):
         """Enable/disable image sampling"""
         return self._send_command('set_image_sample_enable', value=value)
+
+    def set_recording_paused(self, value):
+        """Pause/resume a running recording (same session)"""
+        return self._send_command('set_recording_paused', value=bool(value))
 
     def set_sensitivity_level(self, level):
         """Set sensitivity level (accepts builtin and custom preset names)"""

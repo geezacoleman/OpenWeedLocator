@@ -54,7 +54,9 @@ class TestCollectConfig:
     def test_shape_matches_the_networked_contract(self, ctx):
         client, dashboard, *_ = ctx
         data = client.get('/api/collect/config').get_json()
-        assert set(data['presets']) == {'crops', 'seasonal_crops', 'weather', 'lighting', 'purposes'}
+        assert set(data['presets']) == {
+            'crops', 'custom_crops', 'crop_groups', 'seasonal_crops', 'weather', 'lighting',
+            'light_sources', 'skies', 'soil_covers', 'soil_moistures', 'recent_water', 'purposes'}
         assert tuple(data['presets']['crops']) == DEFAULT_CROPS
         assert set(data['capture']) == set(COLLECT_CAPTURE_DEFAULTS)
         assert data['language'] == 'en'
@@ -294,3 +296,41 @@ def test_system_stats_reports_capture_and_metadata(ctx):
         data = client.get('/api/system_stats').get_json()
     assert data['capture'] == {'sample_mode': 'distance'}
     assert data['session_metadata']['crop'] == 'rye'
+
+
+@pytest.mark.unit
+class TestCustomCropsRoutes:
+    """Same contract as the networked controller; saved in this OWL's own
+    CONTROLLER.ini [Collect] custom_crops."""
+
+    def test_add_and_remove(self, ctx):
+        client, dashboard, tmp_dir, ini, _ = ctx
+        resp = client.post('/api/collect/crops', json={'name': 'Pak choi'})
+        assert resp.status_code == 200 and resp.get_json()['crop'] == 'pak_choi'
+        assert 'custom_crops = pak_choi' in ini.read_text(encoding='utf-8')
+        assert client.get('/api/collect/config').get_json()['presets']['crops'][0] == 'pak_choi'
+        assert client.delete('/api/collect/crops/pak_choi').status_code == 200
+        assert client.get('/api/collect/config').get_json()['presets']['custom_crops'] == []
+
+    def test_bad_names(self, ctx):
+        client, *_ = ctx
+        assert client.post('/api/collect/crops', json={'name': ''}).status_code == 400
+        assert client.delete('/api/collect/crops/wheat').status_code == 404
+
+
+@pytest.mark.unit
+class TestPauseRoutes:
+
+    def test_pause_needs_a_recording(self, ctx):
+        client, dashboard, *_ = ctx
+        with patch.object(dashboard.mqtt_client, 'get_state', return_value={'image_sample_enable': False}):
+            assert client.post('/api/collect/pause').status_code == 409
+        assert not [a for a, _ in _published(dashboard) if a == 'set_recording_paused']
+
+    def test_pause_and_resume(self, ctx):
+        client, dashboard, *_ = ctx
+        with patch.object(dashboard.mqtt_client, 'get_state', return_value={'image_sample_enable': True}):
+            assert client.post('/api/collect/pause').get_json()['paused'] is True
+            assert client.post('/api/collect/resume').get_json()['paused'] is False
+        sent = [p['value'] for a, p in _published(dashboard) if a == 'set_recording_paused']
+        assert sent == [True, False]

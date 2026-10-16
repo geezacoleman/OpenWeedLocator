@@ -472,42 +472,23 @@ function stopTracking() {
 }
 
 /* --------------------------------------------------------------------------
-   Track Stability
+   Tracking values (stability preset or one key): applied live and saved
    -------------------------------------------------------------------------- */
 
-// match_thresh is a cost limit on (1 - IoU): HIGHER = more lenient matching.
-// Must stay in sync with GreenOnGreen.TRACK_STABILITY_PRESETS (utils/greenongreen.py).
-var TRACK_STABILITY_PRESETS = {
-    low:    { track_high_thresh: 0.3,  track_low_thresh: 0.15, new_track_thresh: 0.3,  track_buffer: 30, match_thresh: 0.7 },
-    medium: { track_high_thresh: 0.2,  track_low_thresh: 0.05, new_track_thresh: 0.2,  track_buffer: 60, match_thresh: 0.8 },
-    high:   { track_high_thresh: 0.15, track_low_thresh: 0.05, new_track_thresh: 0.15, track_buffer: 90, match_thresh: 0.9 }
-};
-
-function setTrackStability(level) {
-    var btns = document.querySelectorAll('#track-stability-buttons .seg-btn');
-    btns.forEach(function(b) { b.classList.remove('active'); });
-    var target = document.querySelector('#track-stability-buttons .seg-btn[data-stability="' + level + '"]');
-    if (target) target.classList.add('active');
-
-    var preset = TRACK_STABILITY_PRESETS[level];
-    if (!preset) return;
-
+function setTrackParams(params, label) {
     return apiRequest('/api/config/section', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ section: 'Tracking', params: preset })
+        body: JSON.stringify({ section: 'Tracking', params: params })
     })
         .then(function(response) { return response.json(); })
         .then(function(data) {
-            if (data.success) {
-                showNotification('Success', 'Track stability: ' + level, 'success', 2000);
-                updateSystemStats();
-            } else {
-                throw new Error(data.error || 'Failed to set track stability');
-            }
+            if (!data.success) throw new Error(data.error || 'Could not change tracking');
+            if (label) showNotification('Tracking', label, 'success', 2000);
+            updateSystemStats();
         })
         .catch(function(error) {
-            showNotification('Error', error.message || 'Failed to set track stability', 'error');
+            showNotification('Error', error.message || 'Could not change tracking', 'error');
         });
 }
 

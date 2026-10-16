@@ -269,10 +269,10 @@ class TestMinSizeOverlayWiring:
         fn = src[src.index('function minSizeOverlayPing'):]
         fn = fn[:fn.index('\nfunction ') if '\nfunction ' in fn else len(fn)]
         assert 'Math.sqrt' in fn
-        for host in ('function onKnobDrag', 'function adjustParameter'):
-            body = src[src.index(host):]
-            body = body[:body.index('\nfunction ')]
-            assert 'minSizeOverlayPing(' in body, f"{host} must ping the overlay"
+        # Every stepper change (the steppers replaced the sliders) pings it
+        body = src[src.index('function initParamSteppers'):]
+        body = body[:body.index('\nfunction ')]
+        assert 'minSizeOverlayPing(' in body, "stepper changes must ping the overlay"
 
     def test_overlay_css_present(self):
         css = (PROJECT_ROOT / 'controller' / 'networked' / 'static' / 'css' /

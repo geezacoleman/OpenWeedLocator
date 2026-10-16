@@ -32,6 +32,9 @@ GAIN_AT_LIMIT = 15.5             # the IMX296/HQ AGC tops out at 16x
 MAX_POINTS = 50000               # ~14 h at one image a second per OWL
 THUMBS_PER_OWL = 2
 UPLOAD_REQUEST_TTL_S = 24 * 3600
+UPLOAD_ACK_STATUSES = ('queued', 'accepted', 'rejected', 'retrying', 'stored', 'failed')
+# Numbers an ack may carry, shown on the Data tab ("Waiting (2 of 5)")
+UPLOAD_ACK_NUMBERS = ('position', 'queue_length', 'attempt', 'max_attempts', 'retry_in_s')
 
 
 _PROVISION_FLAGS = {'--host': 'broker_host', '--port': 'broker_port', '--device-id': 'device_id',
@@ -162,6 +165,10 @@ def collect_warnings(owls, now, thresholds=None, cloud_configured=False, gps_fix
                     and not s.get('recording_blocked_reason')
                     and capture.get('stopped_reason') != 'video_limit'):
                 add(owl_id, 'not_recording', 'bad')
+            continue
+
+        if capture.get('paused'):
+            # The driver paused (headland turn): nothing should be saving
             continue
 
         if capture.get('paused_slow'):
@@ -321,11 +328,14 @@ class CollectSession:
                 created.append(dict(request))
         return created
 
-    def ack_upload(self, request_id, status, reason=''):
-        """Noktura's reply (upload_request_ack): queued = seen, waiting for
-        the OWL's current upload or its session list; accepted = upload
-        queued for that OWL; rejected = refused, with a reason."""
-        if status not in ('queued', 'accepted', 'rejected'):
+    def ack_upload(self, request_id, status, reason='', details=None):
+        """Noktura's reply (upload_request_ack): queued = seen, waiting its
+        turn in the rig's upload queue (position / queue_length); accepted =
+        upload sent to that OWL; rejected = refused, with a reason. After
+        accepted (Noktura spec 6.4, 2026-10-15): retrying = the link dropped
+        and Noktura carries on by itself (attempt, max_attempts, retry_in_s);
+        stored = in Noktura and checked; failed = given up, request again."""
+        if status not in UPLOAD_ACK_STATUSES:
             return False
         with self.lock:
             request = self.upload_requests.get(str(request_id))
@@ -334,6 +344,12 @@ class CollectSession:
             request['status'] = status
             request['reason'] = str(reason or '')[:200]
             request['acked_at'] = time.time()
+            for key in UPLOAD_ACK_NUMBERS:
+                value = (details or {}).get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value < 1e6:
+                    request[key] = int(value)
+                else:
+                    request.pop(key, None)
             return True
 
     def bridged_upload_requests(self):

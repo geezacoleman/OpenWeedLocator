@@ -44,7 +44,8 @@ from utils.config_manager import (
 from utils.actuation import GPS_STALE_AFTER_S, SpeedAverager, ActuationCalculator
 from utils.session_metadata import (clean_session_metadata, CAPTURE_PARAM_KEYS, COLLECT_CAPTURE_DEFAULTS,
                                     COLLECT_LANGUAGES, capture_settings_from, coerce_capture_value,
-                                    ini_value, last_pick_values, load_last_pick, presets_from_config)
+                                    ini_value, last_pick_values, load_last_pick, presets_from_config,
+                                    add_custom_crop, remove_custom_crop, CUSTOM_CROPS_KEY)
 from utils.mqtt_manager import CloudFeed, cloud_state_out_topic
 from utils.ai_capability import algorithm_refusal
 from utils.model_archive import dir_sha256, extract_model_zip
@@ -78,6 +79,9 @@ CONTROLLER_CLOUD_ACTIONS = frozenset({'upload_request_ack'})
 # [Cloud] section of their own). Read by utils/mqtt_manager.py.
 CLOUD_POLICY_TOPIC = 'owl/cloud/policy'
 DASHBOARD_UIS = ('full', 'collect')
+# CONTROLLER.ini section holding the model choice: model (every OWL) and
+# model_<owl id> (an OWL told to run something else). Hand-editable.
+FLEET_SECTION = 'Fleet'
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -188,6 +192,7 @@ class CentralController:
         # State management
         self.owls_state = {}
         self.desired_state = {}  # {device_id: {'detection_enable': bool, ...}}
+        self._load_fleet_models()
         self.lwt_timestamps = {}  # {device_id: time.time()} — when LWT marked device offline
         self.mqtt_connected = False
         self.mqtt_lock = threading.Lock()
@@ -333,7 +338,8 @@ class CentralController:
             logger.warning(f"Controller cloud command dropped: {action!r}")
             return
         if action == 'upload_request_ack':
-            if self.collect.ack_upload(payload.get('id'), payload.get('status'), payload.get('reason')):
+            if self.collect.ack_upload(payload.get('id'), payload.get('status'), payload.get('reason'),
+                                       details=payload):
                 logger.info(f"Upload request {payload.get('id')}: {payload.get('status')} "
                             f"{payload.get('reason') or ''}")
 
@@ -659,6 +665,44 @@ class CentralController:
         elif not any_detecting and self.gps_manager.session_active:
             self.gps_manager.stop_session()
 
+    def _load_fleet_models(self):
+        """[Fleet] model (every OWL) and model_<owl id> (one OWL that differs)
+        from CONTROLLER.ini into desired_state, so a restarted controller
+        still puts each OWL back on its model."""
+        if not self.config.has_section(FLEET_SECTION):
+            return
+        for key, value in self.config.items(FLEET_SECTION):
+            value = value.strip()
+            if not value:
+                continue
+            if key == 'model':
+                self.desired_state.setdefault('all', {})['model'] = value
+            elif key.startswith('model_'):
+                self.desired_state.setdefault(key[len('model_'):], {})['model'] = value
+
+    def _remember_model(self, device_id, model):
+        """Keep the model choice in desired_state and CONTROLLER.ini [Fleet].
+        Choosing for all OWLs clears any one-OWL choices."""
+        values = {}
+        if device_id == 'all':
+            self.desired_state.setdefault('all', {})['model'] = model
+            values['model'] = model
+            for oid, desired in self.desired_state.items():
+                if oid != 'all' and desired.pop('model', None) is not None:
+                    values[f'model_{oid}'] = ''
+        else:
+            self.desired_state.setdefault(device_id, {})['model'] = model
+            values[f'model_{device_id}'] = model
+        try:
+            write_ini_section(self.config_file, FLEET_SECTION, values)
+            if not self.config.has_section(FLEET_SECTION):
+                self.config.add_section(FLEET_SECTION)
+            for key, value in values.items():
+                self.config.set(FLEET_SECTION, key, value)
+        except OSError as e:
+            # Still applied live; only a controller restart forgets it
+            logger.warning(f"Could not save the model choice to [{FLEET_SECTION}]: {e}")
+
     def _push_desired_state(self, device_id):
         """Push stored desired state to a (re)connected OWL device."""
         # Merge 'all' defaults with device-specific overrides
@@ -692,12 +736,18 @@ class CentralController:
             self.mqtt_client.publish(topic, payload)
             logger.info(f"Pushed image_sample_enable={merged['image_sample_enable']} to {device_id}")
 
+        if merged.get('image_sample_enable') and merged.get('recording_paused'):
+            payload = json.dumps({'action': 'set_recording_paused', 'value': True})
+            self.mqtt_client.publish(topic, payload)
+            logger.info(f"Pushed recording_paused to {device_id}")
+
         if 'detect_classes' in merged:
             payload = json.dumps({'action': 'set_detect_classes', 'value': merged['detect_classes']})
             self.mqtt_client.publish(topic, payload)
             logger.info(f"Pushed detect_classes={merged['detect_classes']} to {device_id}")
 
-        if 'model' in merged:
+        # Only when it differs: re-sending the same model reloads it
+        if merged.get('model') and merged['model'] != self.owls_state.get(device_id, {}).get('current_model'):
             payload = json.dumps({'action': 'set_model', 'value': merged['model']})
             self.mqtt_client.publish(topic, payload)
             logger.info(f"Pushed model={merged['model']} to {device_id}")
@@ -1137,6 +1187,11 @@ class CentralController:
                     for oid in self.owls_state:
                         self.desired_state.setdefault(oid, {})['detection_mode'] = mode
 
+        elif action == 'set_recording_paused':
+            payload = {'action': 'set_recording_paused', 'value': bool(value)}
+            # Kept so an OWL that rejoins mid-pause doesn't start saving
+            self.desired_state.setdefault('all', {})['recording_paused'] = bool(value)
+
         elif action == 'set_detect_classes':
             payload = {'action': 'set_detect_classes', 'value': value}
             # Store so reconnecting OWLs get the class filter
@@ -1144,7 +1199,7 @@ class CentralController:
 
         elif action == 'set_model':
             payload = {'action': 'set_model', 'value': value}
-            self.desired_state.setdefault('all', {})['model'] = value
+            self._remember_model(device_id, value)
 
         elif action == 'set_tracking':
             payload = {'action': 'set_tracking', 'value': value}
@@ -1637,6 +1692,40 @@ def collect_state():
     })
 
 
+@app.route('/api/collect/crops', methods=['POST'])
+def collect_crops_add():
+    """Add a crop from the record form's "+ Add crop". Saved straight
+    away as [Collect] custom_crops; answers with the new presets."""
+    data = request.get_json(silent=True) or {}
+    try:
+        slug, value = add_custom_crop(controller.config, data.get('name'))
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    if value is not None:
+        try:
+            _write_collect_section({CUSTOM_CROPS_KEY: value})
+        except OSError as e:
+            logger.error(f"Could not save [Collect] {CUSTOM_CROPS_KEY}: {e}")
+            return jsonify({'success': False, 'error': 'Could not save the crop on the controller'}), 500
+    presets = presets_from_config(controller.config)
+    return jsonify({'success': True, 'crop': slug, 'presets': {k: list(v) for k, v in presets.items()}})
+
+
+@app.route('/api/collect/crops/<slug>', methods=['DELETE'])
+def collect_crops_remove(slug):
+    """Take a farmer-added crop off the list (sessions keep their crop)."""
+    value = remove_custom_crop(controller.config, slug)
+    if value is None:
+        return jsonify({'success': False, 'error': 'Not one of your crops'}), 404
+    try:
+        _write_collect_section({CUSTOM_CROPS_KEY: value})
+    except OSError as e:
+        logger.error(f"Could not save [Collect] {CUSTOM_CROPS_KEY}: {e}")
+        return jsonify({'success': False, 'error': 'Could not save on the controller'}), 500
+    presets = presets_from_config(controller.config)
+    return jsonify({'success': True, 'presets': {k: list(v) for k, v in presets.items()}})
+
+
 @app.route('/api/collect/config')
 def collect_config():
     """Presets, capture settings and language for the screen."""
@@ -1702,6 +1791,7 @@ def collect_start():
     _save_last_pick(metadata)
     # Kept so an OWL that reboots mid-run gets the same labels when it rejoins
     controller.desired_state.setdefault('all', {})['session_metadata'] = dict(metadata)
+    controller.desired_state['all'].pop('recording_paused', None)
     _push_capture_settings()
     controller.send_command('all', 'set_session_metadata', metadata)
     result = controller.send_command('all', 'toggle_recording', True)
@@ -1720,9 +1810,34 @@ def collect_stop():
         return jsonify({'success': False, 'error': result.get('error') or 'Could not stop recording'}), 503
     controller.collect.stop()
     controller.desired_state.setdefault('all', {}).pop('session_metadata', None)
+    controller.desired_state['all'].pop('recording_paused', None)
     # Refresh each OWL's session list (also updates Noktura's manifest)
     controller.send_command('all', 'list_data_sessions')
     return jsonify({'success': True})
+
+
+def _set_recording_paused(paused):
+    """Pause or resume every OWL's recording (headland turns). The session
+    stays open; nothing is saved while paused."""
+    with controller.mqtt_lock:
+        recording = any(st.get('connected') and st.get('image_sample_enable')
+                        for st in controller.owls_state.values())
+    if paused and not recording:
+        return jsonify({'success': False, 'error': 'Nothing is recording'}), 409
+    result = controller.send_command('all', 'set_recording_paused', paused)
+    if not result.get('success'):
+        return jsonify({'success': False, 'error': result.get('error') or 'Could not reach the OWLs'}), 503
+    return jsonify({'success': True, 'paused': paused})
+
+
+@app.route('/api/collect/pause', methods=['POST'])
+def collect_pause():
+    return _set_recording_paused(True)
+
+
+@app.route('/api/collect/resume', methods=['POST'])
+def collect_resume():
+    return _set_recording_paused(False)
 
 
 @app.route('/api/collect/thumb/<device_id>/<int:index>')

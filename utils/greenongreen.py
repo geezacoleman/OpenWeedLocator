@@ -120,9 +120,11 @@ class GreenOnGreen:
                 task = self._infer_task(self.model_path.name, self.model_path)
                 return YOLO(str(self.model_path), task=task)
 
-            # Search for NCNN subdirs first, then .pt files
-            ncnn_dirs = [d for d in self.model_path.iterdir()
-                         if d.is_dir() and list(d.glob('*.param'))]
+            # A folder, not a chosen model: NCNN subdirs first, then .pt files,
+            # each by name. Unsorted directory order differs between units, so
+            # two OWLs with the same files used to boot on different models.
+            ncnn_dirs = sorted(d for d in self.model_path.iterdir()
+                               if d.is_dir() and list(d.glob('*.param')))
             if ncnn_dirs:
                 selected = ncnn_dirs[0]
                 logger.info(f'Using NCNN model: {selected.name}')
@@ -130,7 +132,7 @@ class GreenOnGreen:
                 task = self._infer_task(selected.name, selected)
                 return YOLO(str(selected), task=task)
 
-            pt_files = list(self.model_path.glob('*.pt'))
+            pt_files = sorted(self.model_path.glob('*.pt'))
             if pt_files:
                 logger.info(f'Using PyTorch model: {pt_files[0].name}')
                 self._model_filename = pt_files[0].name

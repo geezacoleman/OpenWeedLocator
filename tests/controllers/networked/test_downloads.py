@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from utils.directory_manager import scan_sessions, collect_session_files, select_preview_images
+from utils.mqtt_manager import PART_ATTEMPTS, SINGLE_PUT_ATTEMPTS
 
 
 # ---------------------------------------------------------------------------
@@ -342,13 +343,41 @@ class TestUploadSession:
 
         mqtt_publisher.owl_instance.save_directory = save_dir
 
-        with patch('urllib.request.urlopen', side_effect=ConnectionRefusedError('refused')):
+        with patch('urllib.request.urlopen', side_effect=ConnectionRefusedError('refused')) as urlopen, \
+                patch('time.sleep'):
             mqtt_publisher._upload_session(
                 '20260312', ['images'], 'https://controller/api/downloads/receive'
             )
 
         assert mqtt_publisher.state['data_transfer']['status'] == 'error'
         assert 'refused' in mqtt_publisher.state['data_transfer']['error'].lower()
+        assert urlopen.call_count == SINGLE_PUT_ATTEMPTS
+
+    def test_upload_session_single_put_retries_a_reset(self, mqtt_publisher, tmp_path):
+        """A dropped connection on a small one-request upload is retried from
+        the start of the zip, and the retry is counted."""
+        save_dir = str(tmp_path / 'save')
+        os.makedirs(os.path.join(save_dir, '20260312'))
+        with open(os.path.join(save_dir, '20260312', 'test.jpg'), 'wb') as f:
+            f.write(b'data' * 100)
+        mqtt_publisher.owl_instance.save_directory = save_dir
+        bodies = []
+
+        def flaky(req, **kwargs):
+            bodies.append(req.data.read(10_000_000))
+            if len(bodies) == 1:
+                raise ConnectionResetError('[Errno 104] Connection reset by peer')
+            resp = MagicMock()
+            resp.getcode.return_value = 200
+            return resp
+
+        with patch('urllib.request.urlopen', side_effect=flaky), patch('time.sleep'):
+            mqtt_publisher._upload_session('20260312', ['images'], 'https://s3.example.com/x', 'PUT')
+
+        state = mqtt_publisher.state['data_transfer']
+        assert state['status'] == 'complete'
+        assert state['retries'] == 1
+        assert len(bodies) == 2 and bodies[0] == bodies[1]
 
     def test_upload_session_rejects_concurrent(self, mqtt_publisher, tmp_path):
         """Second request while active is rejected."""
@@ -1401,10 +1430,13 @@ class TestUploadSessionMultipart:
         assert state['parts'] == [{'part_number': 1, 'etag': '"etag-1"'}]
         assert state['request_id'] == 'req-1'
         assert state['upload_id'] == 'uid-1'
-        # 3 attempts on part 2, part 3 never reached
+        # Every attempt on part 2 (cellular: PART_ATTEMPTS), part 3 never reached
         urls = [c['url'] for c in captured]
-        assert urls.count('https://s3.example.com/part2') == 3
+        assert urls.count('https://s3.example.com/part2') == PART_ATTEMPTS
         assert 'https://s3.example.com/part3' not in urls
+        # How far it got survives the error (part 1 landed)
+        assert state['bytes_sent'] == self.PART_SIZE
+        assert state['retries'] == PART_ATTEMPTS - 1
 
     def test_multipart_insufficient_parts_errors_before_upload(self, mqtt_publisher, tmp_path):
         """Parts that can't cover the zip fail upfront — never a silently
@@ -1422,6 +1454,82 @@ class TestUploadSessionMultipart:
         assert mqtt_publisher.state['data_transfer']['status'] == 'complete'
         assert len(captured) == 3
         assert len(mqtt_publisher.state['data_transfer']['parts']) == 3
+
+    def test_reports_resume_capability(self, mqtt_publisher, tmp_path):
+        self._run(mqtt_publisher, tmp_path, self._multipart(3))
+        assert mqtt_publisher.state['data_transfer']['caps'] == ['resume']
+        assert mqtt_publisher.state['data_transfer']['retries'] == 0
+
+    def test_retried_part_is_counted(self, mqtt_publisher, tmp_path):
+        self._run(mqtt_publisher, tmp_path, self._multipart(3), fail_attempts={'part2': 2})
+        state = mqtt_publisher.state['data_transfer']
+        assert state['status'] == 'complete'
+        assert state['retries'] == 2
+        self.mock_sleep.assert_any_call(4)
+
+    def test_missing_part_url_errors_before_upload(self, mqtt_publisher, tmp_path):
+        """A gap in the part list (no URL, not completed) is refused up front."""
+        upload = self._multipart(3)
+        upload['parts'] = [p for p in upload['parts'] if p['part_number'] != 2]
+        captured = self._run(mqtt_publisher, tmp_path, upload)
+        state = mqtt_publisher.state['data_transfer']
+        assert state['status'] == 'error'
+        assert '[2]' in state['error']
+        assert captured == []
+
+    def _resume(self, mqtt_publisher, upload):
+        captured = []
+
+        def mock_urlopen(req, **kwargs):
+            body = req.data.read(10_000_000)
+            captured.append({'url': req.full_url, 'length': len(body)})
+            resp = MagicMock()
+            resp.getcode.return_value = 200
+            resp.headers = {'ETag': f'"etag-{req.full_url.rsplit("part", 1)[-1]}-b"'}
+            return resp
+
+        with patch('urllib.request.urlopen', side_effect=mock_urlopen), patch('time.sleep'):
+            mqtt_publisher._upload_session('20260611', ['images'], '', 'PUT',
+                                           request_id='req-2', upload=upload)
+        return captured
+
+    def test_resume_sends_only_missing_parts(self, mqtt_publisher, tmp_path):
+        """A resumed transfer re-zips the same bytes, skips the parts already in
+        storage and ends with a whole part list for CompleteMultipartUpload."""
+        self._run(mqtt_publisher, tmp_path, self._multipart(3), fail_attempts={'part2': 99})
+        first = mqtt_publisher.state['data_transfer']
+        assert first['status'] == 'error'
+        upload = self._multipart(3)
+        upload['parts'] = [p for p in upload['parts'] if p['part_number'] != 1]
+        upload['completed_parts'] = [{'part_number': 1, 'etag': '"etag-1"'}]
+        upload['expect_md5'] = first['zip_md5']
+
+        captured = self._resume(mqtt_publisher, upload)
+
+        state = mqtt_publisher.state['data_transfer']
+        assert state['status'] == 'complete'
+        assert [c['url'] for c in captured] == ['https://s3.example.com/part2',
+                                                'https://s3.example.com/part3']
+        assert state['parts'] == [{'part_number': 1, 'etag': '"etag-1"'},
+                                  {'part_number': 2, 'etag': '"etag-2-b"'},
+                                  {'part_number': 3, 'etag': '"etag-3-b"'}]
+        assert state['bytes_sent'] == state['zip_bytes']
+        assert state['zip_md5'] == first['zip_md5']
+
+    def test_resume_refused_when_session_changed(self, mqtt_publisher, tmp_path):
+        """The parts in storage came from another zip: say zip_changed and
+        upload nothing, so the cloud starts again."""
+        self._make_session(mqtt_publisher, tmp_path)
+        upload = self._multipart(3)
+        upload['completed_parts'] = [{'part_number': 1, 'etag': '"etag-1"'}]
+        upload['expect_md5'] = '0' * 32
+
+        captured = self._resume(mqtt_publisher, upload)
+
+        state = mqtt_publisher.state['data_transfer']
+        assert state['status'] == 'error'
+        assert state['error'] == 'zip_changed'
+        assert captured == []
 
     def test_state_reset_between_transfers(self, mqtt_publisher, tmp_path):
         """A single-PUT transfer after a multipart one must not carry stale

@@ -4,11 +4,18 @@ Spins up the networked Flask app with three stub OWLs (one spraying with a
 Hailo-8, one on CPU, one offline) and drives Playwright at 1024x600,
 1280x720 and 1280x800:
 
-  - no page scroll; the rail, live view, switches and stat cells on screen
+  - no page scroll; the rail, switches (Blanket spray included), the AI
+    confidence and crop buffer steppers and the stat cells on screen
   - every visible button is at least 44 px; no ' · ' in the visible text
+  - the first tab reads Dashboard; Live view opens the camera pop-up
   - All OWLs is selected by default; tapping an OWL scopes the controls
     (Spraying sends toggle_detection to that OWL only)
-  - Settings > AI models lists one row per OWL with where its AI runs
+  - Colour tuning steppers send the value; held, they repeat
+  - Settings > AI models lists one row per OWL with where its AI runs, and
+    warns in red when the OWLs run different models
+  - Test nozzles: a numbered button per nozzle, greyed while spraying;
+    holding one sends test_nozzles to that OWL
+  - Camera offers every image size from 320x240 to 1456x1088
   - Data, Map and every Settings panel render without JS errors
 
 Run: python tests/e2e/test_networked_redesign_browser.py
@@ -35,7 +42,8 @@ BASE_URL = f'http://{HOST}:{PORT}'
 SHOTS = os.environ.get('OWL_E2E_SHOTS')
 SENT = []
 VIEWPORTS = ((1024, 600, '7in'), (1280, 720, 'td2'), (1280, 800, 'hmi'))
-PANELS = ('colour', 'ai', 'camera', 'collection', 'profiles', 'spraying', 'nozzles', 'noktura', 'maint', 'advanced')
+PANELS = ('colour', 'ai', 'camera', 'collection', 'profiles', 'spraying', 'nozzles', 'noktura', 'maint', 'assistant')
+STATES = {}
 
 
 def owl(device_id, **extra):
@@ -52,6 +60,8 @@ def owl(device_id, **extra):
         'ai': {'cpu': {'installed': True}, 'hailo': {'present': True, 'chip': 'hailo8', 'runtime': True},
                'accelerator': 'hailo8'},
         'model_classes': {'0': 'ryegrass', '1': 'wild radish', '2': 'wheat'}, 'detect_classes': ['ryegrass'],
+        'relay_num': 10, 'nozzle_test': [],
+        'track_params': {'track_high_thresh': 0.2, 'track_buffer': 60, 'match_thresh': 0.8, 'detection_persist_frames': 10},
     }
     state.update(extra)
     return state
@@ -65,7 +75,8 @@ def build_app():
     ctrl = nw.controller
     states = {
         'owl-1': owl('owl-1'),
-        'owl-2': owl('owl-2', capture={'saved_count': 409},
+        'owl-2': owl('owl-2', capture={'saved_count': 409}, current_model='weeds-barley-v1',
+                     available_models=['weeds-wheat-v3', 'weeds-barley-v1'],
                      ai={'cpu': {'installed': True}, 'hailo': {'present': False, 'chip': None, 'runtime': False},
                          'accelerator': 'cpu'}),
         'owl-3': owl('owl-3', connected=False, detection_enable=False, current_model='',
@@ -73,6 +84,7 @@ def build_app():
                          'accelerator': None}),
     }
     ctrl.owls_state = states
+    STATES.update(states)
     ctrl.mqtt_connected = True
 
     def send(device_id, action, value=None):
@@ -140,15 +152,37 @@ def run_checks():
             page.wait_for_timeout(600)
             shot(page, f'field_{name}')
             check_screen(page, f'{name} field', problems)
-            for sel in ('#view-field [data-rail]', '#fieldLive', '#detectSwitch', '#recordSwitch',
-                        '#pipeline-mode-selector', '#sensitivity-seg', '#fieldStats', '#power-btn', '#mainNav'):
+            for sel in ('#view-field [data-rail]', '#detectSwitch', '#nozzleSwitch', '#recordSwitch', '#liveOpen',
+                        '#pipeline-mode-selector', '#sensitivity-seg', '#view-field [data-pstep="confidence"]',
+                        '#view-field [data-pstep="crop_buffer_px"]', '#fieldStats', '#power-btn', '#mainNav'):
                 where = page.evaluate(INSIDE_JS, sel)
                 if where != 'ok':
                     problems.append(f'{name}: {sel} {where}')
+            if page.inner_text('#mainNav [data-view="field"]').strip() != 'Dashboard':
+                problems.append(f'{name}: first tab is not labelled Dashboard')
+            stats = page.inner_text('#fieldStats')
+            for text in ('Speed', '9.8 km/h', 'Frame rate', 'fps'):
+                if text not in stats:
+                    problems.append(f'{name}: Dashboard stats missing {text!r}')
+            if 'is-off' not in (page.get_attribute('#view-field [data-pstep="confidence"]', 'class') or ''):
+                problems.append(f'{name}: AI confidence not greyed in Colour mode')
             if page.get_attribute('#view-field [data-owl="all"]', 'aria-selected') != 'true':
                 problems.append(f'{name}: All OWLs is not selected by default')
             if 'Off' not in page.inner_text('#view-field [data-owl="owl-3"]'):
                 problems.append(f'{name}: offline OWL card missing its Off pill')
+
+            # Live view pop-up: opens over the page, shows a picture, closes
+            page.click('#liveOpen')
+            try:
+                page.wait_for_selector('#fieldFeed:not([hidden])', timeout=4000)
+            except Exception:
+                problems.append(f'{name}: live view pop-up shows no picture')
+            shot(page, f'live_{name}')
+            check_screen(page, f'{name} live view', problems)
+            page.click('#livePop [data-close]')
+            page.wait_for_timeout(200)
+            if page.is_visible('#livePop'):
+                problems.append(f'{name}: live view pop-up did not close')
 
             # Scope to OWL-2 and switch spraying off: only owl-2 hears it
             SENT.clear()
@@ -178,9 +212,52 @@ def run_checks():
             page.click('.ou-side [data-panel="ai"]')
             page.wait_for_timeout(200)
             ai = page.inner_text('#panel-ai')
-            for text in ('owl-1', 'owl-2', 'owl-3', 'Hailo', 'CPU', 'Needs AI'):
+            for text in ('owl-1', 'owl-2', 'owl-3', 'Hailo', 'CPU', 'Needs AI', 'Detection', 'AI confidence',
+                         'different AI models', 'Use weeds-wheat-v3 on all'):
                 if text not in ai:
-                    problems.append(f'{name}: AI models list missing {text!r}')
+                    problems.append(f'{name}: AI models page missing {text!r}')
+            if 'bad' not in (page.get_attribute('#aiNotices .ou-notice', 'class') or ''):
+                problems.append(f'{name}: model difference is not shown in red')
+
+            # Colour tuning: one tap on + sends the new value once the taps stop
+            SENT.clear()
+            page.click('.ou-side [data-panel="colour"]')
+            page.click('[data-pstep="exg_min"] [data-d="1"]')
+            page.wait_for_timeout(700)
+            if not any(a == 'set_config_section' and (v or {}).get('section') == 'GreenOnBrown'
+                       and 'exg_min' in (v or {}).get('params', {}) for _, a, v in SENT):
+                problems.append(f'{name}: exg_min stepper sent nothing {SENT[:3]}')
+
+            # Camera: every size from 320x240 up to the full picture
+            page.click('.ou-side [data-panel="camera"]')
+            page.wait_for_timeout(200)
+            sizes = page.eval_on_selector_all('#camRes button', 'bs => bs.map((b) => b.dataset.value)')
+            if sizes[:1] != ['320x240'] or sizes[-1:] != ['1456x1088'] or len(sizes) < 8:
+                problems.append(f'{name}: camera sizes {sizes}')
+
+            # Test nozzles: greyed while spraying; once off, holding 3 tests it
+            page.click('.ou-side [data-panel="nozzles"]')
+            page.wait_for_timeout(300)
+            if page.locator('#nozzleTest [data-owl="owl-1"][data-nz]').count() != 10:
+                problems.append(f'{name}: owl-1 does not show 10 nozzles')
+            if not page.is_disabled('#nozzleTest [data-owl="owl-1"][data-nz="0"]'):
+                problems.append(f'{name}: nozzle buttons usable while spraying')
+            for s in STATES.values():
+                s['detection_enable'] = False
+            page.wait_for_timeout(2600)
+            SENT.clear()
+            page.hover('#nozzleTest [data-owl="owl-1"][data-nz="2"]')
+            page.mouse.down()
+            page.wait_for_timeout(300)
+            page.mouse.up()
+            page.wait_for_timeout(300)
+            if ('owl-1', 'test_nozzles', {'relays': [2], 'duration_ms': 10000}) not in SENT \
+                    or ('owl-1', 'test_nozzles', {'relays': [], 'duration_ms': 0}) not in SENT:
+                problems.append(f'{name}: holding nozzle 3 sent {SENT[:4]}')
+            shot(page, f'settings_nozzles_off_{name}')
+            for s in STATES.values():
+                s['detection_enable'] = s.get('connected', False)
+            page.click('.ou-side [data-panel="ai"]')
             # One OWL's AI page
             page.click('#view-settings [data-rail] [data-owl="owl-1"]')
             page.wait_for_timeout(400)

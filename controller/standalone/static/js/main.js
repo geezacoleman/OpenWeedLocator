@@ -7,7 +7,7 @@
    3. _controls.js   - Dashboard controls, power, detection, recording, preview
    4. _storage.js    - File browser, USB devices
    5. _stats.js      - System status polling
-   6. _config_tab.js - range sliders (Colour tuning, AI models)
+   6. _config_tab.js - − / + steppers (Colour tuning, AI confidence, crop buffer)
    7. _lut_panel.js  - painted profiles
    8. _config.js     - profiles and the INI editor
    9. _data_collection.js - shared capture form and record modal
@@ -31,7 +31,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initDashboardControls();
     initDataCollection();
     initConfigEditor();
-    initSliders();
+    initParamSteppers();
 
     // Initialize painted LUT panel + weed painter
     if (typeof initLutPanel === 'function') initLutPanel();

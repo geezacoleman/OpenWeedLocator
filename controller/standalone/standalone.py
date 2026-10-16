@@ -29,12 +29,13 @@ from utils.mqtt_manager import DashMQTTSubscriber, transfer_covers
 from utils.session_metadata import (clean_session_metadata, COLLECT_CAPTURE_DEFAULTS, COLLECT_LANGUAGES,
                                     OWL_CAPTURE_DEFAULTS, capture_settings_from, coerce_capture_value,
                                     ini_value, last_pick_values, load_last_pick, merge_session_file,
-                                    presets_from_config, read_session_file)
+                                    presets_from_config, read_session_file,
+                                    add_custom_crop, remove_custom_crop, CUSTOM_CROPS_KEY)
 from utils.input_manager import get_rpi_version
 from utils.device_identity import get_device_serial, read_identity
 from utils import cloud_provision
 from utils.ai_capability import algorithm_refusal
-from utils.directory_manager import (scan_sessions, stream_zip,
+from utils.directory_manager import (scan_sessions, stream_zip, is_session_id,
                                      read_session_locations,
                                      scan_exif_locations, read_session_tracks)
 from utils.config_manager import (
@@ -634,6 +635,26 @@ class OWLDashboard:
             result = self.mqtt_client.set_detection_mode(1)
             return _command_response(result, "All nozzles OFF via dashboard")
 
+        @self.app.route('/api/nozzles/test', methods=['POST'])
+        def nozzles_test():
+            """Nozzle test: {relays: [0-based], duration_ms}. An empty list
+            stops it. The OWL switches the nozzles off itself when the time
+            runs out (at most 10 s) and refuses while spraying."""
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            data = request.get_json(silent=True) or {}
+            relays = data.get('relays') or []
+            if not isinstance(relays, list) or not all(
+                    isinstance(r, int) and not isinstance(r, bool) for r in relays):
+                return jsonify({'success': False, 'error': 'relays must be a list of nozzle numbers'}), 400
+            try:
+                duration_ms = int(data.get('duration_ms', 10000))
+            except (TypeError, ValueError):
+                return jsonify({'success': False, 'error': 'duration_ms must be a number'}), 400
+            result = self.mqtt_client._send_command(
+                'test_nozzles', value={'relays': relays, 'duration_ms': duration_ms})
+            return _command_response(result, f"Nozzle test {relays} via dashboard")
+
         @self.app.route('/api/tracking/set', methods=['POST'])
         def set_tracking():
             if not self.mqtt_client:
@@ -1035,6 +1056,11 @@ class OWLDashboard:
                 'available_lut_profiles': mqtt_state.get('available_lut_profiles', []),
                 # Tracking
                 'tracking_enabled': mqtt_state.get('tracking_enabled', False),
+                'track_params': mqtt_state.get('track_params') or {},
+                # Nozzles (None on older OWLs) and the ones a nozzle test
+                # has on
+                'relay_num': mqtt_state.get('relay_num'),
+                'nozzle_test': mqtt_state.get('nozzle_test') or [],
                 # GPS (additive): best-source fix as seen by owl.py — lets
                 # the phone confirm its pushed position is actually in use.
                 # Coordinates only when there is a fix, never 0.0 defaults.
@@ -1379,12 +1405,11 @@ class OWLDashboard:
 
             session_id can be:
               - "YYYYMMDD" (legacy flat structure)
-              - "YYYYMMDD/session_HHMMSS" (new per-session structure)
+              - "YYYYMMDD/<session folder>" (per-session structure)
 
             Returns (session_path, error_response) — error_response is None on success.
             """
-            import re
-            if not re.match(r'^\d{8}(/session_\d{6})?$', session_id):
+            if not is_session_id(session_id):
                 return None, (jsonify({'error': 'Invalid session ID'}), 400)
 
             save_dir = self._get_save_directory()
@@ -1659,6 +1684,39 @@ class OWLDashboard:
                 'metadata': clean_session_metadata(state.get('session_metadata')),
             })
 
+        def _save_custom_crops(value):
+            try:
+                write_ini_section(self.controller_ini_path, 'Collect', {CUSTOM_CROPS_KEY: value})
+            except OSError as e:
+                self.logger.error(f"Could not save [Collect] {CUSTOM_CROPS_KEY}: {e}")
+                return False
+            return True
+
+        @self.app.route('/api/collect/crops', methods=['POST'])
+        def collect_crops_add():
+            """Add a crop from the record form's "+ Add crop", saved straight
+            away as [Collect] custom_crops. Same contract as networked."""
+            data = request.get_json(silent=True) or {}
+            try:
+                slug, value = add_custom_crop(self._read_controller_ini(), data.get('name'))
+            except ValueError as e:
+                return jsonify({'success': False, 'error': str(e)}), 400
+            if value is not None and not _save_custom_crops(value):
+                return jsonify({'success': False, 'error': 'Could not save the crop on the OWL'}), 500
+            presets = presets_from_config(self._read_controller_ini())
+            return jsonify({'success': True, 'crop': slug,
+                            'presets': {k: list(v) for k, v in presets.items()}})
+
+        @self.app.route('/api/collect/crops/<slug>', methods=['DELETE'])
+        def collect_crops_remove(slug):
+            value = remove_custom_crop(self._read_controller_ini(), slug)
+            if value is None:
+                return jsonify({'success': False, 'error': 'Not one of your crops'}), 404
+            if not _save_custom_crops(value):
+                return jsonify({'success': False, 'error': 'Could not save on the OWL'}), 500
+            presets = presets_from_config(self._read_controller_ini())
+            return jsonify({'success': True, 'presets': {k: list(v) for k, v in presets.items()}})
+
         @self.app.route('/api/collect/settings', methods=['POST'])
         def collect_settings():
             """Validate capture settings, save them to the active config and
@@ -1728,6 +1786,28 @@ class OWLDashboard:
                                 'error': result.get('error') or 'Could not stop recording'}), 503
             self.logger.info("Recording disabled via dashboard")
             return jsonify({'success': True})
+
+        def _set_recording_paused(paused):
+            # Allowed with a hardware recording switch too: the switch still
+            # starts and stops the session, the screen only pauses it
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 503
+            state = self.mqtt_client.get_state() or {}
+            if paused and not state.get('image_sample_enable'):
+                return jsonify({'success': False, 'error': 'Nothing is recording'}), 409
+            result = self.mqtt_client.set_recording_paused(paused)
+            if not result.get('success'):
+                return jsonify({'success': False,
+                                'error': result.get('error') or 'Could not reach the OWL'}), 503
+            return jsonify({'success': True, 'paused': paused})
+
+        @self.app.route('/api/collect/pause', methods=['POST'])
+        def collect_pause():
+            return _set_recording_paused(True)
+
+        @self.app.route('/api/collect/resume', methods=['POST'])
+        def collect_resume():
+            return _set_recording_paused(False)
 
         # ------------------------------------------------------------------
         # End Session metadata routes

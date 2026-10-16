@@ -898,3 +898,145 @@ class TestCollectLiveView:
         for key in ('live:', 'live_title:', 'live_error:', 'close:', 'delete:', 'delete_title:',
                     'delete_hint:', 'deleted:', 'delete_skipped:', 'delete_confirm:'):
             assert self.I18N.count(key) >= 2, key
+
+
+# ---------------------------------------------------------------------------
+# Field round 2026-10-15: crops, pause, upload queue acks, fleet model
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestCollectCropsRoutes:
+    def test_add_saves_straight_away_and_returns_presets(self, collect_client):
+        client, ctrl, _ = collect_client
+        resp = client.post('/api/collect/crops', json={'name': 'Pak choi'})
+        data = resp.get_json()
+        assert resp.status_code == 200 and data['crop'] == 'pak_choi'
+        assert data['presets']['crops'][0] == 'pak_choi'
+        assert data['presets']['custom_crops'] == ['pak_choi']
+        text = ctrl.config_file.read_text()
+        assert 'custom_crops = pak_choi' in text and '# collect keys below' in text
+
+    def test_add_built_in_saves_nothing(self, collect_client):
+        client, ctrl, _ = collect_client
+        resp = client.post('/api/collect/crops', json={'name': 'Cabbage'})
+        assert resp.status_code == 200 and resp.get_json()['crop'] == 'cabbage'
+        assert 'custom_crops' not in ctrl.config_file.read_text()
+
+    def test_add_rejects_empty(self, collect_client):
+        client, _, _ = collect_client
+        assert client.post('/api/collect/crops', json={'name': '***'}).status_code == 400
+        assert client.post('/api/collect/crops', json={}).status_code == 400
+
+    def test_remove(self, collect_client):
+        client, ctrl, _ = collect_client
+        client.post('/api/collect/crops', json={'name': 'Swede'})
+        client.post('/api/collect/crops', json={'name': 'Pak choi'})
+        resp = client.delete('/api/collect/crops/swede')
+        assert resp.status_code == 200
+        assert resp.get_json()['presets']['custom_crops'] == ['pak_choi']
+        assert client.delete('/api/collect/crops/wheat').status_code == 404
+
+
+@pytest.mark.unit
+class TestCollectPause:
+    def test_pause_needs_a_recording(self, collect_client):
+        client, ctrl, _ = collect_client
+        assert client.post('/api/collect/pause').status_code == 409
+        ctrl.send_command.assert_not_called()
+
+    def test_pause_and_resume_broadcast(self, collect_client):
+        client, ctrl, _ = collect_client
+        ctrl.owls_state['owl-1']['image_sample_enable'] = True
+        assert client.post('/api/collect/pause').get_json() == {'success': True, 'paused': True}
+        assert ctrl.send_command.call_args_list[-1].args == ('all', 'set_recording_paused', True)
+        assert client.post('/api/collect/resume').get_json()['paused'] is False
+        assert ctrl.send_command.call_args_list[-1].args == ('all', 'set_recording_paused', False)
+
+    def test_paused_owl_raises_no_saving_warnings(self):
+        owl = _owl(last_capture_at=0.0, capture={'paused': True, 'ground_smear_mm': 9.0})
+        assert collect_warnings({'owl-1': owl}, now=101.0) == []
+
+
+@pytest.mark.unit
+class TestUploadAckDetails:
+    def test_queue_position_and_outcomes_kept(self):
+        collect = CollectSession()
+        req = collect.request_uploads([{'owl': 'owl-1', 'session_id': 's'}])[0]
+        assert collect.ack_upload(req['id'], 'queued', 'busy', {'position': 2, 'queue_length': 5})
+        row = collect.upload_list()[0]
+        assert (row['status'], row['position'], row['queue_length']) == ('queued', 2, 5)
+        assert collect.ack_upload(req['id'], 'retrying', 'connection_reset',
+                                  {'attempt': 2, 'max_attempts': 3, 'retry_in_s': 120, 'position': 'x'})
+        row = collect.upload_list()[0]
+        assert row['attempt'] == 2 and row['retry_in_s'] == 120 and 'position' not in row
+        assert collect.ack_upload(req['id'], 'stored')
+        assert collect.bridged_upload_requests() == []
+
+    def test_unknown_status_refused(self):
+        collect = CollectSession()
+        req = collect.request_uploads([{'owl': 'owl-1', 'session_id': 's'}])[0]
+        assert not collect.ack_upload(req['id'], 'teleported')
+
+
+@pytest.mark.unit
+class TestFleetModel:
+    def make(self, tmp_path, ini=''):
+        import controller.networked.networked as nw
+        ctrl = nw.CentralController.__new__(nw.CentralController)
+        ctrl.config_file = tmp_path / 'CONTROLLER.ini'
+        if ini or not ctrl.config_file.exists():
+            ctrl.config_file.write_text('[MQTT]\nbroker_ip = localhost\n' + ini)
+        ctrl.config = configparser.ConfigParser()
+        ctrl.config.read(ctrl.config_file)
+        ctrl.desired_state = {}
+        ctrl.owls_state = {}
+        ctrl.mqtt_lock = __import__('threading').Lock()
+        ctrl.mqtt_client = MagicMock()
+        ctrl.mqtt_client.publish.return_value = MagicMock(rc=0)
+        ctrl.mqtt_connected = True
+        ctrl._load_fleet_models()
+        return nw, ctrl
+
+    def pushed_models(self, ctrl):
+        payloads = [json.loads(c.args[1]) for c in ctrl.mqtt_client.publish.call_args_list]
+        return [p['value'] for p in payloads if p.get('action') == 'set_model']
+
+    def test_choice_for_all_is_saved_and_survives_a_restart(self, tmp_path):
+        _, ctrl = self.make(tmp_path)
+        ctrl.send_command('all', 'set_model', 'weeds-v3')
+        assert '[Fleet]' in ctrl.config_file.read_text()
+        _, restarted = self.make(tmp_path)
+        assert restarted.desired_state['all']['model'] == 'weeds-v3'
+
+    def test_one_owl_choice_does_not_change_the_fleet(self, tmp_path):
+        _, ctrl = self.make(tmp_path, '[Fleet]\nmodel = weeds-v3\n')
+        ctrl.send_command('owl-2', 'set_model', 'weeds-v4')
+        assert ctrl.desired_state['all']['model'] == 'weeds-v3'
+        assert ctrl.desired_state['owl-2']['model'] == 'weeds-v4'
+        assert 'model_owl-2 = weeds-v4' in ctrl.config_file.read_text()
+
+    def test_use_on_all_clears_one_owl_choices(self, tmp_path):
+        _, ctrl = self.make(tmp_path, '[Fleet]\nmodel = weeds-v3\nmodel_owl-2 = weeds-v4\n')
+        assert ctrl.desired_state['owl-2']['model'] == 'weeds-v4'
+        ctrl.send_command('all', 'set_model', 'weeds-v5')
+        assert 'model' not in ctrl.desired_state['owl-2']
+        cfg = configparser.ConfigParser()
+        cfg.read(ctrl.config_file)
+        assert cfg.get('Fleet', 'model') == 'weeds-v5' and cfg.get('Fleet', 'model_owl-2') == ''
+
+    def test_reconnect_pushes_only_a_different_model(self, tmp_path):
+        _, ctrl = self.make(tmp_path, '[Fleet]\nmodel = weeds-v3\n')
+        ctrl.owls_state = {'owl-1': {'current_model': 'weeds-v3'}, 'owl-2': {'current_model': 'other'}}
+        ctrl._push_desired_state('owl-1')
+        assert self.pushed_models(ctrl) == []
+        ctrl._push_desired_state('owl-2')
+        assert self.pushed_models(ctrl) == ['weeds-v3']
+
+    def test_paused_run_stays_paused_for_a_rejoining_owl(self, tmp_path):
+        _, ctrl = self.make(tmp_path)
+        ctrl.desired_state['all'] = {'image_sample_enable': True}
+        ctrl.send_command('all', 'set_recording_paused', True)
+        ctrl.mqtt_client.publish.reset_mock()
+        ctrl._push_desired_state('owl-1')
+        actions = [json.loads(c.args[1])['action'] for c in ctrl.mqtt_client.publish.call_args_list]
+        assert actions.index('set_recording_paused') > actions.index('set_image_sample_enable')
