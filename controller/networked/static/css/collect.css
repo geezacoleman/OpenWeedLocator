@@ -70,6 +70,17 @@
 .c-record small { font-size: 0.6em; font-weight: 600; opacity: 0.92; font-variant-numeric: tabular-nums; }
 .c-record.is-recording { background: var(--c-rec); }
 .c-record:disabled { background: #8a97a8; cursor: not-allowed; }
+.c-recbox { display: flex; gap: var(--c-pad); min-width: 0; }
+.c-recbox .c-record { flex: 1; min-width: 0; }
+/* Pause: amber outline while recording; Resume: green once paused */
+.c-pause {
+    flex: none; width: 38%; min-height: 96px; border: 2px solid var(--c-warn); border-radius: var(--c-radius);
+    background: var(--c-warn-bg); color: #6b4300; font-size: calc(var(--c-big) * 0.8); font-weight: 700; cursor: pointer;
+}
+.c-pause.is-paused { background: var(--c-ok); border-color: var(--c-ok); color: #fff; }
+.c-pause:disabled { opacity: 0.45; cursor: not-allowed; }
+.c-record.is-paused { background: #8a5200; }
+.c-sub { display: block; color: var(--c-muted); font-size: 0.8em; font-weight: 600; }
 .c-status { padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: hidden; }
 .c-owl-table { display: flex; flex-direction: column; gap: 4px; }
 .c-owl-row { display: grid; grid-template-columns: 14px 78px repeat(4, minmax(0, 1fr)); align-items: center; gap: 8px; }

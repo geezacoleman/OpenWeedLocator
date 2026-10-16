@@ -952,6 +952,21 @@ class TestCollectPause:
         assert client.post('/api/collect/resume').get_json()['paused'] is False
         assert ctrl.send_command.call_args_list[-1].args == ('all', 'set_recording_paused', False)
 
+    def test_state_says_paused_only_when_every_recording_owl_is(self, collect_client):
+        """The Collect screen turns Pause into Resume from this."""
+        client, ctrl, _ = collect_client
+        owl = ctrl.owls_state['owl-1']
+        owl['image_sample_enable'] = True
+        owl.setdefault('capture', {})['paused'] = False
+        assert client.get('/api/collect/state').get_json()['paused'] is False
+        owl['capture']['paused'] = True
+        state = client.get('/api/collect/state').get_json()
+        assert state['paused'] is True and state['owls'][0]['paused'] is True
+        # A stale flag on an OWL that stopped recording is not a pause
+        owl['image_sample_enable'] = False
+        state = client.get('/api/collect/state').get_json()
+        assert state['paused'] is False and state['owls'][0]['paused'] is False
+
     def test_paused_owl_raises_no_saving_warnings(self):
         owl = _owl(last_capture_at=0.0, capture={'paused': True, 'ground_smear_mm': 9.0})
         assert collect_warnings({'owl-1': owl}, now=101.0) == []

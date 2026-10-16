@@ -38,10 +38,14 @@
 <main class="c-main">
     <!-- Record -->
     <section class="c-view c-view--record is-on" id="view-record">
-        <button class="c-record" id="record-btn" type="button">
-            <span id="record-label">Start recording</span>
-            <small id="record-sub">Ready</small>
-        </button>
+        <div class="c-recbox">
+            <button class="c-record" id="record-btn" type="button">
+                <span id="record-label">Start recording</span>
+                <small id="record-sub">Ready</small>
+            </button>
+            <!-- Headland turns: same session, nothing saved until Resume -->
+            <button class="c-pause" id="pause-btn" type="button" disabled data-i18n="pause">Pause</button>
+        </div>
         <div class="c-card c-status">
             <div class="c-owl-table" id="owl-rows"></div>
             <div class="c-chips" id="meta-chips"></div>
@@ -75,7 +79,7 @@
                 <div class="c-pane-head"><h2 data-i18n="s_sessions">Sessions and upload</h2><button class="c-btn c-btn--small" id="sessions-refresh" type="button" data-i18n="refresh">Refresh list</button></div>
                 <div class="c-table-wrap">
                     <table class="c-sessions">
-                        <thead><tr><th></th><th>OWL</th><th data-i18n="session">Session</th><th data-i18n="images">Images</th><th data-i18n="size">Size</th><th data-i18n="status">Status</th></tr></thead>
+                        <thead><tr><th></th><th>OWL</th><th data-i18n="session">Session</th><th data-i18n="contents">Contents</th><th data-i18n="size">Size</th><th data-i18n="status">Status</th></tr></thead>
                         <tbody id="session-rows"></tbody>
                     </table>
                 </div>

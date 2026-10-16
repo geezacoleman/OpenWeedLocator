@@ -149,6 +149,15 @@ body.ou-app {
     text-align: left; cursor: pointer; font: inherit; color: var(--ou-ink);
 }
 .ou-prime .txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+/* Recording with Pause / Resume beside it (headland turns) */
+.ou-recrow { display: flex; gap: 10px; min-width: 0; }
+.ou-recrow .ou-prime { flex: 1; min-width: 0; }
+.ou-pause {
+    flex: none; width: 112px; cursor: pointer; font: 700 17px var(--ou-font);
+    color: #5E3B00; background: var(--ou-warn-bg); border: 2px solid var(--ou-warn-line);
+}
+.ou-pause.is-paused { color: #fff; background: var(--ou-on); border-color: var(--ou-on); }
+.ou-pause:disabled { opacity: 0.45; cursor: not-allowed; }
 .ou-prime .ttl { font: 500 21px/1.2 var(--ou-display); letter-spacing: -0.015em; }
 .ou-prime .hint { font-size: 13px; color: var(--ou-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ou-prime.is-go { background: var(--ou-navy); border-color: var(--ou-navy); color: #fff; }
@@ -525,9 +534,8 @@ button.ou-row { cursor: pointer; }
 /* ---------- the shared record modal in the redesign's look ---------- */
 .ou-app .c-modal { border-radius: 20px; padding: 20px 22px; gap: 12px; max-width: 780px; }
 .ou-app .c-modal h2 { font: 500 22px var(--ou-display); letter-spacing: -0.015em; color: var(--ou-ink); }
-.ou-app .c-mrow > span, .ou-app .c-mrow > label { color: #3A4855; font-weight: 600; font-size: 14px; }
-.ou-app .c-opt { border-radius: 12px; border-width: 1.5px; min-width: 0; padding: 0 16px; min-height: 46px; font-size: 14.5px; }
-.ou-app .c-opt[aria-pressed="true"] { background: var(--ou-navy); border-color: var(--ou-navy); color: #fff; }
+.ou-app .c-modal.c-rf { max-width: 1220px; padding: 14px 18px; }
+.ou-app .c-rf-row, .ou-app .c-rf-pane, .ou-app .c-opt { border-radius: 12px; }
 .ou-app .c-mfoot .c-btn { border-radius: 14px; min-height: 52px; }
 .ou-app .c-btn--go { background: var(--ou-navy); border-color: var(--ou-navy); }
 

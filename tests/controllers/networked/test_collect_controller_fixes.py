@@ -258,8 +258,9 @@ class TestKioskLinks:
 
 @pytest.mark.unit
 def test_progress_is_coerced_before_markup():
-    assert 'Number(tr.progress)' in JS
-    assert not re.search(r"tr\.progress \|\| 0", JS)
+    # The upload status lives in the shared form file since 2026-10-16
+    assert 'Number(tr.progress)' in FORM_JS
+    assert not re.search(r"tr\.progress \|\| 0", JS + FORM_JS)
 
 
 # 7. Rotation asks for a restart -------------------------------------------------

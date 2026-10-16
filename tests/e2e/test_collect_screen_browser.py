@@ -6,9 +6,16 @@ both kiosk sizes:
 
   - 7" EDATEC 1024x600 and 10" HMI3010 1280x800: no page scroll, record
     button, status rows, warnings and four gallery images visible
-  - Start recording opens the modal; Start posts the chosen metadata
+  - Start recording opens the record form (design B, 2026-10-16): a list
+    of five sections, one section's choices beside it; no section scrolls
+    on its own except the crop grid; + Add crop saves and selects the
+    crop; artificial light greys out sky and weather; Start posts the
+    chosen metadata
+  - Pause / Resume beside the record button sends set_recording_paused
+    and shows Paused
   - DK switches the labels
-  - Settings, Sessions: ticking a session and Upload posts the request
+  - Settings, Sessions: photo and video counts, the upload queue states
+    (Waiting n of m), ticking a session and Upload posts the request
 
 Run: python tests/e2e/test_collect_screen_browser.py   (screenshots in tests/e2e/screenshots)
 Script only, like the other e2e checks (not collected by pytest).
@@ -56,7 +63,9 @@ def _owl(device_id, count, smear):
                    'baseline_sharpness': 31.0, 'recent_sharpness': [30.0, 29.0, 30.5], 'count': 10},
         },
         'data_sessions': [{'session_id': '20261008/session_090000', 'date': '20261008', 'time': '090000',
-                           'image_count': count, 'total_size': 180 * 1048576}],
+                           'image_count': count, 'total_size': 180 * 1048576},
+                          {'session_id': f'20261008/s091500_{device_id}_a3f9', 'date': '20261008', 'time': '091500',
+                           'image_count': 0, 'video_count': 1, 'total_size': 146 * 1048576}],
         'data_transfer': {'status': 'idle'},
     }
 
@@ -78,7 +87,13 @@ def build_app():
         return {'success': True, 'message': 'ok'}
     ctrl.send_command = fake_send
     ctrl._publish_controller_presence = lambda: None
-    nw._write_collect_section = lambda values: None
+
+    def write_collect(values):
+        if not ctrl.config.has_section('Collect'):
+            ctrl.config.add_section('Collect')
+        for key, value in values.items():
+            ctrl.config.set('Collect', key, str(value))
+    nw._write_collect_section = write_collect
 
     ctrl.collect.start({'crop': 'wheat'})
     for i in range(30):
@@ -173,6 +188,24 @@ def run_checks():
             for s in ctrl_paused.owls_state.values():
                 s['capture'].update(paused_slow=False, speed_kmh=9.8)
 
+            # Pause at the headland, then resume
+            page.click('#pause-btn')
+            page.wait_for_timeout(300)
+            if ('all', 'set_recording_paused', True) not in SENT:
+                problems.append(f'{name}: Pause did not send set_recording_paused')
+            for s in ctrl_paused.owls_state.values():
+                s['capture']['paused'] = True
+            page.wait_for_function("document.getElementById('pause-btn').textContent === 'Resume'", timeout=5000)
+            if 'Paused' not in page.inner_text('#record-sub') or 'Nothing is saved' not in page.inner_text('#warnings'):
+                problems.append(f'{name}: paused run does not say so')
+            page.screenshot(path=str(SCREENSHOT_DIR / f'collect_headland_{name}.png'))
+            page.click('#pause-btn')
+            page.wait_for_timeout(300)
+            if ('all', 'set_recording_paused', False) not in SENT:
+                problems.append(f'{name}: Resume did not send set_recording_paused false')
+            for s in ctrl_paused.owls_state.values():
+                s['capture']['paused'] = False
+
             # Stop then start: modal + metadata
             page.click('#record-btn')
             page.wait_for_selector('#stop-modal:not([hidden])')
@@ -187,8 +220,40 @@ def run_checks():
             modal = page.locator('#record-modal .c-modal').bounding_box()
             if modal['y'] + modal['height'] > height + 1:
                 problems.append(f'{name}: record modal taller than the screen')
-            page.click('[data-pick="crop"] .c-opt:has-text("Barley")')
-            page.click('[data-pick="crop_season"] .c-opt:has-text("Spring")')
+            for section in ('crop', 'light', 'soil', 'purpose', 'notes'):
+                page.click(f'.c-rf-row[data-section="{section}"]')
+                over = page.evaluate("(() => { const p = document.getElementById('rf-pane');"
+                                     " return p.scrollHeight - p.clientHeight; })()")
+                if over > 1:
+                    problems.append(f'{name}: {section} section scrolls by {over}px')
+                small = page.evaluate("[...document.querySelectorAll('#record-modal button')]"
+                                      ".filter(b => b.offsetParent && b.getBoundingClientRect().height < 44).length")
+                if small:
+                    problems.append(f'{name}: {small} buttons under 44 px in the {section} section')
+                page.screenshot(path=str(SCREENSHOT_DIR / f'collect_form_{section}_{name}.png'))
+
+            # + Add crop: saved on the controller and chosen straight away
+            page.click('.c-rf-row[data-section="crop"]')
+            page.evaluate("(() => { const i = document.getElementById('meta-add-crop'); i.value = 'Pak choi';"
+                          " i.dispatchEvent(new Event('change')); })()")
+            page.wait_for_selector('[data-pick="crop"][data-value="pak_choi"][aria-pressed="true"]', timeout=5000)
+            if 'Pak choi' not in page.inner_text('.c-rf-row[data-section="crop"]'):
+                problems.append(f'{name}: added crop not shown as the choice')
+
+            page.click('.c-rf-tabs [data-tab="arable"]')
+            page.click('[data-pick="crop"][data-value="barley"]')
+            page.click('[data-pick="crop_season"][data-value="spring"]')
+            page.click('.c-rf-row[data-section="light"]')
+            page.click('[data-pick="light_source"][data-value="artificial"]')
+            if not page.locator('[data-pick="sky"][data-value="sunny"]').is_disabled():
+                problems.append(f'{name}: sky still asked under artificial light')
+            page.click('.c-rf-row[data-section="soil"]')
+            page.click('[data-pick="soil_cover"][data-value="none"]')
+            page.click('[data-pick="soil_moisture"][data-value="wet"]')
+            page.click('[data-pick="recent_water"][data-value="irrigation"]')
+            if 'Bare soil, wet after irrigation' not in page.inner_text('.c-rf-row[data-section="soil"]'):
+                problems.append(f'{name}: soil summary wrong: {page.inner_text(".c-rf-row[data-section=soil]")}')
+            page.screenshot(path=str(SCREENSHOT_DIR / f'collect_form_filled_{name}.png'))
             page.click('#modal-start')
             page.wait_for_timeout(300)
 
@@ -201,10 +266,21 @@ def run_checks():
             # Sessions + upload
             page.click('.c-tab[data-view="settings"]')
             page.wait_for_selector('.c-tick')
+            rows_text = page.inner_text('#session-rows')
+            if '1 video' not in rows_text or '412 photos' not in rows_text:
+                problems.append(f'{name}: session counts wrong: {rows_text[:200]}')
             page.screenshot(path=str(SCREENSHOT_DIR / f'collect_sessions_{name}.png'))
             page.locator('.c-tick').first.click()
             page.click('#upload-btn')
             page.wait_for_timeout(300)
+            # Noktura's answer: waiting its turn in the rig's queue
+            reqs = __import__('networked').controller.collect.upload_list()
+            if reqs:
+                __import__('networked').controller.collect.ack_upload(
+                    reqs[0]['id'], 'queued', details={'position': 2, 'queue_length': 5})
+                page.wait_for_function("document.getElementById('session-rows').innerText.includes('Waiting (2 of 5)')",
+                                       timeout=5000)
+                page.screenshot(path=str(SCREENSHOT_DIR / f'collect_queue_{name}.png'))
 
             page.click('.c-setnav [data-pane="capture"]')
             if not page.locator('#set-min-speed').is_visible():
@@ -225,7 +301,10 @@ def run_checks():
 
     import networked as nw
     starts = [v for d, a, v in SENT if a == 'set_session_metadata']
-    if not starts or starts[-1].get('crop') != 'barley' or starts[-1].get('crop_season') != 'spring':
+    want = {'crop': 'barley', 'crop_season': 'spring', 'light_source': 'artificial', 'sky': '',
+            'weather': '', 'soil_cover': 'none', 'soil_moisture': 'wet', 'recent_water': 'irrigation',
+            'lighting': 'artificial'}
+    if not starts or any(starts[-1].get(k) != v for k, v in want.items()):
         problems.append(f'metadata not sent as chosen: {starts[-1:]}')
     if not nw.controller.collect.upload_list():
         problems.append('upload request not created')

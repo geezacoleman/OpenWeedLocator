@@ -42,6 +42,22 @@ From a farmer's run on a networked rig (2 OWLs, Teltonika 5G at 2 bars). Plan: `
   - **Queue place:** `queued` acks carry `position`/`queue_length`.
   - **New statuses:** `retrying`, `stored` and `failed`.
 
+### Changed (record form and screens, 2026-10-16)
+- **New record form** (design B, signed off by Guy 2026-10-16; `controller/shared/js/collect_form.js`, used by the Collect screen and both dashboards).
+  - **Layout:** five rows on the left show what is chosen (Crop, Light and weather, Soil, Purpose, Notes). Tapping one shows only its choices on the right. Start recording is always on screen, and only the crop grid scrolls. It fits 1024x600.
+  - **Crops:** tabs for Your crops, Arable and Vegetables, plus **+ Add crop** (saved straight away through `POST /api/collect/crops`) and **Edit my crops** (`DELETE`).
+  - **Nothing invented:** a first run starts with nothing chosen, and an unchosen field is left out of the metadata. Earlier versions pre-filled weather, light and purpose. Last time's choices come back; a `lighting`-only last pick is read as light source + sky.
+  - **Indoors:** artificial light greys out sky and weather, and they are sent empty.
+  - **Taps:** a second tap on a chosen answer keeps it, so a bump in the cab cannot clear it.
+  - **Labels:** English and Danish for every new crop and condition.
+- **Pause / Resume buttons:**
+  - **Collect screen:** beside the record button. A paused run shows "Paused" and an amber dot per OWL.
+  - **Dashboards:** beside Recording on both. The button is greyed until something records.
+  - **Controller state:** `/api/collect/state` now has `paused` (every recording OWL paused) and a per-OWL `paused`.
+- **Session lists show video:** "214 photos", "1 video" or "12 photos, 1 video" (`CollectForm.sessionCounts`) on the Collect screen and both dashboards' Data tabs.
+- **Upload states:** one shared `CollectForm.uploadStatus` for the Collect screen and the networked Data tab. The states are Waiting (2 of 5), Starting, Sending 40%, Signal dropped carrying on (in N s), Sent and Not sent. While sending, a line under it says "Signal dropped, carried on" after a retry.
+- **Video limit:** "Video stopped at 60 s. Tap Start recording for another clip" on the Collect screen and both dashboards.
+
 ## [Unreleased] (on 3.25.1, branch hardening-3.22)
 
 Dashboard UX round from Guy's field review, 2026-10-14. Both the standalone dashboard and the networked controller.

@@ -7,8 +7,10 @@ drives Playwright at the 7" (1024x600) and Touch Display 2 (1280x720) sizes:
 
   - Settings > Data collection shows the capture form; tapping By distance saves it
     (persisted to the active config + set_capture_params sent live)
-  - Record opens the form; Start sends the chosen slugs, then recording on
-  - While recording, the crop/conditions chips show under the switch
+  - Record opens the form (design B: section list + one section's
+    choices); Start sends the chosen slugs, then recording on
+  - While recording, the crop/conditions chips show under the switch and
+    Pause beside it sends set_recording_paused
 
 Run: python tests/e2e/test_standalone_data_collection_browser.py
 Script only, like the other e2e checks (not collected by pytest).
@@ -72,6 +74,12 @@ def build_app():
         STATE['image_sample_enable'] = value
         return {'success': True}
     fake.set_image_sample_enable.side_effect = set_recording
+
+    def set_paused(value):
+        SENT.append(('set_recording_paused', {'value': value}))
+        STATE.setdefault('capture', {})['paused'] = bool(value)
+        return {'success': True}
+    fake.set_recording_paused.side_effect = set_paused
     dashboard.mqtt_client = fake
 
     tmp = TMP
@@ -152,11 +160,22 @@ def run_checks():
             modal = page.locator('#record-modal .c-modal').bounding_box()
             if modal['y'] + modal['height'] > height + 1 or modal['width'] > width:
                 problems.append(f'{name}: record form does not fit ({modal})')
-            if page.locator('[data-pick="crop"] .c-opt[aria-pressed="true"]').inner_text() != 'Wheat':
+            if page.locator('[data-pick="crop"][aria-pressed="true"]').inner_text() != 'Wheat':
                 problems.append(f'{name}: last crop not pre-selected')
-            page.click('[data-pick="crop"] .c-opt:has-text("Barley")')
-            page.click('[data-pick="crop_season"] .c-opt:has-text("Spring")')
-            page.click('[data-pick="weather"] .c-opt:has-text("Windy")')
+            for section in ('crop', 'light', 'soil', 'purpose', 'notes'):
+                page.click(f'.c-rf-row[data-section="{section}"]')
+                over = page.evaluate("(() => { const p = document.getElementById('rf-pane');"
+                                     " return p.scrollHeight - p.clientHeight; })()")
+                if over > 1:
+                    problems.append(f'{name}: {section} section scrolls by {over}px')
+            page.click('.c-rf-row[data-section="crop"]')
+            page.click('.c-rf-tabs [data-tab="arable"]')
+            page.click('[data-pick="crop"][data-value="barley"]')
+            page.click('[data-pick="crop_season"][data-value="spring"]')
+            page.click('.c-rf-row[data-section="light"]')
+            page.click('[data-pick="light_source"][data-value="natural"]')
+            page.click('[data-pick="weather"][data-value="windy"]')
+            page.screenshot(path=str(SCREENSHOT_DIR / f'standalone_record_light_{name}.png'))
             page.click('#modal-start')
             page.wait_for_timeout(500)
             meta = [kw for a, kw in SENT if a == 'set_session_metadata']
@@ -170,9 +189,16 @@ def run_checks():
             STATE['session_metadata'] = meta[-1] if meta else {}
             page.wait_for_selector('#sessionChips .ou-lab', timeout=8000)
             chips = page.inner_text('#sessionChips')
-            if 'barley' not in chips.lower() or 'Windy' not in chips:
+            if 'barley' not in chips.lower() or 'windy' not in chips.lower():
                 problems.append(f'{name}: chips wrong: {chips!r}')
             page.screenshot(path=str(SCREENSHOT_DIR / f'standalone_recording_{name}.png'))
+
+            # Pause beside Recording (headland turns)
+            page.wait_for_function("!document.getElementById('pauseBtn').disabled", timeout=8000)
+            page.click('#pauseBtn')
+            page.wait_for_timeout(500)
+            if not [a for a, kw in SENT if a == 'set_recording_paused']:
+                problems.append(f'{name}: Pause did not send set_recording_paused')
             if errors:
                 problems.append(f'{name}: JS errors {errors}')
             page.close()

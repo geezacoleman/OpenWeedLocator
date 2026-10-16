@@ -67,6 +67,7 @@ function initRecordModal() {
         parent: scope,
         presets: () => _collectConfig.presets,
         onStart: startCollectRecording,
+        onPresets: (presets) => { _collectConfig.presets = presets; },
     });
     fetch('/api/collect/config').then((r) => r.json()).then((data) => {
         _collectConfig = data;

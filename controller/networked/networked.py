@@ -1634,6 +1634,7 @@ def _collect_owls_snapshot():
             'id': oid,
             'connected': bool(s.get('connected')),
             'recording': bool(s.get('image_sample_enable')),
+            'paused': bool(s.get('image_sample_enable') and capture.get('paused')),
             'detection': bool(s.get('detection_enable')),
             'saved_count': capture.get('saved_count', 0),
             'session_id': capture.get('session_id'),
@@ -1677,6 +1678,9 @@ def collect_state():
     return jsonify({
         'ui_mode': controller.ui_mode,
         'recording': any(r['recording'] for r in rows if r['connected']),
+        # Paused at the headland: every recording OWL has stopped saving
+        'paused': any(r['paused'] for r in rows if r['connected'])
+                  and all(r['paused'] for r in rows if r['connected'] and r['recording']),
         'run': {'run_id': collect.run_id, 'started_at': collect.started_at,
                 'metadata': collect.metadata},
         'owls': rows,

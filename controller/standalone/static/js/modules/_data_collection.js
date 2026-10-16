@@ -21,6 +21,7 @@ function initDataCollection() {
         parent: scope,
         presets: () => _dcConfig.presets,
         onStart: startCollectRecording,
+        onPresets: (presets) => { _dcConfig.presets = presets; },
     });
 
     const form = document.getElementById('dcCaptureForm');

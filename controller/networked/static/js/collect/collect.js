@@ -21,6 +21,7 @@
     let config = { presets: {}, capture: {}, language: 'en' };
     let state = null;
     let starting = false;
+    let pausing = false;
     let recordModal = null;
     let captureForm = null;
     let ticked = {};
@@ -134,13 +135,19 @@
         const btn = $('record-btn');
         const connected = state.owls.filter((o) => o.connected);
         btn.classList.toggle('is-recording', state.recording);
+        btn.classList.toggle('is-paused', !!state.paused);
         btn.disabled = !state.recording && (connected.length === 0 || starting);
         $('record-label').textContent = state.recording ? t('stop') : t('start');
         let sub = t('ready');
         if (starting) sub = t('starting');
-        else if (state.recording) sub = fmtElapsed(state.run.started_at) || '';
+        else if (state.recording) sub = (state.paused ? t('paused') + ' ' : '') + (fmtElapsed(state.run.started_at) || '');
         else if (connected.length === 0) sub = t('no_owls');
         $('record-sub').textContent = sub;
+        // Never hidden: greyed until something is recording
+        const pause = $('pause-btn');
+        pause.disabled = !state.recording || pausing;
+        pause.classList.toggle('is-paused', !!state.paused);
+        pause.textContent = t(state.paused ? 'resume' : 'pause');
     }
 
     function renderOwlRows() {
@@ -151,7 +158,7 @@
                     '<span class="c-owl-name" style="color:' + colour + '">' + esc(o.id) + '</span>' +
                     '<span>' + esc(t('offline')) + '</span><span></span><span></span><span></span><span></span></div>';
             }
-            const dot = o.recording ? 'c-dot--ok' : '';
+            const dot = o.paused ? 'c-dot--warn' : o.recording ? 'c-dot--ok' : '';
             const images = o.record_mode === 'video' && o.video_seconds
                 ? t('video_clip', { s: Math.round(o.video_seconds) }) : (o.saved_count || 0);
             return '<div class="c-owl-row"><span class="c-dot ' + dot + '"></span>' +
@@ -192,11 +199,13 @@
     }
     function renderWarnings() {
         const list = state.warnings || [];
+        const pausedLine = state.paused ? '<div class="c-warn" role="status"><span>' + esc(t('paused_hint')) + '</span></div>' : '';
         if (!list.length) {
-            $('warnings').innerHTML = '<div class="c-ok-line"><span class="c-dot c-dot--ok"></span>' + esc(t('all_ok')) + '</div>';
+            $('warnings').innerHTML = pausedLine ||
+                '<div class="c-ok-line"><span class="c-dot c-dot--ok"></span>' + esc(t('all_ok')) + '</div>';
             return;
         }
-        let html = list.slice(0, MAX_WARNINGS).map((w) =>
+        let html = pausedLine + list.slice(0, MAX_WARNINGS).map((w) =>
             '<div class="c-warn' + (w.severity === 'bad' ? ' c-warn--bad' : '') + '"><span>' + esc(warningText(w)) + '</span></div>').join('');
         if (list.length > MAX_WARNINGS) html += '<div class="c-more">' + esc(t('more_warnings', { n: list.length - MAX_WARNINGS })) + '</div>';
         $('warnings').innerHTML = html;
@@ -275,6 +284,16 @@
         api('/api/collect/start', { metadata: metadata })
             .catch((e) => toast(e.message, 'error'))
             .finally(() => { starting = false; poll(); });
+    }
+
+    // Headland turns: the OWLs keep the same session and save nothing
+    function onPausePress() {
+        if (!state || !state.recording) return;
+        pausing = true;
+        renderRecordButton();
+        api(state.paused ? '/api/collect/resume' : '/api/collect/pause', {})
+            .catch((e) => toast(e.message, 'error'))
+            .finally(() => { pausing = false; poll(); });
     }
 
     function stopRecording() {
@@ -383,23 +402,8 @@
     }
 
     function sessionStatus(owl, session) {
-        const req = (state.uploads || []).find((u) => u.local_id === owl.id && u.session_id === session.session_id);
-        const tr = owl.data_transfer || {};
-        if (tr.session_date === session.session_id && tr.status) {
-            if (tr.status === 'complete') return ['ok', t('st_uploaded')];
-            if (tr.status === 'error') return ['bad', t('st_failed')];
-            if (tr.status !== 'idle') {
-                // progress comes from the OWL's MQTT state: a number, never markup
-                const pct = Math.max(0, Math.min(100, Math.round(Number(tr.progress) || 0)));
-                return ['up', t('st_uploading', { p: pct }), pct];
-            }
-        }
-        if (req) {
-            if (req.status === 'rejected') return ['bad', t('st_rejected') + (req.reason ? ': ' + req.reason : '')];
-            if (req.status === 'accepted' || req.status === 'queued') return ['req', t('st_accepted')];
-            return ['req', t('st_requested')];
-        }
-        return ['', t('st_on_owl')];
+        const st = F.uploadStatus(owl, session, state.uploads);
+        return [st.cls, st.text, st.pct, st.sub];
     }
 
     // capture.session_id is the folder name (session_HHMMSS); session lists
@@ -435,10 +439,11 @@
                     String(!!ticked[key]) + '" aria-label="' + esc(s.session_id) + '">' + (ticked[key] ? '&#10003;' : '') + '</button>' : '') + '</td>' +
                     '<td><b style="color:' + owlColour(owl.id) + '">' + esc(owl.id) + '</b></td>' +
                     '<td class="c-num">' + esc(when || s.session_id) + '</td>' +
-                    '<td class="c-num">' + esc(s.image_count || 0) + '</td>' +
+                    '<td>' + esc(F.sessionCounts(s)) + '</td>' +
                     '<td class="c-num">' + mb(s.total_size) + ' MB</td>' +
                     '<td><span class="c-state' + (st[0] ? ' c-state--' + st[0] : '') + '">' + esc(st[1]) + '</span>' +
-                    (st[0] === 'up' ? '<div class="c-bar"><i style="width:' + st[2] + '%"></i></div>' : '') + '</td></tr>';
+                    (st[0] === 'up' ? '<div class="c-bar"><i style="width:' + st[2] + '%"></i></div>' : '') +
+                    (st[3] ? '<span class="c-sub">' + esc(st[3]) + '</span>' : '') + '</td></tr>';
             }).join('');
         }
         const chosen = Object.keys(ticked).filter((k) => ticked[k]);
@@ -639,6 +644,7 @@
         document.querySelectorAll('.c-lang button').forEach((b) => b.addEventListener('click', () => setLanguage(b.dataset.lang, true)));
         $('cloud-pill').addEventListener('click', () => { showView('settings'); showPane('sessions'); });
         $('record-btn').addEventListener('click', onRecordPress);
+        $('pause-btn').addEventListener('click', onPausePress);
         $('stop-no').addEventListener('click', () => { $('stop-modal').hidden = true; });
         $('stop-yes').addEventListener('click', stopRecording);
         $('power-btn').addEventListener('click', onPowerPress);
@@ -683,7 +689,10 @@
     }
 
     function init() {
-        recordModal = F.mountRecordModal({ presets: () => config.presets, onStart: startRecording });
+        recordModal = F.mountRecordModal({
+            presets: () => config.presets, onStart: startRecording,
+            onPresets: (presets) => { config.presets = presets; },
+        });
         captureForm = F.mountCapture($('capture-form'), { onChange: saveCapture });
         if (typeof Numpad !== 'undefined') Numpad.init();
         bind();

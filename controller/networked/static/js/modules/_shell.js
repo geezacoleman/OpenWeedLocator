@@ -46,6 +46,7 @@ const Shell = (function () {
         $('power-btn').addEventListener('click', () => initiateShutdown());
         $('detectSwitch').addEventListener('click', toggleMainDetection);
         $('recordSwitch').addEventListener('click', toggleMainRecording);
+        $('pauseBtn').addEventListener('click', togglePause);
         $('nozzleSwitch').addEventListener('click', toggleAllNozzles);
         $('trackingSwitch').addEventListener('click', toggleTracking);
         document.querySelectorAll('#pipeline-mode-selector .mode-btn').forEach((b) =>
@@ -352,18 +353,44 @@ const Shell = (function () {
         renderCameraNotice();
     }
 
+    // Headland turns: every OWL keeps its session and saves nothing
+    let _pausing = false;
+    function togglePause() {
+        const recOwls = Object.values(owlsData).filter((o) => o && o.connected && o.image_sample_enable);
+        const resume = recOwls.length > 0 && recOwls.every((o) => (o.capture || {}).paused);
+        _pausing = true;
+        renderRecordHint();
+        fetch(resume ? '/api/collect/resume' : '/api/collect/pause', { method: 'POST' })
+            .then((r) => r.json().then((d) => ({ ok: r.ok, d: d })))
+            .then(({ ok, d }) => {
+                if (!ok || !d.success) throw new Error(d.error || 'It did not go through');
+                showToast(resume ? 'Recording again' : 'Paused. Nothing is saved until you resume', 'info');
+            })
+            .catch((e) => showToast(e.message, 'error'))
+            .finally(() => { _pausing = false; setTimeout(updateDashboard, 400); });
+    }
+
     function renderRecordHint() {
         const U = UI();
         const recOwls = Object.keys(owlsData).filter((id) => owlsData[id] && owlsData[id].connected && owlsData[id].image_sample_enable)
             .map((id) => owlsData[id]);
         const hint = $('recordHint');
+        const pausedRun = recOwls.length > 0 && recOwls.every((o) => (o.capture || {}).paused);
+        const pauseBtn = $('pauseBtn');
+        pauseBtn.disabled = !globalRecordingEnabled || !recOwls.length || _pausing;
+        pauseBtn.classList.toggle('is-paused', pausedRun);
+        pauseBtn.textContent = pausedRun ? 'Resume' : 'Pause';
         if (!globalRecordingEnabled || !recOwls.length) {
-            hint.textContent = _scope === 'all' ? 'Off' : 'Off, records on all OWLs';
+            const limit = Object.values(owlsData).find((o) => o && o.connected && (o.capture || {}).stopped_reason === 'video_limit');
+            hint.textContent = limit ? 'Video stopped at ' + (limit.capture.video_max_s || 60) + ' s. Tap for another clip'
+                : _scope === 'all' ? 'Off' : 'Off, records on all OWLs';
             $('sessionChips').innerHTML = '';
             return;
         }
         const paused = recOwls.find((o) => (o.capture || {}).paused_slow);
-        if (paused) {
+        if (pausedRun) {
+            hint.textContent = 'Paused. Nothing is saved until you resume';
+        } else if (paused) {
             hint.textContent = 'Paused below ' + paused.capture.min_speed_kmh + ' km/h';
         } else {
             const n = recOwls.reduce((sum, o) => sum + (((o.capture || {}).saved_count) || 0), 0);
@@ -770,20 +797,11 @@ const Shell = (function () {
     function pollCollect() {
         fetch('/api/collect/state').then((r) => r.json()).then((data) => { collectState = data; renderSessions(); }).catch(() => {});
     }
+    // Same words as the Collect screen (collect_form.js): waiting its turn,
+    // sending, signal dropped and carrying on, sent, not sent
     function sessionStatus(owl, s) {
-        const req = ((collectState || {}).uploads || []).find((u) => u.local_id === owl.id && u.session_id === s.session_id);
-        const tr = owl.data_transfer || {};
-        if (tr.session_date === s.session_id && tr.status) {
-            if (tr.status === 'complete') return ['ok', 'Uploaded'];
-            if (tr.status === 'error') return ['bad', 'Upload failed'];
-            if (tr.status !== 'idle') return ['c', 'Uploading ' + Math.max(0, Math.min(100, Math.round(Number(tr.progress) || 0))) + '%'];
-        }
-        if (req) {
-            if (req.status === 'rejected') return ['bad', 'Not accepted'];
-            if (req.status === 'accepted' || req.status === 'queued') return ['c', 'Queued in Noktura'];
-            return ['c', 'Requested'];
-        }
-        return ['', 'On OWL'];
+        const st = CollectForm.uploadStatus(owl, s, (collectState || {}).uploads);
+        return [st.cls === 'req' || st.cls === 'up' ? 'c' : st.cls, st.text, st.sub];
     }
     function renderSessions() {
         const U = UI();
@@ -808,10 +826,11 @@ const Shell = (function () {
             html = rows.slice(0, 60).map(([owl, s]) => {
                 const status = sessionStatus(owl, s);
                 const canAct = status[0] === '' || status[0] === 'bad' || status[0] === 'ok';
-                const what = [s.image_count !== undefined ? s.image_count + ' photos' : null, typeof s.total_size === 'number' ? U.fmtBytes(s.total_size) : null];
+                const what = [CollectForm.sessionCounts(s), typeof s.total_size === 'number' ? U.fmtBytes(s.total_size) : null];
                 return '<div class="ou-sess"><div class="ou-sess-row"><span class="ou-thumb">' + U.ICONS.rec + '</span><div style="flex:1;min-width:0"><div class="when">' +
                     U.esc(U.sessionWhen(String(s.date || ''), String(s.time || ''))) + '</div><div class="what">' + U.joinSep([owlName(owl.id)].concat(what)) +
-                    '</div></div><span class="ou-run ' + (status[0] || 'c') + '">' + U.esc(status[1]) + '</span></div>' +
+                    '</div>' + (status[2] ? '<div class="what">' + U.esc(status[2]) + '</div>' : '') +
+                    '</div><span class="ou-run ' + (status[0] || 'c') + '">' + U.esc(status[1]) + '</span></div>' +
                     (canAct ? '<div class="ou-sess-actions"><button type="button" class="ou-btn slim" data-up="' + U.esc(owl.id + '|' + s.session_id) + '">' + U.ICONS.upload +
                         'Upload to Noktura</button><button type="button" class="ou-iconbtn" aria-label="Delete" data-del="' + U.esc(owl.id + '|' + s.session_id) + '">' + U.ICONS.bin + '</button></div>' : '') + '</div>';
             }).join('');

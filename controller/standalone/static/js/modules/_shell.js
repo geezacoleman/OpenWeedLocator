@@ -37,6 +37,7 @@ const Shell = (function () {
         nav = UI().initNav($('mainNav'), onView);
         settings = UI().initSettings($('view-settings'), onPanel);
         $('powerBtn').addEventListener('click', powerSheet);
+        $('pauseBtn').addEventListener('click', togglePause);
 
         // Detect with: check what the OWL can run before asking it
         document.querySelectorAll('#pipeline-mode-selector .mode-btn').forEach((b) =>
@@ -262,18 +263,42 @@ const Shell = (function () {
         renderUpdate(d);
     }
 
+    // Headland turns: the session stays open and nothing is saved
+    let pausing = false;
+    function togglePause() {
+        const resume = !!((last || {}).capture || {}).paused;
+        pausing = true;
+        renderRecordHint(last, true);
+        fetch(resume ? '/api/collect/resume' : '/api/collect/pause', { method: 'POST' })
+            .then((r) => r.json().then((data) => ({ ok: r.ok, data: data })))
+            .then(({ ok, data }) => {
+                if (!ok || !data.success) throw new Error(data.error || 'It did not go through');
+                showNotification('Info', resume ? 'Recording again' : 'Paused. Nothing is saved until you resume', 'info');
+            })
+            .catch((e) => showNotification('Error', e.message, 'error'))
+            .finally(() => { pausing = false; });
+    }
+
     function renderRecordHint(d, recording) {
         const capture = d.capture || {};
         const hint = $('recordHint');
         const chipsBox = $('sessionChips');
+        const pauseBtn = $('pauseBtn');
+        pauseBtn.disabled = !recording || pausing;
+        pauseBtn.classList.toggle('is-paused', !!(recording && capture.paused));
+        pauseBtn.textContent = recording && capture.paused ? 'Resume' : 'Pause';
         if (!recording) {
-            hint.textContent = 'Tap to choose crop and conditions';
+            hint.textContent = capture.stopped_reason === 'video_limit'
+                ? 'Video stopped at ' + (capture.video_max_s || 60) + ' s. Tap for another clip'
+                : 'Tap to choose crop and conditions';
             chipsBox.innerHTML = '';
             return;
         }
         const chips = window.CollectForm && typeof _dcConfig !== 'undefined'
             ? (CollectForm.metadataChips(d.session_metadata, _dcConfig.presets) || []) : [];
-        if (capture.paused_slow) {
+        if (capture.paused) {
+            hint.textContent = 'Paused. Nothing is saved until you resume';
+        } else if (capture.paused_slow) {
             hint.textContent = 'Paused below ' + capture.min_speed_kmh + ' km/h';
         } else if (capture.record_mode === 'video') {
             hint.textContent = typeof capture.video_seconds === 'number' ? 'Video ' + Math.round(capture.video_seconds) + ' s' : 'Video';
@@ -610,8 +635,8 @@ const Shell = (function () {
     function sessionHTML(s) {
         const U = UI();
         const id = U.esc(s.session_id);
-        const what = [s.image_count + (s.image_count === 1 ? ' photo' : ' photos'),
-            s.video_count ? s.video_count + (s.video_count === 1 ? ' video' : ' videos') : null, U.fmtBytes(s.total_size)];
+        // Shared with the controller: "214 photos", "1 video"
+        const what = [window.CollectForm ? CollectForm.sessionCounts(s) : s.image_count + ' photos', U.fmtBytes(s.total_size)];
         return '<div class="ou-sess" data-sess="' + id + '"><div class="ou-sess-row"><span class="ou-thumb">' + U.ICONS.rec +
             '</span><div style="flex:1;min-width:0"><div class="when">' + U.esc(U.sessionWhen(s.date, s.time)) +
             '</div><div class="what">' + U.joinSep(what) + '</div></div></div><div class="ou-labs" data-labels></div>' +

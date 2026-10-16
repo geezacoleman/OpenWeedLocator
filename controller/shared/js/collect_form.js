@@ -11,16 +11,36 @@
 (function () {
     'use strict';
 
-    const PICK_KEYS = ['crop', 'crop_season', 'weather', 'lighting', 'purpose'];
+    const PICK_KEYS = ['crop', 'crop_season', 'light_source', 'sky', 'weather',
+                       'soil_cover', 'soil_moisture', 'recent_water', 'purpose'];
     const t = (key, values) => window.CollectI18n.t(key, values);
     const $in = (root, sel) => root.querySelector(sel);
+    const esc = (s) => String(s === null || s === undefined ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    // A choice in the middle of a sentence: "Sunny, dry"
+    const lowerFirst = (s) => (s ? s.charAt(0).toLowerCase() + s.slice(1) : s);
+
+    // The single `lighting` slug older runs and [Collect] last_lighting hold
+    const LEGACY_LIGHTING = {
+        natural_sun: ['natural', 'sunny'], natural_partial: ['natural', 'partly_cloudy'],
+        natural_overcast: ['natural', 'overcast'], artificial: ['artificial', ''], mixed: ['mixed', ''],
+    };
 
     // Last choices come from the controller ([Collect] last_*): the kiosk
     // browser runs incognito, so local storage is empty after every boot.
-    // No crop is chosen until the driver taps one.
+    // Nothing is chosen until the driver taps it (no invented conditions);
+    // after the first run every choice comes back from last time.
     function defaultPick(last) {
-        return Object.assign({ crop: '', crop_season: 'winter', weather: 'dry',
-                               lighting: 'natural_sun', purpose: 'herbicide', notes: '' }, last || {});
+        const pick = { crop: '', crop_season: '', light_source: '', sky: '', weather: '', soil_cover: '',
+                       soil_moisture: '', recent_water: '', purpose: '', notes: '' };
+        Object.assign(pick, last || {});
+        const legacy = LEGACY_LIGHTING[pick.lighting];
+        if (!pick.light_source && legacy) {
+            pick.light_source = legacy[0];
+            pick.sky = pick.sky || legacy[1];
+        }
+        delete pick.lighting;
+        return pick;
     }
 
     function cropLabel(crop, presets) {
@@ -29,16 +49,93 @@
         return known ? t('crop_' + crop) : crop;
     }
 
+    // An enclosed hood with its own lights: sky and weather don't apply
+    function isIndoor(md) { return md.light_source === 'artificial'; }
+
+    function cropText(md, presets) {
+        if (!md.crop) return '';
+        const crop = cropLabel(md.crop, presets);
+        return md.crop_season ? t('season_' + md.crop_season) + ' ' + lowerFirst(crop) : crop;
+    }
+
+    function joinParts(parts) {
+        return parts.filter(Boolean).map((p, i) => (i ? lowerFirst(p) : p)).join(', ');
+    }
+
+    function lightText(md) {
+        if (!md.light_source) {
+            // Runs recorded before light source and sky were separate
+            return joinParts([md.lighting ? t('lighting_' + md.lighting) : '', md.weather ? t('weather_' + md.weather) : '']);
+        }
+        if (isIndoor(md)) return t('sum_indoor');
+        const parts = [];
+        if (md.light_source === 'mixed') parts.push(t('sum_mixed'));
+        else if (!md.sky) parts.push(t('sum_natural'));
+        if (md.sky) parts.push(t('sky_' + md.sky));
+        if (md.weather) parts.push(t('weather_' + md.weather));
+        return joinParts(parts);
+    }
+
+    function soilText(md) {
+        const watered = md.recent_water === 'rain' || md.recent_water === 'irrigation';
+        let wet = '';
+        if (md.soil_moisture) wet = t('moisture_' + md.soil_moisture) + (watered ? ' ' + t('sum_after_' + md.recent_water) : '');
+        else if (watered) wet = t('sum_water_' + md.recent_water);
+        return joinParts([md.soil_cover ? t('cover_' + md.soil_cover) : '', wet]);
+    }
+
+    // ---------- sessions on the OWLs ----------
+    // "214 photos", "1 video", "12 photos, 1 video"
+    function sessionCounts(s) {
+        const n = s.image_count || 0, v = s.video_count || 0;
+        const parts = [];
+        if (n || !v) parts.push(n === 1 ? t('one_photo') : t('n_photos', { n: n }));
+        if (v) parts.push(v === 1 ? t('one_video') : t('n_videos', { n: v }));
+        return parts.join(', ');
+    }
+
+    // Where a session's upload is: {cls, text, pct, sub}. cls: '' on the
+    // OWL, 'req' waiting on Noktura, 'up' sending, 'ok' sent, 'bad' not
+    // sent. Noktura runs one upload at a time per rig and carries on by
+    // itself when the signal drops (acks queued / retrying / stored /
+    // failed, controller /api/collect/state uploads, newest first); the
+    // OWL reports the bytes in data_transfer.
+    function uploadStatus(owl, session, uploads) {
+        const req = (uploads || []).find((u) => u.local_id === owl.id && u.session_id === session.session_id);
+        const tr = owl.data_transfer || {};
+        const mine = tr.session_date === session.session_id && tr.status;
+        const out = (cls, text, pct, sub) => ({ cls: cls, text: text, pct: pct || 0, sub: sub || '' });
+        if (mine && ['idle', 'complete', 'error'].indexOf(tr.status) === -1) {
+            // progress comes from the OWL's MQTT state: a number, never markup
+            const pct = Math.max(0, Math.min(100, Math.round(Number(tr.progress) || 0)));
+            return out('up', t('st_uploading', { p: pct }), pct, Number(tr.retries) > 0 ? t('st_carried_on') : '');
+        }
+        if (req) {
+            if (req.status === 'stored') return out('ok', t('st_uploaded'));
+            if (req.status === 'failed') return out('bad', t('st_not_sent'));
+            if (req.status === 'rejected') return out('bad', t('st_rejected') + (req.reason ? ': ' + req.reason : ''));
+            if (req.status === 'retrying') {
+                return out('req', req.retry_in_s ? t('st_retrying_in', { s: req.retry_in_s }) : t('st_retrying'));
+            }
+            if (req.status === 'queued') {
+                return out('req', req.position && req.queue_length
+                    ? t('st_waiting', { pos: req.position, n: req.queue_length }) : t('st_waiting_plain'));
+            }
+            if (req.status === 'requested') return out('req', t('st_requested'));
+            // accepted: the OWL has been told to send, until it reports an end
+            const ended = mine && (tr.status === 'complete' || tr.status === 'error');
+            if (req.status === 'accepted' && !ended) return out('req', t('st_accepted'));
+        }
+        if (mine && tr.status === 'complete') return out('ok', t('st_uploaded'));
+        if (mine && tr.status === 'error') return out('bad', t('st_failed'));
+        return out('', t('st_on_owl'));
+    }
+
+    // Short lines for a run: crop, light and weather, soil, purpose
     function metadataChips(md, presets) {
         if (!md || !md.crop) return null;
-        const chips = [];
-        let crop = cropLabel(md.crop, presets);
-        if (md.crop_season) crop = t('season_' + md.crop_season) + ' ' + crop.toLowerCase();
-        chips.push(crop);
-        if (md.weather) chips.push(t('weather_' + md.weather));
-        if (md.lighting) chips.push(t('lighting_' + md.lighting));
-        if (md.purpose) chips.push(t('purpose_' + md.purpose));
-        return chips;
+        return [cropText(md, presets), lightText(md), soilText(md),
+                md.purpose ? t('purpose_' + md.purpose) : ''].filter(Boolean);
     }
 
     // ---------- capture settings ----------
@@ -140,25 +237,47 @@
         return { render: render };
     }
 
-    // ---------- record modal ----------
+    // ---------- record modal (design B, signed off 2026-10-16) ----------
+    // Five rows on the left show what is picked (Crop, Light and weather,
+    // Soil, Purpose, Notes); tapping one shows only its choices on the
+    // right. Start recording is always one tap away. Only the crop grid
+    // scrolls; everything fits the 7" screen (1024x600).
+    const SECTIONS = ['crop', 'light', 'soil', 'purpose', 'notes'];
+    const CHEVRON = '<svg class="c-rf-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4l6 6-6 6"></path></svg>';
     const MODAL_HTML =
-        '<div class="c-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">' +
-        '<h2 id="modal-title" data-i18n="m_title"></h2>' +
-        '<div class="c-mrow"><span data-i18n="crop"></span><div class="c-opts" data-pick="crop"></div></div>' +
-        '<div class="c-mrow" id="season-row"><span data-i18n="season"></span><div class="c-opts" data-pick="crop_season"></div></div>' +
-        '<div class="c-mrow"><span data-i18n="weather"></span><div class="c-opts" data-pick="weather"></div></div>' +
-        '<div class="c-mrow"><span data-i18n="lighting"></span><div class="c-opts" data-pick="lighting"></div></div>' +
-        '<div class="c-mrow"><span data-i18n="purpose"></span><div class="c-opts" data-pick="purpose"></div></div>' +
-        '<div class="c-mrow"><label for="meta-notes" data-i18n="notes"></label>' +
-        '<input class="c-input c-input--wide" id="meta-notes" type="text" maxlength="200" data-numpad data-i18n-ph="notes_ph" /></div>' +
-        '<input type="text" id="meta-other-crop" data-numpad hidden maxlength="60" />' +
-        '<div class="c-mfoot"><button class="c-btn" type="button" id="modal-cancel" data-i18n="cancel"></button>' +
-        '<button class="c-btn c-btn--go" type="button" id="modal-start" data-i18n="start"></button></div>' +
+        '<div class="c-modal c-rf" role="dialog" aria-modal="true" aria-labelledby="modal-title">' +
+        '<div class="c-rf-head"><h2 id="modal-title" data-i18n="m_title"></h2>' +
+        '<button class="c-btn" type="button" id="modal-cancel" data-i18n="cancel"></button></div>' +
+        '<div class="c-rf-body"><div class="c-rf-list">' +
+        SECTIONS.map((s) => '<button type="button" class="c-rf-row" data-section="' + s + '" aria-pressed="false">' +
+            '<span class="c-rf-text"><span class="c-rf-k" data-i18n="sec_' + s + '"></span><span class="c-rf-v"></span></span>' +
+            CHEVRON + '</button>').join('') +
+        '<button class="c-btn c-btn--go c-rf-start" type="button" id="modal-start" data-i18n="start"></button>' +
+        '</div><div class="c-rf-pane" id="rf-pane"></div></div>' +
+        '<input type="text" id="meta-add-crop" data-numpad hidden maxlength="40" />' +
         '</div>';
+
+    function question(label, note, body) {
+        return '<div class="c-rf-q"><div class="c-rf-qh"><span>' + esc(label) + '</span>' +
+            (note ? '<small>' + esc(note) + '</small>' : '') + '</div>' + body + '</div>';
+    }
+
+    function optionButtons(key, values, chosen, prefix, disabled) {
+        return values.map((v) => '<button type="button" data-pick="' + key + '" data-value="' + esc(v) + '" aria-pressed="' +
+            String(!disabled && chosen === v) + '"' + (disabled ? ' disabled' : '') + '>' + esc(t(prefix + '_' + v)) + '</button>').join('');
+    }
+
+    // One row of joined choices (3 or 4 of them)
+    function segQuestion(label, note, key, values, chosen, prefix, disabled) {
+        return question(label, note, '<div class="c-seg c-rf-seg" role="group" aria-label="' + esc(label) + '">' +
+            optionButtons(key, values, chosen, prefix, disabled) + '</div>');
+    }
 
     // opts.parent: where the scrim goes (default document.body; must sit
     // inside a .collect / .c-scope element for the styles).
     // opts.presets(): current preset lists. opts.onStart(metadata): Start.
+    // opts.onPresets(presets): new lists after a crop was added or removed
+    // (POST / DELETE /api/collect/crops, the same on both controllers).
     function mountRecordModal(opts) {
         const o = opts || {};
         const scrim = document.createElement('div');
@@ -169,71 +288,211 @@
         (o.parent || document.body).appendChild(scrim);
         if (window.CollectI18n) window.CollectI18n.apply(scrim);
         const startBtn = $in(scrim, '#modal-start');
-        const otherInput = $in(scrim, '#meta-other-crop');
+        const pane = $in(scrim, '#rf-pane');
+        const addInput = $in(scrim, '#meta-add-crop');
         let pick = defaultPick();
+        let section = 'crop';
+        let tab = null;
+        let removing = false;
+        let ownPresets = null;
 
-        function presets() { return (o.presets && o.presets()) || {}; }
+        function presets() { return ownPresets || (o.presets && o.presets()) || {}; }
+        function seasonal(p) { return (p.seasonal_crops || []).indexOf(pick.crop) !== -1; }
+        function say(msg) {
+            if (typeof showToast === 'function') showToast(msg, 'error');
+            else if (typeof showNotification === 'function') showNotification('Error', msg, 'error');
+        }
 
-        function refresh() {
+        // Your crops first, then the built-in groups. A crop picked last
+        // time that is on no list (typed before crops could be saved)
+        // still shows under Your crops so it stays chosen.
+        function cropGroups(p) {
+            const mine = (p.custom_crops || []).slice();
+            const groups = (p.crop_groups && p.crop_groups.length) ? p.crop_groups
+                : [{ key: 'all', crops: (p.crops || []).filter((c) => mine.indexOf(c) === -1) }];
+            const listed = mine.concat.apply(mine, groups.map((g) => g.crops));
+            if (pick.crop && listed.indexOf(pick.crop) === -1) mine.unshift(pick.crop);
+            return [{ key: 'mine', crops: mine }].concat(groups);
+        }
+
+        function sectionValue(name, p) {
+            if (name === 'crop') return cropText({ crop: pick.crop, crop_season: seasonal(p) ? pick.crop_season : '' }, p);
+            if (name === 'light') return lightText(pick);
+            if (name === 'soil') return soilText(pick);
+            if (name === 'purpose') return pick.purpose ? t('purpose_' + pick.purpose) : '';
+            return pick.notes;
+        }
+
+        function renderList() {
             const p = presets();
-            const lists = {
-                crop: (p.crops || []).concat(['__other']),
-                crop_season: ['winter', 'spring'],
-                weather: p.weather || [],
-                lighting: p.lighting || [],
-                purpose: p.purposes || [],
-            };
-            PICK_KEYS.forEach((key) => {
-                const box = $in(scrim, '[data-pick="' + key + '"]');
-                box.innerHTML = '';
-                lists[key].forEach((value) => {
-                    const b = document.createElement('button');
-                    b.type = 'button';
-                    b.className = 'c-opt';
-                    const isOtherCustom = key === 'crop' && value === '__other' && pick.crop && lists.crop.indexOf(pick.crop) === -1;
-                    if (value === '__other') b.textContent = isOtherCustom ? t('other') + ': ' + pick.crop : t('other') + '…';
-                    else b.textContent = t((key === 'crop_season' ? 'season' : key) + '_' + value);
-                    b.setAttribute('aria-pressed', String(pick[key] === value || isOtherCustom));
-                    b.addEventListener('click', () => onPick(key, value));
-                    box.appendChild(b);
-                });
+            scrim.querySelectorAll('.c-rf-row').forEach((row) => {
+                const name = row.dataset.section;
+                const value = sectionValue(name, p);
+                const v = row.querySelector('.c-rf-v');
+                v.textContent = value || t(name === 'crop' ? 'choose_crop' : name === 'notes' ? 'none' : 'not_set');
+                v.classList.toggle('is-unset', !value);
+                row.setAttribute('aria-pressed', String(name === section));
             });
-            const seasonal = (p.seasonal_crops || []).indexOf(pick.crop) !== -1;
-            $in(scrim, '#season-row').classList.toggle('is-hidden', !seasonal);
             startBtn.disabled = !pick.crop;
         }
 
-        function onPick(key, value) {
-            if (key === 'crop' && value === '__other') {
-                otherInput.value = (presets().crops || []).indexOf(pick.crop) === -1 ? pick.crop : '';
-                otherInput.dataset.label = t('other_ph');
-                // The field stays hidden: the on-screen keyboard is the editor
-                if (typeof Numpad !== 'undefined') Numpad.open(otherInput);
-                else { otherInput.hidden = false; otherInput.focus(); }
-                return;
+        function cropPane(p) {
+            const groups = cropGroups(p);
+            if (!tab || !groups.some((g) => g.key === tab)) {
+                const holding = groups.find((g) => g.crops.indexOf(pick.crop) !== -1);
+                tab = holding ? holding.key : (groups[0].crops.length ? 'mine' : groups[1] ? groups[1].key : 'mine');
             }
+            const custom = p.custom_crops || [];
+            const shown = groups.find((g) => g.key === tab).crops;
+            removing = removing && tab === 'mine' && custom.length > 0;
+            let html = '<div class="c-rf-bar"><div class="c-seg c-rf-tabs" role="group" aria-label="' + esc(t('crop')) + '">' +
+                groups.map((g) => '<button type="button" data-tab="' + g.key + '" aria-pressed="' + String(g.key === tab) + '">' +
+                    esc(t('crops_' + g.key)) + '</button>').join('') + '</div>';
+            if (tab === 'mine' && custom.length) {
+                html += '<button type="button" class="c-btn c-rf-edit" data-act="removing" aria-pressed="' + removing + '">' +
+                    esc(t(removing ? 'done' : 'edit_crops')) + '</button>';
+            }
+            html += '<button type="button" class="c-btn c-rf-add" data-act="add">' + esc(t('add_crop')) + '</button></div>';
+            html += '<div class="c-rf-tiles c-rf-crops">';
+            html += shown.map((c) => {
+                if (removing && custom.indexOf(c) !== -1) {
+                    return '<button type="button" class="c-opt c-opt--remove" data-act="remove" data-value="' + esc(c) + '">' +
+                        esc(cropLabel(c, p)) + '<small>' + esc(t('tap_remove')) + '</small></button>';
+                }
+                return '<button type="button" class="c-opt" data-pick="crop" data-value="' + esc(c) + '" aria-pressed="' +
+                    String(pick.crop === c) + '">' + esc(cropLabel(c, p)) + '</button>';
+            }).join('');
+            if (!shown.length) html += '<p class="c-hint c-rf-empty">' + esc(t('no_own_crops')) + '</p>';
+            html += '</div>';
+            const isSeasonal = seasonal(p);
+            html += segQuestion(t('season'), isSeasonal ? '' : t('season_only'), 'crop_season', ['winter', 'spring'],
+                pick.crop_season, 'season', !isSeasonal);
+            return html;
+        }
+
+        function lightPane(p) {
+            const indoor = isIndoor(pick);
+            return segQuestion(t('light'), '', 'light_source', p.light_sources || [], pick.light_source, 'light') +
+                segQuestion(t('sky'), indoor ? t('not_needed_light') : '', 'sky', p.skies || [], pick.sky, 'sky', indoor) +
+                segQuestion(t('weather'), indoor ? t('not_needed_indoors') : '', 'weather', p.weather || [], pick.weather, 'weather', indoor);
+        }
+
+        function soilPane(p) {
+            return question(t('soil_cover'), '', '<div class="c-rf-tiles" role="group" aria-label="' + esc(t('soil_cover')) + '">' +
+                    (p.soil_covers || []).map((v) => '<button type="button" class="c-opt" data-pick="soil_cover" data-value="' + esc(v) +
+                        '" aria-pressed="' + String(pick.soil_cover === v) + '">' + esc(t('cover_' + v)) + '</button>').join('') + '</div>') +
+                segQuestion(t('soil_surface'), '', 'soil_moisture', p.soil_moistures || [], pick.soil_moisture, 'moisture') +
+                segQuestion(t('watered'), t('watered_note'), 'recent_water', p.recent_water || [], pick.recent_water, 'water');
+        }
+
+        function renderPane() {
+            const p = presets();
+            let html = '';
+            if (section === 'crop') html = cropPane(p);
+            else if (section === 'light') html = lightPane(p);
+            else if (section === 'soil') html = soilPane(p);
+            else if (section === 'purpose') html = segQuestion(t('purpose_q'), '', 'purpose', p.purposes || [], pick.purpose, 'purpose');
+            else {
+                html = '<div class="c-rf-q"><label class="c-rf-qh" for="meta-notes"><span>' + esc(t('notes')) + '</span><small>' +
+                    esc(t('optional')) + '</small></label><input class="c-input c-rf-notes" id="meta-notes" type="text" maxlength="200" data-numpad /></div>';
+            }
+            const next = SECTIONS[SECTIONS.indexOf(section) + 1];
+            if (next) {
+                html += '<div class="c-rf-next"><button type="button" class="c-btn" data-act="next">' +
+                    esc(t('next_to', { s: t('sec_' + next) })) + '</button></div>';
+            }
+            pane.innerHTML = html;
+            const notes = $in(pane, '#meta-notes');
+            if (notes) {
+                notes.value = pick.notes || '';
+                notes.placeholder = t('notes_ph');
+                notes.dataset.label = t('notes');
+                const keep = () => { pick.notes = notes.value.trim(); renderList(); };
+                notes.addEventListener('input', keep);
+                notes.addEventListener('change', keep);
+            }
+        }
+
+        function refresh() { renderList(); renderPane(); }
+
+        function setPresets(next) {
+            if (o.onPresets) o.onPresets(next); else ownPresets = next;
+        }
+
+        function cropRequest(url, method, body) {
+            return fetch(url, { method: method, headers: { 'Content-Type': 'application/json' },
+                                body: body ? JSON.stringify(body) : undefined })
+                .then((r) => r.json().catch(() => ({})).then((data) => {
+                    if (!r.ok || !data.success) throw new Error(data.error || t('crop_not_saved'));
+                    setPresets(data.presets);
+                    return data;
+                }));
+        }
+
+        // Saved on the controller straight away ([Collect] custom_crops)
+        function addCrop(name) {
+            cropRequest('/api/collect/crops', 'POST', { name: name }).then((data) => {
+                pick.crop = data.crop;
+                tab = 'mine';
+                removing = false;
+                refresh();
+            }).catch((e) => say(e.message));
+        }
+        function removeCrop(slug) {
+            cropRequest('/api/collect/crops/' + encodeURIComponent(slug), 'DELETE').then(() => {
+                if (pick.crop === slug) pick.crop = '';
+                refresh();
+            }).catch((e) => say(e.message));
+        }
+
+        function onPick(key, value) {
+            // A second tap keeps the choice: a bump in the cab must not clear it
             pick[key] = value;
             refresh();
         }
 
-        otherInput.addEventListener('change', () => {
-            const value = otherInput.value.trim();
-            otherInput.hidden = true;
-            if (value) { pick.crop = value.toLowerCase(); refresh(); }
+        scrim.addEventListener('click', (e) => {
+            const row = e.target.closest('.c-rf-row');
+            if (row) { section = row.dataset.section; removing = false; refresh(); return; }
+            const opt = e.target.closest('[data-pick]');
+            if (opt && !opt.disabled) { onPick(opt.dataset.pick, opt.dataset.value); return; }
+            const tabBtn = e.target.closest('[data-tab]');
+            if (tabBtn) { tab = tabBtn.dataset.tab; removing = false; renderPane(); return; }
+            const act = e.target.closest('[data-act]');
+            if (!act) return;
+            if (act.dataset.act === 'next') { section = SECTIONS[SECTIONS.indexOf(section) + 1]; refresh(); }
+            else if (act.dataset.act === 'removing') { removing = !removing; renderPane(); }
+            else if (act.dataset.act === 'remove') removeCrop(act.dataset.value);
+            else if (act.dataset.act === 'add') {
+                addInput.value = '';
+                addInput.dataset.label = t('add_crop_ph');
+                // The field stays hidden: the on-screen keyboard is the editor
+                if (typeof Numpad !== 'undefined') Numpad.open(addInput);
+                else { addInput.hidden = false; addInput.focus(); }
+            }
         });
+        addInput.addEventListener('change', () => {
+            const name = addInput.value.trim();
+            addInput.hidden = true;
+            addInput.value = '';
+            if (name) addCrop(name);
+        });
+
         $in(scrim, '#modal-cancel').addEventListener('click', close);
         // open(lastPick, {startLabel, onStart}) reuses the form for other
         // jobs, e.g. adding details to a session already recorded
         let onStart = o.onStart;
         startBtn.addEventListener('click', () => {
-            if (!pick.crop) return;
-            pick.notes = $in(scrim, '#meta-notes').value.trim();
-            const seasonal = (presets().seasonal_crops || []).indexOf(pick.crop) !== -1;
+            if (!pick.crop) { section = 'crop'; refresh(); return; }
+            const p = presets();
+            const indoor = isIndoor(pick);
             const handler = onStart;
             close();
             handler({
-                crop: pick.crop, crop_season: seasonal ? pick.crop_season : '',
-                weather: pick.weather, lighting: pick.lighting, purpose: pick.purpose, notes: pick.notes,
+                crop: pick.crop, crop_season: seasonal(p) ? pick.crop_season : '',
+                light_source: pick.light_source, sky: indoor ? '' : pick.sky, weather: indoor ? '' : pick.weather,
+                soil_cover: pick.soil_cover, soil_moisture: pick.soil_moisture, recent_water: pick.recent_water,
+                purpose: pick.purpose, notes: pick.notes,
             });
         });
 
@@ -242,8 +501,10 @@
             if (lastPick) pick = defaultPick(Object.assign({}, lastPick, { notes: m.onStart ? (lastPick.notes || '') : pick.notes }));
             onStart = m.onStart || o.onStart;
             startBtn.textContent = m.startLabel || t('start');
+            section = 'crop';
+            tab = null;
+            removing = false;
             refresh();
-            $in(scrim, '#meta-notes').value = pick.notes || '';
             scrim.hidden = false;
         }
         function close() { scrim.hidden = true; onStart = o.onStart; }
@@ -257,6 +518,10 @@
         defaultPick: defaultPick,
         cropLabel: cropLabel,
         metadataChips: metadataChips,
+        lightText: lightText,
+        soilText: soilText,
+        sessionCounts: sessionCounts,
+        uploadStatus: uploadStatus,
         captureFormHTML: captureFormHTML,
         mountCapture: mountCapture,
         mountRecordModal: mountRecordModal,
