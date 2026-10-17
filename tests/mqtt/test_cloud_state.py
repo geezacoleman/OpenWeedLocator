@@ -18,13 +18,13 @@ from utils.mqtt_manager import (
 
 REPO = Path(__file__).resolve().parents[2]
 
-# Noktura apps/worker/src/mqtt/state-cache.ts OwlStatePayload (origin/main
-# 81d17a1, 2026-10-09), minus the controller-only upload_requests and
+# Noktura apps/worker/src/mqtt/state-cache.ts OwlStatePayload (feat/devices-v3,
+# 2026-10-17: gps_* removed, BUG-126), minus the controller-only upload_requests and
 # data_sessions (sent by CloudFeed only when it is known). Update both
 # together, spec first (Noktura docs/owl/NOKTURA_INTEGRATION_SPEC.md).
 NOKTURA_OWL_FIELDS = {
     'device_id', 'owl_running', 'detection_enable', 'cpu_percent', 'cpu_temp',
-    'memory_percent', 'disk_percent', 'gps_latitude', 'gps_longitude', 'gps_available',
+    'memory_percent', 'disk_percent',
     'version', 'git_branch', 'git_commit', 'pi_model', 'os_pretty', 'software_update',
     'data_transfer', 'preview_upload', 'available_models', 'current_model', 'model_download',
     # AI capability block (spec section on 'ai', Noktura ai-capability.ts, 2026-10-12)
@@ -73,7 +73,7 @@ class TestCloudFeed:
     def test_telemetry_jitter_is_not_a_change(self):
         feed = CloudFeed()
         feed.next_message(_snap(), now=0)
-        assert feed.next_message(_snap(cpu_percent=80, cpu_temp=70, gps_latitude=-33.1), now=2) is None
+        assert feed.next_message(_snap(cpu_percent=80, cpu_temp=70, memory_percent=55), now=2) is None
 
     @pytest.mark.parametrize('change', [
         {'owl_running': False}, {'detection_enable': True}, {'version': '3.22.0'},
@@ -163,7 +163,16 @@ class TestPublisherCloudState:
         assert set(snap) <= set(CLOUD_STATE_FIELDS)
         assert 'data_sessions' not in snap and 'camera' not in snap
         assert snap['cpu_percent'] == 13 and snap['cpu_temp'] == 51 and snap['memory_percent'] == 40
-        assert snap['gps_latitude'] == -33.86881 and snap['gps_longitude'] == 151.2093
+
+    def test_position_never_leaves_the_unit(self, mqtt_publisher):
+        # Noktura keeps no live OWL location (BUG-126): a fix in the local
+        # state must not reach the cloud feed.
+        with mqtt_publisher.state_lock:
+            mqtt_publisher.state.update(gps_latitude=-33.8688123, gps_longitude=151.2092999,
+                                        gps_available=True)
+        snap = mqtt_publisher._cloud_state()
+        assert not any(k.startswith('gps') for k in snap)
+        assert '-33.86' not in json.dumps(snap)
 
     def test_absent_fields_omitted(self, mqtt_publisher):
         with mqtt_publisher.state_lock:

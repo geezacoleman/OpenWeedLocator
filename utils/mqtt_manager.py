@@ -145,19 +145,21 @@ def parse_cloud_policy(payload):
 # upload_requests is the controller's own. A new local state field stays
 # local unless it is added here on purpose.
 # See docs/handover/CLOUD_DATA_BUDGET_HANDOVER-2026-10-08.md.
+# No position (2026-10-17): Noktura keeps no live OWL location, so gps_* never
+# leaves the unit in the cloud feed (Noktura BUG-126). Location reaches Noktura
+# only inside an uploaded session (photo EXIF and the track). The local state,
+# the dashboard and the phone app's REST state keep their GPS.
 # ---------------------------------------------------------------------------
 CLOUD_STATE_FIELDS = (
     'device_id', 'owl_running', 'detection_enable',
     'cpu_percent', 'cpu_temp', 'memory_percent', 'disk_percent',
-    'gps_latitude', 'gps_longitude', 'gps_available',
     'version', 'git_branch', 'git_commit', 'pi_model', 'os_pretty',
     'software_update', 'data_transfer', 'preview_upload',
     'available_models', 'current_model', 'model_download', 'ai',
 )
 # Telemetry rides along but never counts as a change by itself.
 CLOUD_VOLATILE_FIELDS = frozenset({
-    'cpu_percent', 'cpu_temp', 'memory_percent', 'disk_percent',
-    'gps_latitude', 'gps_longitude', 'gps_available', 'timestamp',
+    'cpu_percent', 'cpu_temp', 'memory_percent', 'disk_percent', 'timestamp',
 })
 # In-progress objects: a status change goes out at once, counters are throttled.
 CLOUD_PROGRESS_FIELDS = ('data_transfer', 'software_update', 'model_download', 'preview_upload')
@@ -3587,9 +3589,6 @@ class OWLMQTTPublisher:
         for key in ('cpu_percent', 'cpu_temp', 'memory_percent', 'disk_percent'):
             if isinstance(snap.get(key), (int, float)):
                 snap[key] = int(round(snap[key]))
-        for key in ('gps_latitude', 'gps_longitude'):
-            if isinstance(snap.get(key), (int, float)):
-                snap[key] = round(snap[key], 5)
         return snap
 
     def _publish_cloud_state(self):

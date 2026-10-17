@@ -2,6 +2,11 @@
 
 Notable changes to the OWL software (owl.py, the standalone dashboard and the networked controller). Newest first. Versions follow `version.py`. History before this file is in the git log.
 
+## [Unreleased] 3.25.3: no live position in the cloud feed (branch hardening-3.22)
+
+### Changed
+- **The OWL no longer sends its GPS position to Noktura.** `gps_latitude`, `gps_longitude` and `gps_available` are out of `CLOUD_STATE_FIELDS`, so no live location leaves the farm. Noktura already strips them on arrival and keeps no live position (Noktura BUG-126, devices v3 Phase 1). A session's location still reaches Noktura inside the uploaded zip. Local GPS (owl.py, the dashboard, the phone app's REST state) is unchanged.
+
 ## [Unreleased] 3.25.2: field round 2026-10-15 (branch hardening-3.22)
 
 From a farmer's run on a networked rig (2 OWLs, Teltonika 5G at 2 bars). Plan: `~/.claude/plans/groovy-knitting-stardust.md`. Needs the matching Noktura release (branch `fix/owl-field-2026-10-15`, migration 121) before any OWL records with the new session names.
