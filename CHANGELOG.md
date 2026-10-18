@@ -2,6 +2,13 @@
 
 Notable changes to the OWL software (owl.py, the standalone dashboard and the networked controller). Newest first. Versions follow `version.py`. History before this file is in the git log.
 
+## [Unreleased] 3.25.6: shipped units no longer show the whole repo modified (branch hardening-3.22)
+
+### Fixed
+- **`dev/clean.sh` no longer sets the execute bit on every file.** The factory install's last step ran `chmod -R 755` on the repo, so `git status` on a fresh unit listed ~400 modified files (mode only, `.stl` files included), `git pull` refused to run, and `owl_update.sh` stashed every one of them on each update. It now runs `chmod -R u+rwX,go+rX,go-w` (same access; execute only on directories and files that already have it).
+- `controller/shared/setup.sh`, `desktop/focus_gui.py` and `desktop/focus_owl_desktop.sh` are recorded as executable in git, so the `chmod +x` in `owl_setup.sh` changes nothing either.
+- Units already cleaned by an older `clean.sh` keep the noise: run `git config core.fileMode false` in `~/owl` once.
+
 ## [Unreleased] 3.25.5: dashboard file and config paths confined (branch hardening-3.22)
 
 ### Security

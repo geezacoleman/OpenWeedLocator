@@ -737,3 +737,22 @@ class TestAiInstallCpuTorch:
         script = self._read('owl_update.sh')
         deps = script[script.index('# --- Dependencies'):script.index('# --- Restart')]
         assert deps.count('install_ai_deps') == 2
+
+
+@pytest.mark.unit
+class TestCleanKeepsGitModes:
+    """dev/clean.sh runs at the end of every factory install. A blanket
+    `chmod -R 755` on the repo set the exec bit on every tracked file, so
+    git showed ~400 files modified on a fresh unit and owl_update.sh stashed
+    them all on every update (owl-1, 2026-10-18)."""
+
+    def test_repo_chmod_does_not_add_exec_bits(self):
+        path = os.path.join(os.path.dirname(__file__), '..', '..', 'dev', 'clean.sh')
+        with open(path, encoding='utf-8') as f:
+            lines = [l.strip() for l in f if l.strip().startswith('chmod -R')]
+        repo = [l for l in lines if '/home/owl/owl' in l]
+        assert repo, 'clean.sh no longer resets repo permissions'
+        for line in repo:
+            mode = line.split()[2]
+            assert not re.fullmatch(r'[0-7]{3,4}', mode), f'numeric mode sets exec on files: {line}'
+            assert 'X' in mode and 'x' not in mode, line

@@ -209,7 +209,11 @@ rm -rvf /home/owl/.config/gcloud 2>/dev/null || true
 # Step 10: Reset file permissions for OWL
 echo -e "${GREEN}[INFO] Resetting OWL file permissions${NC}"
 chown -R owl:owl /home/owl/owl /home/owl/.virtualenvs 2>/dev/null || true
-chmod -R 755 /home/owl/owl 2>/dev/null || true
+# u+rwX,go+rX,go-w, not 755: capital X gives execute only to directories and
+# files that already have it. A blanket 755 flipped the exec bit on every
+# tracked file, so git showed the whole repo modified on shipped units and
+# owl_update.sh stashed ~400 mode changes on every update.
+chmod -R u+rwX,go+rX,go-w /home/owl/owl 2>/dev/null || true
 # CONTROLLER.ini holds the [Security] device_token: never world-readable.
 chmod 640 /home/owl/owl/config/CONTROLLER.ini 2>/dev/null || true
 
