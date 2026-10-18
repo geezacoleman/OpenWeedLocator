@@ -42,6 +42,7 @@ from utils.config_manager import (
     build_config_filename, parse_config_meta, strip_geometry_keys, GEOMETRY_FILE,
     stamp_config_meta, atomic_write_config, AUTOSAVE_CONFIG, seed_autosave,
     strip_legacy_min_area, config_unsaved_state, ConfigValidator, write_ini_section,
+    config_profile_path,
 )
 from utils.lut_manager import LUTProfileManager, LUTProfileError, MIN_CLASS_PIXELS
 from utils.painter_sessions import (
@@ -67,6 +68,27 @@ FLOAT_CONFIG_PARAMS = {'min_detection_area_percent'}
 # take tens of seconds.
 ALGORITHM_CONFIRM_TIMEOUT_S = 180
 ALGORITHM_CONFIRM_POLL_S = 1.0
+
+USB_ROOT = '/media'
+
+
+def usb_path(path):
+    """Real path of `path` if it lies inside /media (USB drives), else None.
+
+    A prefix check alone lets '/media/../home/owl/owl/config/CONTROLLER.ini'
+    (the device token) through, and a symlink on a USB stick would point
+    anywhere. Resolve first, then compare.
+    """
+    if not isinstance(path, str) or not path or '\x00' in path:
+        return None
+    root = os.path.realpath(USB_ROOT)
+    real = os.path.realpath(path)
+    try:
+        if os.path.commonpath([root, real]) != root:
+            return None
+    except ValueError:  # different drives (Windows dev machines)
+        return None
+    return real
 
 try:
     from flask import Flask, Response, render_template, request, jsonify, send_from_directory, send_file
@@ -1272,7 +1294,7 @@ class OWLDashboard:
             directory = data.get('directory', '/media')
 
             # Security: only allow browsing under /media
-            if not directory.startswith('/media'):
+            if usb_path(directory) is None:
                 return jsonify({
                     'files': [],
                     'directory': directory,
@@ -1307,7 +1329,7 @@ class OWLDashboard:
             directory = data.get('directory', '/media')
 
             # Security check
-            if not directory.startswith('/media'):
+            if usb_path(directory) is None:
                 return jsonify({'error': 'Directory access denied'}), 403
 
             if not os.path.exists(directory) or not os.path.isdir(directory):
@@ -1335,8 +1357,8 @@ class OWLDashboard:
 
         @self.app.route('/api/download_file')
         def api_download_file():
-            path = request.args.get('path', '')
-            if not path.startswith('/media') or not os.path.isfile(path):
+            path = usb_path(request.args.get('path', ''))
+            if path is None or not os.path.isfile(path):
                 return "File not found", 404
             return send_file(path, as_attachment=True)
 
@@ -2192,8 +2214,9 @@ class OWLDashboard:
                 overwrite = (data.get('overwrite_filename') or '').strip()
                 if overwrite:
                     safe_name = overwrite if overwrite.endswith('.ini') else overwrite + '.ini'
-                    # Confine overwrite to config/ — reject any path traversal.
-                    if safe_name != os.path.basename(safe_name):
+                    # Confine overwrite to config/ profiles: no traversal, no
+                    # CONTROLLER.ini / GEOMETRY.ini / templates.
+                    if config_profile_path(self._get_config_dir(), safe_name) is None:
                         return jsonify({'success': False, 'error': 'Invalid config filename'}), 400
                 else:
                     safe_name = build_config_filename(display_name, data.get('filename'), timestamp)
@@ -2276,11 +2299,10 @@ class OWLDashboard:
                     return jsonify({'success': False, 'error': 'No config specified'}), 400
 
                 # Handle both relative and just filename
-                if not config_name.startswith('config/'):
-                    config_name = f'config/{config_name}'
-
-                # Verify the config exists using our resolver
-                full_path = self._resolve_config_path(config_name)
+                full_path = config_profile_path(self._get_config_dir(), config_name)
+                if full_path is None:
+                    return jsonify({'success': False, 'error': f'Not a config profile: {config_name}'}), 400
+                config_name = f'config/{os.path.basename(full_path)}'
 
                 if not os.path.exists(full_path):
                     return jsonify({'success': False, 'error': f'Config file not found: {config_name}'}), 404
@@ -2364,10 +2386,10 @@ class OWLDashboard:
                         'error': 'Cannot delete default configuration files'
                     }), 400
 
-                if not config_name.startswith('config/'):
-                    config_name = f'config/{config_name}'
-
-                full_path = self._resolve_config_path(config_name)
+                full_path = config_profile_path(self._get_config_dir(), config_name)
+                if full_path is None:
+                    return jsonify({'success': False, 'error': 'Not a config profile'}), 400
+                config_name = f'config/{os.path.basename(full_path)}'
 
                 if not os.path.exists(full_path):
                     return jsonify({'success': False, 'error': 'Config file not found'}), 404
@@ -2658,8 +2680,11 @@ class OWLDashboard:
                 try:
                     with open(pointer_path, 'r') as f:
                         active = f.read().strip()
-                        if active:
-                            return active
+                    if active and config_profile_path(self._get_config_dir(), active):
+                        return active
+                    if active:
+                        self.logger.warning(f"active_config.txt names {active!r}, which is "
+                                            f"not a detection profile; using the default")
                 except Exception as e:
                     self.logger.warning(f"Could not read active config pointer: {e}")
 
@@ -2838,8 +2863,8 @@ class OWLDashboard:
         configs = []
         if os.path.exists(config_dir):
             for f in os.listdir(config_dir):
-                # Skip device-resident geometry and *_TEMPLATE.ini docs — not selectable configs.
-                if f.endswith('.ini') and f != GEOMETRY_FILE and not f.endswith('_TEMPLATE.ini'):
+                # Skip CONTROLLER.ini, GEOMETRY.ini and *_TEMPLATE.ini: not selectable configs.
+                if config_profile_path(config_dir, f):
                     full_path = os.path.join(config_dir, f)
                     stat = os.stat(full_path)
 

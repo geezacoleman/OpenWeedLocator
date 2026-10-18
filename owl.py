@@ -90,7 +90,7 @@ try:
     from utils.algorithms import fft_blur
     from utils.greenonbrown import GreenOnBrown, draw_boxes
     from utils.frame_reader import FrameReader
-    from utils.config_manager import ConfigValidator, atomic_write_config
+    from utils.config_manager import ConfigValidator, atomic_write_config, config_profile_path
     from utils.geometry import compute_geometry, assign_lanes
     from utils.log_manager import LogManager, MQTTLogHandler
     from utils.shared_types import Sensitivity
@@ -2764,7 +2764,9 @@ if __name__ == "__main__":
         # Check for active config pointer from dashboard
         try:
             active_config = ACTIVE_CONFIG_POINTER.read_text().strip()
-            if active_config:
+            if active_config and config_profile_path(ACTIVE_CONFIG_POINTER.parent, active_config) is None:
+                logger.warning(f"Active config {active_config!r} is not a detection profile, using default")
+            elif active_config:
                 # Verify the config file exists
                 active_path = Path(__file__).parent / active_config
                 if active_path.exists():

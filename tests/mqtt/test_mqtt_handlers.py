@@ -341,3 +341,24 @@ class TestResolutionState:
         fresh = OWLMQTTPublisher(broker_host='localhost', client_id='fresh_test')
         assert fresh.state['resolution_width'] == 0
         assert fresh.state['resolution_height'] == 0
+
+
+@pytest.mark.unit
+class TestSetActiveConfigConfinement:
+    """set_active_config over MQTT must only ever name a detection profile:
+    the pointer decides what owl.py loads and what GET /api/config serves."""
+
+    @pytest.mark.parametrize('name', ['config/CONTROLLER.ini', 'config/../owl.py',
+                                      'config/../../etc/x.ini', 'GEOMETRY.ini'])
+    def test_refuses_non_profiles(self, mqtt_publisher, name):
+        with patch('utils.mqtt_manager.atomic_write_config') as write, \
+                patch('utils.mqtt_manager.seed_autosave') as seed:
+            mqtt_publisher._handle_set_active_config(name)
+        write.assert_not_called()
+        seed.assert_not_called()
+
+    def test_writes_a_profile(self, mqtt_publisher):
+        with patch('utils.mqtt_manager.atomic_write_config') as write, \
+                patch('utils.mqtt_manager.seed_autosave'):
+            mqtt_publisher._handle_set_active_config('config/DAY_SENSITIVITY_2.ini')
+        write.assert_called_once()

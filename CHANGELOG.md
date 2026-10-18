@@ -2,6 +2,15 @@
 
 Notable changes to the OWL software (owl.py, the standalone dashboard and the networked controller). Newest first. Versions follow `version.py`. History before this file is in the git log.
 
+## [Unreleased] 3.25.5: dashboard file and config paths confined (branch hardening-3.22)
+
+### Security
+- **The standalone USB download no longer serves files outside `/media`.** `/api/download_file`, `/api/browse_files` and `/api/navigate_directory` checked only that the path *started* with `/media`, so `/media/../home/owl/owl/config/CONTROLLER.ini` returned the device token and the Noktura cloud password to anyone on the OWL's network. Paths are now resolved (`..` and symlinks) before the check (`usb_path`).
+- **Config names can only name detection profiles.** New `config_profile_path()` in `utils/config_manager.py` (same shape as `model_path_in`): a flat `.ini` in `config/`, never `CONTROLLER.ini`, `GEOMETRY.ini` or a `*_TEMPLATE.ini`. Used by `/api/config/delete` (which passed `config/../owl.py` to `os.remove`), `/api/config/set-active` (which accepted `CONTROLLER.ini`, after which `GET /api/config` served the device token), the save route's `overwrite_filename`, the MQTT `set_active_config` handler, and the active-config pointer reads in the dashboard and `owl.py` (a pointer naming anything else falls back to `GENERAL_CONFIG.ini` with a warning).
+
+### Changed
+- `CONTROLLER.ini` no longer appears in the dashboard's config list. It was listed as a "(default)" profile; selecting it loaded controller settings as the detection config.
+
 ## [Unreleased] 3.25.4: Install AI fits a 2 GB / 16 GB CM5 (branch hardening-3.22)
 
 ### Fixed

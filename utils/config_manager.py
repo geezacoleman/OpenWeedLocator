@@ -33,6 +33,37 @@ GEOMETRY_FILE = 'GEOMETRY.ini'
 # file per slider move. Explicit "Save As" still creates named presets.
 AUTOSAVE_CONFIG = 'config_autosave.ini'
 
+# .ini files in config/ that are not detection profiles. CONTROLLER.ini holds
+# the device token and broker settings: as the "active config" the dashboard
+# would hand it to anyone who asks (GET /api/config).
+NON_PROFILE_FILES = frozenset({'CONTROLLER.ini', GEOMETRY_FILE})
+
+
+def config_profile_path(config_dir, name):
+    """Absolute path of detection profile `name` in `config_dir`, or None if
+    `name` is not one.
+
+    Names come from dashboard requests, MQTT commands and active_config.txt,
+    as 'X.ini' or 'config/X.ini'. They get loaded, served and deleted, so
+    'config/../owl.py' must not reach os.remove. Profiles are flat files in
+    config/; templates and the files above are not profiles. The file need
+    not exist yet (callers 404 on that).
+    """
+    if not isinstance(name, str):
+        return None
+    name = name.strip()
+    if name.startswith('config/'):
+        name = name[len('config/'):]
+    if (not name or name.startswith('.') or '\x00' in name or '\\' in name
+            or os.path.basename(name) != name or not name.endswith('.ini')
+            or name in NON_PROFILE_FILES or name.endswith('_TEMPLATE.ini')):
+        return None
+    root = os.path.realpath(config_dir)
+    path = os.path.realpath(os.path.join(root, name))
+    if os.path.dirname(path) != root:
+        return None
+    return path
+
 # [Camera] white-balance keys seeded into profiles saved before they existed
 # (v3.11). Must match the fallbacks in owl.py and utils/video_manager.py.
 CAMERA_WB_DEFAULTS = {

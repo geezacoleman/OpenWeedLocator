@@ -24,7 +24,7 @@ from utils.config_manager import (
     GREENONBROWN_PARAMS, GEOMETRY_KEYS as MOUNT_GEOMETRY_KEYS,
     GEOMETRY_SECTION_KEYS, GEOMETRY_FILE, atomic_write_config,
     AUTOSAVE_CONFIG, seed_autosave, parse_config_meta, config_unsaved_state,
-    ConfigValidator,
+    ConfigValidator, config_profile_path,
 )
 from utils.directory_manager import scan_sessions, collect_session_files, select_preview_images, is_session_id
 from utils import software_update
@@ -2104,6 +2104,9 @@ class OWLMQTTPublisher:
         try:
             config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
             active_path = os.path.join(config_dir, 'active_config.txt')
+            if config_profile_path(config_dir, config_path) is None:
+                self.logger.warning(f"set_active_config refused: {config_path!r} is not a detection profile")
+                return
 
             with self.config_lock:
                 # Atomic: a plain rewrite truncates first, and a reader in
