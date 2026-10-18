@@ -2,6 +2,12 @@
 
 Notable changes to the OWL software (owl.py, the standalone dashboard and the networked controller). Newest first. Versions follow `version.py`. History before this file is in the git log.
 
+## [Unreleased] 3.25.4: Install AI fits a 2 GB / 16 GB CM5 (branch hardening-3.22)
+
+### Fixed
+- **Install AI no longer fails with "No space left on device".** On 64-bit ARM the PyPI torch wheel depends on the full NVIDIA CUDA stack (about 3 to 4 GB to download, 6 GB+ installed), and pip unpacked it into `/tmp`, which Trixie mounts as a RAM-backed tmpfs (1 GB on a 2 GB CM5). `requirements-gog.txt` now pins `torch==2.14.1+cpu` and `torchvision==0.29.1+cpu` from the PyTorch CPU index (the `+cpu` pin cannot match the PyPI CUDA build), so about 324 MB of wheels instead of 4 GB. `owl_update.sh` runs every pip call with `TMPDIR` on disk and `--no-cache-dir`, deletes that temp folder on exit (rollback included), checks free space on the repo, venv and temp filesystems, and fails the install (so it rolls back) if a CUDA torch build ends up in the venv. The routine "Green-on-Green detected" re-install on AI units goes through the same path.
+- **Install AI keeps the OWL's OpenCV and numpy.** ultralytics asks for `opencv-python`, which pip does not know `opencv-contrib-python` already provides, so it put the newest OpenCV (5.0) over `cv2`. Both are now held at the installed versions with a pip constraint.
+
 ## [Unreleased] 3.25.3: no live position in the cloud feed (branch hardening-3.22)
 
 ### Changed

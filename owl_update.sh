@@ -21,8 +21,8 @@
 #   --request-id ID    Correlation id echoed into the status file
 #   --status-file F    JSON status file path (default: <repo>/.update_status.json)
 #   --no-restart       Skip the service restart + health check
-#   --with-ai          Also install AI (requirements-gog.txt: ultralytics,
-#                      torch, ncnn) into the same venv. OWL profile only.
+#   --with-ai          Also install AI (requirements-gog.txt: CPU-only torch,
+#                      ultralytics, ncnn) into the same venv. OWL profile only.
 #                      Inside the same rollback handling as everything else.
 #   --yes              Manual mode: don't prompt before restarting the service
 #
@@ -60,8 +60,6 @@ ORIGINAL_SCRIPT="$2"
 shift 2
 RUNCOPY="$(realpath "${BASH_SOURCE[0]}")"
 REPO_DIR="$(dirname "$ORIGINAL_SCRIPT")"
-# Safe on Linux: bash holds an open fd to the copy, unlink doesn't affect it.
-trap 'rm -f "$RUNCOPY"' EXIT
 
 # --- Globals ------------------------------------------------------------------
 TS="$(date +%Y%m%d_%H%M%S)"
@@ -77,6 +75,7 @@ WITH_AI=0
 SERVICE=""
 VENV=""
 REQUIREMENTS=""
+PIP_TMP=""                # set only once the lock is held (see cleanup)
 
 STARTED_AT="$(date +%s)"
 FROM_DESC=""
@@ -93,6 +92,39 @@ IN_ROLLBACK=0
 
 LOG_DIR="$REPO_DIR/logs/updates"
 LOG_FILE="$LOG_DIR/owl_update_${TS}.log"
+
+cleanup() {
+    # Safe on Linux: bash holds an open fd to the copy, unlink doesn't affect it.
+    rm -f "$RUNCOPY"
+    # Empty for a run refused by the lock, so it never deletes the live run's dir.
+    if [[ -n "$PIP_TMP" ]]; then rm -rf "$PIP_TMP"; fi
+}
+trap cleanup EXIT
+
+# --- pip ------------------------------------------------------------------------
+# TMPDIR on disk: Trixie mounts /tmp as tmpfs (half of RAM, 1 GB on a 2 GB
+# CM5) and pip unpacks wheels there. No cache: ~/.cache/pip would hold a
+# second copy of every wheel on a 16 GB eMMC.
+pip_install() {
+    TMPDIR="$PIP_TMP" "$VENV/bin/pip" install --no-input --no-cache-dir "$@"
+}
+
+install_ai_deps() {
+    # Hold numpy and OpenCV where they are. ultralytics wants opencv-python,
+    # which pip doesn't know opencv-contrib-python already provides, so it
+    # would put the newest OpenCV over cv2 and could move numpy under
+    # picamera2. Same version = the same cv2 (OWL uses no contrib modules).
+    local constraints="$PIP_TMP/ai-constraints.txt" v
+    : >"$constraints"
+    v="$("$VENV/bin/python" -c 'import numpy; print(numpy.__version__)' 2>/dev/null || true)"
+    if [[ -n "$v" ]]; then echo "numpy==$v" >>"$constraints"; fi
+    v="$("$VENV/bin/pip" show opencv-contrib-python 2>/dev/null | sed -n 's/^Version: //p' || true)"
+    if [[ -n "$v" ]]; then echo "opencv-python==$v" >>"$constraints"; fi
+
+    # requirements-gog.txt pins torch +cpu; the check catches a ref that doesn't.
+    pip_install -c "$constraints" -r "$REPO_DIR/requirements-gog.txt"
+    "$VENV/bin/python" -c 'import torch, ultralytics, cv2; assert torch.version.cuda is None, "CUDA torch installed"; print("AI ready: torch", torch.__version__, "ultralytics", ultralytics.__version__, "OpenCV", cv2.__version__)'
+}
 
 # --- Status file --------------------------------------------------------------
 write_status() {
@@ -187,7 +219,7 @@ rollback() {
     fi
 
     # Best-effort dependency restore from the rolled-back tree.
-    "$VENV/bin/pip" install --no-input -r "$REPO_DIR/$REQUIREMENTS" >/dev/null 2>&1 || log "WARNING: pip restore failed (continuing)"
+    pip_install -r "$REPO_DIR/$REQUIREMENTS" >/dev/null 2>&1 || log "WARNING: pip restore failed (continuing)"
 
     if [[ "$NO_RESTART" != "1" ]]; then
         sudo -n systemctl restart "$SERVICE" || { write_status error "rollback: service restart failed (original: $original_error)" true; exit 1; }
@@ -267,6 +299,10 @@ main() {
         fail_terminal "--with-ai installs AI on an OWL, not on the $PROFILE"
     fi
     log "Profile: $PROFILE (service=$SERVICE, venv=$VENV, deps=$REQUIREMENTS)"
+    # Fixed name, so a kill -9 leftover is cleared by the next run.
+    PIP_TMP="$user_home/.cache/owl-pip-tmp"
+    rm -rf "$PIP_TMP"
+    mkdir -p "$PIP_TMP"
 
     # --- Preflight ---------------------------------------------------------------
     write_status preflight
@@ -280,13 +316,15 @@ main() {
         fail_terminal "invalid ref: $REF"
     fi
 
-    # AI (PyTorch + ultralytics) needs about 2 GB more
+    [[ -x "$VENV/bin/pip" ]] || fail_terminal "venv pip not found at $VENV/bin/pip"
+
+    # AI peaks at roughly 1.3 GB (estimate, measure on the bench): ~0.3 GB
+    # of wheels in PIP_TMP (CPU torch is 160 MB) plus ~1 GB installed.
+    # 3 GB total leaves headroom. Check every filesystem pip writes to.
     local avail_kb need_gb=1
     if [[ "$WITH_AI" == "1" ]]; then need_gb=3; fi
-    avail_kb="$(df --output=avail -k "$REPO_DIR" | tail -1 | tr -d ' ')"
-    [[ "$avail_kb" -ge $((need_gb * 1048576)) ]] || fail_terminal "insufficient disk space (need ${need_gb} GB free, have $((avail_kb / 1024)) MB)"
-
-    [[ -x "$VENV/bin/pip" ]] || fail_terminal "venv pip not found at $VENV/bin/pip"
+    avail_kb="$(df --output=avail -k "$REPO_DIR" "$VENV" "$PIP_TMP" | tail -n +2 | sort -n | head -1 | tr -d ' ')"
+    [[ "$avail_kb" -ge $((need_gb * 1048576)) ]] || fail_terminal "not enough free disk space (need ${need_gb} GB, have $((avail_kb / 1024)) MB)"
     if [[ "$NO_RESTART" != "1" ]]; then
         systemctl cat "$SERVICE" >/dev/null 2>&1 || fail_terminal "$SERVICE not installed"
     fi
@@ -373,19 +411,19 @@ main() {
     # --- Dependencies ---------------------------------------------------------------
     write_status installing_deps
     log "Installing Python dependencies ($REQUIREMENTS)..."
-    "$VENV/bin/pip" install --no-input -r "$REPO_DIR/$REQUIREMENTS"
+    pip_install -r "$REPO_DIR/$REQUIREMENTS"
     if [[ "$WITH_AI" == "1" ]]; then
         if [[ ! -f "$REPO_DIR/requirements-gog.txt" ]]; then
             log "ERROR: requirements-gog.txt not found on $REF"
             false  # -> ERR trap -> rollback
         fi
         log "Installing AI (requirements-gog.txt). This can take 20 minutes or more..."
-        "$VENV/bin/pip" install --no-input -r "$REPO_DIR/requirements-gog.txt"
-        "$VENV/bin/python" -c 'import ultralytics' >/dev/null
+        install_ai_deps
     elif [[ "$PROFILE" == "owl" && -f "$REPO_DIR/requirements-gog.txt" ]] \
        && "$VENV/bin/python" -c 'import ultralytics' >/dev/null 2>&1; then
+        # Same path as Install AI: TMPDIR on disk, versions held, CPU check.
         log "Green-on-Green detected — updating GoG dependencies..."
-        "$VENV/bin/pip" install --no-input -r "$REPO_DIR/requirements-gog.txt"
+        install_ai_deps
     fi
 
     local new_version new_commit

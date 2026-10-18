@@ -690,3 +690,50 @@ class TestLeftoverFirstbootFlag:
     def test_flag_path_matches_install_firstboot(self):
         content = self._read('controller/setup/install_firstboot.sh')
         assert f'FLAG_PATH="{self.FLAG}"' in content
+
+
+# ---------------------------------------------------------------------------
+# Install AI on a 2 GB / 16 GB CM5: the PyPI aarch64 torch wheel drags in the
+# NVIDIA CUDA stack (~6 GB) and pip unpacks into the 1 GB tmpfs /tmp
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestAiInstallCpuTorch:
+
+    PROJECT_ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
+
+    def _read(self, relpath):
+        with open(os.path.join(self.PROJECT_ROOT, relpath), encoding='utf-8') as f:
+            return f.read()
+
+    def test_gog_requirements_pin_cpu_torch(self):
+        """The extra index is only safe because every torch pin carries +cpu:
+        `==2.14.1+cpu` cannot match the PyPI (CUDA) 2.14.1 build."""
+        lines = [l.strip() for l in self._read('requirements-gog.txt').splitlines()
+                 if l.strip() and not l.strip().startswith('#')]
+        assert '--extra-index-url https://download.pytorch.org/whl/cpu' in lines
+        torch_pins = [l for l in lines if l.startswith(('torch', 'torchvision'))]
+        assert len(torch_pins) == 2
+        assert all(re.fullmatch(r'torch(vision)?==[\d.]+\+cpu', p) for p in torch_pins), torch_pins
+        assert lines.index(torch_pins[0]) < lines.index('ultralytics>=8.4,<8.5')
+
+    def test_every_updater_pip_install_goes_through_pip_install(self):
+        """pip_install sets TMPDIR on disk and --no-cache-dir; a bare
+        `$VENV/bin/pip install` would unpack into the tmpfs /tmp again."""
+        script = self._read('owl_update.sh')
+        bare = [l.strip() for l in script.splitlines()
+                if '/bin/pip" install' in l and 'pip_install()' not in l
+                and not l.strip().startswith('#')]
+        assert bare == ['TMPDIR="$PIP_TMP" "$VENV/bin/pip" install --no-input --no-cache-dir "$@"']
+
+    def test_ai_install_checks_for_cpu_torch(self):
+        script = self._read('owl_update.sh')
+        body = script[script.index('install_ai_deps() {'):]
+        body = body[:body.index('\n}\n')]
+        assert '-c "$constraints" -r "$REPO_DIR/requirements-gog.txt"' in body
+        assert 'torch.version.cuda is None' in body
+
+    def test_both_ai_branches_use_install_ai_deps(self):
+        script = self._read('owl_update.sh')
+        deps = script[script.index('# --- Dependencies'):script.index('# --- Restart')]
+        assert deps.count('install_ai_deps') == 2

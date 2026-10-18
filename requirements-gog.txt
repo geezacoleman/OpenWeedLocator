@@ -1,6 +1,17 @@
 ## Green-on-Green (YOLO) dependencies ##
-# Install with: pip install -r requirements-gog.txt
-# Requires ~2GB additional disk space (includes PyTorch)
+# Install with: pip install -r requirements-gog.txt (owl_update.sh --with-ai,
+# the Install AI button, does this). Roughly 1 GB installed.
+#
+# CPU-only PyTorch. On aarch64 the PyPI torch wheel depends on the full NVIDIA
+# CUDA stack (cuDNN, cuBLAS, NCCL: ~3-4 GB to download, 6 GB+ installed,
+# useless on a Pi). The +cpu local version is what makes the extra index safe:
+# `==2.14.1+cpu` cannot match the PyPI 2.14.1 build, so pip has to take torch
+# from the CPU index. Never pin without +cpu. Pins need cp311 (Bookworm) and
+# cp313 (Trixie) aarch64 wheels; check https://download.pytorch.org/whl/cpu/torch/
+# before bumping.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1+cpu
+torchvision==0.29.1+cpu
 # Pinned to 8.4.x: tracking (get_lost_tracks) relies on ultralytics internals
 # (predictor.trackers, lost_stracks, STrack.xyxy) verified against 8.4.6.
 ultralytics>=8.4,<8.5
