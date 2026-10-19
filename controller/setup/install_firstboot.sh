@@ -7,9 +7,10 @@
 #   sudo bash install_firstboot.sh --camera-config  # only write the CM camera
 #                                                   # overlay to config.txt
 #                                                   # (exit 2 = changed, reboot needed)
-#   sudo bash install_firstboot.sh --gps-config     # nRF9151 modem boot config
-#                                                   # (UART3 + power), also applied
-#                                                   # now (exit 2 = config changed)
+#   sudo bash install_firstboot.sh --gps-config     # CM5 carrier boot config: nRF9151
+#                                                   # (UART3 + power, also applied now)
+#                                                   # + external Wi-Fi antenna (ant2,
+#                                                   # next boot) (exit 2 = changed)
 #   sudo bash install_firstboot.sh --cloud-helper   # only the root-owned cloud
 #                                                   # provisioning helper (also run
 #                                                   # by --arm and by setup.sh)
@@ -177,7 +178,8 @@ configure_camera() {
 }
 
 configure_gps_uart() {
-    # Write the nRF9151 modem boot config and apply it for this session.
+    # Write the nRF9151 modem boot config and apply it for this session, plus
+    # the CM5 external Wi-Fi antenna (boot-time only, from the next boot).
     # Idempotent: each line is added only if missing. Returns:
     #   0  nothing to do (already configured, or not a CM5)
     #   1  error (config.txt missing or unwritable)
@@ -230,6 +232,31 @@ configure_gps_uart() {
         changed=1
     fi
 
+    # Every production CM5 ships with an antenna on its u.FL socket, but the
+    # module stays on its PCB antenna (weak inside the enclosure) unless
+    # dtparam=ant2 is set. A later ant1/noant line would win, so it is
+    # commented out. The switch is a boot-time GPIO hog: no live apply.
+    if grep -qE "^dtparam=(ant1|noant)" "$BOOT_CONFIG"; then
+        if ! sed -i -E "s/^dtparam=(ant1|noant)/#&/" "$BOOT_CONFIG"; then
+            echo -e "${CROSS} Could not edit ${BOOT_CONFIG}."
+            return 1
+        fi
+        changed=1
+    fi
+    if ! grep -qE "^dtparam=ant2[[:space:]]*$" "$BOOT_CONFIG"; then
+        {
+            echo ""
+            echo "[all]"
+            echo "# OWL Wi-Fi external antenna (CM5 u.FL socket) - added by install_firstboot.sh"
+            echo "dtparam=ant2"
+        } >> "$BOOT_CONFIG"
+        if [[ $? -ne 0 ]]; then
+            echo -e "${CROSS} Could not append to ${BOOT_CONFIG}."
+            return 1
+        fi
+        changed=1
+    fi
+
     # Apply now too, so the modem can be checked without a reboot. A boot-time
     # ctsrts overlay can't be unloaded here; the edit above fixes it on reboot.
     [[ -e "$GPS_UART_DEV" ]] || dtoverlay "$GPS_UART_OVERLAY" 2>/dev/null
@@ -238,10 +265,11 @@ configure_gps_uart() {
     fi
 
     if [[ "$changed" == "1" ]]; then
-        echo -e "${TICK} nRF9151 boot config written to ${BOOT_CONFIG} (${GPS_UART_OVERLAY}, gpio=${GPS_POWER_GPIO}=op,dh)"
+        echo -e "${TICK} CM5 boot config written to ${BOOT_CONFIG} (${GPS_UART_OVERLAY}, gpio=${GPS_POWER_GPIO}=op,dh, dtparam=ant2)"
+        echo -e "${ORANGE}[INFO] The modem is powered now; the external Wi-Fi antenna switches over on the next boot.${NC}"
         return 2
     fi
-    echo -e "${TICK} nRF9151 boot config already present in ${BOOT_CONFIG}"
+    echo -e "${TICK} CM5 boot config already present in ${BOOT_CONFIG} (modem + external Wi-Fi antenna)"
     return 0
 }
 
@@ -546,7 +574,8 @@ case "$MODE" in
     # Deliberately untouched by --disarm — the overlay is hardware truth,
     # not setup surface.
     --camera-config) configure_camera; exit $? ;;
-    # owl_setup.sh --factory entry: nRF9151 modem UART + power boot config.
+    # owl_setup.sh --factory entry: nRF9151 modem UART + power and the
+    # external Wi-Fi antenna (dtparam=ant2) boot config.
     --gps-config) configure_gps_uart; exit $? ;;
     # controller/shared/setup.sh entry (every standalone unit): the phone app
     # can connect a self-installed OWL to Noktura from device settings.

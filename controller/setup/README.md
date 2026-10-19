@@ -209,10 +209,19 @@ automation pass `--yes` as the second argument (`bash owl_setup.sh --factory
 passwordless sudo and re-runs itself detached, logging to `~/owl_setup.log`.
 Building your own OWL? Run `bash owl_setup.sh` with no options.
 
+**Wi-Fi country:** `--country CC` (two-letter code, e.g. `bash owl_setup.sh
+--factory --country AU`) sets the Wi-Fi regulatory country through `raspi-config
+nonint do_wifi_country`, which writes `cfg80211.ieee80211_regdom=CC` to
+`cmdline.txt`. `--factory` without it resets the unit to the world setting, so
+no bench country ships. A maker install without it leaves the OS setting alone.
+The country set shows in the SHIP-READY summary; check it on the unit with
+`iw reg get`.
+
 **Production carrier GPS:** `--factory` also provisions the nRF9151 modem (Serial LTE Modem firmware):
 `dialout` for the OWL user, ModemManager off, `install_firstboot.sh
 --gps-config` (writes `dtoverlay=uart3-pi5` and `gpio=26=op,dh` to config.txt
-and applies both immediately), `[GPS] source = nrf91`, `port = /dev/ttyAMA3`,
+and applies both immediately, plus `dtparam=ant2` so Wi-Fi uses the external
+antenna on the CM5's u.FL socket from the next boot), `[GPS] source = nrf91`, `port = /dev/ttyAMA3`,
 `baudrate = 460800` in `config/CONTROLLER.ini`, then an `AT` link check. A
 failed config write or no `AT` reply is NOT SHIP-READY (reboot and re-run; re-runs
 are safe). The OWL starts GPS over AT commands on every connect. For bench

@@ -32,19 +32,52 @@ fi
 # (tools/noktura_register.sh). The identity is checked up front, before 20
 # minutes of install; registration is not checked here (it needs internet and
 # the factory token, which never touch the unit).
+#
+# --country CC sets the Wi-Fi regulatory country (two-letter code, e.g. AU,
+# GB, US), which decides the channels and power the radio may use. --factory
+# without it resets the unit to the world setting so no bench country ships;
+# a maker install without it leaves whatever the OS (or Imager) set.
 FACTORY_MODE=0
-case "${1:-}" in
-  --factory)
-    FACTORY_MODE=1
-    echo -e "${GREEN}[INFO] Factory mode: non-interactive production provisioning${NC}"
-    ;;
-  "")
-    ;;
-  *)
-    echo -e "${RED}[ERROR] Unknown option '$1' (supported: --factory)${NC}"
+FACTORY_YES=0
+COUNTRY_GIVEN=0
+WIFI_COUNTRY=""
+SETUP_ARGS=("$@")
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --factory)
+      FACTORY_MODE=1
+      ;;
+    --yes)
+      FACTORY_YES=1
+      ;;
+    --country)
+      COUNTRY_GIVEN=1
+      WIFI_COUNTRY="${2:-}"
+      shift
+      ;;
+    *)
+      echo -e "${RED}[ERROR] Unknown option '$1' (supported: --factory [--yes], --country CC)${NC}"
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+if [[ "$FACTORY_YES" == "1" && "$FACTORY_MODE" != "1" ]]; then
+  echo -e "${RED}[ERROR] --yes only applies to --factory${NC}"
+  exit 1
+fi
+if [[ "$COUNTRY_GIVEN" == "1" ]]; then
+  WIFI_COUNTRY="${WIFI_COUNTRY^^}"
+  if [[ ! "$WIFI_COUNTRY" =~ ^[A-Z]{2}$ ]] || \
+     { [[ -f /usr/share/zoneinfo/iso3166.tab ]] && ! grep -q "^${WIFI_COUNTRY}[[:space:]]" /usr/share/zoneinfo/iso3166.tab; }; then
+    echo -e "${RED}[ERROR] --country needs a two-letter country code, e.g. --country AU (got '${WIFI_COUNTRY}')${NC}"
     exit 1
-    ;;
-esac
+  fi
+fi
+if [[ "$FACTORY_MODE" == "1" ]]; then
+  echo -e "${GREEN}[INFO] Factory mode: non-interactive production provisioning${NC}"
+fi
 
 # Identity gate (fail fast, before the confirmation and the long install).
 # A production unit without its OTP identity cannot be claimed in the app.
@@ -63,27 +96,19 @@ fi
 # every WiFi profile except the OWL hotspot, SSH keys and shell history, sets
 # the shared setup password and locks detection until phone-app setup finishes.
 # A maker running it by mistake locks themselves out, so it asks for a typed
-# confirmation. Factory automation passes --yes as the second argument.
-if [[ "$FACTORY_MODE" == "1" && -z "${OWL_SETUP_DETACHED:-}" ]]; then
-    case "${2:-}" in
-      --yes) ;;
-      "")
-        echo -e "${ORANGE}[WARN] Factory mode prepares a unit for a customer. It will:${NC}"
-        echo -e "${ORANGE}       - delete every WiFi profile except the OWL hotspot, plus SSH keys and shell history${NC}"
-        echo -e "${ORANGE}       - set the shared setup hotspot password (owl-setup)${NC}"
-        echo -e "${ORANGE}       - keep detection off until setup is finished in the phone app${NC}"
-        echo -e "${ORANGE}       Building your own OWL? Stop here and run: bash owl_setup.sh${NC}"
-        read -r -p "Type FACTORY to continue: " factory_confirm
-        if [[ "$factory_confirm" != "FACTORY" ]]; then
-            echo -e "${RED}[ERROR] Factory mode cancelled. Nothing was changed.${NC}"
-            exit 1
-        fi
-        ;;
-      *)
-        echo -e "${RED}[ERROR] Unknown option '$2' (only --yes may follow $1)${NC}"
+# confirmation. Factory automation passes --yes.
+if [[ "$FACTORY_MODE" == "1" && "$FACTORY_YES" != "1" && -z "${OWL_SETUP_DETACHED:-}" ]]; then
+    echo -e "${ORANGE}[WARN] Factory mode prepares a unit for a customer. It will:${NC}"
+    echo -e "${ORANGE}       - delete every WiFi profile except the OWL hotspot, plus SSH keys and shell history${NC}"
+    echo -e "${ORANGE}       - set the shared setup hotspot password (owl-setup)${NC}"
+    echo -e "${ORANGE}       - keep detection off until setup is finished in the phone app${NC}"
+    echo -e "${ORANGE}       - set the Wi-Fi country to ${WIFI_COUNTRY:-world (none given; add --country CC)}${NC}"
+    echo -e "${ORANGE}       Building your own OWL? Stop here and run: bash owl_setup.sh${NC}"
+    read -r -p "Type FACTORY to continue: " factory_confirm
+    if [[ "$factory_confirm" != "FACTORY" ]]; then
+        echo -e "${RED}[ERROR] Factory mode cancelled. Nothing was changed.${NC}"
         exit 1
-        ;;
-    esac
+    fi
 fi
 
 # Factory mode takes 20+ minutes and is usually run over SSH. A dropped session
@@ -98,7 +123,7 @@ if [[ "$FACTORY_MODE" == "1" && -z "${OWL_SETUP_DETACHED:-}" ]]; then
         exit 1
     fi
     SETUP_LOG="$HOME/owl_setup.log"
-    OWL_SETUP_DETACHED=1 setsid nohup bash "$SCRIPT_DIR/owl_setup.sh" "$1" \
+    OWL_SETUP_DETACHED=1 setsid nohup bash "$SCRIPT_DIR/owl_setup.sh" "${SETUP_ARGS[@]}" \
         > "$SETUP_LOG" 2>&1 < /dev/null &
     SETUP_PID=$!
     echo -e "${GREEN}[INFO] Install running in the background (PID ${SETUP_PID}), so it survives an SSH drop.${NC}"
@@ -188,6 +213,7 @@ STATUS_NUMPY_COMPAT=""
 STATUS_GOG_DEPS=""
 STATUS_CONTROLLER=""
 STATUS_GPS=""
+STATUS_WIFI_COUNTRY=""
 
 ERROR_UPGRADE=""
 ERROR_SYS_DEPS=""
@@ -206,6 +232,7 @@ ERROR_NUMPY_COMPAT=""
 ERROR_GOG_DEPS=""
 ERROR_CONTROLLER=""
 ERROR_GPS=""
+ERROR_WIFI_COUNTRY=""
 
 # Function to check the exit status of the last executed command
 check_status() {
@@ -420,6 +447,46 @@ EOF
   fi
 }
 
+setup_wifi_country() {
+  # --country CC sets it; --factory without it resets to world (00); a maker
+  # install without it is left alone. The boot cmdline is checked rather than
+  # `iw reg get`, which can follow a nearby router's advertised country.
+  local cmdline=/boot/firmware/cmdline.txt
+  [ -f "$cmdline" ] || cmdline=/boot/cmdline.txt
+
+  if [[ -n "$WIFI_COUNTRY" ]]; then
+    echo -e "${GREEN}[INFO] Setting the Wi-Fi country to ${WIFI_COUNTRY}...${NC}"
+    if ! command -v raspi-config >/dev/null 2>&1; then
+      echo -e "${CROSS} raspi-config not found, so the Wi-Fi country cannot be set"
+      STATUS_WIFI_COUNTRY="${CROSS}"
+      ERROR_WIFI_COUNTRY="raspi-config missing"
+      return 1
+    fi
+    sudo raspi-config nonint do_wifi_country "$WIFI_COUNTRY"
+    if grep -q "cfg80211\.ieee80211_regdom=${WIFI_COUNTRY}\b" "$cmdline"; then
+      echo -e "${TICK} Wi-Fi country ${WIFI_COUNTRY}"
+      STATUS_WIFI_COUNTRY="${TICK}"
+    else
+      echo -e "${CROSS} Wi-Fi country ${WIFI_COUNTRY} was not written to ${cmdline}"
+      STATUS_WIFI_COUNTRY="${CROSS}"
+      ERROR_WIFI_COUNTRY="Wi-Fi country not set"
+      return 1
+    fi
+  elif [[ "$FACTORY_MODE" == "1" ]]; then
+    echo -e "${GREEN}[INFO] No --country given: Wi-Fi uses the world setting${NC}"
+    sudo sed -i 's/[[:space:]]*cfg80211\.ieee80211_regdom=[^[:space:]]*//' "$cmdline"
+    sudo iw reg set 00 2>/dev/null
+    if grep -q "cfg80211\.ieee80211_regdom=" "$cmdline"; then
+      echo -e "${CROSS} Could not remove the old Wi-Fi country from ${cmdline}"
+      STATUS_WIFI_COUNTRY="${CROSS}"
+      ERROR_WIFI_COUNTRY="old Wi-Fi country left in cmdline.txt"
+      return 1
+    fi
+    echo -e "${TICK} Wi-Fi country: world"
+    STATUS_WIFI_COUNTRY="${TICK}"
+  fi
+}
+
 setup_factory_gps() {
   # --factory only. Must run AFTER controller/shared/setup.sh, which writes
   # [GPS] source = none into CONTROLLER.ini.
@@ -574,6 +641,9 @@ elif [ "$CAMERA_CONFIG_RC" -eq 1 ]; then
     echo -e "${RED}[WARNING] Camera boot config failed (see above) — fix config.txt"
     echo -e "          before expecting the camera to work on this Compute Module.${NC}"
 fi
+
+# Step 1c: Wi-Fi country, before the dashboard step brings up the hotspot
+setup_wifi_country
 
 # Step 2: Ensure a camera is connected before proceeding
 check_camera_connection
@@ -976,6 +1046,9 @@ echo -e "$STATUS_CONTROLLER Hardware Controller Configured"
 if [[ "$FACTORY_MODE" == "1" ]]; then
     echo -e "$STATUS_GPS nRF9151 GPS Configured"
 fi
+if [[ -n "$STATUS_WIFI_COUNTRY" ]]; then
+    echo -e "$STATUS_WIFI_COUNTRY Wi-Fi Country (${WIFI_COUNTRY:-world})"
+fi
 if [[ -n "$STATUS_IDENTITY" ]]; then
     echo -e "$STATUS_IDENTITY Device Identity (key file) Created"
 fi
@@ -1010,10 +1083,11 @@ if [[ "$FACTORY_MODE" == "1" ]]; then
     [ -n "$ERROR_DASHBOARD_DEPS" ] && SHIP_BLOCKERS+="dashboard dependencies; "
     [ -n "$ERROR_DASHBOARD" ] && SHIP_BLOCKERS+="dashboard/first-boot setup; "
     [ -n "$ERROR_GPS" ] && SHIP_BLOCKERS+="nRF9151 GPS setup; "
+    [ -n "$ERROR_WIFI_COUNTRY" ] && SHIP_BLOCKERS+="Wi-Fi country; "
     if [ -n "$SHIP_BLOCKERS" ]; then
         echo -e ""
         echo -e "${RED}[NOT SHIP-READY] Critical failures: ${SHIP_BLOCKERS%??}${NC}"
-        echo -e "${RED}Fix the above and re-run 'bash owl_setup.sh $1'. Dev cleanup was"
+        echo -e "${RED}Fix the above and re-run 'bash owl_setup.sh ${SETUP_ARGS[*]}'. Dev cleanup was"
         echo -e "skipped so the unit remains reachable over your current network.${NC}"
         exit 1
     fi
@@ -1028,6 +1102,7 @@ if [[ "$FACTORY_MODE" == "1" ]]; then
     echo -e "  • Hotspot: ${SHIP_SSID:-OWL-XXXX} (setup password)"
     if [[ "$FACTORY_MODE" == "1" ]]; then
         echo -e "  • GPS: nRF9151 on ${NRF_GPS_PORT} (source = ${NRF_GPS_SOURCE})"
+        echo -e "  • Wi-Fi: external antenna (dtparam=ant2, active from next boot), country ${WIFI_COUNTRY:-world}"
     fi
     echo -e "  • Identity: $(cat "${OWL_IDENTITY_DIR}/tier") tier, fingerprint $(openssl pkey -pubin -in "${OWL_IDENTITY_DIR}/device.pub" -outform DER 2>/dev/null | sha256sum | cut -c1-16)…"
     echo -e "  • First-boot setup armed — the phone app takes over on next boot"

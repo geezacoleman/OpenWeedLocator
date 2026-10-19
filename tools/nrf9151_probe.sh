@@ -271,22 +271,19 @@ echo "      [GPS] port = $PORT"
 echo "      [GPS] baudrate = $BAUD"
 echo "      boot config: dtoverlay=uart3-pi5 and gpio=26=op,dh"
 
-if grep -qF "$MARKER" "$BOOT_CONFIG"; then
-  info "Boot config lines already present (marker found)."
+# Look for the lines themselves, whoever wrote them (owl_setup.sh --factory
+# writes them via install_firstboot.sh --gps-config with its own comment).
+MISSING=()
+grep -qE '^dtoverlay=uart3-pi5[[:space:]]*$' "$BOOT_CONFIG" || MISSING+=("dtoverlay=uart3-pi5")
+grep -qE '^gpio=26=op,dh[[:space:]]*$' "$BOOT_CONFIG" || MISSING+=("gpio=26=op,dh")
+if (( ${#MISSING[@]} == 0 )); then
+  info "Boot config already powers the modem and loads UART3 on every boot."
 elif [ -t 0 ]; then
   echo
-  read -r -p "Add the boot config lines so the modem powers up and $PORT exists on every boot? [y/N] " answer
+  read -r -p "Add ${MISSING[*]} so the modem powers up and $PORT exists on every boot? [y/N] " answer
   if [[ "$answer" =~ ^[Yy]$ ]]; then
-    add_overlay=1
-    grep -qE '^dtoverlay=uart3-pi5$' "$BOOT_CONFIG" && add_overlay=0
     sudo cp "$BOOT_CONFIG" "$BOOT_CONFIG.bak-nrf-probe-final"
-    {
-      echo ""
-      echo "[all]"
-      echo "$MARKER"
-      (( add_overlay == 1 )) && echo "dtoverlay=uart3-pi5"
-      echo "gpio=26=op,dh"
-    } | sudo tee -a "$BOOT_CONFIG" > /dev/null
+    printf '%s\n' "" "[all]" "$MARKER" "${MISSING[@]}" | sudo tee -a "$BOOT_CONFIG" > /dev/null
     info "Written (backup: $BOOT_CONFIG.bak-nrf-probe-final)."
     REBOOT_NEEDED=1
   fi

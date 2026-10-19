@@ -583,6 +583,12 @@ class TestFactoryCleanup:
         assert '"${1:-}" == "--yes"' in clean       # set -u safe
         assert 'ASSUME_YES' in clean
 
+    def test_clean_deletes_only_wifi_profiles(self, clean):
+        # Wired eth0 must survive: deleting it left a factory unit unreachable
+        # over Ethernet (2026-10-19)
+        assert '"$type" == "802-11-wireless"' in clean
+        assert 'nmcli connection delete uuid "$uuid"' in clean
+
     def test_clean_restarts_both_services_it_stopped(self, clean):
         assert 'systemctl start owl.service' in clean
         assert 'systemctl start owl-dash.service' in clean
@@ -616,7 +622,9 @@ class TestFactoryGuard:
         assert '"$factory_confirm" != "FACTORY"' in owl_setup
 
     def test_yes_skips_the_prompt_for_factory_automation(self, owl_setup):
-        assert '      --yes) ;;\n' in owl_setup
+        assert '    --yes)\n      FACTORY_YES=1\n' in owl_setup
+        assert ('if [[ "$FACTORY_MODE" == "1" && "$FACTORY_YES" != "1" '
+                '&& -z "${OWL_SETUP_DETACHED:-}" ]]; then') in owl_setup
 
     def test_confirmation_happens_before_detaching(self, owl_setup):
         # The detached re-exec has no terminal, so it cannot prompt
@@ -640,12 +648,60 @@ class TestFactoryFlag:
     def gps_fn(self, owl_setup):
         return owl_setup.split('setup_factory_gps() {', 1)[1].split('\n}\n', 1)[0]
 
-    def test_only_factory_and_no_arg_parse(self, owl_setup):
-        parse = owl_setup.split('case "${1:-}" in', 1)[1].split('esac', 1)[0]
-        assert '  --factory)\n' in parse
-        assert '  "")\n' in parse
+    def test_only_factory_yes_and_country_parse(self, owl_setup):
+        parse = owl_setup.split('while [[ $# -gt 0 ]]; do', 1)[1].split('esac', 1)[0]
+        assert '    --factory)\n' in parse
+        assert '    --yes)\n' in parse
+        assert '    --country)\n' in parse
         assert '--ship' not in parse
-        assert 'supported: --factory)' in parse
+        assert 'supported: --factory [--yes], --country CC)' in parse
+
+    def test_detached_rerun_keeps_every_argument(self, owl_setup):
+        # --country must survive the setsid re-exec, or the logged run drops it
+        assert 'SETUP_ARGS=("$@")' in owl_setup
+        assert 'setsid nohup bash "$SCRIPT_DIR/owl_setup.sh" "${SETUP_ARGS[@]}"' in owl_setup
+
+    @pytest.mark.parametrize('args, rc, expect', [
+        (['--factory', '--country', 'au'], 0, 'factory=1 yes=0 country=AU'),
+        (['--country', 'GB', '--factory', '--yes'], 0, 'factory=1 yes=1 country=GB'),
+        (['--factory'], 0, 'factory=1 yes=0 country='),
+        (['--country', 'NZ'], 0, 'factory=0 yes=0 country=NZ'),
+        ([], 0, 'factory=0 yes=0 country='),
+        (['--country'], 1, 'two-letter country code'),
+        (['--country', 'AUS'], 1, 'two-letter country code'),
+        (['--country', '--factory'], 1, 'two-letter country code'),
+        (['--yes'], 1, '--yes only applies to --factory'),
+        (['--ship'], 1, "Unknown option '--ship'"),
+    ])
+    def test_argument_parsing_behaviour(self, tmp_path, args, rc, expect):
+        """Run the real parser with each argument combination."""
+        import subprocess
+        import shutil
+        from pathlib import Path
+        bash = shutil.which('bash')
+        if not bash:
+            pytest.skip('bash not available')
+        script = (Path(__file__).resolve().parents[3] / 'owl_setup.sh').read_text(encoding='utf-8')
+        start = script.index('FACTORY_MODE=0')
+        end = script.index('# Identity gate')
+        probe = tmp_path / 'parse.sh'
+        probe.write_text("RED=''; NC=''; GREEN=''\n" + script[start:end]
+                         + 'echo "factory=$FACTORY_MODE yes=$FACTORY_YES country=$WIFI_COUNTRY"\n',
+                         newline='\n')
+        result = subprocess.run([bash, probe.as_posix(), *args], capture_output=True, text=True,
+                                env={'PATH': '/usr/bin:/bin'})
+        assert result.returncode == rc
+        assert expect in result.stdout
+
+    def test_wifi_country_step(self, owl_setup):
+        fn = owl_setup.split('setup_wifi_country() {', 1)[1].split('\n}\n', 1)[0]
+        assert 'sudo raspi-config nonint do_wifi_country "$WIFI_COUNTRY"' in fn
+        # factory without --country resets to world; a maker install is left alone
+        assert 'elif [[ "$FACTORY_MODE" == "1" ]]; then' in fn
+        assert 'sudo iw reg set 00' in fn
+        # runs before the dashboard step brings up the hotspot, and blocks shipping
+        assert owl_setup.index('\nsetup_wifi_country\n') < owl_setup.index('# Step 13: Dashboard Setup')
+        assert '[ -n "$ERROR_WIFI_COUNTRY" ] && SHIP_BLOCKERS+=' in owl_setup
 
     def test_old_flags_are_gone_everywhere_but_the_history_note(self, owl_setup):
         assert owl_setup.count('--ship') == 2   # "It replaces --ship and --ship-gps"

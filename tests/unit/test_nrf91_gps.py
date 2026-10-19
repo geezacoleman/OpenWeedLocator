@@ -203,6 +203,19 @@ class TestNrf91Wiring:
         assert 'echo "dtoverlay=${GPS_UART_OVERLAY}"' in fn
         # GPIO 10/11 are output channels on the carrier: ctsrts is removed, never written
         assert 'echo "dtoverlay=${GPS_UART_OVERLAY},ctsrts' not in fn
+        # Every production CM5 has an external Wi-Fi antenna: ant2, and a
+        # stray ant1/noant (which would win) is commented out
+        assert 'echo "dtparam=ant2"' in fn
+        assert 'grep -qE "^dtparam=ant2' in fn
+        assert 's/^dtparam=(ant1|noant)/#&/' in fn
+
+    def test_probe_checks_boot_lines_not_its_marker(self):
+        # The probe re-added gpio=26=op,dh on a --factory unit because it only
+        # looked for its own marker comment (2026-10-19)
+        probe = (REPO / 'tools' / 'nrf9151_probe.sh').read_text(encoding='utf-8')
+        assert 'grep -qF "$MARKER"' not in probe
+        assert "grep -qE '^gpio=26=op,dh" in probe
+        assert "grep -qE '^dtoverlay=uart3-pi5" in probe
 
     @pytest.mark.parametrize('script', [
         'owl_setup.sh', 'controller/setup/install_firstboot.sh',

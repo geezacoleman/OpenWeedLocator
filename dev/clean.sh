@@ -45,7 +45,7 @@ echo
 echo -e "${YELLOW}[WARNING] The following will be REMOVED:${NC}"
 echo "  • Command history files"
 echo "  • SSH keys and known hosts"
-echo "  • Personal WiFi network connections (keeps hotspot)"
+echo "  • Personal WiFi network connections (keeps hotspot and wired)"
 echo "  • Browser data and bookmarks"
 echo "  • Most log files (keeps system essentials)"
 echo "  • Temporary files"
@@ -113,13 +113,15 @@ OWL_HOTSPOT=$(nmcli -t -f NAME,TYPE connection show | grep -E "OWL|Hotspot" | gr
 if [[ -n "$OWL_HOTSPOT" ]]; then
     echo -e "${GREEN}[INFO] Found OWL hotspot: $OWL_HOTSPOT - will preserve${NC}"
 
-    # Get list of all connections except the hotspot
-    while IFS= read -r conn; do
-        if [[ -n "$conn" && "$conn" != "$OWL_HOTSPOT" ]]; then
-            echo "Removing connection: $conn"
-            nmcli connection delete "$conn" 2>/dev/null || true
+    # Only WiFi profiles carry personal network passwords. Wired (eth0) and
+    # loopback profiles stay, so the unit is still reachable over Ethernet.
+    # TYPE and UUID never contain ':', so the rest of the line is the name.
+    while IFS=: read -r type uuid name; do
+        if [[ "$type" == "802-11-wireless" && "$name" != "$OWL_HOTSPOT" ]]; then
+            echo "Removing WiFi connection: $name"
+            nmcli connection delete uuid "$uuid" 2>/dev/null || true
         fi
-    done < <(nmcli -t -f NAME connection show | grep -v "^$OWL_HOTSPOT$")
+    done < <(nmcli -t -e no -f TYPE,UUID,NAME connection show)
 else
     echo -e "${YELLOW}[WARNING] No OWL hotspot found - preserving all connections for safety${NC}"
     echo -e "${YELLOW}[WARNING] Please manually remove unwanted network connections${NC}"
@@ -270,7 +272,7 @@ Preserved configurations:
 Removed:
 - Command history (bash, zsh, python, node)
 - SSH keys and known hosts
-- Personal network connections
+- Personal WiFi connections (hotspot and wired kept)
 - Browser data and cache
 - Personal files
 - Log files
