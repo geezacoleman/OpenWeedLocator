@@ -14,6 +14,9 @@
 #   sudo bash install_firstboot.sh --cloud-helper   # only the root-owned cloud
 #                                                   # provisioning helper (also run
 #                                                   # by --arm and by setup.sh)
+#   sudo bash install_firstboot.sh --net-watchdog   # only the Wi-Fi fallback
+#                                                   # (owl-net-watchdog.service;
+#                                                   # also run by --arm and setup.sh)
 #
 # Arming:
 #   - installs + enables owl-firstboot.service (ConditionPathExists gated)
@@ -69,6 +72,10 @@ CLOUD_HELPER="/usr/local/sbin/owl-cloud-provision"
 CLOUD_SUDOERS_FILE="/etc/sudoers.d/95-owl-cloud-provision"
 CLOUD_LIB_DIR="/usr/local/lib/owl"
 CLOUD_SCRIPT_COPY="${CLOUD_LIB_DIR}/owl_cloud_provision.sh"
+# Wi-Fi fallback watchdog (see install_net_watchdog). Kept after --disarm.
+NET_LIB_DIR="/usr/local/lib/owl/net"
+NET_UNIT_DEST="/etc/systemd/system/owl-net-watchdog.service"
+NET_TMPFILES="/etc/tmpfiles.d/owl-net.conf"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OWL_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -369,6 +376,52 @@ EOF
     echo -e "${TICK} root-owned cloud helper (${CLOUD_HELPER} -> ${CLOUD_SCRIPT_COPY}) + sudoers entry"
 }
 
+install_net_watchdog() {
+    # Wi-Fi fallback (utils/net_watchdog.py): raises the hotspot whenever
+    # wlan0 has no network, independent of the dashboard. Root runs a
+    # root-owned copy, never the repo (same rule as the cloud helper), so a
+    # broken update cannot take the fallback with it. owl_update.sh cannot
+    # refresh the copy (it runs as the owl user): re-run --net-watchdog after
+    # utils/net_watchdog.py or utils/network_manager.py change.
+    install -d -m 755 -o root -g root "${NET_LIB_DIR}/utils" || return 1
+    install -m 644 -o root -g root "${OWL_DIR}/utils/network_manager.py" \
+        "${OWL_DIR}/utils/net_watchdog.py" "${NET_LIB_DIR}/utils/" || return 1
+    # Empty package marker: a system-wide `utils` package can never shadow ours
+    install -m 644 -o root -g root /dev/null "${NET_LIB_DIR}/utils/__init__.py" || return 1
+
+    # The dashboard (as ${CURRENT_USER}) marks /run/owl/net-switching while it
+    # owns the radio; /run is a tmpfs, so tmpfiles.d recreates the dir on boot.
+    printf 'd /run/owl 0755 %s %s -\n' "${CURRENT_USER}" "$(id -gn "${CURRENT_USER}")" \
+        > "${NET_TMPFILES}" || return 1
+    systemd-tmpfiles --create "${NET_TMPFILES}" || return 1
+
+    command -v iw >/dev/null 2>&1 || echo -e "${ORANGE}[WARN] iw not found: saved networks are never retried while on the hotspot${NC}"
+
+    # Unquoted heredoc: no backticks or command substitutions in the body.
+    cat > "${NET_UNIT_DEST}" <<EOF || return 1
+[Unit]
+Description=OWL Wi-Fi fallback (hotspot back when wlan0 has no network)
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=simple
+WorkingDirectory=${NET_LIB_DIR}
+Environment=LC_ALL=C
+ExecStart=/usr/bin/python3 -E -s -m utils.net_watchdog
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload || return 1
+    systemctl enable owl-net-watchdog.service >/dev/null 2>&1 || return 1
+    # Restart, not start: picks up a new copy and forgets a renamed hotspot
+    systemctl restart owl-net-watchdog.service || return 1
+    echo -e "${TICK} Wi-Fi fallback (owl-net-watchdog.service, ${NET_LIB_DIR})"
+}
+
 arm() {
     echo -e "${GREEN}[INFO] Arming first-boot setup mode...${NC}"
 
@@ -534,6 +587,12 @@ EOF
         exit 1
     fi
 
+    # 7c. Wi-Fi fallback: a shipped unit must never be stranded off the air.
+    if ! install_net_watchdog; then
+        echo -e "${CROSS} Wi-Fi fallback not installed. Nothing was armed."
+        exit 1
+    fi
+
     # 8. State dir + flag — the actual arm, LAST so a failure anywhere above
     # leaves the unit un-armed rather than half-armed.
     mkdir -p /var/lib/owl
@@ -580,5 +639,8 @@ case "$MODE" in
     # controller/shared/setup.sh entry (every standalone unit): the phone app
     # can connect a self-installed OWL to Noktura from device settings.
     --cloud-helper) install_cloud_helper; exit $? ;;
-    *) echo -e "${CROSS} Unknown option '$MODE' (use --arm, --disarm, --camera-config, --gps-config or --cloud-helper)"; exit 1 ;;
+    # setup.sh entry (every standalone unit) and the one-off command for
+    # units installed before v3.26.1: the Wi-Fi fallback.
+    --net-watchdog) install_net_watchdog; exit $? ;;
+    *) echo -e "${CROSS} Unknown option '$MODE' (use --arm, --disarm, --camera-config, --gps-config, --cloud-helper or --net-watchdog)"; exit 1 ;;
 esac

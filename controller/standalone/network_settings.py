@@ -18,16 +18,27 @@ UDP beacon to its gateway (the phone) on every watchdog tick so the app can
 learn the OWL's IP on the phone's randomised tether subnet.
 
 No JSON persistence: a mid-switch reboot self-resolves via NetworkManager
-autoconnect priorities (client profiles 200, hotspot 0). A single gunicorn
+autoconnect priorities (client profiles 200, hotspot 10). A single gunicorn
 worker (--workers 1 --threads 8) makes one in-process machine safe.
+
+The hotspot must come back whenever the unit has no network, even if this
+process dies (v3.26.0: an update restarted the dashboard mid-session and
+the unit was unreachable until someone plugged in a screen). So: every
+join unblocks the hotspot's autoconnect, failed restores keep retrying,
+startup cleanup checks the radio, and while this process owns the radio
+it says so in SWITCH_MARKER for utils/net_watchdog.py, the root backstop.
 """
 
 import json
 import logging
+import os
 import socket
 import threading
 import time
 from datetime import datetime, timezone, timedelta
+
+from utils.network_manager import (NetworkManagerError, PHONE_INTERNET_CON_NAME,
+                                   SWITCH_MARKER)
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +46,11 @@ SWITCH_DELAY_S = 5          # grace period so the join HTTP response reaches the
 ACTIVATE_TIMEOUT_S = 45     # how long nmcli waits for the client network
 REVERT_ATTEMPTS = 3         # tries to restore the previous connection after a failed join
 SCAN_START_DELAY_S = 0.1    # lets the scan HTTP response flush before the AP drops
+HOTSPOT_RETRY_S = 30        # while the unit has no network at all
 
 # Temporary join (phone-hotspot internet)
-TEMP_CON_NAME = 'owl-phone-internet'   # never the SSID: revert must not collide with a real profile
+TEMP_CON_NAME = PHONE_INTERNET_CON_NAME  # never the SSID: revert must not collide with a real profile
+TEMP_STATUS_FAILURES_TO_END = 3        # unreadable link state in a row = link lost
 TEMP_WAIT_DEFAULT_S = 90               # the user turns the hotspot on AFTER the 202 lands
 TEMP_WAIT_MIN_S = 10
 TEMP_WAIT_MAX_S = 180
@@ -72,9 +85,11 @@ class NetworkSettingsManager:
     """
 
     def __init__(self, network_manager, timer_factory=threading.Timer,
-                 beacon_sender=None):
+                 beacon_sender=None, switch_marker=SWITCH_MARKER):
         self.nm = network_manager
         self._timer_factory = timer_factory
+        self._switch_marker = switch_marker
+        self._status_failures = 0
         self._beacon_sender = beacon_sender or send_udp_beacon
         self._lock = threading.Lock()
         self._timer = None
@@ -109,6 +124,72 @@ class NetworkSettingsManager:
         return datetime.now(timezone.utc).isoformat()
 
     # ------------------------------------------------------------------
+    # Radio ownership + hotspot recovery
+    # ------------------------------------------------------------------
+    def _mark_switching(self):
+        """Tell the root watchdog this process owns the radio. A unit set
+        up before the watchdog has no /run/owl; nothing reads it there."""
+        try:
+            with open(self._switch_marker, 'w') as f:
+                f.write(str(os.getpid()))
+        except OSError:
+            pass
+
+    def _clear_switching(self):
+        try:
+            os.remove(self._switch_marker)
+        except OSError:
+            pass
+
+    def _run_marked(self, work):
+        self._mark_switching()
+        try:
+            work()
+        finally:
+            self._clear_switching()
+
+    def _start_marked(self, delay, work):
+        timer = self._timer_factory(delay, lambda: self._run_marked(work))
+        timer.daemon = True
+        timer.start()
+        return timer
+
+    def _allow_hotspot_autoconnect(self):
+        """After a join: undo the `con down` block, so NetworkManager raises
+        the hotspot by itself if this network goes."""
+        try:
+            self.nm.allow_hotspot_autoconnect()
+        except Exception as e:
+            logger.warning("Could not re-enable hotspot autoconnect: %s", e)
+
+    def _schedule_hotspot_retry(self):
+        timer = self._timer_factory(HOTSPOT_RETRY_S, self._hotspot_retry)
+        timer.daemon = True
+        timer.start()
+
+    def _hotspot_retry(self):
+        """Raise the hotspot while the unit has no network at all; again in
+        HOTSPOT_RETRY_S if that fails. Stops once anything is up, a new
+        switch starts, or there is no hotspot profile."""
+        with self._lock:
+            if self.state in ('pending', 'switching') or (
+                    self.state == 'connected' and self.temporary):
+                return
+        try:
+            if self.nm.status().get('mode') != 'none':
+                return
+            self.nm.hotspot_up()
+            logger.warning("Hotspot back up on retry")
+            return
+        except NetworkManagerError as e:
+            if e.kind == 'not_found':
+                return
+            logger.error("Hotspot retry failed: %s", e)
+        except Exception as e:
+            logger.error("Hotspot retry failed: %s", e)
+        self._schedule_hotspot_retry()
+
+    # ------------------------------------------------------------------
     # Scanning
     # ------------------------------------------------------------------
     def scan_client(self, rescan=True):
@@ -125,9 +206,7 @@ class NetworkSettingsManager:
             if self.scanning:
                 return
             self.scanning = True
-        timer = self._timer_factory(SCAN_START_DELAY_S, self._do_hotspot_scan)
-        timer.daemon = True
-        timer.start()
+        self._start_marked(SCAN_START_DELAY_S, self._do_hotspot_scan)
 
     def _do_hotspot_scan(self):
         try:
@@ -144,6 +223,7 @@ class NetworkSettingsManager:
                 self.nm.hotspot_up()
             except Exception as e:
                 logger.error("Failed to restore hotspot after scan: %s", e)
+                self._schedule_hotspot_retry()
             with self._lock:
                 self.scanning = False
 
@@ -185,10 +265,7 @@ class NetworkSettingsManager:
             self._end_requested = False
 
         target = self._do_temporary_switch if temporary else self._do_switch
-        timer = self._timer_factory(SWITCH_DELAY_S, target)
-        timer.daemon = True
-        timer.start()
-        self._timer = timer
+        self._timer = self._start_marked(SWITCH_DELAY_S, target)
 
     @staticmethod
     def _clamp_wait(wait_s):
@@ -214,6 +291,7 @@ class NetworkSettingsManager:
                 with self._lock:
                     self.state = 'connected'
                     self.ip = self.nm.get_ip4()
+                self._allow_hotspot_autoconnect()
                 # Drop the superseded client profile so the unit doesn't
                 # autoconnect back to the old network later. The hotspot
                 # profile is never deleted (built-in fallback).
@@ -266,9 +344,11 @@ class NetworkSettingsManager:
                         self.ip = self.nm.get_ip4()
                         self.gateway = gateway
                         self._beacon_error_logged = False
+                        self._status_failures = 0
                         self._ttl_deadline = time.monotonic() + TEMP_TTL_S
                         self.expires_at = (datetime.now(timezone.utc)
                                            + timedelta(seconds=TEMP_TTL_S)).isoformat()
+                    self._allow_hotspot_autoconnect()
                     self._arm_watchdog()
                     self._send_beacon()
                     logger.info("Temporary join to '%s' (%s), TTL %d s",
@@ -336,6 +416,7 @@ class NetworkSettingsManager:
         else:
             logger.critical("Join to '%s' failed (%s) AND the previous "
                             "connection did not come back", ssid, error)
+            self._schedule_hotspot_retry()
 
     # ------------------------------------------------------------------
     # Temporary session: watchdog + revert
@@ -357,9 +438,12 @@ class NetworkSettingsManager:
             return
         try:
             alive = self.nm.connection_state(TEMP_CON_NAME) == 'activated'
+            self._status_failures = 0
         except Exception as e:
+            # One bad read is not a lost link; a run of them is treated as one
+            self._status_failures += 1
             logger.warning("Watchdog could not read link state: %s", e)
-            alive = True
+            alive = self._status_failures < TEMP_STATUS_FAILURES_TO_END
         if not alive:
             # The phone's hotspot went away; NetworkManager has already
             # dropped the client link (and may have raised the AP itself)
@@ -396,33 +480,11 @@ class NetworkSettingsManager:
                 self._watchdog.cancel()
                 self._watchdog = None
 
+        self._mark_switching()
         try:
-            self.nm.delete_connection(TEMP_CON_NAME)
-        except Exception as e:
-            logger.warning("Could not delete temporary profile: %s", e)
-
-        restored = False
-        try:
-            hotspot = self.nm.get_hotspot_connection()
-            already_up = (hotspot
-                          and self.nm.connection_state(hotspot) == 'activated')
-        except Exception:
-            already_up = False
-        if already_up:
-            # Never `con up` an active AP: it would restart it and kick
-            # the phone off for nothing
-            restored = True
-        else:
-            for attempt in range(1, REVERT_ATTEMPTS + 1):
-                try:
-                    self.nm.hotspot_up()
-                    restored = True
-                    break
-                except Exception as e:
-                    logger.error("Hotspot restore attempt %d/%d failed: %s",
-                                 attempt, REVERT_ATTEMPTS, e)
-                if attempt < REVERT_ATTEMPTS:
-                    time.sleep(2 * attempt)
+            restored = self._restore_hotspot_after_session()
+        finally:
+            self._clear_switching()
 
         with self._lock:
             self.ended_reason = reason
@@ -440,6 +502,40 @@ class NetworkSettingsManager:
             self.warning = None if restored else 'previous_unavailable'
         logger.warning("Temporary internet session ended (%s); hotspot %s",
                        reason, 'restored' if restored else 'NOT restored')
+        if not restored:
+            self._schedule_hotspot_retry()
+
+    def _restore_hotspot_after_session(self):
+        """Delete the throwaway profile and make sure the AP is up."""
+        try:
+            self.nm.delete_connection(TEMP_CON_NAME)
+        except Exception as e:
+            logger.warning("Could not delete temporary profile: %s", e)
+
+        restored = False
+        try:
+            hotspot = self.nm.get_hotspot_connection()
+            # 'activating': NetworkManager is already raising it (unblocked)
+            already_up = (hotspot and self.nm.connection_state(hotspot)
+                          in ('activated', 'activating'))
+        except Exception:
+            already_up = False
+        if already_up:
+            # Never `con up` an active AP: it would restart it and kick
+            # the phone off for nothing
+            restored = True
+        else:
+            for attempt in range(1, REVERT_ATTEMPTS + 1):
+                try:
+                    self.nm.hotspot_up()
+                    restored = True
+                    break
+                except Exception as e:
+                    logger.error("Hotspot restore attempt %d/%d failed: %s",
+                                 attempt, REVERT_ATTEMPTS, e)
+                if attempt < REVERT_ATTEMPTS:
+                    time.sleep(2 * attempt)
+        return restored
 
     def revert(self):
         """End a temporary session from the app. Returns what happens next:
@@ -468,13 +564,19 @@ class NetworkSettingsManager:
         return 'reverting'
 
     def cleanup_stale_temporary(self):
-        """Delete a temporary profile left behind by a crash/reboot mid
-        session. Called once at dashboard start (not in __init__: fresh
-        managers must not touch nmcli)."""
+        """Recover from a restart mid session (an update restarts this
+        process). Called once at dashboard start (not in __init__: fresh
+        managers must not touch nmcli): delete the temporary profile,
+        unblock the hotspot, and check in HOTSPOT_RETRY_S that the unit has
+        a network. Ends a live phone session: the app has already seen the
+        update complete."""
+        self._clear_switching()
         try:
             self.nm.delete_connection(TEMP_CON_NAME)
         except Exception as e:
             logger.debug("No stale temporary profile to delete: %s", e)
+        self._allow_hotspot_autoconnect()
+        self._schedule_hotspot_retry()
 
     # ------------------------------------------------------------------
     # Cancel + result
@@ -499,6 +601,8 @@ class NetworkSettingsManager:
 
     def cancel(self):
         """pending -> idle (kills the timer); failed/connected -> idle.
+        A connected temporary session is torn down like revert(): left
+        alone, nothing would ever bring the hotspot back.
         Raises while the switch itself is underway (cannot be unwound)."""
         with self._lock:
             if self.state == 'switching':
@@ -506,11 +610,17 @@ class NetworkSettingsManager:
             if self.state == 'pending' and self._timer is not None:
                 self._timer.cancel()
                 self._timer = None
+            teardown = self.state == 'connected' and self.temporary
             if self.state != 'idle':
                 if self._watchdog is not None:
                     self._watchdog.cancel()
                     self._watchdog = None
                 self._reset_fields()
+        if teardown:
+            timer = self._timer_factory(TEMP_REVERT_DELAY_S,
+                                        lambda: self._end_temporary('revert'))
+            timer.daemon = True
+            timer.start()
 
     def result(self):
         with self._lock:

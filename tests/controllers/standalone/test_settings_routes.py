@@ -67,9 +67,10 @@ def nm():
 
 
 @pytest.fixture
-def mgr(nm):
+def mgr(nm, tmp_path):
     return NetworkSettingsManager(nm, timer_factory=CapturingTimer,
-                                  beacon_sender=MagicMock())
+                                  beacon_sender=MagicMock(),
+                                  switch_marker=str(tmp_path / 'net-switching'))
 
 
 GIT_INFO = {'branch': 'main', 'commit': 'abc1234'}
@@ -485,6 +486,16 @@ class TestTokenRecovery:
         client = self._client(mgr, tmp_path)
         response = client.post('/api/settings/token', json={})
         assert response.status_code == 400
+
+    def test_shared_setup_psk_proves_nothing(self, mgr, tmp_path):
+        # wifi/controller-mode units keep 'owl-setup', and the Wi-Fi
+        # fallback raises their hotspot wherever they lose their network
+        client = self._client(mgr, tmp_path, psk='owl-setup')
+        response = client.post('/api/settings/token',
+                               json={'hotspot_password': 'owl-setup'})
+        assert response.status_code == 409
+        assert response.get_json()['error'] == 'setup_password'
+        assert 'device_token' not in response.get_json()
 
     def test_psk_unreadable_503(self, mgr, tmp_path):
         client = self._client(mgr, tmp_path, psk=None)

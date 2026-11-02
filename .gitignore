@@ -226,3 +226,6 @@ benchmarks/results/*.png
 /readthedocs/
 /tests/outputs/
 /labels/
+
+/CHANGELOG.md
+/controller/setup/BENCH_TEST.md

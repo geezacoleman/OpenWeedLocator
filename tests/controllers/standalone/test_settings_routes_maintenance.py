@@ -148,11 +148,13 @@ class TestUpdateStart:
         assert response.status_code == 202
         data = response.get_json()
         assert data['status'] == 'starting'
-        assert data['ref'] == 'main'          # the unit's branch by default
+        # The newest release tag, never the branch tip (v3.26.0 shipped broken
+        # and untagged that way)
+        assert data['ref'] == 'latest'
         request_id = data['request_id']
         popen.assert_called_once()
         assert popen.call_args[0][0] == swu.update_argv(
-            'main', request_id, status_file=tmp_path / '.update_status.json')
+            'latest', request_id, status_file=tmp_path / '.update_status.json')
         seeded = swu.read_status(tmp_path / '.update_status.json')
         assert seeded['request_id'] == request_id
         assert seeded['status'] == 'starting'
@@ -168,16 +170,16 @@ class TestUpdateStart:
 
 @pytest.mark.unit
 class TestAiInstall:
-    def test_launches_the_update_with_ai_at_the_current_branch(self, mgr, tmp_path):
+    def test_launches_the_update_with_ai_at_the_latest_release(self, mgr, tmp_path):
         popen = MagicMock()
         client = build_client(mgr, tmp_path, popen=popen)
         response = client.post('/api/ai/install', json={})
         assert response.status_code == 202
         data = response.get_json()
         assert data['with_ai'] is True
-        assert data['ref'] == 'main'
+        assert data['ref'] == 'latest'
         assert popen.call_args[0][0] == swu.update_argv(
-            'main', data['request_id'], status_file=tmp_path / '.update_status.json',
+            'latest', data['request_id'], status_file=tmp_path / '.update_status.json',
             with_ai=True)
         # Progress is the ordinary update status
         status = client.get('/api/settings/update/status').get_json()
@@ -201,10 +203,10 @@ class TestAiInstall:
 
 @pytest.mark.unit
 class TestUpdateStatus:
-    def _write(self, tmp_path, status, updated_at):
+    def _write(self, tmp_path, status, updated_at, started_at=0):
         (tmp_path / '.update_status.json').write_text(json.dumps(
             {'request_id': 'req-1', 'status': status, 'ref': 'main',
-             'updated_at': updated_at}))
+             'started_at': started_at, 'updated_at': updated_at}))
 
     def test_idle_without_file_and_version_fields(self, mgr, tmp_path):
         client = build_client(mgr, tmp_path)
@@ -231,6 +233,17 @@ class TestUpdateStatus:
         # Second read: still pending, no second timer
         data = client.get('/api/settings/update/status').get_json()
         assert data['dashboard_restart_pending'] is True
+        assert CapturingTimer.pending == []
+
+    def test_dashboard_started_during_the_update_is_not_restarted_again(self, mgr, tmp_path):
+        # owl_update.sh restarted this process during its health check: it
+        # already runs the new code
+        now = int(time.time())
+        self._write(tmp_path, 'complete', now + 5, started_at=now - 100)
+        client = build_client(mgr, tmp_path, process_started_at=now - 50)
+        data = client.get('/api/settings/update/status').get_json()
+        assert data['update']['status'] == 'complete'
+        assert data['dashboard_restart_pending'] is False
         assert CapturingTimer.pending == []
 
     def test_old_complete_does_not_restart(self, mgr, tmp_path):

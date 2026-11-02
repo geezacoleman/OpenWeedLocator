@@ -331,6 +331,52 @@ class TestConnectionState:
 
 
 @pytest.mark.unit
+class TestDeviceState:
+    def test_argv_and_activated_hotspot(self, manager, runner):
+        runner.queue(stdout='GENERAL.STATE:100 (connected)\nGENERAL.CONNECTION:OWL-4b7d\n')
+        assert manager.device_state() == (100, 'OWL-4b7d')
+        assert runner.calls[-1] == ['nmcli', '-t', '-f', 'GENERAL.STATE,GENERAL.CONNECTION',
+                                    'dev', 'show', 'wlan0']
+
+    def test_no_connection(self, manager, runner):
+        runner.queue(stdout='GENERAL.STATE:30 (disconnected)\nGENERAL.CONNECTION:--\n')
+        assert manager.device_state() == (30, None)
+
+    def test_nmcli_failure(self, manager, runner):
+        runner.queue(returncode=10, stderr='Error: Device not found')
+        assert manager.device_state() == (0, None)
+
+
+@pytest.mark.unit
+class TestWifiProfiles:
+    def test_wireless_only_with_escaped_names(self, manager, runner):
+        runner.queue(stdout='OWL-4b7d:802-11-wireless:yes:10\n'
+                            'Wired:802-3-ethernet:yes:0\n'
+                            'Rig\\:2:802-11-wireless:yes:200\n'
+                            'owl-phone-internet:802-11-wireless:no:200\n'
+                            'odd:802-11-wireless:yes:x\n')
+        assert manager.wifi_profiles() == [
+            {'name': 'OWL-4b7d', 'autoconnect': True, 'priority': 10},
+            {'name': 'Rig:2', 'autoconnect': True, 'priority': 200},
+            {'name': 'owl-phone-internet', 'autoconnect': False, 'priority': 200},
+            {'name': 'odd', 'autoconnect': True, 'priority': 0},
+        ]
+
+
+@pytest.mark.unit
+class TestAllowHotspotAutoconnect:
+    def test_modify_only(self, manager, runner):
+        manager._hotspot_name = 'OWL-4'
+        manager.allow_hotspot_autoconnect()
+        assert runner.argv_history() == ['nmcli con modify OWL-4 connection.autoconnect yes']
+
+    def test_no_hotspot_profile_no_call(self, manager, runner):
+        runner.when(lambda a: a[-2:] == ['con', 'show'], stdout='')
+        manager.allow_hotspot_autoconnect()
+        assert not any('modify' in call for call in runner.argv_history())
+
+
+@pytest.mark.unit
 class TestHotspotPassword:
     def test_rejects_short_password(self, manager):
         with pytest.raises(NetworkManagerError):
@@ -347,20 +393,23 @@ class TestHotspotPassword:
 @pytest.mark.unit
 class TestHotspotRadioSettings:
     @staticmethod
-    def _profile(runner, band='bg', channel='0', powersave='0 (default)', pmf='0 (default)'):
+    def _profile(runner, band='bg', channel='0', powersave='0 (default)', pmf='0 (default)',
+                 priority='0'):
         runner.when(lambda a: 'con' in a and 'show' in a and '802-11-wireless.band' in ' '.join(a),
                     stdout=f'802-11-wireless.band:{band}\n'
                            f'802-11-wireless.channel:{channel}\n'
                            f'802-11-wireless.powersave:{powersave}\n'
-                           f'802-11-wireless-security.pmf:{pmf}\n')
+                           f'802-11-wireless-security.pmf:{pmf}\n'
+                           f'connection.autoconnect-priority:{priority}\n')
 
-    def test_old_profile_gets_all_three(self, manager, runner):
+    def test_old_profile_gets_all_four(self, manager, runner):
         manager._hotspot_name = 'OWL-9390'
         self._profile(runner)
         assert manager.ensure_hotspot_radio_settings() is True
         assert runner.argv_history()[-1] == (
             'nmcli con modify OWL-9390 802-11-wireless-security.pmf 1 '
-            '802-11-wireless.powersave 2 802-11-wireless.channel 6')
+            '802-11-wireless.powersave 2 802-11-wireless.channel 6 '
+            'connection.autoconnect-priority 10')
 
     def test_default_spelled_as_word_is_still_default(self, manager, runner):
         manager._hotspot_name = 'OWL-9390'
@@ -369,13 +418,13 @@ class TestHotspotRadioSettings:
 
     def test_already_fixed_profile_is_not_touched(self, manager, runner):
         manager._hotspot_name = 'OWL-9390'
-        self._profile(runner, channel='6', powersave='2', pmf='1')
+        self._profile(runner, channel='6', powersave='2', pmf='1', priority='10')
         assert manager.ensure_hotspot_radio_settings() is False
         assert not any('modify' in call for call in runner.argv_history())
 
     def test_hand_set_channel_and_pmf_survive(self, manager, runner):
         manager._hotspot_name = 'OWL-9390'
-        self._profile(runner, channel='11', pmf='3')
+        self._profile(runner, channel='11', pmf='3', priority='50')
         manager.ensure_hotspot_radio_settings()
         modify = runner.argv_history()[-1]
         assert modify == 'nmcli con modify OWL-9390 802-11-wireless.powersave 2'

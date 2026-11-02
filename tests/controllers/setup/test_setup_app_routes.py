@@ -207,6 +207,8 @@ class TestWifiJoin:
 
         nm.add_wifi_connection.assert_called_once_with('HomeNet', 'secret123')
         nm.hotspot_down.assert_called_once()
+        # con down blocked the hotspot until reboot; the join undoes that
+        nm.allow_hotspot_autoconnect.assert_called_once()
         result = client.get('/setup/api/wifi/result').get_json()
         assert result['state'] == 'connected'
         assert result['ip'] == '192.168.1.57'

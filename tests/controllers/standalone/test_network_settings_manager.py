@@ -76,9 +76,10 @@ def sender():
 
 
 @pytest.fixture
-def mgr(nm, sender):
+def mgr(nm, sender, tmp_path):
     return NetworkSettingsManager(nm, timer_factory=CapturingTimer,
-                                  beacon_sender=sender)
+                                  beacon_sender=sender,
+                                  switch_marker=str(tmp_path / 'net-switching'))
 
 
 @pytest.mark.unit

@@ -119,9 +119,9 @@ decision). Which script does what, who runs it, and where state lives.
 | `owl_setup.sh` | person | user (never sudo) | Full install. No option: maker install (interactive). `--factory [--yes]`: the only ship command. |
 | `owl_identity.sh` | person | root | Device identity in `/etc/owl-identity/`. `--otp` (CM5/Pi 5 OTP key, permanent, type `GENKEY`), `--disk` (key file, makers), `--show` (JSON), `--serial OWL-…` (optional local label), `--sign FILE` (bench spike). No other script writes identity. |
 | `controller/shared/setup.sh` | `owl_setup.sh` (or a person re-running network setup) | root | Hotspot/network, dashboard, nginx certificate, device token, and for every standalone unit the cloud helper. Preserves `[Cloud]` and `[Security]` when it rewrites `CONTROLLER.ini` (O-17). |
-| `controller/setup/install_firstboot.sh` | `owl_setup.sh` / `setup.sh` | root | `--arm` / `--disarm` first boot, `--camera-config`, `--gps-config`, `--cloud-helper`. |
+| `controller/setup/install_firstboot.sh` | `owl_setup.sh` / `setup.sh` | root | `--arm` / `--disarm` first boot, `--camera-config`, `--gps-config`, `--cloud-helper`, `--net-watchdog` (Wi-Fi fallback: `owl-net-watchdog.service` runs a root-owned copy of `utils/net_watchdog.py` + `utils/network_manager.py` from `/usr/local/lib/owl/net`; units installed before v3.26.1 need it run once by hand). |
 | `owl_cloud_provision.sh` | the root helper (phone app), or a person for manual rigs | root | Mosquitto bridge to Noktura, `[Cloud]`, credentials in `~/.owl/cloud`. |
-| `owl_update.sh` | dashboard / cloud `update_software` | user (systemd-run) | git + pip update with rollback. Does **not** refresh the root helper copy (O-23): after an update that changes `owl_cloud_provision.sh`, run `sudo bash controller/setup/install_firstboot.sh --cloud-helper`. |
+| `owl_update.sh` | dashboard / cloud `update_software` | user (systemd-run) | git + pip update with rollback. `--ref latest` (the app's default since v3.26.1) = newest `vX.Y.Z` tag. Before restarting, `tools/import_check.py` confirms every repo module the services import exists; then owl.service **and** owl-dash.service are restarted and health-checked, and either failing rolls back. Does **not** refresh the root copies (O-23): after an update that changes `owl_cloud_provision.sh`, run `sudo bash controller/setup/install_firstboot.sh --cloud-helper`; after one that changes `utils/net_watchdog.py` or `utils/network_manager.py`, run `... --net-watchdog`. |
 | `tools/noktura_register.sh` | Guy / factory, **laptop only** | laptop user | Registers an identity with Noktura using the factory token; prints the serial, claim code and a claim card. |
 | `dev/clean.sh` | `owl_setup.sh --factory` (last step, detached) | root | Strips dev residue before boxing. |
 
@@ -254,8 +254,6 @@ auto-connect matches `OWL-*` only) and answer yes to its arm prompt, or run
 `sudo bash controller/setup/install_firstboot.sh --arm` yourself. Arming
 refuses if no hotspot profile exists — that ordering is what guarantees a
 phone can always reach an armed unit.
-
-Bench verification: work through `BENCH_TEST.md` in this directory.
 
 ## Factory reset / re-entering setup
 

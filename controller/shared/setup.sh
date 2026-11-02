@@ -974,6 +974,9 @@ if [[ "$OWL_MODE" == "standalone" ]]; then
     nmcli connection modify "${SSID}" 802-11-wireless-security.pmf 1
     nmcli connection modify "${SSID}" 802-11-wireless.channel 6
     nmcli connection modify "${SSID}" 802-11-wireless.powersave 2
+    # Above the hidden Imager 'preconfigured' Wi-Fi (0), below client
+    # networks the app joins (200): HOTSPOT_AUTOCONNECT_PRIORITY.
+    nmcli connection modify "${SSID}" connection.autoconnect-priority 10
     nmcli connection modify "${SSID}" ipv4.method shared
     nmcli connection modify "${SSID}" ipv4.addresses 10.42.0.1/24
     nmcli connection modify "${SSID}" ipv6.method ignore
@@ -1543,6 +1546,15 @@ if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "
         else
             echo -e "${ORANGE}[WARN] Cloud helper not installed; the app cannot connect this OWL to Noktura."
             echo -e "       Retry with: sudo bash ${FIRSTBOOT_SCRIPT} --cloud-helper${NC}"
+        fi
+
+        # Wi-Fi fallback: the hotspot comes back whenever a client network
+        # (phone hotspot, farm Wi-Fi, rig) goes away, dashboard running or not.
+        if bash "${FIRSTBOOT_SCRIPT}" --net-watchdog; then
+            echo -e "${TICK} Wi-Fi fallback installed (hotspot returns when Wi-Fi drops)"
+        else
+            echo -e "${ORANGE}[WARN] Wi-Fi fallback not installed; losing a client network can strand this OWL."
+            echo -e "       Retry with: sudo bash ${FIRSTBOOT_SCRIPT} --net-watchdog${NC}"
         fi
 
         # First-boot arming — for units shipped to an end user, the phone

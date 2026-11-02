@@ -6,6 +6,18 @@
 set -e
 cd "$(git rev-parse --show-toplevel)"
 
+# The tests below run on this working tree, CI runs on the commit. v3.26.0
+# went out importing utils/support_bundle.py, which was never committed:
+# green here, red on CI, crash-looping dashboard on the unit.
+UNTRACKED="$(git ls-files --others --exclude-standard -- ':(top)*.py' 'utils/*.py' \
+    'controller/*.py' 'tools/*.py' 'tests/*.py' 'agent/*.py')"
+if [[ -n "$UNTRACKED" ]]; then
+    echo "pre-push: untracked Python files (CI and the OWLs won't have them):"
+    echo "$UNTRACKED" | sed 's/^/  /'
+    echo "pre-push: commit or gitignore them, then push again."
+    exit 1
+fi
+
 PARALLEL=()
 if python -c "import xdist" 2>/dev/null; then
     PARALLEL=(-n auto)

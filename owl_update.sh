@@ -15,7 +15,9 @@
 #                          --request-id <uuid> --status-file <path>
 #
 # OPTIONS
-#   --ref REF          Branch or tag to update to (default: current branch)
+#   --ref REF          Branch or tag to update to (default: current branch).
+#                      'latest' = the newest vX.Y.Z release tag (the app's
+#                      default, so untagged branch commits never reach a unit)
 #   --profile P        owl | controller (default: auto-detect)
 #   --unattended       No prompts; failures roll back automatically
 #   --request-id ID    Correlation id echoed into the status file
@@ -73,6 +75,7 @@ ASSUME_YES=0
 WITH_AI=0
 
 SERVICE=""
+DASH_SERVICE=""           # owl-dash.service on an OWL that has the dashboard
 VENV=""
 REQUIREMENTS=""
 PIP_TMP=""                # set only once the lock is held (see cleanup)
@@ -222,6 +225,10 @@ rollback() {
     pip_install -r "$REPO_DIR/$REQUIREMENTS" >/dev/null 2>&1 || log "WARNING: pip restore failed (continuing)"
 
     if [[ "$NO_RESTART" != "1" ]]; then
+        if [[ -n "$DASH_SERVICE" ]]; then
+            # Best effort: the OWL itself is what the rollback must get back
+            sudo -n systemctl restart "$DASH_SERVICE" || log "WARNING: $DASH_SERVICE restart failed"
+        fi
         sudo -n systemctl restart "$SERVICE" || { write_status error "rollback: service restart failed (original: $original_error)" true; exit 1; }
         local i
         for i in $(seq 1 10); do
@@ -327,12 +334,25 @@ main() {
     [[ "$avail_kb" -ge $((need_gb * 1048576)) ]] || fail_terminal "not enough free disk space (need ${need_gb} GB, have $((avail_kb / 1024)) MB)"
     if [[ "$NO_RESTART" != "1" ]]; then
         systemctl cat "$SERVICE" >/dev/null 2>&1 || fail_terminal "$SERVICE not installed"
+        # The dashboard is checked and rolled back with the OWL: v3.26.0's
+        # dashboard died on import while owl.service ran fine.
+        if [[ "$PROFILE" == "owl" ]] && systemctl cat owl-dash.service >/dev/null 2>&1; then
+            DASH_SERVICE="owl-dash.service"
+        fi
     fi
 
     # --- Fetch + resolve ref -------------------------------------------------------
     write_status fetching
     log "Fetching origin..."
     git fetch --prune --tags origin
+
+    if [[ "$REF" == "latest" ]]; then
+        # awk reads everything (no early exit), so pipefail never sees a SIGPIPE
+        REF="$(git tag -l 'v[0-9]*' --sort=-v:refname \
+            | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ && !found { print; found = 1 }')"
+        [[ -n "$REF" ]] || fail_terminal "no release tags (vX.Y.Z) on origin"
+        log "Latest release: $REF"
+    fi
 
     local ref_type=""
     if git ls-remote --exit-code --heads origin "$REF" >/dev/null 2>&1; then
@@ -432,6 +452,17 @@ main() {
     TO_DESC="${new_version}@${REF}/${new_commit}"
     log "Updated tree: $TO_DESC"
 
+    # --- Import check -------------------------------------------------------------------
+    # Every repo module the services import must be on disk. Older refs
+    # predate the checker; their health check still runs.
+    if [[ -f "$REPO_DIR/tools/import_check.py" ]]; then
+        write_status import_check
+        log "Checking the new code imports..."
+        local entries=(owl.py controller/standalone/standalone.py)
+        if [[ "$PROFILE" == "controller" ]]; then entries=(controller/networked/networked.py); fi
+        "$VENV/bin/python" "$REPO_DIR/tools/import_check.py" "${entries[@]}"
+    fi
+
     # --- Restart + health check --------------------------------------------------------
     if [[ "$NO_RESTART" == "1" ]]; then
         log "Skipping service restart (--no-restart)."
@@ -451,32 +482,45 @@ main() {
         fi
     fi
 
+    # This script runs in its own transient unit, so restarting the
+    # dashboard (which launched it) does not stop it.
+    local units=("$SERVICE") unit
+    if [[ -n "$DASH_SERVICE" ]]; then units+=("$DASH_SERVICE"); fi
     write_status restarting
-    log "Restarting $SERVICE..."
-    sudo -n systemctl restart "$SERVICE"
+    for unit in "${units[@]}"; do
+        log "Restarting $unit..."
+        sudo -n systemctl restart "$unit"
+    done
 
     write_status health_check
     log "Health check..."
-    local i active=0
-    for i in $(seq 1 10); do
-        sleep 3
-        if systemctl is-active --quiet "$SERVICE"; then active=1; break; fi
-    done
-    if [[ "$active" != "1" ]]; then
-        log "ERROR: $SERVICE not active 30s after restart"
-        false  # -> ERR trap -> rollback
-    fi
-    # Crash-loop detection: Restart=always makes is-active flap back to
-    # active, but each crash increments NRestarts.
-    local base_restarts now_restarts
-    base_restarts="$(systemctl show -p NRestarts --value "$SERVICE")"
-    for i in $(seq 1 10); do
-        sleep 3
-        now_restarts="$(systemctl show -p NRestarts --value "$SERVICE")"
-        if ! systemctl is-active --quiet "$SERVICE" || [[ "$now_restarts" != "$base_restarts" ]]; then
-            log "ERROR: $SERVICE unstable after restart (crash loop detected)"
+    local i active
+    for unit in "${units[@]}"; do
+        active=0
+        for i in $(seq 1 10); do
+            if systemctl is-active --quiet "$unit"; then active=1; break; fi
+            sleep 3
+        done
+        if [[ "$active" != "1" ]]; then
+            log "ERROR: $unit not active 30s after restart"
             false  # -> ERR trap -> rollback
         fi
+    done
+    # Crash-loop detection: Restart=always makes is-active flap back to
+    # active, but each crash increments NRestarts.
+    local -A base_restarts
+    for unit in "${units[@]}"; do
+        base_restarts[$unit]="$(systemctl show -p NRestarts --value "$unit")"
+    done
+    for i in $(seq 1 10); do
+        sleep 3
+        for unit in "${units[@]}"; do
+            if ! systemctl is-active --quiet "$unit" \
+               || [[ "$(systemctl show -p NRestarts --value "$unit")" != "${base_restarts[$unit]}" ]]; then
+                log "ERROR: $unit unstable after restart (crash loop detected)"
+                false  # -> ERR trap -> rollback
+            fi
+        done
     done
 
     write_status complete

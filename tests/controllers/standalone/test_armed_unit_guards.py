@@ -51,13 +51,20 @@ class TestTokenRecoveryWhileArmed:
         assert TOKEN not in resp.get_data(as_text=True)
 
     def test_finished_unit_still_recovers(self, tmp_path):
-        client, flag = dashboard(tmp_path)
+        client, flag = dashboard(tmp_path, psk='paddock-psk-99')
         flag.touch()
-        client.post('/api/settings/token', json={'hotspot_password': 'owl-setup'})
+        client.post('/api/settings/token', json={'hotspot_password': 'paddock-psk-99'})
         flag.unlink()   # setup finished
-        resp = client.post('/api/settings/token', json={'hotspot_password': 'owl-setup'})
+        resp = client.post('/api/settings/token', json={'hotspot_password': 'paddock-psk-99'})
         assert resp.status_code == 200
         assert resp.get_json()['device_token'] == TOKEN
+
+    def test_finished_unit_on_the_printed_psk_still_refuses(self, tmp_path):
+        # wifi/controller-mode finishes keep 'owl-setup' (v3.26.1)
+        client, _ = dashboard(tmp_path)
+        resp = client.post('/api/settings/token', json={'hotspot_password': 'owl-setup'})
+        assert resp.status_code == 409
+        assert TOKEN not in resp.get_data(as_text=True)
 
 
 @pytest.mark.unit

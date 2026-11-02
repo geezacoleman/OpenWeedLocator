@@ -33,6 +33,7 @@ from utils.network_manager import NetworkManagerError
 from utils import software_update
 from utils import cloud_provision
 from utils.device_identity import read_identity
+from controller.setup.firstboot_state import SETUP_HOTSPOT_PSK
 from utils.internet_probe import probe_internet
 from controller.standalone.network_settings import (
     SWITCH_DELAY_S, TEMP_CON_NAME, TEMP_REVERT_DELAY_S, TEMP_TTL_S)
@@ -48,9 +49,10 @@ PERMISSIONS_MISSING_ERROR = ('Device settings permissions not installed. '
 UPDATE_PERMISSIONS_MISSING_ERROR = ('Software update permissions not installed. '
                                     'Re-run controller/shared/setup.sh on the OWL.')
 
-# The dashboard runs OLD code after owl_update.sh finishes (the script only
-# restarts owl.service), so the status route restarts it once it has
-# reported `complete` to the caller.
+# owl_update.sh restarts and health-checks the dashboard itself since
+# v3.26.1. An older updater copy (the one that installs this release) only
+# restarts owl.service, so the status route restarts a dashboard that was
+# running before the update began, once it has reported `complete`.
 DASHBOARD_UNIT = 'owl-dash.service'
 DASHBOARD_RESTART_DELAY_S = 2
 
@@ -351,10 +353,10 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
     # Software update (owl_update.sh in a transient systemd unit)
     # ------------------------------------------------------------------
     def _default_ref():
-        branch = git_info.get('branch')
-        if not branch or branch == 'HEAD':
-            return 'main'
-        return branch
+        # The newest vX.Y.Z tag (owl_update.sh resolves it). A branch tip is
+        # whatever was pushed last: v3.26.0 reached a unit that way untagged
+        # and broken. Branches stay one explicit `ref` away.
+        return 'latest'
 
     def _version_payload():
         return {'version': _software_version(),
@@ -406,23 +408,27 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
     @bp.route('/api/ai/install', methods=['POST'])
     @guard
     def ai_install():
-        """Install AI (ultralytics, torch, ncnn): a software update at the
-        current branch that also installs requirements-gog.txt. Progress is
+        """Install AI (ultralytics, torch, ncnn): a software update to the
+        latest release that also installs requirements-gog.txt. Progress is
         the update's: GET /api/settings/update/status. Needs internet."""
         return _launch_update(_default_ref(), with_ai=True)
 
     @bp.route('/api/settings/update/status')
     def update_status():
         """Mirror of the status file plus version/git. The first read of a
-        fresh `complete` schedules the dashboard's own restart (the script
-        only restarts owl.service) so the caller sees it coming."""
+        fresh `complete` schedules the dashboard's own restart when this
+        process predates the update (an older updater only restarts
+        owl.service) so the caller sees it coming."""
         current = (software_update.read_status(update_status_file)
                    or software_update.idle_status())
         payload = {'success': True, 'update': current,
                    'dashboard_restart_pending': False}
         payload.update(_version_payload())
+        # Started after the update began = already restarted onto new code
+        restarted_by_update = bool(current['started_at']) and started_at > current['started_at']
         fresh_complete = (current['status'] == 'complete'
-                          and current['updated_at'] > started_at)
+                          and current['updated_at'] > started_at
+                          and not restarted_by_update)
         if fresh_complete and not restart_state['scheduled']:
             systemctl = shutil.which('systemctl') or '/usr/bin/systemctl'
             argv = ['/usr/bin/sudo', '-n', systemctl, 'restart', dashboard_unit]
@@ -614,6 +620,13 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
             return jsonify({'success': False,
                             'error': 'Could not verify the hotspot password '
                                      'on this OWL'}), 503
+        # Units finished in wifi/controller mode keep the printed setup PSK,
+        # and the Wi-Fi fallback brings their hotspot up wherever they lose
+        # their network. Knowing a password every OWL shares proves nothing.
+        if actual == SETUP_HOTSPOT_PSK:
+            return jsonify({'success': False, 'error': 'setup_password',
+                            'detail': 'This OWL still uses the setup hotspot '
+                                      'password. Set a hotspot password first.'}), 409
 
         if not secrets.compare_digest(provided, actual):
             recovery_lock['failures'] += 1

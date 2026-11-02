@@ -81,7 +81,8 @@ class TestStatusFile:
         status = swu.read_status(path)
         assert status == {
             'request_id': '7', 'status': 'fetching', 'ref': '', 'from': '',
-            'to': '', 'error': '', 'rollback_failed': True, 'updated_at': 12,
+            'to': '', 'error': '', 'rollback_failed': True, 'started_at': 0,
+            'updated_at': 12,
         }
 
     def test_missing_or_bad_file_is_none(self, tmp_path):
@@ -89,6 +90,9 @@ class TestStatusFile:
         bad = tmp_path / 'bad.json'
         bad.write_text('{not json')
         assert swu.read_status(bad) is None
+
+    def test_import_check_phase_runs_before_the_restart(self):
+        assert swu.PHASES.index('import_check') == swu.PHASES.index('restarting') - 1
 
     def test_idle_status_is_terminal(self):
         assert swu.idle_status()['status'] == 'idle'

@@ -382,6 +382,14 @@ class FirstBootState:
         timer.daemon = True
         timer.start()
 
+    def _allow_hotspot_autoconnect(self):
+        """hotspot_down() blocked the hotspot's autoconnect until reboot;
+        undo it so NetworkManager raises the hotspot if this network goes."""
+        try:
+            self.nm.allow_hotspot_autoconnect()
+        except Exception as e:
+            logger.warning("Could not re-enable hotspot autoconnect: %s", e)
+
     def _do_switch(self):
         with self._lock:
             ssid = self.wifi_ssid
@@ -394,6 +402,7 @@ class FirstBootState:
             self.nm.add_wifi_connection(ssid, password)
             self.nm.hotspot_down()
             if self.nm.activate_connection(ssid, timeout=ACTIVATE_TIMEOUT_S):
+                self._allow_hotspot_autoconnect()
                 with self._lock:
                     self.wifi_state = 'connected'
                     self.wifi_ip = self.nm.get_ip4()
@@ -443,6 +452,7 @@ class FirstBootState:
                 prefix=params.get('subnet_prefix', 24), dns=params.get('dns'))
             self.nm.hotspot_down()
             if self.nm.activate_connection(ssid, timeout=ACTIVATE_TIMEOUT_S):
+                self._allow_hotspot_autoconnect()
                 # owl.py must reread broker_ip/device_id and start
                 # heartbeating to the controller (which auto-confirms the
                 # reservation on the first message it sees). If the restart

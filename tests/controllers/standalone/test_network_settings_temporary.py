@@ -210,17 +210,136 @@ class TestTemporaryJoin:
         assert result['temporary'] is False
         assert result['con_name'] is None
 
-    def test_cancel_clears_temporary_fields(self, mgr, nm, clock):
+    def test_cancel_tears_a_connected_session_down(self, mgr, nm, clock):
+        # Left alone, nothing would ever bring the hotspot back
         connect(mgr)
         mgr.cancel()
         result = mgr.result()
         assert result['temporary'] is False
         assert result['expires_at'] is None
-        assert CapturingTimer.pending == []
+        assert [t.interval for t in CapturingTimer.pending] == [ns.TEMP_REVERT_DELAY_S]
+        fire_one()
+        nm.delete_connection.assert_called_with(ns.TEMP_CON_NAME)
+        nm.hotspot_up.assert_called_once()
+        assert mgr.state == 'idle'
 
-    def test_cleanup_stale_temporary_deletes_profile(self, mgr, nm):
+    def test_cancel_leaves_a_permanent_join_on_its_network(self, mgr, nm):
+        mgr.request_join('HomeNet', 'secret123')
+        CapturingTimer.fire_all()
+        assert mgr.state == 'connected'
+        mgr.cancel()
+        assert CapturingTimer.pending == []
+        nm.hotspot_up.assert_not_called()
+
+    def test_cleanup_stale_temporary_after_a_restart(self, mgr, nm, tmp_path):
+        # v3.26.0: an update restarted the dashboard mid-session and the
+        # hotspot never came back
+        (tmp_path / 'net-switching').write_text('999999')
+        nm.status.return_value = {'mode': 'none', 'ssid': None, 'ip': None}
         mgr.cleanup_stale_temporary()
         nm.delete_connection.assert_called_once_with(ns.TEMP_CON_NAME)
+        nm.allow_hotspot_autoconnect.assert_called_once()
+        assert not (tmp_path / 'net-switching').exists()
+        assert [t.interval for t in CapturingTimer.pending] == [ns.HOTSPOT_RETRY_S]
+        fire_one()
+        nm.hotspot_up.assert_called_once()
+
+    def test_cleanup_stale_temporary_leaves_a_working_network(self, mgr, nm):
+        nm.status.return_value = {'mode': 'client', 'ssid': 'FarmNet', 'ip': '192.168.1.50'}
+        mgr.cleanup_stale_temporary()
+        fire_one()
+        nm.hotspot_up.assert_not_called()
+        assert CapturingTimer.pending == []
+
+
+@pytest.mark.unit
+class TestHotspotRecovery:
+    def test_join_unblocks_hotspot_autoconnect(self, mgr, nm, clock):
+        connect(mgr)
+        nm.allow_hotspot_autoconnect.assert_called_once()
+
+    def test_unblock_failure_does_not_fail_the_join(self, mgr, nm, clock):
+        nm.allow_hotspot_autoconnect.side_effect = RuntimeError('nmcli')
+        connect(mgr)
+        assert mgr.state == 'connected'
+
+    def test_marker_held_only_while_switching(self, mgr, nm, clock, tmp_path):
+        marker = tmp_path / 'net-switching'
+        seen = []
+        nm.activate_connection.side_effect = (
+            lambda *a, **k: seen.append(marker.read_text()) or True)
+        connect(mgr)
+        assert seen == [str(ns.os.getpid())]
+        assert not marker.exists()
+
+    def test_marker_cleared_when_the_scan_fails(self, mgr, nm, tmp_path):
+        nm.scan.side_effect = RuntimeError('scan failed')
+        mgr.start_hotspot_scan()
+        CapturingTimer.fire_all()
+        assert not (tmp_path / 'net-switching').exists()
+
+    def test_three_unreadable_link_states_end_the_session(self, mgr, nm, clock):
+        connect(mgr)
+        nm.connection_state.side_effect = RuntimeError('nmcli hung')
+        fire_one()
+        fire_one()
+        assert mgr.state == 'connected'
+        fire_one()
+        assert mgr.result()['error'] == 'link_lost'
+
+    def test_one_bad_read_does_not(self, mgr, nm, clock):
+        connect(mgr)
+        reads = [RuntimeError('blip'), RuntimeError('blip'), 'activated', RuntimeError('blip')]
+
+        def state(name):
+            value = reads.pop(0)
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+        nm.connection_state.side_effect = state
+        for _ in range(4):
+            fire_one()
+        assert mgr.state == 'connected'
+
+    def test_activating_hotspot_is_not_restarted(self, mgr, nm, clock):
+        connect(mgr)
+        nm.get_hotspot_connection.return_value = 'OWL-4b7d'
+        nm.connection_state.side_effect = (
+            lambda name: 'activating' if name == 'OWL-4b7d' else 'inactive')
+        fire_one()
+        nm.hotspot_up.assert_not_called()
+        assert mgr.result()['warning'] is None
+
+    def test_failed_restore_keeps_retrying(self, mgr, nm, clock):
+        connect(mgr)
+        nm.connection_state.return_value = 'inactive'
+        nm.hotspot_up.side_effect = RuntimeError('radio busy')
+        fire_one()                                   # link lost, 3 tries fail
+        assert nm.hotspot_up.call_count == ns.REVERT_ATTEMPTS
+        assert mgr.result()['warning'] == 'previous_unavailable'
+        assert [t.interval for t in CapturingTimer.pending] == [ns.HOTSPOT_RETRY_S]
+        nm.status.return_value = {'mode': 'none', 'ssid': None, 'ip': None}
+        fire_one()                                   # still failing: again
+        assert len(CapturingTimer.pending) == 1
+        nm.hotspot_up.side_effect = None
+        fire_one()
+        assert nm.hotspot_up.call_count == ns.REVERT_ATTEMPTS + 2
+        assert CapturingTimer.pending == []
+
+    def test_retry_stops_without_a_hotspot_profile(self, mgr, nm):
+        nm.status.return_value = {'mode': 'none', 'ssid': None, 'ip': None}
+        nm.hotspot_up.side_effect = ns.NetworkManagerError('none', kind='not_found')
+        mgr._schedule_hotspot_retry()
+        fire_one()
+        assert CapturingTimer.pending == []
+
+    def test_retry_stays_out_of_a_new_switch(self, mgr, nm):
+        nm.status.return_value = {'mode': 'none', 'ssid': None, 'ip': None}
+        mgr._schedule_hotspot_retry()
+        mgr.state = 'switching'
+        fire_one()
+        nm.hotspot_up.assert_not_called()
 
 
 @pytest.mark.unit

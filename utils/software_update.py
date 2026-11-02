@@ -28,7 +28,8 @@ UPDATE_REF_PATTERN = r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$'
 TERMINAL_STATUSES = ('idle', 'complete', 'rolled_back', 'error')
 # In the order owl_update.sh writes them
 PHASES = ('starting', 'preflight', 'fetching', 'stashing', 'checking_out',
-          'restoring_config', 'installing_deps', 'restarting', 'health_check')
+          'restoring_config', 'installing_deps', 'import_check', 'restarting',
+          'health_check')
 
 UNIT_NAME = 'owl-update'
 RUNTIME_MAX_S = 1800
@@ -97,6 +98,7 @@ def normalise_status(data):
         'to': str(data.get('to', '')),
         'error': str(data.get('error', '')),
         'rollback_failed': bool(data.get('rollback_failed', False)),
+        'started_at': int(data.get('started_at', 0) or 0),
         'updated_at': int(data.get('updated_at', 0) or 0),
     }
 
