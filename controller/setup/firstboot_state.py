@@ -240,6 +240,13 @@ class FirstBootState:
 
         self._ensure_setup_surface()
 
+        # Before the AP cycle below, so the hotspot the phone sees already
+        # has them (see NetworkManager.ensure_hotspot_radio_settings)
+        try:
+            self.nm.ensure_hotspot_radio_settings()
+        except Exception as e:
+            logger.warning("Could not update hotspot radio settings: %s", e)
+
         # Mid-setup reboot after a successful join: the client profile
         # (priority 200) outranks the hotspot and reconnects on its own.
         try:

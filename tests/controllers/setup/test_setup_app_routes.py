@@ -900,6 +900,20 @@ class TestStartup:
         from controller.setup.firstboot_state import SETUP_HOTSPOT_PSK
         nm.set_hotspot_password.assert_called_once_with(SETUP_HOTSPOT_PSK)
 
+    def test_hotspot_radio_settings_fixed_before_the_ap_cycle(self, nm, state):
+        with patch('controller.setup.firstboot_state.time.sleep'):
+            state.startup()
+        names = [c[0] for c in nm.mock_calls]
+        assert 'ensure_hotspot_radio_settings' in names
+        assert names.index('ensure_hotspot_radio_settings') < names.index('hotspot_down')
+
+    def test_radio_settings_failure_still_raises_the_hotspot(self, nm, state):
+        nm.ensure_hotspot_radio_settings.side_effect = RuntimeError('nmcli gone')
+        with patch('controller.setup.firstboot_state.time.sleep'):
+            state.startup()
+        assert state.state == 'await_phone'
+        nm.hotspot_up.assert_called()
+
     def test_startup_recreates_ufw_rule(self, nm, state):
         with patch('controller.setup.firstboot_state.time.sleep'):
             state.startup()

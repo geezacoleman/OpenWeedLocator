@@ -26,6 +26,7 @@ import configparser
 import hashlib
 import secrets
 import shutil
+import socket
 import io
 import subprocess
 import uuid
@@ -50,6 +51,7 @@ from utils.mqtt_manager import CloudFeed, cloud_state_out_topic
 from utils.ai_capability import algorithm_refusal
 from utils.model_archive import dir_sha256, extract_model_zip
 from utils import software_update
+from utils import support_bundle
 try:
     from version import VERSION as _OWL_VERSION, APP_CONTRACT_VERSION
     CONTROLLER_VERSION = str(_OWL_VERSION)
@@ -1489,6 +1491,31 @@ app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB upload limit
 # Initialize controller
 controller = CentralController()
 
+
+def _build_support_bundle(app_report):
+    """(filename, zip bytes, support email, email subject) for Save logs:
+    the controller's own logs (its OWLs have no dashboard to serve theirs)."""
+    from version import SystemInfo
+    label = socket.gethostname()
+    fleet = None
+    if controller.fleet_roster is not None:
+        devices, reservations = controller.fleet_roster.snapshot()
+        fleet = {'devices': devices, 'reservations': reservations}
+    git = SystemInfo.get_git_info() or {}
+    filename, data = support_bundle.build_bundle(
+        label=label, units=support_bundle.CONTROLLER_UNITS,
+        version_info={'version': CONTROLLER_VERSION, 'git_branch': git.get('branch'),
+                      'git_commit': git.get('commit')},
+        stats={'mqtt_connected': controller.mqtt_connected,
+               'owls': dict(controller.owls_state), 'fleet': fleet},
+        controller_ini_path=str(controller.config_file), app_report=app_report)
+    subject = f"OWL controller logs {label} {datetime.now().strftime('%d %b %Y')}"
+    return filename, data, support_bundle.support_email(str(controller.config_file)), subject
+
+
+app.register_blueprint(support_bundle.create_support_blueprint(
+    build=_build_support_bundle, logger=logger))
+
 # Widget system (optional — does not block startup)
 widget_manager = None
 try:
@@ -1530,9 +1557,13 @@ DEMO_PUBLIC_PREFIXES = (
     # additionally require the per-device token minted at reserve time
     # (enforced in the routes themselves).
     '/api/fleet/',
+    # Save logs from the phone app (rig screen). Open like the fleet routes:
+    # on a rig LAN a token would stop nobody (reserve hands one out). The
+    # bundle is redacted and one build runs at a time.
+    '/api/support/bundle/',
 )
 
-DEMO_PUBLIC_EXACT = ('/api/fleet',)
+DEMO_PUBLIC_EXACT = ('/api/fleet', '/api/support/bundle')
 
 
 def _effective_client_ip():

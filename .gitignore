@@ -51,6 +51,8 @@ pip-delete-this-directory.txt
 .update_lock
 .update_backup/
 logs/updates/
+# Bench diagnostics
+logs/bench/
 
 # Unit test / coverage reports
 htmlcov/

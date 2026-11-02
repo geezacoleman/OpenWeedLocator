@@ -374,6 +374,21 @@ class TestRecordingStorageState:
         assert publisher.state['recording_blocked_reason'] is None
         assert publisher._publish_state.call_count == 2
 
+    def test_set_recording_storage_republishes_save_directory(self):
+        """Storage found by the record-time re-scan must reach state, or the
+        dashboard lists sessions from the boot path (or none at all)."""
+        publisher = self._publisher()
+        publisher.state['save_directory'] = ''
+        publisher.set_recording_storage('usb', fallback=False,
+                                        save_directory='/media/owl/SanDisk')
+        assert publisher.state['save_directory'] == '/media/owl/SanDisk'
+
+    def test_set_recording_storage_without_path_keeps_state(self):
+        publisher = self._publisher()
+        publisher.state['save_directory'] = '/home/owl/owl_images'
+        publisher.set_recording_storage('internal', fallback=True)
+        assert publisher.state['save_directory'] == '/home/owl/owl_images'
+
     def test_set_recording_blocked_clears_location(self):
         publisher = self._publisher()
         publisher.set_recording_storage('usb', fallback=False)

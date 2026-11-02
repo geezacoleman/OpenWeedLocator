@@ -667,6 +667,19 @@ ${CURRENT_USER} ALL=(root) NOPASSWD: OWL_SETTINGS_CMDS
 EOF
     sudo chmod 0440 "$SUDOERS_FILE"
 
+    # sudo logs every command line to the journal, and nmcli gets Wi-Fi and
+    # hotspot passwords as arguments. Own file, validated first: an older
+    # sudo without log_allowed skips it instead of breaking sudo.
+    local QUIET_TMP
+    QUIET_TMP="$(mktemp)"
+    printf '# Managed by OWL controller/shared/setup.sh: keep Wi-Fi passwords out of the journal\nDefaults!%s !log_allowed\n' "${NMCLI_BIN}" > "$QUIET_TMP"
+    if sudo visudo -cf "$QUIET_TMP" >/dev/null 2>&1; then
+        sudo install -m 440 -o root -g root "$QUIET_TMP" /etc/sudoers.d/95-owl-nmcli-quiet
+    else
+        echo -e "${ORANGE}[WARNING] This sudo cannot stop logging nmcli commands; Wi-Fi passwords may appear in the journal${NC}"
+    fi
+    rm -f "$QUIET_TMP"
+
     check_status "Device settings permissions" "DEVICE_SETTINGS_PERMISSIONS"
 }
 
@@ -737,11 +750,12 @@ update_owl_configs() {
     # phone app's device token (cross-repo review 2026-09-17, O-17): the bridge
     # config in /etc/mosquitto survives a re-run, so dropping [Cloud] left a
     # connected unit that reported cloud as off, and dropping [Security] turned
-    # the token guard off. Keep both sections verbatim.
+    # the token guard off. Keep both sections verbatim, and [Support] (a
+    # dealer's own support email for Save logs).
     PRESERVED_SECTIONS=""
     if [[ -f "$CTRL_INI" ]]; then
         PRESERVED_SECTIONS=$(awk '
-            /^\[/ { keep = ($0 == "[Cloud]" || $0 == "[Security]") }
+            /^\[/ { keep = ($0 == "[Cloud]" || $0 == "[Security]" || $0 == "[Support]") }
             keep { print }
         ' "$CTRL_INI")
     fi
@@ -953,6 +967,13 @@ if [[ "$OWL_MODE" == "standalone" ]]; then
     nmcli connection modify "${SSID}" 802-11-wireless-security.proto rsn
     nmcli connection modify "${SSID}" 802-11-wireless-security.pairwise ccmp
     nmcli connection modify "${SSID}" 802-11-wireless.band bg
+    # WPA2 only: with pmf at default NetworkManager also offers WPA3 (SAE),
+    # which the Pi's Wi-Fi chip fails as a hotspot, so phones can't join.
+    # Channel 6 is legal in every country; auto can pick 12/13, which many
+    # phones never scan. Same settings as utils/network_manager.py.
+    nmcli connection modify "${SSID}" 802-11-wireless-security.pmf 1
+    nmcli connection modify "${SSID}" 802-11-wireless.channel 6
+    nmcli connection modify "${SSID}" 802-11-wireless.powersave 2
     nmcli connection modify "${SSID}" ipv4.method shared
     nmcli connection modify "${SSID}" ipv4.addresses 10.42.0.1/24
     nmcli connection modify "${SSID}" ipv6.method ignore

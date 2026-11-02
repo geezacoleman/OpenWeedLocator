@@ -52,6 +52,77 @@ class TestImageSampleEnable:
 
 
 @pytest.mark.unit
+class TestStopMetadataOffTheMqttLoop:
+    """Pi 5 field test 2026-10-29: Stop wrote session_metadata.json under
+    state_lock on the MQTT loop. A stalled drive then froze every later
+    command while the video kept streaming."""
+
+    def test_stalled_metadata_write_does_not_block_commands(self, mqtt_publisher, mock_owl):
+        import threading
+        started, release = threading.Event(), threading.Event()
+
+        def stalled_write(metadata):
+            started.set()
+            release.wait(5)
+
+        mqtt_publisher.state['image_sample_enable'] = True
+        mqtt_publisher.state['session_metadata'] = {'crop': 'wheat'}
+        with patch.object(mqtt_publisher, '_write_session_metadata', side_effect=stalled_write):
+            mqtt_publisher._handle_command({'action': 'set_image_sample_enable', 'value': False})
+            assert started.wait(2), "Stop never wrote the metadata"
+            # The writer is stuck on the drive; commands still go through
+            mqtt_publisher._handle_command({'action': 'set_detection_enable', 'value': True})
+            assert mqtt_publisher.state['detection_enable'] is True
+            assert mqtt_publisher.state_lock.acquire(timeout=1)
+            mqtt_publisher.state_lock.release()
+            release.set()
+
+    def test_stop_still_writes_the_metadata(self, mqtt_publisher, mock_owl):
+        import threading
+        written = threading.Event()
+        mqtt_publisher.state['image_sample_enable'] = True
+        mqtt_publisher.state['session_metadata'] = {'crop': 'wheat'}
+        with patch.object(mqtt_publisher, '_write_session_metadata',
+                          side_effect=lambda metadata: written.set()) as write:
+            mqtt_publisher._handle_command({'action': 'set_image_sample_enable', 'value': False})
+            assert written.wait(2)
+        assert write.call_args.args[0] == {'crop': 'wheat'}
+
+
+@pytest.mark.unit
+class TestGpsSourceAndSpeed:
+    """The app's Speed cell: display speed from any fresh fix, and where the
+    position comes from. Spray-timing speed is not touched here."""
+
+    def test_known_push_source_kept(self, mqtt_publisher):
+        mqtt_publisher._handle_gps_update({'latitude': -31.5, 'longitude': 150.2,
+                                           'source': 'phone'})
+        assert mqtt_publisher.state['gps_payload']['source'] == 'phone'
+
+    @pytest.mark.parametrize('source', ['serial', 'dashboard', 'x', 3])
+    def test_unknown_push_source_dropped(self, mqtt_publisher, source):
+        """Nothing pushed over MQTT may pose as the OWL's own receiver."""
+        mqtt_publisher._handle_gps_update({'latitude': -31.5, 'longitude': 150.2,
+                                           'source': source})
+        assert 'source' not in mqtt_publisher.state['gps_payload']
+
+    def test_speed_published_and_quantized(self, mqtt_publisher):
+        mqtt_publisher.set_gps_status(True, 'phone', -31.5, 150.2, 4.0, speed_kmh=7.32)
+        assert mqtt_publisher.state['gps_speed_kmh'] == 7.5
+        assert mqtt_publisher.state['gps_source'] == 'phone'
+
+    def test_speed_jitter_does_not_republish(self, mqtt_publisher):
+        mqtt_publisher.set_gps_status(True, 'phone', -31.5, 150.2, 4.0, speed_kmh=7.4)
+        mqtt_publisher.client.publish.reset_mock()
+        mqtt_publisher.set_gps_status(True, 'phone', -31.5, 150.2, 4.0, speed_kmh=7.6)
+        assert not mqtt_publisher.client.publish.called
+
+    def test_no_speed_is_none_not_zero(self, mqtt_publisher):
+        mqtt_publisher.set_gps_status(True, 'serial', -31.5, 150.2, 2.0)
+        assert mqtt_publisher.state['gps_speed_kmh'] is None
+
+
+@pytest.mark.unit
 class TestRecordingPaused:
     """set_recording_paused: headland pause, same session (2026-10-15)."""
 

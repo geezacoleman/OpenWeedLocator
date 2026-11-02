@@ -34,6 +34,12 @@ CLIENT_CONNECTION_PRIORITY = 200
 DEFAULT_ACTIVATE_TIMEOUT = 45
 MIN_PSK_LENGTH = 8
 
+# Hotspot radio settings (see ensure_hotspot_radio_settings). Channel 6 is
+# legal in every regulatory domain, the world default (00) included.
+HOTSPOT_CHANNEL = '6'
+HOTSPOT_PMF_DISABLE = '1'
+HOTSPOT_POWERSAVE_DISABLE = '2'
+
 
 class NetworkManagerError(Exception):
     """Raised when an nmcli command fails or nmcli is unavailable."""
@@ -105,14 +111,25 @@ class NetworkManager:
         try:
             result = self._runner(['nmcli'] + args, timeout=timeout)
         except subprocess.TimeoutExpired:
-            raise NetworkManagerError(f"nmcli timed out: {' '.join(args)}", kind='timeout')
+            raise NetworkManagerError(f"nmcli timed out: {self._shown(args)}", kind='timeout')
 
         if check and result.returncode != 0:
             stderr = (result.stderr or '').strip()
-            logger.error("nmcli failed (%s): %s", ' '.join(args), stderr)
-            raise NetworkManagerError(stderr or f"nmcli failed: {' '.join(args)}",
+            logger.error("nmcli failed (%s): %s", self._shown(args), stderr)
+            raise NetworkManagerError(stderr or f"nmcli failed: {self._shown(args)}",
                                       kind=classify_nmcli_error(stderr))
         return result
+
+    @staticmethod
+    def _shown(args):
+        """nmcli args for a log line or an error: the value after a psk or
+        password argument is hidden (it used to land in the dashboard log)."""
+        shown = []
+        hide_next = False
+        for arg in args:
+            shown.append('[hidden]' if hide_next else arg)
+            hide_next = arg in ('password', 'wifi-sec.psk', '802-11-wireless-security.psk')
+        return ' '.join(shown)
 
     @staticmethod
     def _default_runner(argv, timeout=30):
@@ -307,6 +324,51 @@ class NetworkManager:
                 psk = line.split(':', 1)[1].strip()
                 return psk or None
         return None
+
+    def ensure_hotspot_radio_settings(self, name=None):
+        """Pin the hotspot settings the Pi's Wi-Fi chip needs. Returns True
+        when the profile was changed.
+
+        Since wpasupplicant 2.10-24+rpt1 (Raspberry Pi, 2026) NetworkManager
+        runs a wpa-psk hotspot as WPA2/WPA3 transition. The CYW43455 fails
+        WPA3 (SAE) auth in AP mode, so phones, which try WPA3 first, cannot
+        join, and repeated failures can take the AP down. pmf=disable drops
+        SAE. A fixed channel 6 stops the auto pick landing on 12/13, which
+        many phones never scan. Power save off keeps the AP responsive.
+
+        Only properties still at their default are changed, so a channel or
+        pmf set by hand survives. Modify only: it takes effect the next time
+        the hotspot comes up, so a connected phone is not dropped.
+        """
+        name = name or self.get_hotspot_connection()
+        if not name:
+            return False
+        result = self._run(['-t', '-f',
+                            '802-11-wireless.band,802-11-wireless.channel,'
+                            '802-11-wireless.powersave,802-11-wireless-security.pmf',
+                            'con', 'show', name])
+        current = {}
+        for line in (result.stdout or '').splitlines():
+            key, _, value = line.partition(':')
+            current[key] = value.strip()
+
+        def at_default(prop):
+            # nmcli prints a default enum as '0', 'default' or '0 (default)'
+            return (current.get(prop, '').split() or [''])[0] in ('', '0', 'default')
+
+        changes = []
+        if at_default('802-11-wireless-security.pmf'):
+            changes += ['802-11-wireless-security.pmf', HOTSPOT_PMF_DISABLE]
+        if at_default('802-11-wireless.powersave'):
+            changes += ['802-11-wireless.powersave', HOTSPOT_POWERSAVE_DISABLE]
+        # A channel needs a band; never put channel 6 on a 5 GHz profile
+        if current.get('802-11-wireless.band') == 'bg' and at_default('802-11-wireless.channel'):
+            changes += ['802-11-wireless.channel', HOTSPOT_CHANNEL]
+        if not changes:
+            return False
+        self._run(['con', 'modify', name] + changes)
+        logger.info("Hotspot '%s' radio settings updated: %s", name, ' '.join(changes))
+        return True
 
     # ------------------------------------------------------------------
     # Hostname (used by first-boot controller-join only)

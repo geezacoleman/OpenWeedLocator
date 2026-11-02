@@ -1154,7 +1154,8 @@ function handleGPSSuccess(position) {
         accuracy: position.coords.accuracy,
         speed: position.coords.speed,
         heading: position.coords.heading,
-        timestamp: position.timestamp
+        timestamp: position.timestamp,
+        source: 'browser'
     };
 
     updateGPSIndicator();

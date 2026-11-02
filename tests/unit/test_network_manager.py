@@ -345,6 +345,66 @@ class TestHotspotPassword:
 
 
 @pytest.mark.unit
+class TestHotspotRadioSettings:
+    @staticmethod
+    def _profile(runner, band='bg', channel='0', powersave='0 (default)', pmf='0 (default)'):
+        runner.when(lambda a: 'con' in a and 'show' in a and '802-11-wireless.band' in ' '.join(a),
+                    stdout=f'802-11-wireless.band:{band}\n'
+                           f'802-11-wireless.channel:{channel}\n'
+                           f'802-11-wireless.powersave:{powersave}\n'
+                           f'802-11-wireless-security.pmf:{pmf}\n')
+
+    def test_old_profile_gets_all_three(self, manager, runner):
+        manager._hotspot_name = 'OWL-9390'
+        self._profile(runner)
+        assert manager.ensure_hotspot_radio_settings() is True
+        assert runner.argv_history()[-1] == (
+            'nmcli con modify OWL-9390 802-11-wireless-security.pmf 1 '
+            '802-11-wireless.powersave 2 802-11-wireless.channel 6')
+
+    def test_default_spelled_as_word_is_still_default(self, manager, runner):
+        manager._hotspot_name = 'OWL-9390'
+        self._profile(runner, powersave='default', pmf='default')
+        assert manager.ensure_hotspot_radio_settings() is True
+
+    def test_already_fixed_profile_is_not_touched(self, manager, runner):
+        manager._hotspot_name = 'OWL-9390'
+        self._profile(runner, channel='6', powersave='2', pmf='1')
+        assert manager.ensure_hotspot_radio_settings() is False
+        assert not any('modify' in call for call in runner.argv_history())
+
+    def test_hand_set_channel_and_pmf_survive(self, manager, runner):
+        manager._hotspot_name = 'OWL-9390'
+        self._profile(runner, channel='11', pmf='3')
+        manager.ensure_hotspot_radio_settings()
+        modify = runner.argv_history()[-1]
+        assert modify == 'nmcli con modify OWL-9390 802-11-wireless.powersave 2'
+
+    def test_5ghz_profile_gets_no_channel(self, manager, runner):
+        manager._hotspot_name = 'OWL-9390'
+        self._profile(runner, band='a')
+        manager.ensure_hotspot_radio_settings()
+        assert 'channel' not in runner.argv_history()[-1]
+
+    def test_never_reactivates_the_hotspot(self, manager, runner):
+        manager._hotspot_name = 'OWL-9390'
+        self._profile(runner)
+        manager.ensure_hotspot_radio_settings()
+        assert not any(' up ' in f' {call} ' for call in runner.argv_history())
+
+    def test_no_hotspot_profile_is_a_no_op(self, manager, runner):
+        runner.when(lambda a: a[-2:] == ['con', 'show'], stdout='')
+        assert manager.ensure_hotspot_radio_settings() is False
+        assert not any('modify' in call for call in runner.argv_history())
+
+    def test_nmcli_failure_raises(self, manager, runner):
+        manager._hotspot_name = 'OWL-9390'
+        runner.when(lambda a: 'show' in a, returncode=4, stderr='Error: permission denied')
+        with pytest.raises(NetworkManagerError):
+            manager.ensure_hotspot_radio_settings()
+
+
+@pytest.mark.unit
 class TestStatus:
     def test_hotspot_mode(self, manager, runner):
         manager._hotspot_name = 'OWL-4'

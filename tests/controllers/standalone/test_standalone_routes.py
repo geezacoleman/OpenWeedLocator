@@ -969,6 +969,44 @@ class TestSystemStats:
         assert data['storage_fallback'] is True
         assert data['recording_blocked_reason'] is None
 
+    def _stats_with_state(self, dashboard, state):
+        dashboard.mqtt_client = MagicMock()
+        dashboard.mqtt_client.get_state.return_value = state
+        dashboard.mqtt_client.get_weed_detect_indicator.return_value = False
+        dashboard.mqtt_client.get_image_write_indicator.return_value = False
+        dashboard.mqtt_client.get_cloud_connected.return_value = None
+
+    def test_gps_speed_and_source_pass_through(self, standalone_test_client):
+        """The app's Speed cell shows gps_speed_kmh (any source, display
+        only) and where it comes from. Spray-timing speed_kmh stays apart."""
+        client, dashboard, tmp_dir = standalone_test_client
+        self._stats_with_state(dashboard, {'gps_fix': True, 'gps_source': 'phone',
+                                           'gps_speed_kmh': 7.5, 'speed_kmh': None})
+        data = client.get('/api/system_stats').get_json()
+        assert data['gps_speed_kmh'] == 7.5
+        assert data['gps_source'] == 'phone'
+        assert data['speed_kmh'] is None
+
+    def test_gps_speed_hidden_without_fix(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        self._stats_with_state(dashboard, {'gps_fix': False, 'gps_speed_kmh': 7.5})
+        assert client.get('/api/system_stats').get_json()['gps_speed_kmh'] is None
+
+    def test_hung_helpers_do_not_hang_the_poll(self, standalone_test_client):
+        """A hung lsusb/vcgencmd (USB drive dropping off the bus) held a
+        gunicorn thread per 2 s poll until every route stopped answering."""
+        import subprocess as sp
+        client, dashboard, tmp_dir = standalone_test_client
+        dashboard.lsusb_path = '/usr/bin/lsusb'
+        dashboard.vcgencmd_path = '/usr/bin/vcgencmd'
+        with patch('controller.standalone.standalone.subprocess.run',
+                   side_effect=sp.TimeoutExpired('lsusb', 2)) as run:
+            resp = client.get('/api/system_stats')
+        assert resp.status_code == 200
+        assert resp.get_json()['usb_devices'] == []
+        assert run.call_count == 2
+        assert all(c.kwargs.get('timeout') == 2 for c in run.call_args_list)
+
     def test_includes_resolution(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
         resp = client.get('/api/system_stats')
@@ -1105,6 +1143,24 @@ class TestUpdateGPS:
         resp = client.post('/api/update_gps', json={
             'latitude': 'nope', 'longitude': 151.2})
         assert resp.get_json()['success'] is False
+
+    def test_known_source_passes_through(self, standalone_test_client):
+        """The phone app says it is the phone, so the OWL can show
+        "Phone GPS" instead of a generic pushed position."""
+        client, dashboard, tmp_dir = standalone_test_client
+        publish = self._capture_publish(dashboard)
+        client.post('/api/update_gps', json={
+            'latitude': -31.5, 'longitude': 150.25, 'source': 'phone'})
+        assert self._payload(publish)['source'] == 'phone'
+
+    @pytest.mark.parametrize('source', ['serial', 'controller', '', 7, None])
+    def test_unknown_source_is_dropped(self, standalone_test_client, source):
+        """A push can never claim to be the OWL's own receiver."""
+        client, dashboard, tmp_dir = standalone_test_client
+        publish = self._capture_publish(dashboard)
+        client.post('/api/update_gps', json={
+            'latitude': -31.5, 'longitude': 150.25, 'source': source})
+        assert 'source' not in self._payload(publish)
 
     def test_speed_ms_converted_to_kmh(self, standalone_test_client):
         """Browser/Android speed is m/s; the EXIF pipeline speaks km/h."""

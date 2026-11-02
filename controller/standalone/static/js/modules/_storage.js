@@ -246,17 +246,28 @@ function downloadFile(filePath) {
 }
 
 /**
- * Download logs
+ * Save logs: the OWL builds a redacted support bundle (device token, asked
+ * for once as the hotspot password), then the browser downloads it by ticket.
  */
-function downloadLogs() {
-    showNotification('Info', 'Downloading logs...', 'info');
-
+async function downloadLogs() {
+    showNotification('Info', 'Saving logs...', 'info');
+    let data = {};
+    try {
+        const res = await window.OwlUI.guardedFetch('/api/support/bundle', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        });
+        data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.url) throw new Error(data.detail || data.error || 'Could not save logs');
+    } catch (error) {
+        showNotification('Error', error.message, 'error');
+        return;
+    }
     const link = document.createElement('a');
-    link.href = '/api/download_logs';
-    link.download = `owl_logs_${new Date().toISOString().split('T')[0]}.zip`;
+    link.href = data.url;
+    link.download = data.filename;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-
-    showNotification('Success', 'Log download started', 'success');
+    showNotification('Success', `Saved ${data.filename}. Passwords, keys and GPS positions are removed. `
+        + `Email it to ${data.support_email}.`, 'success', 8000);
 }

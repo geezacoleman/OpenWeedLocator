@@ -25,7 +25,7 @@ import urllib.request
 import urllib.error
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-from utils.mqtt_manager import DashMQTTSubscriber, transfer_covers
+from utils.mqtt_manager import DashMQTTSubscriber, transfer_covers, GPS_PUSH_SOURCES
 from utils.session_metadata import (clean_session_metadata, COLLECT_CAPTURE_DEFAULTS, COLLECT_LANGUAGES,
                                     OWL_CAPTURE_DEFAULTS, capture_settings_from, coerce_capture_value,
                                     ini_value, last_pick_values, load_last_pick, merge_session_file,
@@ -33,6 +33,7 @@ from utils.session_metadata import (clean_session_metadata, COLLECT_CAPTURE_DEFA
                                     add_custom_crop, remove_custom_crop, CUSTOM_CROPS_KEY)
 from utils.input_manager import get_rpi_version
 from utils.device_identity import get_device_serial, read_identity
+from utils import support_bundle
 from utils import cloud_provision
 from utils.ai_capability import algorithm_refusal
 from utils.directory_manager import (scan_sessions, stream_zip, is_session_id,
@@ -170,12 +171,18 @@ class OWLDashboard:
         self.controller_ini_path = str(
             Path(__file__).parent.parent.parent / 'config' / 'CONTROLLER.ini')
         self.token_reader = make_token_reader(self.controller_ini_path)
-        self.network_settings = NetworkSettingsManager(
-            NetworkManager(runner=self._sudo_runner))
+        nm = NetworkManager(runner=self._sudo_runner)
+        self.network_settings = NetworkSettingsManager(nm)
         # A phone-hotspot session that died with the process must not leave
         # its throwaway profile behind (NetworkManager could pick it later)
         if NetworkManager.is_supported():
             self.network_settings.cleanup_stale_temporary()
+            # Hotspots made by an older setup.sh offer WPA3 that phones can't
+            # join; fixed in place, live from the next time the hotspot comes up
+            try:
+                nm.ensure_hotspot_radio_settings()
+            except Exception as e:
+                self.logger.warning(f"Could not update hotspot radio settings: {e}")
         # Software version for the app's Maintenance card (system_stats).
         # Computed once: the dashboard restarts after an update.
         self.version_info = self._read_version_info()
@@ -1018,6 +1025,8 @@ class OWLDashboard:
                     extra['speed_kmh'] = float(gps_data['speed_kmh'])
             except (TypeError, ValueError):
                 pass
+            if gps_data.get('source') in GPS_PUSH_SOURCES:
+                extra['source'] = gps_data['source']
             result = self.mqtt_client.update_gps(lat, lon,
                                                  accuracy=extra.get('accuracy'),
                                                  timestamp=extra.get('timestamp'),
@@ -1091,6 +1100,10 @@ class OWLDashboard:
                 'gps_latitude': mqtt_state.get('gps_best_lat') if mqtt_state.get('gps_fix') else None,
                 'gps_longitude': mqtt_state.get('gps_best_lon') if mqtt_state.get('gps_fix') else None,
                 'gps_accuracy': mqtt_state.get('gps_best_accuracy') if mqtt_state.get('gps_fix') else None,
+                # Ground speed from whichever source has the fix, for display.
+                # speed_kmh below is the spray-timing speed, which phone GPS
+                # deliberately never feeds.
+                'gps_speed_kmh': mqtt_state.get('gps_speed_kmh') if mqtt_state.get('gps_fix') else None,
                 # Spray timing (additive, v3.17): who owns the timing
                 # (device-gps | controller | config), the speed it uses,
                 # frame-capture-to-relay latency and the farmer-facing speed
@@ -1362,29 +1375,9 @@ class OWLDashboard:
                 return "File not found", 404
             return send_file(path, as_attachment=True)
 
-        @self.app.route('/api/download_logs')
-        def download_logs():
-            # Streamed, never via a temp file: /tmp is tmpfs on Trixie and
-            # the old temp-file version leaked one zip per request.
-            try:
-                log_dir = Path('../../logs')
-                pairs = []
-                if log_dir.exists():
-                    for pattern in ('*.log*', '*.jsonl'):
-                        for log_file in log_dir.glob(pattern):
-                            if log_file.is_file():
-                                pairs.append((log_file.name, str(log_file)))
-
-                filename = f'owl_logs_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'
-                total_bytes = sum(os.path.getsize(p) for _, p in pairs)
-                response = Response(stream_zip(pairs), mimetype='application/zip')
-                response.headers['Content-Disposition'] = f'attachment; filename={filename}'
-                response.headers['X-Total-Bytes'] = str(total_bytes)
-                return response
-
-            except Exception as e:
-                self.logger.error(f"Error creating log archive: {e}")
-                return jsonify({'error': str(e)}), 500
+        # Logs: /api/support/bundle (utils/support_bundle.py). The old
+        # tokenless /api/download_logs zipped logs/ unredacted, Wi-Fi
+        # passwords included.
 
         # ------------------------------------------------------------------
         # Data Downloads (separate page — local filesystem, no MQTT)
@@ -2663,6 +2656,30 @@ class OWLDashboard:
                     'commit': self.version_info.get('git_commit')},
             ))
 
+        # Save logs: POST builds a redacted bundle (device token, like the
+        # other maintenance actions), GET serves it by ticket
+        self.app.register_blueprint(support_bundle.create_support_blueprint(
+            build=self._build_support_bundle, guard=self._check_device_token,
+            logger=self.logger))
+
+    def _build_support_bundle(self, app_report):
+        """(filename, zip bytes, support email, email subject) for Save logs."""
+        label = get_device_serial() or socket.gethostname()
+        try:
+            profile = self._resolve_config_path(self._get_active_config_path())
+        except Exception:
+            profile = None
+        state = self.mqtt_client.get_state() if self.mqtt_client else {}
+        filename, data = support_bundle.build_bundle(
+            label=label, units=support_bundle.OWL_UNITS,
+            version_info=getattr(self, 'version_info', None) or self._read_version_info(),
+            stats={'system': self.get_system_stats(), 'owl_state': state},
+            controller_ini_path=self.controller_ini_path, profile_path=profile,
+            log_files=support_bundle.owl_log_files(), app_report=app_report)
+        subject = f"OWL logs {label} {datetime.now().strftime('%d %b %Y')}"
+        return (filename, data, support_bundle.support_email(self.controller_ini_path),
+                subject)
+
     def _get_active_config_path(self):
         """Get the active config path from pointer file, or default."""
         # Try to find config directory relative to this file
@@ -3164,18 +3181,22 @@ class OWLDashboard:
 
             if self.vcgencmd_path:
                 try:
-                    result = subprocess.run([self.vcgencmd_path, 'measure_temp'], capture_output=True, text=True)
+                    result = subprocess.run([self.vcgencmd_path, 'measure_temp'], capture_output=True, text=True,
+                                            timeout=2)
                     if result.returncode == 0:
                         stats['cpu_temp'] = round(float(result.stdout.replace('temp=', '').replace("'C\n", '')), 1)
 
                 except Exception as e:
                     self.logger.debug(f"Temp. retrieval error: {e}")
 
-            # USB devices (skipped silently when lsusb is absent — warned once at startup)
+            # USB devices (skipped silently when lsusb is absent — warned once at startup).
+            # Both calls are time-boxed: the app polls every 2 s and a hung
+            # lsusb (USB drive dropping off the bus) held a gunicorn thread
+            # each time until all 8 were gone and every route stopped answering.
             usb_devices = []
             if self.lsusb_path:
                 try:
-                    result = subprocess.run([self.lsusb_path], capture_output=True, text=True)
+                    result = subprocess.run([self.lsusb_path], capture_output=True, text=True, timeout=2)
                     if result.returncode == 0:
                         for line in result.stdout.split('\n'):
                             if 'Camera' in line or 'Webcam' in line:

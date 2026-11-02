@@ -529,6 +529,7 @@ class Owl:
                 or '/home/owl/owl_images')
             self.min_free_gb = self.config.getint('DataCollection', 'min_free_gb', fallback=4)
             self.image_quota_gb = self.config.getint('DataCollection', 'image_quota_gb', fallback=12)
+            self._storage_resolved_for = self._storage_choice()
 
             # The storage watchdog enforces the internal free-space floor
             self.status_indicator.storage_location = self.storage_location
@@ -552,7 +553,8 @@ class Owl:
                 if self.dash:
                     self.dash.set_recording_storage(
                         self.directory_manager.resolved_location,
-                        fallback=self._is_storage_fallback())
+                        fallback=self._is_storage_fallback(),
+                        save_directory=self.save_directory)
 
             except (errors.NoWritableUSBError, errors.USBMountError, errors.USBWriteError,
                     errors.StorageSystemError) as e:
@@ -891,6 +893,12 @@ class Owl:
             return 'storage_full'
         return 'storage_error'
 
+    def _storage_choice(self):
+        """The Settings choices storage was resolved from. Both are applied
+        live by set_config_section, so a change shows up here."""
+        return (getattr(self, 'storage_location', 'auto'),
+                getattr(self, 'internal_save_directory', None))
+
     def _save_directory_writable(self):
         save_dir = getattr(self, 'save_directory', None)
         return bool(save_dir) and os.access(save_dir, os.W_OK)
@@ -902,6 +910,7 @@ class Owl:
 
         Returns True when storage was found and the ImageRecorder is ready.
         """
+        self._storage_resolved_for = self._storage_choice()
         try:
             self.directory_manager = DirectorySetup(
                 save_directory=self.config.get('DataCollection', 'save_directory'),
@@ -920,7 +929,8 @@ class Owl:
                 self.dash.set_storage_available(True)
                 self.dash.set_recording_storage(
                     self.directory_manager.resolved_location,
-                    fallback=self._is_storage_fallback())
+                    fallback=self._is_storage_fallback(),
+                    save_directory=self.save_directory)
             self.logger.info(f"Recording storage ready: {self.save_directory} "
                              f"({self.directory_manager.resolved_location})")
             return True
@@ -933,6 +943,12 @@ class Owl:
                 self.logger.warning(f"Recording requested but no writable storage found: {e}")
             else:
                 self.logger.debug(f"Recording requested but no writable storage found: {e}")
+            # Nothing writable for the current choice: recording must not
+            # carry on into the previous location (Save to changed to usb
+            # with no drive kept recording to internal)
+            self.save_directory = None
+            self.save_subdirectory = None
+            self.image_recorder = None
             if self.dash:
                 self.dash.set_storage_available(False)
                 self.dash.set_recording_blocked(self._classify_storage_error(e))
@@ -1118,6 +1134,17 @@ class Owl:
                         self.logger.info("Tracker state reset (detection disabled)")
                 prev_detection_enable = self._detection_enable
 
+                # Save to (usb/internal/auto) changed in Settings: re-resolve
+                # while idle, so the next recording and the Data page follow
+                # it at once. Before, a still-writable old location kept
+                # being used and listed until a restart.
+                if (not self._image_sample_enable
+                        and getattr(self, '_storage_resolved_for', None) is not None
+                        and self._storage_choice() != self._storage_resolved_for):
+                    self.logger.info(f"Storage setting changed to {self._storage_choice()[0]}; "
+                                     f"finding recording storage again")
+                    self._retry_storage_setup()
+
                 # Create new session directory when recording starts
                 if self._image_sample_enable and not prev_recording_enable:
                     # No drive at boot, or it has been removed or gone
@@ -1171,7 +1198,8 @@ class Owl:
                             self.dash.save_session_metadata()
                             self.dash.set_recording_storage(
                                 self.directory_manager.resolved_location,
-                                fallback=self._is_storage_fallback())
+                                fallback=self._is_storage_fallback(),
+                                save_directory=self.save_directory)
                     else:
                         # Still no drive — refuse to record and snap the
                         # toggle back off everywhere so state stays honest.
@@ -2430,7 +2458,8 @@ class Owl:
                 source=gps.get('source') if gps else None,
                 latitude=gps.get('latitude') if gps else None,
                 longitude=gps.get('longitude') if gps else None,
-                accuracy=gps.get('accuracy') if gps else None)
+                accuracy=gps.get('accuracy') if gps else None,
+                speed_kmh=self._fresh_speed_kmh())
 
         # Session GPS track: recorder throttles internally (1 s / 0.5 m)
         if (self.track_recorder.recording and self._image_sample_enable
@@ -2585,8 +2614,9 @@ class Owl:
                 if age <= self._GPS_STALE_THRESHOLD:
                     if self.gps_status_led:
                         self.gps_status_led.set_state(GPSLEDState.FIX)
-                    # Copy — the stored payload must not grow keys.
-                    return dict(gps, source='dashboard')
+                    # Copy — the stored payload must not grow keys. The MQTT
+                    # handler keeps only known push sources (phone, browser).
+                    return dict(gps, source=gps.get('source') or 'dashboard')
                 else:
                     # Dashboard GPS is stale — phone disconnected or tab backgrounded
                     if self.gps_status_led:

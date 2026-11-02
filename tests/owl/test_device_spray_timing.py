@@ -164,3 +164,26 @@ class TestDetectionLoopOrder:
         assert 'get_system_stats()' not in self._method(src, 'hoot')
         assert 'update_system_stats(self.get_system_stats())' in self._method(src, '_update_state_once')
         assert 'cpu_percent(interval=None)' in self._method(src, 'get_system_stats')
+
+
+@pytest.mark.unit
+class TestPushedGpsSource:
+    """Pushed GPS keeps who sent it (phone or browser) so the app can say
+    "Phone GPS"; an older app's push stays the generic 'dashboard'."""
+
+    def _best(self, payload):
+        fake = SimpleNamespace(_gps_state=None, gps_status_led=None,
+                               _GPS_STALE_THRESHOLD=Owl._GPS_STALE_THRESHOLD,
+                               dash=MagicMock())
+        fake.dash.get_gps_data.return_value = dict(payload, received_at=time.time())
+        return Owl._get_best_gps_data(fake)
+
+    def test_phone_push_reported_as_phone(self):
+        best = self._best({'latitude': -33.8, 'longitude': 151.0,
+                           'speed_kmh': 9.0, 'source': 'phone'})
+        assert best['source'] == 'phone'
+        assert best['speed_kmh'] == 9.0
+
+    def test_unlabelled_push_reported_as_dashboard(self):
+        best = self._best({'latitude': -33.8, 'longitude': 151.0})
+        assert best['source'] == 'dashboard'

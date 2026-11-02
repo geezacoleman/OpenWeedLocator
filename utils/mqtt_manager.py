@@ -137,6 +137,11 @@ def parse_cloud_policy(payload):
     return policy
 
 
+# Who pushed a position over /api/update_gps -> owl/gps. Anything else (an
+# older app, a hand-made post) is reported as the generic 'dashboard'.
+GPS_PUSH_SOURCES = ('phone', 'browser')
+
+
 # ---------------------------------------------------------------------------
 # Slim cloud feed. The mosquitto bridge forwards cloud_out/... to Noktura
 # over 4G in place of the full dashboard state (88 keys every 2 s, about
@@ -1232,9 +1237,13 @@ class OWLMQTTPublisher:
                     self.state['recording_paused'] = False
                 self.logger.info(f"Image sample enable set to: {self.state['image_sample_enable']}")
 
-                # Auto-save session metadata when recording stops
+                # Auto-save session metadata when recording stops. Off this
+                # thread: the write ran under state_lock on the MQTT loop, so
+                # a stalled drive stopped every later command (video kept
+                # streaming, controls went dead).
                 if was_recording and not self.state['image_sample_enable']:
-                    self._auto_save_session_metadata()
+                    threading.Thread(target=self._auto_save_session_metadata,
+                                     name='session-metadata', daemon=True).start()
 
             elif action == 'set_recording_paused':
                 # Only a running recording can be paused
@@ -3394,6 +3403,8 @@ class OWLMQTTPublisher:
         except (TypeError, ValueError):
             self.logger.warning(f"Ignoring GPS update with a non-numeric field: {gps_data}")
             return
+        if payload.get('source') not in GPS_PUSH_SOURCES:
+            payload.pop('source', None)
         gps_data = payload
 
         with self.state_lock:
@@ -3652,11 +3663,17 @@ class OWLMQTTPublisher:
             self.state['last_update'] = time.time()
         self._publish_state()
 
-    def set_recording_storage(self, location, fallback):
+    def set_recording_storage(self, location, fallback, save_directory=None):
         """Recording storage resolved: where images will land ('usb' or
         'internal') and whether that was a fallback from a missing USB drive
-        (storage_location usb/auto). Clears any blocked reason."""
+        (storage_location usb/auto). Clears any blocked reason.
+
+        save_directory republishes the resolved path: storage found by the
+        record-time re-scan otherwise left the boot value in state, and the
+        dashboard's Data and Map pages listed the wrong (or no) directory."""
         with self.state_lock:
+            if save_directory:
+                self.state['save_directory'] = save_directory
             self.state['recording_location'] = location
             self.state['storage_fallback'] = bool(fallback)
             self.state['recording_blocked_reason'] = None
@@ -3709,22 +3726,26 @@ class OWLMQTTPublisher:
             self.state['last_update'] = time.time()
         self._publish_state()
 
-    def set_gps_status(self, fix, source, latitude, longitude, accuracy):
+    def set_gps_status(self, fix, source, latitude, longitude, accuracy, speed_kmh=None):
         """Push the current best-GPS reading into state (additive fields).
 
-        Coordinates are quantized to 5 decimal places (~1.1 m) for the
-        change check so a stationary rig doesn't republish state on every
-        jitter; fix/source transitions always publish.
+        Coordinates are quantized to 5 decimal places (~1.1 m) and speed to
+        0.5 km/h for the change check so a stationary rig doesn't republish
+        state on every jitter; fix/source transitions always publish.
+        speed_kmh is for display only (gps_speed_kmh); spray timing keeps
+        its own speed_kmh.
         """
         lat_q = None if latitude is None else round(float(latitude), 5)
         lon_q = None if longitude is None else round(float(longitude), 5)
         acc_q = None if accuracy is None else round(float(accuracy), 1)
+        speed_q = None if speed_kmh is None else round(float(speed_kmh) * 2) / 2
         with self.state_lock:
             changed = (self.state.get('gps_fix') != fix
                        or self.state.get('gps_source') != source
                        or self.state.get('gps_best_lat') != lat_q
                        or self.state.get('gps_best_lon') != lon_q
-                       or self.state.get('gps_best_accuracy') != acc_q)
+                       or self.state.get('gps_best_accuracy') != acc_q
+                       or self.state.get('gps_speed_kmh') != speed_q)
             if not changed:
                 return
             self.state['gps_fix'] = bool(fix)
@@ -3732,6 +3753,7 @@ class OWLMQTTPublisher:
             self.state['gps_best_lat'] = lat_q
             self.state['gps_best_lon'] = lon_q
             self.state['gps_best_accuracy'] = acc_q
+            self.state['gps_speed_kmh'] = speed_q
             self.state['last_update'] = time.time()
         self._publish_state()
 
