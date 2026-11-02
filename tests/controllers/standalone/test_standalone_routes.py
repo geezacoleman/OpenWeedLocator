@@ -999,6 +999,9 @@ class TestSystemStats:
         client, dashboard, tmp_dir = standalone_test_client
         dashboard.lsusb_path = '/usr/bin/lsusb'
         dashboard.vcgencmd_path = '/usr/bin/vcgencmd'
+        # systemctl is-active also goes through subprocess.run where systemctl
+        # exists (Linux CI, not Windows): count only the two helpers
+        dashboard.get_owl_service_state = lambda: {'active': True, 'status': 'active'}
         with patch('controller.standalone.standalone.subprocess.run',
                    side_effect=sp.TimeoutExpired('lsusb', 2)) as run:
             resp = client.get('/api/system_stats')

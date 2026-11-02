@@ -239,6 +239,10 @@ class TestTemporaryJoin:
         mgr.cleanup_stale_temporary()
         nm.delete_connection.assert_called_once_with(ns.TEMP_CON_NAME)
         nm.allow_hotspot_autoconnect.assert_called_once()
+        # Unblocked first: the delete frees the radio and NetworkManager
+        # chooses the next profile right then
+        names = [c[0] for c in nm.mock_calls]
+        assert names.index('allow_hotspot_autoconnect') < names.index('delete_connection')
         assert not (tmp_path / 'net-switching').exists()
         assert [t.interval for t in CapturingTimer.pending] == [ns.HOTSPOT_RETRY_S]
         fire_one()

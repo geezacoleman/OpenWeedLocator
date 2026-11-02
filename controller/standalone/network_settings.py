@@ -571,11 +571,15 @@ class NetworkSettingsManager:
         a network. Ends a live phone session: the app has already seen the
         update complete."""
         self._clear_switching()
+        # Unblock BEFORE the delete: deleting a live phone session frees the
+        # radio, and NetworkManager picks its next profile at that instant.
+        # With the hotspot still blocked it took a saved phone profile
+        # instead (field, 2026-11-02).
+        self._allow_hotspot_autoconnect()
         try:
             self.nm.delete_connection(TEMP_CON_NAME)
         except Exception as e:
             logger.debug("No stale temporary profile to delete: %s", e)
-        self._allow_hotspot_autoconnect()
         self._schedule_hotspot_retry()
 
     # ------------------------------------------------------------------

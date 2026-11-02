@@ -4,6 +4,7 @@ import json
 import platform
 import re
 import shutil
+import threading
 import time
 import os
 import zipfile
@@ -57,6 +58,40 @@ def _is_session_metadata_file(filename):
             or (filename.startswith('track_') and filename.endswith('.geojson')))
 
 
+# Session listing cache. The app lists sessions on every Data/Map visit and
+# after every recording stop; walking a 65 GB USB drive (a getsize per JPEG)
+# per request, while the recorder writes to it, took long enough that the
+# app's 6 s timeouts stacked up 8 scans and every dashboard thread with them
+# (field, 2026-11-02). A folder is re-read only when its mtime moves (a file
+# was added or removed) or it changed in the last SCAN_SETTLE_S (the session
+# being recorded: its newest image may still be growing).
+SCAN_SETTLE_S = 60
+_dir_summaries = {}          # folder path -> (mtime_ns, summary)
+_last_listing = {}           # save_dir -> sessions, served while a scan runs
+_scan_lock = threading.Lock()
+
+
+def _summarise_dir(path, extensions_video=True):
+    """(image_count, video_count, image_size, video_size) of one folder."""
+    mtime_ns = os.stat(path).st_mtime_ns
+    cached = _dir_summaries.get(path)
+    if cached and cached[0] == mtime_ns and time.time() - mtime_ns / 1e9 > SCAN_SETTLE_S:
+        return cached[1]
+    image_count = video_count = image_size = video_size = 0
+    with os.scandir(path) as entries:
+        for entry in entries:
+            name = entry.name.lower()
+            if name.endswith(IMAGE_EXTENSIONS):
+                image_count += 1
+                image_size += entry.stat().st_size
+            elif extensions_video and name.endswith(VIDEO_EXTENSIONS):
+                video_count += 1
+                video_size += entry.stat().st_size
+    summary = (image_count, video_count, image_size, video_size)
+    _dir_summaries[path] = (mtime_ns, summary)
+    return summary
+
+
 def scan_sessions(save_dir):
     """Scan save_dir for recording sessions.
 
@@ -67,10 +102,25 @@ def scan_sessions(save_dir):
     Returns list of session dicts sorted newest-first, each with:
         session_id, date, time, image_count, video_count, image_size,
         total_size (images + video clips)
+
+    One scan at a time: a caller arriving mid-scan gets the previous listing
+    rather than starting a second walk of the drive (the first one ever waits).
     """
     if not save_dir or not os.path.isdir(save_dir):
         return []
+    if not _scan_lock.acquire(blocking=False):
+        if save_dir in _last_listing:
+            return list(_last_listing[save_dir])
+        _scan_lock.acquire()
+    try:
+        sessions = _scan_sessions(save_dir)
+        _last_listing[save_dir] = sessions
+        return list(sessions)
+    finally:
+        _scan_lock.release()
 
+
+def _scan_sessions(save_dir):
     sessions = []
 
     for date_entry in sorted(os.listdir(save_dir), reverse=True):
@@ -85,39 +135,26 @@ def scan_sessions(save_dir):
         if subdirs:
             # By start time, not name: old and new names sort differently
             for sess in sorted(subdirs, key=lambda d: (session_time(d), d), reverse=True):
-                sess_path = os.path.join(date_path, sess)
-                image_files = [f for f in os.listdir(sess_path)
-                               if f.lower().endswith(IMAGE_EXTENSIONS)]
-                video_files = [f for f in os.listdir(sess_path)
-                               if f.lower().endswith(VIDEO_EXTENSIONS)]
-                image_size = sum(
-                    os.path.getsize(os.path.join(sess_path, f))
-                    for f in image_files
-                )
-                video_size = sum(os.path.getsize(os.path.join(sess_path, f)) for f in video_files)
+                image_count, video_count, image_size, video_size = _summarise_dir(
+                    os.path.join(date_path, sess))
                 sessions.append({
                     'session_id': f"{date_entry}/{sess}",
                     'date': date_entry,
                     'time': session_time(sess),
-                    'image_count': len(image_files),
-                    'video_count': len(video_files),
+                    'image_count': image_count,
+                    'video_count': video_count,
                     'image_size': image_size,
                     'total_size': image_size + video_size,
                 })
         else:
             # Legacy structure: images directly in YYYYMMDD dir
-            image_files = [f for f in os.listdir(date_path)
-                           if f.lower().endswith(IMAGE_EXTENSIONS)]
-            if image_files:
-                image_size = sum(
-                    os.path.getsize(os.path.join(date_path, f))
-                    for f in image_files
-                )
+            image_count, _, image_size, _ = _summarise_dir(date_path, extensions_video=False)
+            if image_count:
                 sessions.append({
                     'session_id': date_entry,
                     'date': date_entry,
                     'time': '',
-                    'image_count': len(image_files),
+                    'image_count': image_count,
                     'video_count': 0,
                     'image_size': image_size,
                     'total_size': image_size,
