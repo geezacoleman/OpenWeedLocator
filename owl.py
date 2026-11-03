@@ -93,6 +93,7 @@ try:
     from utils.config_manager import ConfigValidator, atomic_write_config, config_profile_path
     from utils.geometry import compute_geometry, assign_lanes
     from utils.log_manager import LogManager, MQTTLogHandler
+    from utils import net_watchdog
     from utils.shared_types import Sensitivity
     from utils.gps_manager import GPSState, TrackRecorder, nrf91_command, nrf91_start_gps
     from utils.actuation import SpeedAverager, ActuationCalculator, speed_warning
@@ -2808,6 +2809,11 @@ if __name__ == "__main__":
             logger.warning(f"Could not read active_config.txt: {e}, using default")
 
     logger.info(f"Starting OWL with config: {config_file}")
+
+    # Wi-Fi fallback: hotspot back whenever wlan0 has no network. Here, not
+    # in the dashboard, so it survives a dashboard that will not start, and
+    # before Owl() so a camera that will not start cannot hold it up.
+    net_watchdog.start()
 
     owl = Owl(
         config_file=config_file,

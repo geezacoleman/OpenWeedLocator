@@ -35,8 +35,7 @@ LOG_DIR = REPO_ROOT / 'logs'
 
 DEFAULT_SUPPORT_EMAIL = 'support@noktura.tech'
 
-OWL_UNITS = ('owl', 'owl-dash', 'owl-firstboot', 'owl-net-watchdog', 'mosquitto',
-             'NetworkManager', 'nginx')
+OWL_UNITS = ('owl', 'owl-dash', 'owl-firstboot', 'mosquitto', 'NetworkManager', 'nginx')
 CONTROLLER_UNITS = ('owl-controller', 'mosquitto', 'NetworkManager', 'nginx')
 
 # CONTROLLER.ini goes in by section ALLOWLIST: a secret key added later

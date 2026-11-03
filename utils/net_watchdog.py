@@ -1,13 +1,12 @@
 """Wi-Fi fallback: bring the OWL hotspot back whenever wlan0 has no network.
 
-Runs as root (owl-net-watchdog.service, installed by
-controller/setup/install_firstboot.sh --net-watchdog) from a root-owned copy
-in /usr/local/lib/owl/net, never from the repo: a broken update must not
-break the one thing that keeps the unit reachable. v3.26.0 did exactly that
-to the dashboard, the in-process fallback died with it, and the unit stayed
-off the air until someone plugged in a screen.
-
-Standard library + utils.network_manager only (system python3, no venv).
+Runs as a thread in owl.py (start()), not in the dashboard: v3.26.0's
+dashboard died on an update, the fallback died with it, and the unit stayed
+off the air until someone plugged in a screen. owl.py is a separate process,
+started at boot, kept up through faults and health-checked (with rollback)
+by every update, and an app update delivers it to units nobody can reach
+with a shell. nmcli runs through `sudo -n`, which setup.sh grants the OWL
+user on every install (/etc/sudoers.d/95-owl-device-settings).
 
 Every TICK_S:
   - paused while first-boot setup is armed, during boot, and while the
@@ -19,18 +18,20 @@ Every TICK_S:
     or farm network that came back). Failed: the hotspot comes straight
     back. The phone-internet profile is never tried.
 
-Pause it with: sudo systemctl stop owl-net-watchdog
+Stopping owl.service stops it too; the dashboard's own retries remain.
 """
 
 import logging
 import os
+import shutil
 import subprocess
+import threading
 import time
 
 from utils.network_manager import (DEVICE_ACTIVATED, NetworkManager,
                                    PHONE_INTERNET_CON_NAME, SWITCH_MARKER)
 
-logger = logging.getLogger('owl-net-watchdog')
+logger = logging.getLogger(__name__)
 
 TICK_S = 10
 BOOT_GRACE_S = 120          # NetworkManager gets first go at autoconnect
@@ -39,6 +40,7 @@ CLIENT_RETRY_S = 150
 CLIENT_TRY_TIMEOUT_S = 30
 STATION_QUIET_S = 60
 MARKER_MAX_AGE_S = 600      # a hung dashboard does not hold the radio forever
+NO_HOTSPOT_RECHECK_S = 300  # networked units have no hotspot: look again rarely
 FIRSTBOOT_FLAG = '/boot/firmware/owl-firstboot.flag'
 PROC_DIR = '/proc'
 # unknown, unmanaged, unavailable (radio off): not ours to fix
@@ -61,7 +63,8 @@ def has_stations(runner, device='wlan0'):
     """Anyone joined to the hotspot? Unknown counts as yes: a failed read
     must never kick a phone off."""
     try:
-        result = runner(['iw', 'dev', device, 'station', 'dump'], timeout=10)
+        result = runner([shutil.which('iw') or '/usr/sbin/iw', 'dev', device,
+                         'station', 'dump'], timeout=10)
     except Exception:
         return True
     return result.returncode != 0 or 'Station ' in (result.stdout or '')
@@ -74,8 +77,12 @@ def uptime_s():
 
 class NetWatchdog:
     def __init__(self, nm, runner, uptime=uptime_s, flag_path=FIRSTBOOT_FLAG,
-                 marker_path=SWITCH_MARKER):
+                 marker_path=SWITCH_MARKER, nm_admin=None):
+        # Reads through nm (no sudo: every sudo call writes session lines to
+        # the journal, ~17k a day at one check per 10 s); changes through
+        # nm_admin (sudo), which is rare
         self.nm = nm
+        self.nm_admin = nm_admin or nm
         self.runner = runner
         self.uptime = uptime
         self.flag_path = flag_path
@@ -83,6 +90,7 @@ class NetWatchdog:
         self.down_since = None
         self.next_client_try = None
         self.last_station = float('-inf')
+        self.no_hotspot_until = None
 
     def tick(self, now):
         """One check. Returns what it saw (keeps the tests readable)."""
@@ -90,9 +98,14 @@ class NetWatchdog:
                 or dashboard_switching(self.marker_path, time.time())):
             self.down_since = None
             return 'paused'
+        if self.no_hotspot_until is not None and now < self.no_hotspot_until:
+            return 'no_hotspot'
         hotspot = self.nm.get_hotspot_connection()
         if not hotspot:
+            # Finding out lists every profile: not every 10 s
+            self.no_hotspot_until = now + NO_HOTSPOT_RECHECK_S
             return 'no_hotspot'
+        self.no_hotspot_until = None
         code, connection = self.nm.device_state()
         if code in HANDS_OFF:
             self.down_since = None
@@ -114,7 +127,7 @@ class NetWatchdog:
                        now - self.down_since, hotspot)
         self.down_since = None
         self.next_client_try = now + CLIENT_RETRY_S
-        self.nm.hotspot_up(hotspot)
+        self.nm_admin.hotspot_up(hotspot)
         return 'fallback'
 
     def _maybe_try_client(self, now, hotspot):
@@ -134,18 +147,50 @@ class NetWatchdog:
             return
         name = max(saved, key=lambda p: p['priority'])['name']
         logger.info("Nobody on the hotspot: trying saved network '%s'", name)
-        if not self.nm.activate_connection(name, timeout=CLIENT_TRY_TIMEOUT_S):
+        if not self.nm_admin.activate_connection(name, timeout=CLIENT_TRY_TIMEOUT_S):
             logger.info("'%s' not there; hotspot back up", name)
-            self.nm.hotspot_up(hotspot)
+            self.nm_admin.hotspot_up(hotspot)
 
 
 def run_command(argv, timeout=30):
     return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
 
 
-def main(sleep=time.sleep, watchdog=None):
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
-    watchdog = watchdog or NetWatchdog(NetworkManager(runner=run_command), run_command)
+def run_sudo(argv, timeout=30):
+    """nmcli needs root; the OWL user may run it with sudo -n."""
+    return run_command(['/usr/bin/sudo', '-n'] + list(argv), timeout=timeout)
+
+
+def read_runner():
+    """run_command when this user may read NetworkManager state (the usual
+    case), else run_sudo: a refused read would look like 'radio off' and the
+    watchdog would never act."""
+    try:
+        probe = run_command(['nmcli', '-t', '-f', 'GENERAL.STATE', 'dev', 'show', 'wlan0'],
+                            timeout=10)
+        if probe.returncode == 0 and probe.stdout.strip():
+            return run_command
+    except Exception:
+        pass
+    logger.warning("nmcli reads need sudo here: the journal gets sudo lines every %d s", TICK_S)
+    return run_sudo
+
+
+def start():
+    """Run the watchdog in a daemon thread (owl.py). None where there is no
+    NetworkManager (desktop testing)."""
+    if not NetworkManager.is_supported():
+        return None
+    watchdog = NetWatchdog(NetworkManager(runner=read_runner()), run_command,
+                           nm_admin=NetworkManager(runner=run_sudo))
+    thread = threading.Thread(target=run, args=(watchdog,), name='net-watchdog',
+                              daemon=True)
+    thread.start()
+    logger.info("Wi-Fi fallback watchdog running")
+    return thread
+
+
+def run(watchdog, sleep=time.sleep):
     last_error = None
     while True:
         try:
@@ -157,7 +202,3 @@ def main(sleep=time.sleep, watchdog=None):
                 logger.error("Watchdog check failed: %s", e)
                 last_error = str(e)
         sleep(TICK_S)
-
-
-if __name__ == '__main__':
-    main()

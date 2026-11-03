@@ -1548,15 +1548,6 @@ if [[ "$STATUS_PACKAGES" == "${TICK}" && "$STATUS_MQTT_BROKER" == "${TICK}" && "
             echo -e "       Retry with: sudo bash ${FIRSTBOOT_SCRIPT} --cloud-helper${NC}"
         fi
 
-        # Wi-Fi fallback: the hotspot comes back whenever a client network
-        # (phone hotspot, farm Wi-Fi, rig) goes away, dashboard running or not.
-        if bash "${FIRSTBOOT_SCRIPT}" --net-watchdog; then
-            echo -e "${TICK} Wi-Fi fallback installed (hotspot returns when Wi-Fi drops)"
-        else
-            echo -e "${ORANGE}[WARN] Wi-Fi fallback not installed; losing a client network can strand this OWL."
-            echo -e "       Retry with: sudo bash ${FIRSTBOOT_SCRIPT} --net-watchdog${NC}"
-        fi
-
         # First-boot arming — for units shipped to an end user, the phone
         # app takes over network/identity setup on their first boot.
         if [[ "$ARM_FIRSTBOOT" == "1" ]]; then

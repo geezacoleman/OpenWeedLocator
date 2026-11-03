@@ -14,7 +14,7 @@ autoconnect-priority 200 and the hotspot has 10, so NetworkManager raises
 the hotspot when no client network is around. Except after `con down`:
 that blocks the profile's autoconnect until reboot, so every switch that
 takes the hotspot down unblocks it once the client is up
-(allow_hotspot_autoconnect). utils/net_watchdog.py is the backstop.
+(allow_hotspot_autoconnect). utils/net_watchdog.py (in owl.py) is the backstop.
 
 Testable on any platform: pass a `runner` callable (same signature as
 subprocess.run) and no real nmcli is ever invoked.
@@ -40,8 +40,9 @@ HOTSPOT_AUTOCONNECT_PRIORITY = '10'
 # Throwaway profile of the phone-hotspot internet session; never rejoined
 PHONE_INTERNET_CON_NAME = 'owl-phone-internet'
 # Written by the dashboard while it owns the radio (switch, scan, teardown);
-# the watchdog keeps its hands off meanwhile. /run/owl is made by tmpfiles.d.
-SWITCH_MARKER = '/run/owl/net-switching'
+# the watchdog in owl.py keeps its hands off meanwhile. Both run as the OWL
+# user; /dev/shm is writable by it and empty after every boot.
+SWITCH_MARKER = '/dev/shm/owl-net-switching'
 # nmcli GENERAL.STATE code of a device with an active connection
 DEVICE_ACTIVATED = 100
 DEFAULT_ACTIVATE_TIMEOUT = 45

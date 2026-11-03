@@ -536,3 +536,12 @@ class TestPlatformSupport:
         with pytest.raises(NetworkManagerError) as excinfo:
             manager.scan()
         assert excinfo.value.kind == 'timeout'
+
+
+@pytest.mark.unit
+def test_setup_sh_hotspot_priority_matches_the_constant():
+    from pathlib import Path
+    from utils.network_manager import HOTSPOT_AUTOCONNECT_PRIORITY
+    setup = (Path(__file__).resolve().parents[2] / 'controller' / 'shared'
+             / 'setup.sh').read_text(encoding='utf-8')
+    assert f'connection.autoconnect-priority {HOTSPOT_AUTOCONNECT_PRIORITY}' in setup

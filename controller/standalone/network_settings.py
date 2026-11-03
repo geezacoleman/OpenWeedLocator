@@ -26,7 +26,7 @@ process dies (v3.26.0: an update restarted the dashboard mid-session and
 the unit was unreachable until someone plugged in a screen). So: every
 join unblocks the hotspot's autoconnect, failed restores keep retrying,
 startup cleanup checks the radio, and while this process owns the radio
-it says so in SWITCH_MARKER for utils/net_watchdog.py, the root backstop.
+it says so in SWITCH_MARKER for utils/net_watchdog.py, the backstop in owl.py.
 """
 
 import json
@@ -127,8 +127,8 @@ class NetworkSettingsManager:
     # Radio ownership + hotspot recovery
     # ------------------------------------------------------------------
     def _mark_switching(self):
-        """Tell the root watchdog this process owns the radio. A unit set
-        up before the watchdog has no /run/owl; nothing reads it there."""
+        """Tell the watchdog in owl.py that this process owns the radio
+        (no /dev/shm off Linux: nothing to tell there)."""
         try:
             with open(self._switch_marker, 'w') as f:
                 f.write(str(os.getpid()))
