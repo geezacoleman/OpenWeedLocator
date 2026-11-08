@@ -705,11 +705,18 @@ class TestDetectionRoutes:
         assert resp.status_code == 200
         assert data['success'] is True
 
-    def test_detection_locked_by_hardware(self, standalone_test_client):
+    @pytest.mark.parametrize('controller', ['advanced', 'ute'])
+    def test_spraying_is_not_refused_for_a_hardware_switch(self, standalone_test_client,
+                                                           controller):
+        """v3.27: the OWL arbitrates (switch OFF wins; while it is ON the
+        dashboard chooses spot, blanket or off). A 423 here made a Ute
+        switch that was ON unusable from the dashboard."""
         client, dashboard, tmp_dir = standalone_test_client
-        dashboard._get_controller_type = lambda: 'advanced'
+        _stabilize_mqtt(dashboard)
+        dashboard._get_controller_type = lambda: controller
+        dashboard._get_switch_purpose = lambda: 'detection'
         resp = client.post('/api/detection/start')
-        assert resp.status_code == 423
+        assert resp.status_code == 200
 
 
 @pytest.mark.unit
@@ -784,6 +791,28 @@ class TestNozzleRoutes:
         resp = client.post('/api/nozzles/test', json=body)
         assert resp.status_code == 400
         dashboard.mqtt_client._send_command.assert_not_called()
+
+    def test_hold_sends_the_lease(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        dashboard.mqtt_client._send_command = MagicMock(return_value={'success': True})
+        resp = client.post('/api/nozzles/hold', json={'ms': 1500})
+        assert resp.status_code == 200
+        dashboard.mqtt_client._send_command.assert_called_once_with('hold_spray', value=1500)
+
+    @pytest.mark.parametrize('ms, sent', [(0, 0), (99999, 1500), (-5, 0)])
+    def test_hold_lease_is_bounded(self, standalone_test_client, ms, sent):
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        dashboard.mqtt_client._send_command = MagicMock(return_value={'success': True})
+        client.post('/api/nozzles/hold', json={'ms': ms})
+        dashboard.mqtt_client._send_command.assert_called_once_with('hold_spray', value=sent)
+
+    def test_hold_rejects_bad_input(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        resp = client.post('/api/nozzles/hold', json={'ms': 'soon'})
+        assert resp.status_code == 400
 
     def test_nozzle_test_undelivered_is_503(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client

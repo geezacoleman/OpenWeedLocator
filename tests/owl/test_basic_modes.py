@@ -252,6 +252,10 @@ def test_advanced_controller_update_state_without_gpio():
             self.detection_enable = Value('b', True)
             self.dash = None
             self.relay_controller = DummyRelayController()
+            self.applied = 0
+
+        def _apply_spray(self, publish=True):
+            self.applied += 1
 
     owl_instance = DummyOwl()
     errors = []
@@ -271,8 +275,12 @@ def test_advanced_controller_update_state_without_gpio():
     assert errors == [], f'update_state must not error off-Pi: {errors}'
     # No switches: three-position switch resolves to centre (off)
     assert controller.detection_mode_state.value == 1
-    assert bool(owl_instance.detection_enable.value) is False
-    assert set(owl_instance.relay_controller.relay.calls) == {'all_off'}
+    # The switch only records its position; the OWL's spray owner turns it
+    # into nozzle state. It never touches relays or the detection Value
+    # (re-running update_state at hoot() start used to re-energise a blanket).
+    assert owl_instance.applied >= 1
+    assert owl_instance.relay_controller.relay.calls == []
+    assert bool(owl_instance.detection_enable.value) is True
 
 
 def test_ute_controller_update_state_without_gpio():

@@ -728,3 +728,214 @@ class TestStaleAnchorCost:
     def test_a_real_delay_still_schedules_into_the_future(self):
         """With a genuine camera-to-nozzle delay the window is still ahead."""
         assert self._committed_window_ms(0.040, 0.030, delay=0.20) == pytest.approx(190, abs=5)
+
+
+# ---------------------------------------------------------------------------
+# One spray owner (v3.27): set_mode, bounded tests, RelayControl.stop
+# ---------------------------------------------------------------------------
+
+def _recording_controller(relays=(0, 1)):
+    from utils.output_manager import RelayController
+    rc = RelayController({r: 13 + r for r in relays}, vis=False)
+    events = []
+    lock = threading.Lock()
+
+    def on(relay, verbose=True):
+        with lock:
+            events.append(('on', relay))
+
+    def off(relay, verbose=True):
+        with lock:
+            events.append(('off', relay))
+
+    rc.relay.relay_on = on
+    rc.relay.relay_off = off
+    return rc, events
+
+
+def _last(events, relay):
+    for kind, r in reversed(events):
+        if r == relay:
+            return kind
+    return None
+
+
+@pytest.mark.unit
+class TestSetMode:
+    def test_blanket_turns_everything_on_and_off_turns_it_off(self):
+        rc, events = _recording_controller()
+        assert rc.set_mode('blanket') is True
+        assert _last(events, 0) == 'on' and _last(events, 1) == 'on'
+        rc.set_mode('off')
+        assert _last(events, 0) == 'off' and _last(events, 1) == 'off'
+        rc.stop()
+
+    def test_change_guarded(self):
+        rc, events = _recording_controller()
+        rc.set_mode('off')
+        before = len(events)
+        assert rc.set_mode('off') is False
+        assert len(events) == before
+        rc.stop()
+
+    def test_unknown_mode_raises(self):
+        rc, _ = _recording_controller()
+        with pytest.raises(ValueError):
+            rc.set_mode('sideways')
+        rc.stop()
+
+    def test_receive_ignored_outside_spot(self):
+        rc, events = _recording_controller()
+        for mode in ('off', 'blanket'):
+            rc.set_mode(mode)
+            before = list(events)
+            rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=0.2)
+            time.sleep(0.35)
+            assert events == before, f'{mode}: a spray window switched a relay: {events[len(before):]}'
+        rc.stop()
+
+    def test_pending_window_cannot_turn_a_blanket_lane_off(self):
+        """The audit's bug: a spot window still pending when blanket started
+        switched that lane off when it closed."""
+        rc, events = _recording_controller()
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=0.2)
+        time.sleep(0.05)
+        rc.set_mode('blanket')
+        time.sleep(0.4)
+        assert _last(events, 0) == 'on', f'blanket lane switched off: {events}'
+        rc.stop()
+
+    def test_first_window_after_blanket_still_fires(self):
+        """A consumer that thought its relay was on (from before the blanket)
+        must still switch on for the first spot window afterwards."""
+        rc, events = _recording_controller()
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=5)
+        time.sleep(0.1)
+        rc.set_mode('blanket')
+        rc.set_mode('spot')
+        assert _last(events, 0) == 'off'
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=0.3)
+        time.sleep(0.1)
+        assert _last(events, 0) == 'on', f'first weed after blanket missed: {events}'
+        time.sleep(0.4)
+        assert _last(events, 0) == 'off'
+        rc.stop()
+
+
+@pytest.mark.unit
+class TestBoundedTests:
+    def test_test_runs_in_off_mode_and_ends_by_itself(self):
+        rc, events = _recording_controller()
+        rc.set_mode('off')
+        ended = threading.Event()
+        rc.on_test_end = ended.set
+        assert rc.start_test([0], 0.2) == [0]
+        assert _last(events, 0) == 'on'
+        assert rc.test_relays == [0]
+        assert ended.wait(1.0)
+        assert _last(events, 0) == 'off'
+        assert rc.test_relays == []
+        rc.stop()
+
+    def test_renew_extends_but_never_past_the_cap(self):
+        rc, events = _recording_controller()
+        rc.set_mode('off')
+        rc.TEST_MAX_S = 0.5
+        rc.start_test([0, 1], 0.2)
+        deadline = time.monotonic() + 1.2
+        while time.monotonic() < deadline and rc.test_relays:
+            rc.renew_test(0.2)
+            time.sleep(0.05)
+        assert rc.test_relays == [], 'renewing kept the test past its cap'
+        assert _last(events, 0) == 'off' and _last(events, 1) == 'off'
+        rc.stop()
+
+    def test_renew_without_a_test_is_refused(self):
+        rc, _ = _recording_controller()
+        assert rc.renew_test(1.0) is False
+        rc.stop()
+
+    def test_test_end_restores_blanket(self):
+        rc, events = _recording_controller()
+        rc.set_mode('blanket')
+        rc.start_test([0], 5)
+        rc.stop_test()
+        assert _last(events, 0) == 'on'
+        rc.stop()
+
+    def test_mode_change_leaves_test_relays_alone(self):
+        rc, events = _recording_controller()
+        rc.set_mode('blanket')
+        rc.start_test([0], 5)
+        rc.set_mode('off')
+        assert _last(events, 0) == 'on', 'mode change cut a running test short'
+        assert _last(events, 1) == 'off'
+        rc.stop_test()
+        assert _last(events, 0) == 'off'
+        rc.stop()
+
+    def test_spot_consumer_does_not_fight_a_test(self):
+        rc, events = _recording_controller()
+        rc.start_test([0], 5)
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=0.1)
+        time.sleep(0.3)
+        assert _last(events, 0) == 'on', 'spray window end switched a tested relay off'
+        rc.stop_test()
+        rc.stop()
+
+
+@pytest.mark.unit
+class TestStuckCallbackNoDeadlock:
+    def test_on_stuck_runs_without_blocking_set_mode(self):
+        """on_stuck is called on a consumer thread holding its Condition; a
+        handler that only records the message keeps set_mode working."""
+        rc, events = _recording_controller(relays=(0,))
+        seen = []
+        rc.on_stuck = seen.append
+
+        def broken_off(relay, verbose=True):
+            raise RuntimeError('gpio busy')
+
+        rc.relay.relay_off = broken_off
+        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=0.05)
+        time.sleep(0.3)
+        assert seen, 'stuck relay never reported'
+        done = threading.Event()
+        threading.Thread(target=lambda: (rc.set_mode('off'), done.set()), daemon=True).start()
+        assert done.wait(3.0), 'set_mode deadlocked behind the stuck relay'
+        rc.stop()
+
+
+@pytest.mark.unit
+def test_relay_control_stop_turns_relays_off_before_clearing():
+    from utils.output_manager import RelayControl
+    rc = RelayControl({0: 13, 1: 15})
+    offs = []
+    for number, relay in rc.relay_dict.items():
+        relay.off = (lambda n: (lambda: offs.append(n)))(number)
+    rc.stop()
+    assert sorted(offs) == [0, 1]
+    assert rc.relay_dict == {}
+
+
+@pytest.mark.unit
+class TestStorageRecoveryKeepsFaultCodes:
+    """Drive-full recovery used to call clear_error(), wiping a spraying
+    fault's LED code (on a Ute the LED is the only signal)."""
+
+    def test_recovery_keeps_a_fault_code(self):
+        from utils.output_manager import HeadlessStatusIndicator
+        ind = HeadlessStatusIndicator(save_directory=None, no_save=True)
+        ind.DRIVE_FULL = True
+        ind.error(7)                    # relay stuck
+        ind._update_storage_indicator(0.5)
+        assert ind.DRIVE_FULL is False
+        assert ind.error_code == 7
+
+    def test_recovery_clears_a_storage_code(self):
+        from utils.output_manager import HeadlessStatusIndicator
+        ind = HeadlessStatusIndicator(save_directory=None, no_save=True)
+        ind.DRIVE_FULL = True
+        ind.error(5)
+        ind._update_storage_indicator(0.5)
+        assert ind.error_code is None

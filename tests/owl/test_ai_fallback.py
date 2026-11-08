@@ -33,8 +33,8 @@ def build(owl_factory, config_factory, input_dir, algorithm):
 
 
 def detection_on(instance):
-    with instance.dash.state_lock:
-        instance.dash.state['detection_enable'] = True
+    # The dashboard's Start button: a command the OWL decides on
+    instance.dash._handle_command({'action': 'set_detection_enable', 'value': True})
     instance._update_state_once()
 
 

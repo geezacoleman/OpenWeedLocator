@@ -177,6 +177,8 @@ class OWLDashboard:
         # its throwaway profile behind (NetworkManager could pick it later)
         if NetworkManager.is_supported():
             self.network_settings.cleanup_stale_temporary()
+            # A join still waiting to be confirmed when this process stopped
+            self.network_settings.resume_pending_confirm()
             # Hotspots made by an older setup.sh offer WPA3 that phones can't
             # join; fixed in place, live from the next time the hotspot comes up
             try:
@@ -609,11 +611,11 @@ class OWLDashboard:
             self.logger.info(success_log)
             return jsonify(result)
 
+        # Spraying is never refused here for a hardware switch: the OWL
+        # decides (a switch OFF wins, ON lets the dashboard choose spot,
+        # blanket or off) and its spray state says why when it refuses.
         @self.app.route('/api/detection/start', methods=['POST'])
         def start_detection():
-            if self._is_hardware_locked('detection'):
-                return _hardware_locked_response('detection')
-
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             result = self.mqtt_client.set_detection_enable(True)
@@ -621,9 +623,6 @@ class OWLDashboard:
 
         @self.app.route('/api/detection/stop', methods=['POST'])
         def stop_detection():
-            if self._is_hardware_locked('detection'):
-                return _hardware_locked_response('detection')
-
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             result = self.mqtt_client.set_detection_enable(False)
@@ -663,6 +662,23 @@ class OWLDashboard:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             result = self.mqtt_client.set_detection_mode(1)
             return _command_response(result, "All nozzles OFF via dashboard")
+
+        @self.app.route('/api/nozzles/hold', methods=['POST'])
+        def nozzles_hold():
+            """Hold to spray: {ms} lease, renewed about every second while the
+            button is held; 0 releases. The OWL turns every nozzle off by
+            itself at most 1.5 s after the last renew (10 s in all), so a phone
+            that leaves mid-hold cannot leave them on. Works with the switch
+            off; refused during first-boot or an on_error = off fault."""
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            data = request.get_json(silent=True) or {}
+            try:
+                ms = int(data.get('ms', 0))
+            except (TypeError, ValueError):
+                return jsonify({'success': False, 'error': 'ms must be a number'}), 400
+            result = self.mqtt_client.hold_spray(ms)
+            return _command_response(result, f"Hold to spray ({ms} ms) via dashboard")
 
         @self.app.route('/api/nozzles/test', methods=['POST'])
         def nozzles_test():
@@ -1078,6 +1094,10 @@ class OWLDashboard:
                 'crop_buffer_px': mqtt_state.get('crop_buffer_px', 20),
                 'algorithm_error': mqtt_state.get('algorithm_error'),
                 'fault': mqtt_state.get('fault'),
+                # v3.27 spray owner: what was asked, what the nozzles do and
+                # why they differ; every active fault
+                'spray': mqtt_state.get('spray'),
+                'faults': mqtt_state.get('faults') or [],
                 'config_name': mqtt_state.get('config_name', ''),
                 'config_unsaved': mqtt_state.get('config_unsaved', False),
                 'config_source': mqtt_state.get('config_source', ''),

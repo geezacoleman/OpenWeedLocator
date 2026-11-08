@@ -485,22 +485,33 @@
     }
 
     // ---------- hold to spray ----------
-    // Spray while held; release, leaving the button or maxMs stops it.
+    // Spray while held; release, cancel, the page hiding or maxMs stops it.
+    // o.renew (optional) runs every renewMs while held: the OWL holds the
+    // nozzles on a short lease and turns them off by itself when the renews
+    // stop, so a phone that walks out of range cannot leave them on.
+    // The pointer is captured, so a gloved finger sliding a little off the
+    // button keeps spraying instead of cutting out.
     function hold(btn, o) {
         let timer = null;
         let tick = null;
+        let renew = null;
         let on = false;
         const maxMs = o.maxMs || 10000;
+        const renewMs = o.renewMs || 1000;
         const label = btn.querySelector('small');
         const idle = label ? label.textContent : '';
         function start(e) {
             if (e) e.preventDefault();
             if (on) return;
             on = true;
+            if (e && e.pointerId !== undefined && btn.setPointerCapture) {
+                try { btn.setPointerCapture(e.pointerId); } catch (err) { /* not capturable */ }
+            }
             btn.classList.add('is-on');
             o.start();
             const t0 = Date.now();
             timer = setTimeout(stop, maxMs);
+            if (o.renew) renew = setInterval(o.renew, renewMs);
             tick = setInterval(() => {
                 if (label) label.textContent = 'Spraying. Stops in ' + Math.max(0, Math.ceil((maxMs - (Date.now() - t0)) / 1000)) + ' s';
             }, 250);
@@ -510,6 +521,7 @@
             on = false;
             clearTimeout(timer);
             clearInterval(tick);
+            clearInterval(renew);
             btn.classList.remove('is-on');
             if (label) label.textContent = idle;
             o.stop();
@@ -521,6 +533,29 @@
         window.addEventListener('blur', stop);
         document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); });
         return { stop: stop };
+    }
+
+    // ---------- why spraying stopped ----------
+    // The OWL's spray block (v3.27): request, effective, reason. Returns the
+    // notice text for a request the OWL cleared or refused, or '' when there
+    // is nothing to say. Never resumes anything: it tells the operator what
+    // to press. A fault that is still active has its own notice.
+    const SPRAY_REASONS = {
+        switch_off: 'Spray switch is off. Turn it on to spray.',
+        firstboot: 'Spraying is off while setup runs.',
+        setup_finished: 'Setup finished. Press Start to spray.',
+        link_lost: 'Spraying stopped: lost contact with the controller. Press Start to spray again.',
+    };
+    function sprayNotice(d) {
+        const spray = d && d.spray;
+        if (!spray || !spray.reason || spray.request !== 'off') return '';
+        if (SPRAY_REASONS[spray.reason]) return SPRAY_REASONS[spray.reason];
+        if (String(spray.reason).indexOf('fault:') === 0) {
+            if (d.fault) return '';  // the fault notice already says the nozzles are off
+            return 'Spraying stopped: ' + String(spray.reason_text || 'fault').toLowerCase() +
+                '. Press Start to spray again.';
+        }
+        return '';
     }
 
     // ---------- press and hold to repeat (stepper − / +) ----------
@@ -869,7 +904,7 @@
         canRunAI: canRunAI, aiReported: aiReported, isHailo: isHailo, aiRunBadge: aiRunBadge, aiSummary: aiSummary,
         modelRows: modelRows, renderAIModels: renderAIModels, toggleClass: toggleClass,
         confirm: confirmSheet, choose: choiceSheet, prompt: promptSheet,
-        guardedFetch: guardedFetch, hold: hold, stepper: stepper, repeatPress: repeatPress, typeNumber: typeNumber,
+        guardedFetch: guardedFetch, hold: hold, sprayNotice: sprayNotice, stepper: stepper, repeatPress: repeatPress, typeNumber: typeNumber,
         paramSteppers: paramSteppers, showParam: showParam, stepOff: stepOff, showModeSettings: showModeSettings,
         TRACK_PRESETS: TRACK_PRESETS, trackPreset: trackPreset,
         livePop: livePop, nozzleTest: nozzleTest, RESOLUTIONS: RESOLUTIONS, resolutionKey: resolutionKey,

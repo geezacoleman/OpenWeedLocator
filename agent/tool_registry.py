@@ -530,27 +530,42 @@ def set_algorithm(algorithm, **context):
 
 @owl_tool(
     tier='apply',
-    description='Enable or disable detection, optionally setting detection mode (0=spot spray, 1=off, 2=blanket)',
+    description=('Turn spraying off, spot spray (detection on) or blanket spray (every nozzle on). '
+                 'Use state; enabled=false always means off. The OWL refuses while first-boot '
+                 'setup, a hardware switch set to off or an on_error=off fault is active.'),
     parameters={
+        'state': {
+            'type': 'string',
+            'description': "'off', 'spot' or 'blanket'",
+            'required': False,
+        },
         'enabled': {
             'type': 'boolean',
-            'description': 'Enable or disable detection',
-            'required': True,
+            'description': 'Older form: true = spot spray, false = off',
+            'required': False,
         },
         'mode': {
             'type': 'integer',
-            'description': 'Detection mode: 0=spot spray, 1=off, 2=blanket',
+            'description': 'Older form: 0=spot spray, 1=off, 2=blanket (ignored when enabled is false)',
             'required': False,
         },
     },
 )
-def set_detection(enabled, mode=None, **context):
+def set_detection(enabled=None, mode=None, state=None, **context):
     mqtt_client = context.get('mqtt_client')
     if mqtt_client is None:
         return {'error': 'No MQTT client available'}
+    codes = {'spot': 0, 'off': 1, 'blanket': 2}
+    if state is not None:
+        if state not in codes:
+            raise ValueError(f"Invalid spray state {state!r}. Must be 'off', 'spot' or 'blanket'.")
+        return mqtt_client._send_command('set_detection_mode', value=codes[state])
     if mode is not None:
         if mode not in (0, 1, 2):
             raise ValueError(f"Invalid detection mode {mode}. Must be 0, 1, or 2.")
+        # "Disable" always wins: enabled=false with mode=2 used to blanket spray
+        if enabled is False:
+            return mqtt_client.set_detection_enable(False)
         return mqtt_client._send_command('set_detection_mode', value=int(mode))
     return mqtt_client.set_detection_enable(bool(enabled))
 

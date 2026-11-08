@@ -1,4 +1,4 @@
-from threading import Thread, Event, Condition, Lock
+from threading import Thread, Event, Condition, Lock, Timer
 from utils.vis_manager import RelayVis
 from utils.error_manager import OWLAlreadyRunningError
 from utils.log_manager import LogManager
@@ -7,6 +7,7 @@ from collections import deque
 from typing import Optional
 
 import os
+import re
 import subprocess
 import shutil
 import time
@@ -220,7 +221,7 @@ class BaseStatusIndicator:
             self._set_storage_warning('full')
         else:
             if self.DRIVE_FULL:
-                self.clear_error()
+                self.clear_storage_error()
             self._set_storage_warning(
                 'low' if free_bytes < floor + 2 * self.GB else 'ok')
 
@@ -256,6 +257,14 @@ class BaseStatusIndicator:
         self.error_code = None
         self.DRIVE_FULL = False
         self.flash_event.set()
+
+    def clear_storage_error(self):
+        """Storage recovered: unlatch DRIVE_FULL and stop flashing only if a
+        storage code (5/6) is showing. A spraying fault or the switch-again
+        hint (owl.py) may be flashing instead, and must stay."""
+        self.DRIVE_FULL = False
+        if self.error_code in (5, 6):
+            self.clear_error()
 
     def _flash_error_code(self):
         while self.running and self.error_code is not None:
@@ -335,7 +344,7 @@ class HeadlessStatusIndicator(BaseStatusIndicator):
             self.DRIVE_FULL = True
         elif self.DRIVE_FULL:
             # space was freed (e.g. sessions deleted) — recording may resume
-            self.clear_error()
+            self.clear_storage_error()
 
 
 # UteStatusIndicator is defined after AdvancedStatusIndicator (below)
@@ -373,7 +382,7 @@ class AdvancedStatusIndicator(BaseStatusIndicator):
             self.error(5)  # storage full (1 is camera/dependency failure)
         elif self.DRIVE_FULL:
             # space was freed (e.g. sessions deleted) — recording may resume
-            self.clear_error()
+            self.clear_storage_error()
 
     def setup_success(self):
         self.led.blink(on_time=0.1, off_time=0.1, n=2)
@@ -599,6 +608,7 @@ class RelayControl:
                     self.relay_dict[relay] = TestRelay(board_pin)
                 else:
                     self.relay_dict[relay] = OutputDevice(pin=f'BOARD{board_pin}')
+            self._write_pins_file()
 
         else:
             self.buzzer = TestBuzzer()
@@ -637,8 +647,41 @@ class RelayControl:
         self.relay_dict = {}
 
     def stop(self):
-        self.clear()
+        # Off first: clearing the dict first made this all_off() a no-op
         self.all_off()
+        self.clear()
+
+    def _write_pins_file(self):
+        """Record the BCM numbers this process claimed, for
+        tools/relays_off.py (owl.service ExecStopPost). It drives exactly these
+        low after any exit, including kill -9, so it never needs to re-read
+        the config or touch pins the GPS hardware owns."""
+        path = os.environ.get('OWL_RELAY_PINS_FILE', RELAY_PINS_FILE)
+        pins = []
+        for relay, device in self.relay_dict.items():
+            if relay in self.disabled_relays:
+                continue
+            # str(pin) is 'GPIO27' on gpiozero 1.6 and 2.x alike (2.x's
+            # pin.info.number is the header position, not BCM)
+            match = re.search(r'GPIO(\d+)', str(getattr(device, 'pin', '')))
+            if match:
+                pins.append(int(match.group(1)))
+        try:
+            tmp = path + '.tmp'
+            with open(tmp, 'w') as f:
+                f.write(' '.join(str(p) for p in sorted(pins)) + '\n')
+            os.replace(tmp, path)
+        except OSError as e:
+            self.logger.warning(f"Could not record relay pins in {path}: {e}")
+
+
+# Read by tools/relays_off.py after owl.py exits (tmpfs: gone after a reboot)
+RELAY_PINS_FILE = '/dev/shm/owl-relay-pins'
+
+# RelayController modes (utils/spray_mode decides which one applies)
+MODE_OFF = 'off'
+MODE_SPOT = 'spot'
+MODE_BLANKET = 'blanket'
 
 # this class does the hard work of receiving detection 'jobs' and scheduling the actuation. Each detection opens a
 # spray window from its detection timestamp; overlapping windows from repeated detections of the same weed/patch merge
@@ -659,9 +702,32 @@ class RelayController:
         self.relay_schedule_dict = {}
         self.relay_condition_dict = {}
         self.running = True
-        # Called with a message when a relay will not switch off (owl.py
-        # raises it as a fault); None = log only.
+        # Called with a message when a relay will not switch off; None = log
+        # only. It runs on a consumer thread holding that relay's Condition,
+        # so it must only record the fact (owl.py raises the fault on its
+        # next sync tick) and never take another lock.
         self.on_stuck = None
+
+        # The one mode the nozzles are in. Only set_mode() changes it, and
+        # this class is the only GPIO writer: consumers act in 'spot' only,
+        # and 'blanket' holds every nozzle on. 'spot' by default so the class
+        # on its own just follows spray windows; owl.py sets the real mode
+        # straight after construction.
+        self.mode = MODE_SPOT
+        # Bumped on every mode change and test end: a consumer that sees a new
+        # generation forgets what it thought its relay was doing and re-drives
+        # it (after blanket -> spot the first weed was missed otherwise).
+        self._generation = 0
+        self._mode_lock = Lock()
+        # Bounded test (nozzle test, hold to spray): relays held on directly,
+        # whatever the mode, until _test_until. Consumers leave them alone.
+        self._test_relays = frozenset()
+        self._test_until = None
+        self._test_cap_until = None
+        self._test_timer = None
+        # Called (no lock held) when a test ends by itself, so the owner can
+        # publish the change
+        self.on_test_end = None
 
         # create a spray-window schedule and Condition() for each nozzle
         self.logger.info("[INFO] Setting up nozzles...")
@@ -678,6 +744,142 @@ class RelayController:
         time.sleep(1)
         self.logger.info("[INFO] Nozzle setup complete. Initiating camera...")
         self.relay.beep(duration=0.5)
+
+    # ------------------------------------------------------------------
+    # Mode
+    # ------------------------------------------------------------------
+    def set_mode(self, mode):
+        """Put every nozzle into mode: 'off' (all off), 'spot' (consumers follow
+        spray windows), 'blanket' (all on). Change-guarded; True if it changed.
+
+        Order matters: the mode and generation change first, then each relay
+        is cleared and driven while holding its own Condition, so a consumer
+        can never be part-way through switching it when it changes hands.
+        Relays under a bounded test keep running until the test ends."""
+        if mode not in (MODE_OFF, MODE_SPOT, MODE_BLANKET):
+            raise ValueError(f"unknown relay mode: {mode!r}")
+        with self._mode_lock:
+            if mode == self.mode:
+                return False
+            self.mode = mode
+            self._generation += 1
+            testing_now = self._test_relays
+            for relay, condition in self.relay_condition_dict.items():
+                with condition:
+                    schedule = self.relay_schedule_dict[relay]
+                    schedule['on_at'] = None
+                    schedule['off_at'] = None
+                    if relay not in testing_now:
+                        self._drive(relay, mode == MODE_BLANKET)
+                    condition.notify_all()
+        self.logger.info(f"Nozzles: {mode}")
+        return True
+
+    def _drive(self, relay, on):
+        """Switch one relay outside the consumer (mode change, test). An off
+        that fails is retried once and then reported as stuck."""
+        try:
+            self._set_relay(relay, on=on)
+        except Exception as e:
+            self.logger.error(f"Relay {relay} failed to switch {'on' if on else 'off'}: {e}")
+            if not on:
+                try:
+                    self.relay.relay_off(relay, verbose=False)
+                except Exception as e2:
+                    self._stuck(f"Relay {relay} is stuck on: {e2}")
+
+    def _stuck(self, message):
+        self.logger.error(message)
+        if self.on_stuck:
+            try:
+                self.on_stuck(message)
+            except Exception as e:
+                self.logger.error(f"on_stuck handler failed: {e}")
+
+    # ------------------------------------------------------------------
+    # Bounded tests: nozzle test and hold to spray
+    # ------------------------------------------------------------------
+    # Hard cap on any test, whatever the caller asks or however often it
+    # renews: a lost connection must not leave a nozzle open.
+    TEST_MAX_S = 10.0
+
+    @property
+    def test_relays(self):
+        return sorted(self._test_relays)
+
+    def start_test(self, relays, duration_s):
+        """Hold relays on for duration_s (capped at TEST_MAX_S), whatever
+        the mode: tests run with the switch off too. Replaces a running test.
+        Returns the relays now under test."""
+        relays = frozenset(r for r in relays if r in self.relay_condition_dict)
+        self.stop_test(notify=False)
+        if not relays:
+            return []
+        now = time.monotonic()
+        with self._mode_lock:
+            self._test_relays = relays
+            self._test_cap_until = now + self.TEST_MAX_S
+            self._test_until = min(now + max(0.0, duration_s), self._test_cap_until)
+            for relay in relays:
+                with self.relay_condition_dict[relay]:
+                    self._drive(relay, True)
+                    self.relay_condition_dict[relay].notify_all()
+            self._arm_test_timer()
+        return sorted(relays)
+
+    def renew_test(self, duration_s):
+        """Extend a running test (hold to spray renews every second), never
+        past TEST_MAX_S from its start. False when no test is running."""
+        with self._mode_lock:
+            if not self._test_relays:
+                return False
+            self._test_until = min(time.monotonic() + max(0.0, duration_s), self._test_cap_until)
+            self._arm_test_timer()
+            return True
+
+    def stop_test(self, notify=True):
+        """End a test now and give its relays back to the current mode.
+        True if a test was running."""
+        with self._mode_lock:
+            relays = self._test_relays
+            if self._test_timer:
+                self._test_timer.cancel()
+                self._test_timer = None
+            if not relays:
+                return False
+            self._test_relays = frozenset()
+            self._test_until = None
+            self._test_cap_until = None
+            self._generation += 1
+            for relay in relays:
+                with self.relay_condition_dict[relay]:
+                    self._drive(relay, self.mode == MODE_BLANKET)
+                    self.relay_condition_dict[relay].notify_all()
+        if notify and self.on_test_end:
+            try:
+                self.on_test_end()
+            except Exception as e:
+                self.logger.error(f"on_test_end handler failed: {e}")
+        return True
+
+    def _arm_test_timer(self):
+        """Caller holds _mode_lock."""
+        if self._test_timer:
+            self._test_timer.cancel()
+        delay = max(0.0, self._test_until - time.monotonic())
+        timer = Timer(delay, self._test_expired)
+        timer.daemon = True
+        self._test_timer = timer
+        timer.start()
+
+    def _test_expired(self):
+        with self._mode_lock:
+            if not self._test_relays or self._test_until is None:
+                return
+            if time.monotonic() < self._test_until - 0.005:
+                self._arm_test_timer()  # renewed while this timer was firing
+                return
+        self.stop_test()
 
     def receive(self, relay, time_stamp, location=0, delay=0, duration=1):
         """
@@ -706,6 +908,10 @@ class RelayController:
         :param delay: seconds between detection and the ground reaching the nozzle
         :param duration: duration of spray
         """
+        if self.mode != MODE_SPOT:
+            # Off: nothing sprays. Blanket: every nozzle is already on, and a
+            # window's end would switch its lane off.
+            return
         schedule = self.relay_schedule_dict[relay]
         condition = self.relay_condition_dict[relay]
         on_at = time_stamp + delay
@@ -756,6 +962,7 @@ class RelayController:
         condition = self.relay_condition_dict[relay]
         schedule = self.relay_schedule_dict[relay]
         relay_on = False
+        generation = self._generation
 
         def switch(on):
             """Drive the relay, surviving a switching failure.
@@ -779,13 +986,20 @@ class RelayController:
                         self.relay.relay_off(relay, verbose=False)
                         relay_on = False
                     except Exception as e2:
-                        self.logger.error(f"Relay {relay} STUCK ON - direct off "
-                                          f"also failed: {e2}")
-                        if self.on_stuck:
-                            self.on_stuck(f"Relay {relay} is stuck on: {e2}")
+                        self._stuck(f"Relay {relay} is stuck on - direct off also failed: {e2}")
 
         with condition:
             while self.running:
+                if generation != self._generation:
+                    # Mode change or test end: set_mode/stop_test drove the
+                    # relay itself, so what this thread remembers is stale
+                    generation = self._generation
+                    relay_on = False
+                if self.mode != MODE_SPOT or relay in self._test_relays:
+                    # Not this thread's relay right now; set_mode/stop_test
+                    # notify when it is again
+                    condition.wait()
+                    continue
                 now = time.monotonic()
                 off_at = schedule['off_at']
 
@@ -818,6 +1032,8 @@ class RelayController:
 
     def stop(self):
         self.running = False
+        if self._test_timer:
+            self._test_timer.cancel()
         for condition in self.relay_condition_dict.values():
             with condition:
                 condition.notify_all()

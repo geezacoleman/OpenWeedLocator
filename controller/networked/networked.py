@@ -171,6 +171,43 @@ def _validate_ncnn_zip(zip_path):
     return True, 'ok'
 
 
+# --------------------------------------------------------------------------
+# Spray state shared by push, reconciliation and the buttons
+# --------------------------------------------------------------------------
+
+def desired_spray(merged):
+    """'off' | 'spot' | 'blanket' from a merged desired state, or None when
+    the screen has not asked for anything yet. Older entries (detection_enable
+    / detection_mode, e.g. collect mode) are read too."""
+    if merged.get('spray') in ('off', 'spot', 'blanket'):
+        return merged['spray']
+    if merged.get('detection_mode') == 2:
+        return 'blanket'
+    if 'detection_enable' in merged:
+        return 'spot' if merged['detection_enable'] else 'off'
+    if merged.get('detection_mode') in (0, 1):
+        return 'spot' if merged['detection_mode'] == 0 else 'off'
+    return None
+
+
+def spray_command(spray):
+    """The one command that means `spray` on every OWL version."""
+    if spray == 'blanket':
+        return {'action': 'set_detection_mode', 'value': 2}
+    return {'action': 'set_detection_enable', 'value': spray == 'spot'}
+
+
+def reported_spray(state):
+    """(request, reason) an OWL reports. v3.27+ sends 'spray'; older OWLs
+    only detection_enable / detection_mode (and never a reason)."""
+    spray = state.get('spray')
+    if isinstance(spray, dict) and spray.get('request') in ('off', 'spot', 'blanket'):
+        return spray['request'], spray.get('reason'), spray.get('source')
+    if state.get('detection_mode') == 2:
+        return 'blanket', None, None
+    return ('spot' if state.get('detection_enable') else 'off'), None, None
+
+
 class CentralController:
     """Central controller for managing multiple OWLs via MQTT"""
 
@@ -193,7 +230,10 @@ class CentralController:
 
         # State management
         self.owls_state = {}
-        self.desired_state = {}  # {device_id: {'detection_enable': bool, ...}}
+        self.desired_state = {}  # {device_id: {'spray': 'off'|'spot'|'blanket', ...}}
+        # Reconciliation (check_connections): when each OWL was last sent its
+        # spray state, how many sends went unanswered, and what the card says
+        self._spray_books()
         self._load_fleet_models()
         self.lwt_timestamps = {}  # {device_id: time.time()} — when LWT marked device offline
         self.mqtt_connected = False
@@ -641,6 +681,7 @@ class CentralController:
                             del self.owls_state[device_id]
 
                 self._update_session_state()
+                self._reconcile_spray()
 
                 # Cloud presence: CloudFeed decides whether this cycle sends.
                 if self.mqtt_connected:
@@ -651,6 +692,97 @@ class CentralController:
             except Exception as e:
                 logger.error(f"Error in connection checker: {e}")
                 time.sleep(5)
+
+    # A spray state is re-sent at most this often, and an OWL counts as not
+    # responding after this many unanswered sends
+    SPRAY_RESEND_S = 4.0
+    SPRAY_UNANSWERED_LIMIT = 3
+
+    def _reconcile_spray(self):
+        """Every OWL does what the screen shows. A QoS 0 command lost on a
+        flaky link, an OWL that rebooted, a stale override: each is noticed
+        here and the spray state sent again. When an OWL stopped by itself
+        (first-boot, its switch off, an on_error = off fault, a link-loss
+        blanket stop) the screen follows the OWL instead: its desired spray
+        becomes off and the card shows why, so nothing resumes on its own."""
+        if not self.mqtt_client or not self.mqtt_connected:
+            return
+        self._spray_books()
+        now = time.time()
+        with self.mqtt_lock:
+            owls = {oid: dict(st) for oid, st in self.owls_state.items()
+                    if st.get('connected', False) and now - st.get('last_seen', 0) < 3.0}
+        for oid, state in owls.items():
+            merged = dict(self.desired_state.get('all', {}))
+            merged.update(self.desired_state.get(oid, {}))
+            desired = desired_spray(merged)
+            if desired is None:
+                continue
+            reported, reason, source = reported_spray(state)
+            spray_block = state.get('spray') if isinstance(state.get('spray'), dict) else {}
+            token = spray_block.get('requested_at')
+            if (token is not None and oid in self._spray_seen
+                    and token != self._spray_seen[oid] and source == 'switch'):
+                self._switch_flips.add(oid)
+            self._spray_seen[oid] = token
+            if now - self._spray_sent_at.get(oid, 0) < self.SPRAY_RESEND_S:
+                continue  # its answer to the last send may still be on the way
+            flipped = oid in self._switch_flips
+            self._switch_flips.discard(oid)
+            if reported != desired and source == 'switch' and flipped:
+                # The operator just flipped this OWL's own switch: newer than
+                # the screen, so the screen follows it. (Only a fresh flip: a
+                # lost Stop command must be re-sent, not overruled.)
+                self.desired_state.setdefault(oid, {})['spray'] = reported
+                desired = reported
+            if reported == desired:
+                self._set_spray_notice(oid, None)
+                self._spray_unanswered[oid] = 0
+                continue
+            if reason and reported == 'off':
+                # The OWL stopped and said why: adopt it (screen shows off)
+                self.desired_state.setdefault(oid, {})['spray'] = 'off'
+                self._spray_unanswered[oid] = 0
+                self._set_spray_notice(oid, None)
+                logger.info(f"{oid} stopped spraying ({reason}); its button now shows off")
+                continue
+            self.mqtt_client.publish(f"owl/{oid}/commands", json.dumps(spray_command(desired)))
+            self._spray_sent_at[oid] = now
+            count = self._spray_unanswered.get(oid, 0) + 1
+            self._spray_unanswered[oid] = count
+            logger.warning(f"{oid} reports spray={reported}, screen shows {desired}: re-sent ({count})")
+            if count >= self.SPRAY_UNANSWERED_LIMIT:
+                self._set_spray_notice(oid, 'Not responding to commands')
+
+    def _spray_books(self):
+        """Reconciliation bookkeeping, created on first use: when each OWL
+        was last sent its spray state, unanswered sends, the last request
+        token each OWL reported, and OWLs whose own switch just changed."""
+        if not hasattr(self, '_spray_sent_at'):
+            self._spray_sent_at = {}
+            self._spray_unanswered = {}
+            self._spray_seen = {}
+            self._switch_flips = set()
+
+    def _set_spray_notice(self, oid, text):
+        with self.mqtt_lock:
+            if oid in self.owls_state:
+                self.owls_state[oid]['controller_notice'] = text
+
+    def _set_all(self, key, value):
+        """A fleet-wide choice: stored once under 'all' and cleared from every
+        per-OWL entry, including OWLs not connected right now. Writing it into
+        each listed OWL instead left an override behind for any OWL that was
+        offline, which won over a later Stop all when it came back."""
+        self.desired_state.setdefault('all', {})[key] = value
+        for oid, desired in self.desired_state.items():
+            if oid != 'all':
+                desired.pop(key, None)
+
+    def _merged_desired(self, device_id):
+        merged = dict(self.desired_state.get('all', {}))
+        merged.update(self.desired_state.get(device_id, {}))
+        return merged
 
     def _update_session_state(self):
         """Auto-start/stop the GPS session while any OWL is detecting or
@@ -716,10 +848,15 @@ class CentralController:
             return
 
         topic = f"owl/{device_id}/commands"
-        if 'detection_enable' in merged:
-            payload = json.dumps({'action': 'set_detection_enable', 'value': merged['detection_enable']})
-            self.mqtt_client.publish(topic, payload)
-            logger.info(f"Pushed detection_enable={merged['detection_enable']} to {device_id}")
+        spray = desired_spray(merged)
+        if spray is not None:
+            # Exactly one command, with the same meaning on old and new OWLs
+            # (an old OWL in blanket turned everything off on
+            # set_detection_enable false, so sending both undid a blanket)
+            self.mqtt_client.publish(topic, json.dumps(spray_command(spray)))
+            self._spray_books()
+            self._spray_sent_at[device_id] = time.time()
+            logger.info(f"Pushed spray={spray} to {device_id}")
 
         # Capture settings and the run's labels go before recording, so a
         # rejoining OWL's first image already carries them.
@@ -785,7 +922,10 @@ class CentralController:
                     fix = gps_state.get('fix', {})
                     conn = gps_state.get('connection', {})
 
-                    if fix.get('speed_kmh') is not None:
+                    # GPSState drops a speed older than 3 s or without a valid
+                    # fix; fix_valid is checked here too so a source that
+                    # reports speed on its own can't time the boom from a void fix
+                    if fix.get('speed_kmh') is not None and fix.get('fix_valid'):
                         raw_speed = fix['speed_kmh']
                         avg = self.speed_averager.add_sample(raw_speed)
                         speed_kmh = avg
@@ -1134,6 +1274,45 @@ class CentralController:
             return f"{', '.join(sorted(refused))}: {reason}"
         return reason
 
+    def _store_spray(self, device_id, spray):
+        """Remember what the screen asks for, so reconnects and
+        reconciliation can put each OWL back to it."""
+        self._spray_books()
+        if device_id == 'all':
+            self._set_all('spray', spray)
+            with self.mqtt_lock:
+                targets = list(self.owls_state)
+        else:
+            self.desired_state.setdefault(device_id, {})['spray'] = spray
+            targets = [device_id]
+        now = time.time()
+        for oid in targets:
+            self._spray_sent_at[oid] = now
+            self._spray_unanswered[oid] = 0
+            self._set_spray_notice(oid, None)
+
+    def _send_hold(self, device_id, lease):
+        """hold_spray to each target. An OWL from before v3.27 has no lease:
+        it gets the old blanket on / off instead (the screen's hold button
+        sends 0 on release)."""
+        with self.mqtt_lock:
+            if device_id == 'all':
+                targets = {oid: dict(st) for oid, st in self.owls_state.items()
+                           if st.get('connected', False)}
+            else:
+                targets = {device_id: dict(self.owls_state.get(device_id, {}))}
+        sent_to = []
+        for oid, state in targets.items():
+            if 'spray' in state:
+                payload = {'action': 'hold_spray', 'value': lease}
+            else:
+                payload = {'action': 'set_detection_mode', 'value': 2 if lease else 1}
+            result = self.mqtt_client.publish(f"owl/{oid}/commands", json.dumps(payload))
+            if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                sent_to.append(oid)
+        return {'success': bool(sent_to) or device_id == 'all',
+                'message': f"Sent to {len(sent_to)} OWLs", 'targets': sent_to}
+
     def send_command(self, device_id, action, value=None):
         """Send command to OWL(s)"""
         if not self.mqtt_connected or not self.mqtt_client:
@@ -1148,46 +1327,38 @@ class CentralController:
         payload = {'action': action}
 
         if action == 'toggle_detection':
-            if device_id != 'all':
-                current = self.owls_state.get(device_id, {}).get('detection_enable', False)
-                new_val = not current
-                payload = {'action': 'set_detection_enable', 'value': new_val}
-                self.desired_state.setdefault(device_id, {})['detection_enable'] = new_val
-            else:
-                payload = {'action': 'set_detection_enable', 'value': value}
-                self.desired_state.setdefault('all', {})['detection_enable'] = value
-                with self.mqtt_lock:
-                    for oid in self.owls_state:
-                        self.desired_state.setdefault(oid, {})['detection_enable'] = value
+            # Absolute when a value is given; an old client without one
+            # toggles from what the screen shows, never from what the OWL
+            # last reported (a flip of a stale report inverted the button)
+            if value is None and device_id != 'all':
+                value = desired_spray(self._merged_desired(device_id)) != 'spot'
+            spray = 'spot' if value else 'off'
+            payload = spray_command(spray)
+            self._store_spray(device_id, spray)
 
         elif action == 'toggle_recording':
-            if device_id != 'all':
-                current = self.owls_state.get(device_id, {}).get('image_sample_enable', False)
-                new_val = not current
-                payload = {'action': 'set_image_sample_enable', 'value': new_val}
-                self.desired_state.setdefault(device_id, {})['image_sample_enable'] = new_val
+            if value is None and device_id != 'all':
+                value = not self._merged_desired(device_id).get('image_sample_enable', False)
+            payload = {'action': 'set_image_sample_enable', 'value': bool(value)}
+            if device_id == 'all':
+                self._set_all('image_sample_enable', bool(value))
             else:
-                payload = {'action': 'set_image_sample_enable', 'value': value}
-                self.desired_state.setdefault('all', {})['image_sample_enable'] = value
-                with self.mqtt_lock:
-                    for oid in self.owls_state:
-                        self.desired_state.setdefault(oid, {})['image_sample_enable'] = value
+                self.desired_state.setdefault(device_id, {})['image_sample_enable'] = bool(value)
 
         elif action == 'toggle_all_nozzles':
-            mode = 2 if value else 1
-            payload = {'action': 'set_detection_mode', 'value': mode}
-            self.desired_state.setdefault('all', {})['detection_mode'] = mode
-            if value:
-                # Turning on nozzles disables detection
-                self.desired_state.setdefault('all', {})['detection_enable'] = False
-                with self.mqtt_lock:
-                    for oid in self.owls_state:
-                        self.desired_state.setdefault(oid, {})['detection_mode'] = mode
-                        self.desired_state.setdefault(oid, {})['detection_enable'] = False
-            else:
-                with self.mqtt_lock:
-                    for oid in self.owls_state:
-                        self.desired_state.setdefault(oid, {})['detection_mode'] = mode
+            # Blanket on/off, for the OWL asked (it used to set the fleet)
+            spray = 'blanket' if value else 'off'
+            payload = spray_command(spray)
+            self._store_spray(device_id, spray)
+
+        elif action == 'hold_spray':
+            # Hold to spray: a lease the OWL ends by itself <= 1.5 s after the
+            # last renew. Not stored: nothing to restore on reconnect.
+            try:
+                lease = max(0, min(1500, int(value or 0)))
+            except (TypeError, ValueError):
+                lease = 0
+            return self._send_hold(device_id, lease)
 
         elif action == 'set_recording_paused':
             payload = {'action': 'set_recording_paused', 'value': bool(value)}
@@ -1205,10 +1376,10 @@ class CentralController:
 
         elif action == 'set_tracking':
             payload = {'action': 'set_tracking', 'value': value}
-            self.desired_state.setdefault('all', {})['tracking_enabled'] = value
-            with self.mqtt_lock:
-                for oid in self.owls_state:
-                    self.desired_state.setdefault(oid, {})['tracking_enabled'] = value
+            if device_id == 'all':
+                self._set_all('tracking_enabled', value)
+            else:
+                self.desired_state.setdefault(device_id, {})['tracking_enabled'] = value
 
         elif action == 'set_sensitivity':
             payload = {'action': 'set_sensitivity_level', 'level': value}

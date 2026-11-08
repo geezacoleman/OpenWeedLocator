@@ -415,7 +415,13 @@ Group=$(id -g -n $CURRENT_USER)
 WorkingDirectory=$SCRIPT_DIR
 Environment="PATH=$VENV_BIN:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="PYTHONUNBUFFERED=1"
+# A software update cut off part-way is rolled back before owl.py starts
+# (tools/update_guard.py; system python3 -I: the venv may be half-installed)
+ExecStartPre=-/usr/bin/python3 -I $SCRIPT_DIR/tools/update_guard.py
 ExecStart=$VENV_BIN/python -u $SCRIPT_DIR/owl.py
+# After any exit (kill -9 included): drive the relay pins owl.py claimed low.
+# System python3 -I, so a broken virtualenv cannot stop it; '-' = never fail the unit.
+ExecStopPost=-/usr/bin/python3 -I $SCRIPT_DIR/tools/relays_off.py
 Restart=always
 RestartSec=5
 KillMode=mixed

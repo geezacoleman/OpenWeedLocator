@@ -189,7 +189,7 @@ class TestGPSStateIntegration:
 
         # Manually backdate the fix time
         with state._lock:
-            state.last_fix_time = time.time() - 15
+            state.last_fix_time = time.monotonic() - 15
 
         d = state.get_dict()
         assert d['fix_valid'] is False
@@ -424,7 +424,7 @@ class TestGPSFallback:
 
         # Backdate to make it stale
         with state._lock:
-            state.last_fix_time = time.time() - 15
+            state.last_fix_time = time.monotonic() - 15
 
         dash = MagicMock()
         dash_data = {'latitude': -33.5, 'longitude': 151.0, 'accuracy': 5.0, 'timestamp': time.time()}

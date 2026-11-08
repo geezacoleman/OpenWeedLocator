@@ -106,7 +106,7 @@ class TestDesiredVsReportedState:
 
         controller.send_command('all', 'toggle_detection', True)
 
-        assert controller.desired_state.get('all', {}).get('detection_enable') is True
+        assert controller.desired_state.get('all', {}).get('spray') == 'spot'
 
     def test_toggle_recording_stores_desired_state(self, controller):
         controller.owls_state['owl-pi-1'] = {
@@ -135,8 +135,7 @@ class TestDesiredVsReportedState:
 
         controller.send_command('all', 'toggle_all_nozzles', True)
 
-        assert controller.desired_state.get('all', {}).get('detection_mode') == 2
-        assert controller.desired_state.get('all', {}).get('detection_enable') is False
+        assert controller.desired_state.get('all', {}).get('spray') == 'blanket'
 
 
 # ---------------------------------------------------------------------------

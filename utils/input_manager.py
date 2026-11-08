@@ -24,6 +24,29 @@ else:
         f"The system is running on a {platform_name} platform. GPIO disabled. Test mode active.")
 
 
+def _apply_spray(owl):
+    """Hand a switch change to the OWL's one spray owner. No publish here:
+    this runs on a gpiozero callback thread."""
+    apply = getattr(owl, '_apply_spray', None)
+    if callable(apply):
+        try:
+            apply(publish=False)
+        except Exception as e:
+            logger.error(f"Applying the spray switch failed: {e}", exc_info=True)
+
+
+def _nozzles_off(owl, log):
+    rc = getattr(owl, 'relay_controller', None)
+    if rc is None:
+        return
+    try:
+        rc.stop_test(notify=False)
+        rc.set_mode('off')
+        log.info("[INFO] All relays turned off")
+    except Exception as e:
+        log.error(f"Error turning off relays: {e}")
+
+
 class UteController:
     def __init__(self, detection_state,
                  sample_state,
@@ -68,6 +91,9 @@ class UteController:
                 self.status_indicator.enable_weed_detection()
             else:
                 self.status_indicator.disable_weed_detection()
+            # The switch is a spray input: apply it now (switch OFF is a hard
+            # kill), the dashboard hears on the next state-sync tick
+            _apply_spray(self.owl)
         elif self.switch_purpose == 'recording':
             with self.sample_state.get_lock():
                 self.sample_state.value = is_active
@@ -103,20 +129,8 @@ class UteController:
         with self.stop_flag.get_lock():
             self.stop_flag.value = True
 
-        # Turn off all relays
-        try:
-            if hasattr(self.owl, 'relay_controller') and self.owl.relay_controller:
-                self.owl.relay_controller.relay.all_off()
-                self.logger.info("[INFO] All relays turned off")
-        except Exception as e:
-            self.logger.error(f"Error turning off relays: {e}")
-
-        # Disable detection
-        try:
-            with self.detection_state.get_lock():
-                self.detection_state.value = False
-        except Exception as e:
-            self.logger.error(f"Error disabling detection: {e}")
+        # Nozzles off (owl.stop() already did; this covers a direct stop)
+        _nozzles_off(self.owl, self.logger)
 
         # Stop status indicator (turns off LEDs)
         try:
@@ -231,33 +245,20 @@ class AdvancedController:
         self.sensitivity_manager.apply_preset(preset_name, self.owl)
 
     def set_detection_mode(self, mode):
+        """Three-position spray switch: 0 spot, 1 off, 2 blanket. Only records
+        the position; owl._apply_spray turns it into nozzle state (first-boot
+        and faults still win) and publishes it. It never switches relays
+        itself: hoot() re-reads the switches at start, and this used to
+        re-energise a blanket from here."""
         try:
             with self.detection_mode_state.get_lock():
                 self.detection_mode_state.value = mode
             self.status_indicator.generic_notification()
-            with self.owl.detection_enable.get_lock():
-                if mode == 0:  # Detection on (Spot Spray)
-                    self.owl.detection_enable.value = True
-                    self.status_indicator.enable_weed_detection()
-                elif mode == 2:  # All solenoids on (Blanket)
-                    self.owl.detection_enable.value = False
-                    self.status_indicator.disable_weed_detection()
-                    if getattr(self.owl, '_firstboot_active', False) is True:
-                        self.logger.warning("Blanket spray refused: first-boot setup is active")
-                    else:
-                        self.owl.relay_controller.relay.all_on()
-                else:  # Off (mode 1)
-                    self.owl.detection_enable.value = False
-                    self.status_indicator.disable_weed_detection()
-                    self.owl.relay_controller.relay.all_off()
-
-            # Publish detection mode to MQTT for dashboard (optional - doesn't affect core functionality)
-            try:
-                if hasattr(self.owl, 'dash') and self.owl.dash:
-                    self.owl.dash.set_detection_mode(mode)
-            except Exception as mqtt_err:
-                # MQTT failure should not affect hardware control
-                self.logger.debug(f"MQTT publish failed (non-critical): {mqtt_err}")
+            if mode == 0:
+                self.status_indicator.enable_weed_detection()
+            else:
+                self.status_indicator.disable_weed_detection()
+            _apply_spray(self.owl)
 
         except KeyboardInterrupt:
             self.logger.info("[INFO] KeyboardInterrupt received in set_detection_mode. Exiting.")
@@ -303,20 +304,8 @@ class AdvancedController:
         with self.stop_flag.get_lock():
             self.stop_flag.value = True
 
-        # Turn off all relays
-        try:
-            if hasattr(self.owl, 'relay_controller') and self.owl.relay_controller:
-                self.owl.relay_controller.relay.all_off()
-                self.logger.info("[INFO] All relays turned off")
-        except Exception as e:
-            self.logger.error(f"Error turning off relays: {e}")
-
-        # Disable detection
-        try:
-            with self.owl.detection_enable.get_lock():
-                self.owl.detection_enable.value = False
-        except Exception as e:
-            self.logger.error(f"Error disabling detection: {e}")
+        # Nozzles off (owl.stop() already did; this covers a direct stop)
+        _nozzles_off(self.owl, self.logger)
 
         # Stop status indicator (turns off LEDs)
         try:
@@ -326,10 +315,9 @@ class AdvancedController:
         except Exception as e:
             self.logger.error(f"Error stopping status indicator: {e}")
 
-        # Update MQTT state to show everything is off
+        # Update MQTT state to show recording is off
         try:
             if hasattr(self.owl, 'dash') and self.owl.dash:
-                self.owl.dash.set_detection_mode(1)  # Off
                 self.owl.dash.set_image_sample_enable(False)
         except Exception as e:
             self.logger.debug(f"MQTT update failed during shutdown: {e}")

@@ -21,6 +21,16 @@ No JSON persistence: a mid-switch reboot self-resolves via NetworkManager
 autoconnect priorities (client profiles 200, hotspot 10). A single gunicorn
 worker (--workers 1 --threads 8) makes one in-process machine safe.
 
+A permanent join must be confirmed (v3.27). Until then the new profile does
+not autoconnect and the previous one is kept, so a reboot falls back by
+itself, and after CONFIRM_S the OWL reverts on its own: a typo'd network
+that NetworkManager "joined" (DHCP on the wrong VLAN, a captive portal, a
+phone that cannot follow) no longer strands the unit. Any request reaching
+the dashboard from the new network confirms it (the app polls /result over
+it), as does POST /api/settings/network/confirm; a join made at the kiosk
+confirms at once. The deadline is kept in /dev/shm so a dashboard restart
+inside the window still reverts.
+
 The hotspot must come back whenever the unit has no network, even if this
 process dies (v3.26.0: an update restarted the dashboard mid-session and
 the unit was unreachable until someone plugged in a screen). So: every
@@ -47,6 +57,8 @@ ACTIVATE_TIMEOUT_S = 45     # how long nmcli waits for the client network
 REVERT_ATTEMPTS = 3         # tries to restore the previous connection after a failed join
 SCAN_START_DELAY_S = 0.1    # lets the scan HTTP response flush before the AP drops
 HOTSPOT_RETRY_S = 30        # while the unit has no network at all
+CONFIRM_S = 120             # a permanent join reverts unless confirmed by then
+CONFIRM_RECORD = '/dev/shm/owl-net-confirm.json'   # tmpfs: a reboot falls back anyway
 
 # Temporary join (phone-hotspot internet)
 TEMP_CON_NAME = PHONE_INTERNET_CON_NAME  # never the SSID: revert must not collide with a real profile
@@ -85,9 +97,16 @@ class NetworkSettingsManager:
     """
 
     def __init__(self, network_manager, timer_factory=threading.Timer,
-                 beacon_sender=None, switch_marker=SWITCH_MARKER):
+                 beacon_sender=None, switch_marker=SWITCH_MARKER,
+                 confirm_timer_factory=threading.Timer, confirm_record=CONFIRM_RECORD):
         self.nm = network_manager
         self._timer_factory = timer_factory
+        # Separate so tests can fire the switch without the 120 s revert
+        self._confirm_timer_factory = confirm_timer_factory
+        self._confirm_record = confirm_record
+        self._confirm_timer = None
+        self._confirm_now = False
+        self.confirmed = True       # False while a permanent join awaits confirmation
         self._switch_marker = switch_marker
         self._status_failures = 0
         self._beacon_sender = beacon_sender or send_udp_beacon
@@ -236,9 +255,13 @@ class NetworkSettingsManager:
     # ------------------------------------------------------------------
     # Join
     # ------------------------------------------------------------------
-    def request_join(self, ssid, password=None, temporary=False, wait_s=None):
+    def request_join(self, ssid, password=None, temporary=False, wait_s=None,
+                     confirm_now=False):
         """Schedule the switch and return immediately — the HTTP 202 must
         reach the phone before the current network can drop.
+
+        confirm_now: the join was made at the OWL itself (kiosk), so there is
+        nothing to wait for; otherwise it reverts unless confirmed in CONFIRM_S.
 
         temporary=True: phone-hotspot internet session (see module doc).
         Only valid while the OWL is on its own hotspot, so the revert
@@ -263,6 +286,8 @@ class NetworkSettingsManager:
             self.expires_at = None
             self.ended_reason = None
             self._end_requested = False
+            self._confirm_now = bool(confirm_now)
+            self.confirmed = True
 
         target = self._do_temporary_switch if temporary else self._do_switch
         self._timer = self._start_marked(SWITCH_DELAY_S, target)
@@ -283,27 +308,27 @@ class NetworkSettingsManager:
             previous = dict(self.previous or {})
             self.state = 'switching'
 
+        # Re-joining the network it is on (a new password): the old profile is
+        # replaced, so there is nothing to go back to
+        same_network = previous.get('mode') == 'client' and previous.get('ssid') == ssid
+        confirm_now = self._confirm_now or same_network
         try:
-            self.nm.add_wifi_connection(ssid, password)
+            # No autoconnect until confirmed: a reboot before then comes back
+            # on the previous network or the hotspot by itself
+            self.nm.add_wifi_connection(ssid, password, autoconnect=confirm_now)
             if previous.get('mode') == 'hotspot':
                 self.nm.hotspot_down()
             if self.nm.activate_connection(ssid, timeout=ACTIVATE_TIMEOUT_S):
                 with self._lock:
                     self.state = 'connected'
                     self.ip = self.nm.get_ip4()
+                    self.confirmed = False
                 self._allow_hotspot_autoconnect()
-                # Drop the superseded client profile so the unit doesn't
-                # autoconnect back to the old network later. The hotspot
-                # profile is never deleted (built-in fallback).
-                prev_ssid = previous.get('ssid')
-                if (previous.get('mode') == 'client' and prev_ssid
-                        and prev_ssid != ssid):
-                    try:
-                        self.nm.delete_connection(prev_ssid)
-                    except Exception as e:
-                        logger.warning("Could not delete old profile '%s': %s",
-                                       prev_ssid, e)
                 logger.info("Joined '%s' (%s)", ssid, self.ip)
+                if confirm_now:
+                    self._finish_confirm(ssid, previous)
+                else:
+                    self._arm_confirm(ssid, previous, time.time() + CONFIRM_S)
                 return
             error = getattr(self.nm, 'last_error', 'error') or 'error'
         except Exception as e:
@@ -417,6 +442,112 @@ class NetworkSettingsManager:
             logger.critical("Join to '%s' failed (%s) AND the previous "
                             "connection did not come back", ssid, error)
             self._schedule_hotspot_retry()
+
+    # ------------------------------------------------------------------
+    # Confirming a permanent join
+    # ------------------------------------------------------------------
+    def _arm_confirm(self, ssid, previous, deadline):
+        """Revert at deadline (wall clock) unless confirmed before then."""
+        try:
+            with open(self._confirm_record, 'w') as f:
+                json.dump({'ssid': ssid, 'previous': previous, 'deadline': deadline}, f)
+        except OSError:
+            pass  # no /dev/shm off Linux; the in-process timer still runs
+        timer = self._confirm_timer_factory(max(0.0, deadline - time.time()),
+                                            lambda: self._confirm_expired(ssid, previous))
+        timer.daemon = True
+        timer.start()
+        with self._lock:
+            self._confirm_timer = timer
+        logger.info("Waiting up to %ds for '%s' to be confirmed", CONFIRM_S, ssid)
+
+    def _clear_confirm_record(self):
+        try:
+            os.remove(self._confirm_record)
+        except OSError:
+            pass
+
+    def _confirm_expired(self, ssid, previous):
+        with self._lock:
+            if self.confirmed or self.state != 'connected' or self.ssid != ssid:
+                return
+            self._confirm_timer = None
+        self._clear_confirm_record()
+        logger.warning("'%s' was not confirmed in %ds: going back", ssid, CONFIRM_S)
+        self._run_marked(lambda: self._revert(ssid, 'not_confirmed', previous))
+
+    def _finish_confirm(self, ssid, previous):
+        """Keep the new network: autoconnect on, the superseded client profile
+        deleted so the unit doesn't go back to it later. The hotspot profile
+        is never deleted (built-in fallback)."""
+        with self._lock:
+            if self._confirm_timer is not None:
+                self._confirm_timer.cancel()
+                self._confirm_timer = None
+            self.confirmed = True
+        self._clear_confirm_record()
+        try:
+            self.nm.set_autoconnect(ssid, True)
+        except Exception as e:
+            logger.warning("Could not turn autoconnect on for '%s': %s", ssid, e)
+        prev_ssid = (previous or {}).get('ssid')
+        if (previous or {}).get('mode') == 'client' and prev_ssid and prev_ssid != ssid:
+            try:
+                self.nm.delete_connection(prev_ssid)
+            except Exception as e:
+                logger.warning("Could not delete old profile '%s': %s", prev_ssid, e)
+        logger.info("Network '%s' confirmed", ssid)
+
+    def confirm(self):
+        """The new network works (the app reached the OWL over it). True if
+        a join was waiting for this."""
+        with self._lock:
+            if self.confirmed or self.temporary or self.state != 'connected':
+                return False
+            ssid, previous = self.ssid, dict(self.previous or {})
+            self.confirmed = True
+        self._finish_confirm(ssid, previous)
+        return True
+
+    def confirm_from(self, remote_addr):
+        """Confirm when a request arrives from the new network's subnet (a
+        /24 around the OWL's new address). Cheap: called on every request."""
+        if self.confirmed or not remote_addr:
+            return False
+        with self._lock:
+            ip = self.ip
+            waiting = self.state == 'connected' and not self.temporary and not self.confirmed
+        if not waiting or not ip:
+            return False
+        if remote_addr.rsplit('.', 1)[0] != ip.rsplit('.', 1)[0]:
+            return False
+        return self.confirm()
+
+    def resume_pending_confirm(self):
+        """Dashboard start: a join that was still waiting when this process
+        stopped reverts now if its deadline has passed, or keeps waiting."""
+        try:
+            with open(self._confirm_record) as f:
+                record = json.load(f)
+        except (OSError, ValueError):
+            return
+        ssid = record.get('ssid')
+        previous = record.get('previous') or {}
+        deadline = float(record.get('deadline') or 0)
+        if not ssid:
+            self._clear_confirm_record()
+            return
+        with self._lock:
+            self.state = 'connected'
+            self.ssid = ssid
+            self.previous = previous
+            self.temporary = False
+            self.confirmed = False
+            try:
+                self.ip = self.nm.get_ip4()
+            except Exception:
+                self.ip = None
+        self._arm_confirm(ssid, previous, deadline)
 
     # ------------------------------------------------------------------
     # Temporary session: watchdog + revert
@@ -608,6 +739,7 @@ class NetworkSettingsManager:
         A connected temporary session is torn down like revert(): left
         alone, nothing would ever bring the hotspot back.
         Raises while the switch itself is underway (cannot be unwound)."""
+        keep = None
         with self._lock:
             if self.state == 'switching':
                 raise RuntimeError('The network switch is already underway')
@@ -619,12 +751,19 @@ class NetworkSettingsManager:
                 if self._watchdog is not None:
                     self._watchdog.cancel()
                     self._watchdog = None
+                if self._confirm_timer is not None and not self.confirmed:
+                    # Dismissing an unconfirmed join keeps it: same as confirming
+                    keep = (self.ssid, dict(self.previous or {}))
+                else:
+                    keep = None
                 self._reset_fields()
         if teardown:
             timer = self._timer_factory(TEMP_REVERT_DELAY_S,
                                         lambda: self._end_temporary('revert'))
             timer.daemon = True
             timer.start()
+        if keep:
+            self._finish_confirm(*keep)
 
     def result(self):
         with self._lock:
@@ -639,4 +778,7 @@ class NetworkSettingsManager:
                 'expires_at': self.expires_at,
                 'ended_reason': self.ended_reason,
                 'con_name': TEMP_CON_NAME if self.temporary else None,
+                # v3.27: state stays 'connected' (older apps wait for that);
+                # False until the new network is confirmed, else it reverts
+                'confirmed': self.confirmed,
             }

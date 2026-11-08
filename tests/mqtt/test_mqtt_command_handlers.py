@@ -342,133 +342,100 @@ class TestSetModelCommand:
 
 @pytest.mark.unit
 class TestSetDetectionMode:
-    """Tests for set_detection_mode command handler."""
+    """set_detection_mode asks the OWL (owl.request_spray), which decides and
+    publishes. The publisher no longer touches relays itself: that is how a
+    dashboard blanket used to survive the Ute switch going off. Behaviour on
+    a real OWL: tests/owl/test_spray_owner.py."""
 
-    def test_blanket_mode_activates_all_relays(self, mqtt_publisher, mock_owl):
-        mock_owl.relay_controller = MagicMock()
-        mqtt_publisher._handle_command({
-            'action': 'set_detection_mode',
-            'value': 2
-        })
-        assert mqtt_publisher.state['detection_mode'] == 2
-        assert mqtt_publisher.state['detection_enable'] is False
-        mock_owl.relay_controller.relay.all_on.assert_called_once()
+    @pytest.mark.parametrize('code, mode, enabled', [(2, 'blanket', False), (0, 'spot', True),
+                                                     (1, 'off', False)])
+    def test_routes_through_the_owl(self, mqtt_publisher, mock_owl, code, mode, enabled):
+        mock_owl.request_spray.return_value = {'request': mode}
+        mqtt_publisher._handle_command({'action': 'set_detection_mode', 'value': code})
+        mock_owl.request_spray.assert_called_once_with(mode, source='dashboard')
+        assert mqtt_publisher.state['detection_mode'] == code
+        assert mqtt_publisher.state['detection_enable'] is enabled
+        mock_owl.relay_controller.relay.all_on.assert_not_called()
+        mock_owl.relay_controller.relay.all_off.assert_not_called()
 
-    def test_spot_spray_enables_detection(self, mqtt_publisher, mock_owl):
-        mock_owl.relay_controller = MagicMock()
-        mqtt_publisher._handle_command({
-            'action': 'set_detection_mode',
-            'value': 0
-        })
-        assert mqtt_publisher.state['detection_mode'] == 0
-        assert mqtt_publisher.state['detection_enable'] is True
-        mock_owl.relay_controller.relay.all_off.assert_called_once()
-
-    def test_off_mode_disables_everything(self, mqtt_publisher, mock_owl):
-        mock_owl.relay_controller = MagicMock()
-        mqtt_publisher._handle_command({
-            'action': 'set_detection_mode',
-            'value': 1
-        })
+    def test_refused_request_reports_what_the_owl_kept(self, mqtt_publisher, mock_owl):
+        mock_owl.request_spray.return_value = {'request': 'off', 'refused': 'switch_off'}
+        mqtt_publisher._handle_command({'action': 'set_detection_mode', 'value': 2})
         assert mqtt_publisher.state['detection_mode'] == 1
         assert mqtt_publisher.state['detection_enable'] is False
-        mock_owl.relay_controller.relay.all_off.assert_called_once()
 
-    def test_invalid_mode_rejected(self, mqtt_publisher, mock_owl):
+    @pytest.mark.parametrize('bad', [5, 'x', None])
+    def test_invalid_mode_rejected(self, mqtt_publisher, mock_owl, bad):
         mqtt_publisher.state['detection_mode'] = 1
-        mqtt_publisher._handle_command({
-            'action': 'set_detection_mode',
-            'value': 5
-        })
-        # Invalid mode returns early — state unchanged
+        mqtt_publisher._handle_command({'action': 'set_detection_mode', 'value': bad})
+        # Invalid mode returns early — state unchanged, nothing asked
         assert mqtt_publisher.state['detection_mode'] == 1
+        mock_owl.request_spray.assert_not_called()
+
+    def test_detection_enable_routes_through_the_owl(self, mqtt_publisher, mock_owl):
+        mock_owl.request_spray.return_value = {'request': 'spot'}
+        mqtt_publisher._handle_command({'action': 'set_detection_enable', 'value': True})
+        mock_owl.request_spray.assert_called_once_with('spot', source='dashboard')
+        assert mqtt_publisher.state['detection_enable'] is True
+        mqtt_publisher._handle_command({'action': 'set_detection_enable', 'value': False})
+        mock_owl.request_spray.assert_called_with('off', source='dashboard')
 
 
 # ---------------------------------------------------------------------------
-# test_nozzles (Test nozzles page: one nozzle, or each in turn)
+# test_nozzles (Test nozzles page: one nozzle, or each in turn) and hold_spray
 # ---------------------------------------------------------------------------
 
 @pytest.mark.unit
 class TestNozzleTest:
-    """test_nozzles turns the listed relays on, and the OWL itself turns
-    them off when the time runs out, whatever the dashboard does next."""
+    """test_nozzles is validated here and run by the OWL (owl.test_nozzles ->
+    RelayController.start_test), which turns the relays off itself when the
+    time runs out. Timer/cap behaviour: tests/unit/test_output_manager.py."""
 
     @pytest.fixture
-    def relays(self, mqtt_publisher, mock_owl):
-        mock_owl.relay_controller = MagicMock()
+    def owl(self, mock_owl):
         mock_owl.relay_num = 4
-        mock_owl._firstboot_active = False
-        mqtt_publisher.state['detection_enable'] = False
-        mqtt_publisher.state['detection_mode'] = 1
-        yield mock_owl.relay_controller.relay
-        mqtt_publisher._stop_nozzle_test()
+        return mock_owl
 
     def _test(self, publisher, relays, duration_ms=10000):
         publisher._handle_command({'action': 'test_nozzles',
                                    'value': {'relays': relays, 'duration_ms': duration_ms}})
 
-    def test_turns_listed_relays_on(self, mqtt_publisher, relays):
+    def test_turns_listed_relays_on(self, mqtt_publisher, owl):
         self._test(mqtt_publisher, [2, 0])
-        relays.relay_on.assert_has_calls([call(0, verbose=False), call(2, verbose=False)])
-        assert mqtt_publisher.state['nozzle_test'] == [0, 2]
+        owl.test_nozzles.assert_called_once_with([0, 2], 10.0, source='dashboard')
 
-    def test_switches_off_when_time_runs_out(self, mqtt_publisher, relays):
-        self._test(mqtt_publisher, [1], duration_ms=100)
-        time.sleep(0.4)
-        relays.relay_off.assert_called_with(1, verbose=False)
-        assert mqtt_publisher.state['nozzle_test'] == []
-
-    def test_empty_list_stops_a_running_test(self, mqtt_publisher, relays):
-        self._test(mqtt_publisher, [3])
+    def test_empty_list_stops_a_running_test(self, mqtt_publisher, owl):
         self._test(mqtt_publisher, [], duration_ms=0)
-        relays.relay_off.assert_called_with(3, verbose=False)
-        assert mqtt_publisher.state['nozzle_test'] == []
-        assert mqtt_publisher._nozzle_test_timer is None
+        owl.test_nozzles.assert_called_once_with([], 0.1, source='dashboard')
 
-    def test_next_nozzle_switches_the_last_one_off(self, mqtt_publisher, relays):
-        self._test(mqtt_publisher, [0])
-        self._test(mqtt_publisher, [1])
-        relays.relay_off.assert_called_with(0, verbose=False)
-        assert mqtt_publisher.state['nozzle_test'] == [1]
-
-    def test_duration_is_capped_at_ten_seconds(self, mqtt_publisher, relays):
+    def test_duration_is_capped_at_ten_seconds(self, mqtt_publisher, owl):
         self._test(mqtt_publisher, [0], duration_ms=600000)
-        assert mqtt_publisher._nozzle_test_timer.interval == 10.0
+        owl.test_nozzles.assert_called_once_with([0], 10.0, source='dashboard')
 
     @pytest.mark.parametrize('bad', [[4], [-1], [True], ['1'], [1.0]])
-    def test_ignores_relays_outside_this_owl(self, mqtt_publisher, relays, bad):
+    def test_ignores_relays_outside_this_owl(self, mqtt_publisher, owl, bad):
         self._test(mqtt_publisher, bad)
-        relays.relay_on.assert_not_called()
-        assert mqtt_publisher.state['nozzle_test'] == []
+        owl.test_nozzles.assert_called_once_with([], 10.0, source='dashboard')
 
-    @pytest.mark.parametrize('state', [{'detection_enable': True}, {'detection_mode': 2}])
-    def test_refused_while_spraying(self, mqtt_publisher, relays, state):
-        mqtt_publisher.state.update(state)
-        self._test(mqtt_publisher, [0])
-        relays.relay_on.assert_not_called()
-
-    def test_refused_during_first_boot_setup(self, mqtt_publisher, mock_owl, relays):
-        mock_owl._firstboot_active = True
-        self._test(mqtt_publisher, [0])
-        relays.relay_on.assert_not_called()
-
-    def test_spraying_on_ends_the_test(self, mqtt_publisher, relays):
-        self._test(mqtt_publisher, [2])
-        mqtt_publisher._handle_command({'action': 'set_detection_enable', 'value': True})
-        relays.relay_off.assert_called_with(2, verbose=False)
-        assert mqtt_publisher.state['nozzle_test'] == []
-
-    def test_blanket_spray_ends_the_test(self, mqtt_publisher, relays):
-        self._test(mqtt_publisher, [2])
-        mqtt_publisher._handle_command({'action': 'set_detection_mode', 'value': 2})
-        relays.relay_off.assert_called_with(2, verbose=False)
-        assert mqtt_publisher.state['nozzle_test'] == []
-
-    def test_no_relay_controller_is_not_a_crash(self, mqtt_publisher, mock_owl):
-        mock_owl.relay_controller = None
+    def test_no_owl_is_not_a_crash(self, mqtt_publisher):
+        mqtt_publisher.owl_instance = None
         mqtt_publisher._handle_command({'action': 'test_nozzles', 'value': {'relays': [0]}})
-        assert mqtt_publisher.state['nozzle_test'] == []
 
+
+@pytest.mark.unit
+class TestHoldSpray:
+    def test_hold_passes_the_lease(self, mqtt_publisher, mock_owl):
+        mqtt_publisher._handle_command({'action': 'hold_spray', 'value': 1500})
+        mock_owl.hold_spray.assert_called_once_with(1500.0, source='dashboard')
+
+    @pytest.mark.parametrize('bad', [None, 'x', 0])
+    def test_bad_or_zero_lease_releases(self, mqtt_publisher, mock_owl, bad):
+        mqtt_publisher._handle_command({'action': 'hold_spray', 'value': bad})
+        mock_owl.hold_spray.assert_called_once_with(0.0, source='dashboard')
+
+
+@pytest.mark.unit
+class TestNozzleCountState:
     def test_state_reports_nozzle_count(self, mqtt_publisher, mock_owl):
         mock_owl.relay_num = 10
         mqtt_publisher._sync_parameters_to_state()
@@ -537,6 +504,7 @@ class TestRestartService:
         """restart_service must use Popen (non-blocking) not subprocess.run."""
         with patch('subprocess.Popen') as mock_popen:
             mqtt_publisher._handle_command({'action': 'restart_service'})
+            mqtt_publisher.io_flush()
             mock_popen.assert_called_once()
             args = mock_popen.call_args[0][0]
             assert 'restart' in args
@@ -546,6 +514,7 @@ class TestRestartService:
         """If subprocess.Popen raises, handler logs error without crash."""
         with patch('subprocess.Popen', side_effect=OSError("no sudo")):
             mqtt_publisher._handle_command({'action': 'restart_service'})
+            mqtt_publisher.io_flush()
             # No crash = pass
 
 
@@ -1091,6 +1060,7 @@ class TestShutdown:
              patch('shutil.which', return_value='/usr/sbin/shutdown'):
             mock_run.return_value = MagicMock(returncode=0, stdout='', stderr='')
             mqtt_publisher._handle_command({'action': 'shutdown'})
+            mqtt_publisher.io_flush()
         mock_run.assert_called_once()
         argv = mock_run.call_args[0][0]
         # -n matters: without it a sudoers miss hangs on a password prompt
@@ -1101,12 +1071,14 @@ class TestShutdown:
         with patch('subprocess.run',
                    return_value=MagicMock(returncode=0, stdout='', stderr='')):
             mqtt_publisher._handle_command({'action': 'shutdown'})
+            mqtt_publisher.io_flush()
         assert mqtt_publisher.client.publish.called
 
     def test_shutdown_handles_run_failure(self, mqtt_publisher, mock_owl):
         with patch('subprocess.run', side_effect=OSError('not found')):
             # Should not raise — error is caught and logged
             mqtt_publisher._handle_command({'action': 'shutdown'})
+            mqtt_publisher.io_flush()
 
     def test_shutdown_logs_nonzero_returncode(self, mqtt_publisher, mock_owl,
                                               caplog):
@@ -1118,6 +1090,7 @@ class TestShutdown:
         with patch('subprocess.run', return_value=result), \
              caplog.at_level(logging.ERROR):
             mqtt_publisher._handle_command({'action': 'shutdown'})
+            mqtt_publisher.io_flush()
         assert any('password is required' in r.message for r in caplog.records)
 
 
@@ -1196,8 +1169,10 @@ class TestUpdateSoftware:
         assert mqtt_publisher.state['software_update']['status'] == 'error'
         assert any('update_software refused' in r.message for r in caplog.records)
 
-    def test_refused_while_update_in_progress(self, mqtt_publisher, mock_owl):
+    def test_refused_while_update_in_progress(self, mqtt_publisher, mock_owl, tmp_path):
+        mqtt_publisher._update_status_path = tmp_path / 'absent.json'
         mqtt_publisher.state['software_update']['status'] = 'fetching'
+        mqtt_publisher.state['software_update']['updated_at'] = int(time.time())
         with patch('subprocess.Popen') as mock_popen:
             mqtt_publisher._handle_command({
                 'action': 'update_software', 'ref': 'main', 'request_id': 'r'
@@ -1205,6 +1180,18 @@ class TestUpdateSoftware:
         mock_popen.assert_not_called()
         assert mqtt_publisher.state['software_update']['status'] == 'error'
         assert 'already in progress' in mqtt_publisher.state['software_update']['error']
+
+    def test_a_cut_off_run_no_longer_blocks_updates(self, mqtt_publisher, mock_owl, tmp_path):
+        # v3.27: a status nobody has written for 30 min is not an update in
+        # progress (a power cut mid-update used to block this path for good)
+        mqtt_publisher._update_status_path = tmp_path / 'absent.json'
+        mqtt_publisher.state['software_update']['status'] = 'installing_deps'
+        mqtt_publisher.state['software_update']['updated_at'] = int(time.time()) - 4000
+        with patch('subprocess.Popen') as mock_popen:
+            mqtt_publisher._handle_command({
+                'action': 'update_software', 'ref': 'main', 'request_id': 'r'
+            })
+        mock_popen.assert_called_once()
 
     def test_refused_while_transfer_in_progress(self, mqtt_publisher, mock_owl):
         mqtt_publisher.state['data_transfer']['status'] = 'uploading'
@@ -1250,6 +1237,7 @@ class TestRebootCommand:
              patch('shutil.which', return_value='/usr/sbin/reboot'):
             mock_run.return_value = MagicMock(returncode=0, stdout='', stderr='')
             mqtt_publisher._handle_command({'action': 'reboot'})
+            mqtt_publisher.io_flush()
         mock_run.assert_called_once()
         argv = mock_run.call_args[0][0]
         assert argv == ['sudo', '-n', '/usr/sbin/reboot']
@@ -1259,12 +1247,14 @@ class TestRebootCommand:
         with patch('subprocess.run',
                    return_value=MagicMock(returncode=0, stdout='', stderr='')):
             mqtt_publisher._handle_command({'action': 'reboot'})
+            mqtt_publisher.io_flush()
         assert mqtt_publisher.client.publish.called
 
     def test_reboot_handles_run_failure(self, mqtt_publisher, mock_owl):
         with patch('subprocess.run', side_effect=OSError('denied')):
             # Should not raise — error is caught and logged
             mqtt_publisher._handle_command({'action': 'reboot'})
+            mqtt_publisher.io_flush()
 
     def test_reboot_logs_nonzero_returncode(self, mqtt_publisher, mock_owl,
                                             caplog):
@@ -1274,6 +1264,7 @@ class TestRebootCommand:
         with patch('subprocess.run', return_value=result), \
              caplog.at_level(logging.ERROR):
             mqtt_publisher._handle_command({'action': 'reboot'})
+            mqtt_publisher.io_flush()
         assert any('password is required' in r.message for r in caplog.records)
 
 

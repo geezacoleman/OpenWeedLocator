@@ -844,11 +844,11 @@ function updateHardwareLockUI() {
     // UTE: lock only the switch matching switch_purpose (recording OR detection)
     // Advanced: recording, detection, sensitivity
     // Fan, tracking, track stability, nozzles: NEVER locked
+    // Spraying is never locked (the OWL arbitrates with its switch).
     if (controllerType === 'ute') {
-        lockSwitch(switchPurpose === 'detection' ? 'detectSwitch' : 'recordSwitch');
+        if (switchPurpose !== 'detection') lockSwitch('recordSwitch');
     } else if (controllerType === 'advanced') {
         lockSwitch('recordSwitch');
-        lockSwitch('detectSwitch');
         lockSegmented('sensitivity-buttons');
     }
 }

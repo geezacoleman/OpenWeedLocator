@@ -20,6 +20,7 @@ is persisted to a small JSON file.
 
 import configparser
 import json
+import re
 import logging
 import os
 import secrets
@@ -44,6 +45,11 @@ SETUP_PORT = int(os.environ.get('OWL_SETUP_PORT', 8088))
 SWITCH_DELAY_S = 5          # grace period so the join HTTP response reaches the phone
 ACTIVATE_TIMEOUT_S = 45     # how long nmcli waits for the client network
 EXIT_DELAY_S = 1.0          # lets the finish response flush before the process exits
+# Each arm is one setup run. The id lives in the flag file: the arm script
+# and the dashboard's re-arm helper leave the flag empty, and the first start
+# of a run writes a fresh id. Persisted state from another run is discarded,
+# so a re-armed unit never resumes the previous customer's setup.
+RUN_ID_PATTERN = r'^run-[0-9a-f]{12}$'
 HOTSPOT_RETRY_S = 30        # retry cadence when the setup AP cannot come up
 REVERT_HOTSPOT_ATTEMPTS = 3  # hotspot_up tries before a failed join gives up
 
@@ -150,9 +156,12 @@ class FirstBootState:
                                    / 'config' / 'CONTROLLER.ini')
         self._timer_factory = timer_factory
         self._system_runner = system_runner or self._default_system_runner
-        self._exit_fn = exit_fn or (lambda: os._exit(0))
+        self._exit_fn = exit_fn or (lambda: os._exit(self._exit_code))
         self._hostname_getter = hostname_getter or socket.gethostname
         self._lock = threading.Lock()
+        self._exit_code = 0
+        self.run_id = self._claim_run_id()
+        self._resumable = False   # persisted join from THIS run was switching/connected
 
         self.state = 'await_phone'
         self.scan_cache = []
@@ -187,11 +196,42 @@ class FirstBootState:
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
+    def _claim_run_id(self):
+        """This setup run's id from the flag file, writing a new one when the
+        flag is empty or holds anything else (a fresh arm). None without a
+        flag (dev runs, tests)."""
+        try:
+            text = self.flag_path.read_text().strip()
+        except OSError:
+            return None
+        if re.match(RUN_ID_PATTERN, text):
+            return text
+        run_id = 'run-' + secrets.token_hex(6)
+        try:
+            with open(self.flag_path, 'w') as f:
+                f.write(run_id + '\n')
+                f.flush()
+                os.fsync(f.fileno())
+        except OSError as e:
+            logger.warning("Could not record the setup run id in the flag: %s", e)
+        logger.info("New first-boot setup run %s", run_id)
+        return run_id
+
     def _load_persisted(self):
         try:
             data = json.loads(self.state_file.read_text())
         except (OSError, ValueError):
             return
+        if data.get('run_id') != self.run_id:
+            # A previous arm's state (its customer's network, its join):
+            # never resume it
+            logger.info("Discarding first-boot state from another setup run")
+            try:
+                self.state_file.unlink()
+            except OSError:
+                pass
+            return
+        self._resumable = data.get('wifi_state') in ('switching', 'connected')
         self.wifi_state = data.get('wifi_state', 'idle')
         self.wifi_mode = data.get('wifi_mode')
         self.wifi_ssid = data.get('wifi_ssid')
@@ -208,7 +248,8 @@ class FirstBootState:
             self.wifi_state = 'idle'
 
     def _persist(self):
-        data = {'wifi_state': self.wifi_state, 'wifi_mode': self.wifi_mode,
+        data = {'run_id': self.run_id,
+                'wifi_state': self.wifi_state, 'wifi_mode': self.wifi_mode,
                 'wifi_ssid': self.wifi_ssid,
                 'wifi_ip': self.wifi_ip, 'wifi_error': self.wifi_error,
                 'wifi_warning': self.wifi_warning,
@@ -217,9 +258,16 @@ class FirstBootState:
                 'prior_hostname': self.prior_hostname,
                 'cloud': self.cloud,
                 'updated_at': datetime.now(timezone.utc).isoformat()}
+        # Atomic: a power cut mid-write used to leave half a file, which then
+        # read as no state at all
         try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
-            self.state_file.write_text(json.dumps(data, indent=2))
+            tmp = self.state_file.with_name(self.state_file.name + '.tmp')
+            with open(tmp, 'w') as f:
+                f.write(json.dumps(data, indent=2))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.state_file)
         except OSError as e:
             logger.warning("Could not persist first-boot state: %s", e)
 
@@ -254,7 +302,9 @@ class FirstBootState:
         except Exception as e:
             logger.error("Could not read network status at startup: %s", e)
             status = {'mode': 'unknown', 'ssid': None, 'ip': None}
-        if status['mode'] == 'client':
+        # Only a join this run made counts: a re-armed unit that comes up on
+        # last season's network must still offer the setup hotspot
+        if status['mode'] == 'client' and self._resumable:
             logger.info("Booted onto client network '%s'; resuming setup",
                         status['ssid'])
             self.wifi_state = 'connected'
@@ -791,7 +841,22 @@ class FirstBootState:
         except FileNotFoundError:
             pass
         except OSError as e:
+            # Still armed: exit non-zero so systemd sees a failure and the
+            # next start tries the teardown again
             logger.error("Could not remove first-boot flag: %s", e)
+            self._exit_code = 1
+        # The flag is on FAT32: an unsynced unlink can come back after a
+        # power cut and re-run setup on a finished unit
+        try:
+            os.sync()
+        except (AttributeError, OSError):
+            pass
+        try:
+            self.state_file.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            logger.warning("Could not remove first-boot state: %s", e)
 
         avahi_file = Path(AVAHI_SERVICE_FILE)
         try:

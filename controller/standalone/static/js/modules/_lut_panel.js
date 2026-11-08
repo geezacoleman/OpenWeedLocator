@@ -210,12 +210,14 @@ function updateLutSwatch() {
 /* Detection interlock: never fire nozzles while the operator is head-down
    painting. Stream the full frame so the whole scene is paintable. */
 function lutPainterInterlockOn() {
-    apiRequest('/api/system_stats')
+    // Plain fetch: apiRequest is abortable, and a newer request (the stats
+    // poll) aborting this one left the nozzles spraying while painting
+    fetch('/api/system_stats')
         .then(function (r) { return r.json(); })
         .then(function (data) {
             lutPanelState.detectionWasOn = !!data.detection_enable;
             if (lutPanelState.detectionWasOn) {
-                apiRequest('/api/detection/stop', { method: 'POST' }).catch(function () { });
+                fetch('/api/detection/stop', { method: 'POST' }).catch(function () { });
             }
         }).catch(function () { });
     apiRequest('/api/preview-mode', {
@@ -233,7 +235,7 @@ function lutPainterInterlockOff() {
     }).catch(function () { });
     if (lutPanelState.detectionWasOn) {
         lutPanelState.detectionWasOn = false;
-        apiRequest('/api/detection/start', { method: 'POST' }).catch(function () { });
+        fetch('/api/detection/start', { method: 'POST' }).catch(function () { });
     }
 }
 

@@ -35,8 +35,8 @@ class _ThreadProcess(threading.Thread):
     """Stands in for multiprocessing.Process for the switch-panel controller:
     under 'spawn' (Windows) the real one pickles the whole Owl and hangs."""
 
-    def __init__(self, target):
-        super().__init__(target=target, daemon=True)
+    def __init__(self, target, daemon=True):
+        super().__init__(target=target, daemon=daemon)
 
     def terminate(self):
         pass  # controller.stop() sets its stop flag; run() then returns
@@ -81,8 +81,10 @@ def switch_on(instance, detection=True, recording=True):
         controller.detection_mode_switch_up = Switch(False)
         controller.update_state()
     if instance.dash:
+        # Spraying: the dashboard button sends a command (the OWL decides);
+        # recording is still read from dashboard state
+        instance.dash._handle_command({'action': 'set_detection_enable', 'value': detection})
         with instance.dash.state_lock:
-            instance.dash.state['detection_enable'] = detection
             instance.dash.state['image_sample_enable'] = recording
     instance._update_state_once()
 
@@ -199,11 +201,18 @@ class ScriptedCamera:
 
 
 def spy_relays(instance):
+    """Every nozzle mode change, as the old all_on / all_off names."""
     calls = []
-    relay = instance.relay_controller.relay
-    for name in ('all_on', 'all_off'):
-        real = getattr(relay, name)
-        setattr(relay, name, lambda *a, _n=name, _r=real, **k: (calls.append(_n), _r(*a, **k)))
+    rc = instance.relay_controller
+    real = rc.set_mode
+
+    def set_mode(mode):
+        changed = real(mode)
+        if changed:
+            calls.append({'blanket': 'all_on', 'off': 'all_off', 'spot': 'spot'}[mode])
+        return changed
+
+    rc.set_mode = set_mode
     return calls
 
 

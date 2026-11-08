@@ -280,9 +280,9 @@ function lutPainterInterlockOff() {
         lutPanelState.paintDeviceId = null;
     }
     if (lutPanelState.detectingIds.length) {
-        // toggle_detection per device flips the (now off) state back on
+        // Explicit value: a bare toggle flipped whatever was reported then
         lutPanelState.detectingIds.forEach(function (id) {
-            sendCommand(id, 'toggle_detection');
+            sendCommand(id, 'toggle_detection', true);
         });
         lutPanelState.detectingIds = [];
     }

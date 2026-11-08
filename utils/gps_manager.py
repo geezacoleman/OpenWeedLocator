@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 KNOTS_TO_KMH = 1.852
+# A speed older than this is not reported (receivers send several per second)
+SPEED_STALE_AFTER_S = 3.0
 EARTH_RADIUS_KM = 6371.0
 
 # ---------------------------------------------------------------------------
@@ -400,8 +402,15 @@ class GPSState:
         self.utc_date = None
         self.accuracy_m = None  # metres, from receivers that report it (nRF91)
         self.fix_valid = False
+        # time.monotonic() stamps: the phone app's time sync and NTP step the
+        # wall clock, which made a dead receiver look fresh (or a live one stale)
         self.last_fix_time = None
+        self.last_speed_time = None
         self.connected = False
+
+    def _set_speed(self, kmh):
+        self.speed_kmh = kmh
+        self.last_speed_time = time.monotonic()
 
     def update_from_rmc(self, data):
         """Update state from a parsed RMC sentence."""
@@ -410,18 +419,20 @@ class GPSState:
                 self.latitude = data['lat']
                 self.longitude = data['lon']
                 self.fix_valid = True
-                self.last_fix_time = time.time()
+                self.last_fix_time = time.monotonic()
                 # Raw NMEA UTC ('hhmmss[.sss]' / 'ddmmyy') — only trusted from
                 # an active fix; used for EXIF GPSTimeStamp/GPSDateStamp.
                 if data.get('time_utc') is not None:
                     self.utc_time = data['time_utc']
                 if data.get('date') is not None:
                     self.utc_date = data['date']
+                # Speed only from an active fix: a void RMC (status V) can
+                # still carry the receiver's last speed, and the controller
+                # used it to time every nozzle on the rig.
+                if data.get('speed_knots') is not None:
+                    self._set_speed(data['speed_knots'] * KNOTS_TO_KMH)
             # Don't clear fix_valid here — a GGA fix may still be valid.
             # The 10s staleness check in get_dict() handles true fix loss.
-
-            if data.get('speed_knots') is not None:
-                self.speed_kmh = data['speed_knots'] * KNOTS_TO_KMH
 
             if data.get('heading') is not None:
                 self.heading = data['heading']
@@ -440,13 +451,13 @@ class GPSState:
                 self.altitude = data['altitude']
             if data.get('fix_quality') is not None and data['fix_quality'] > 0:
                 self.fix_valid = True
-                self.last_fix_time = time.time()
+                self.last_fix_time = time.monotonic()
 
     def update_from_vtg(self, data):
         """Update state from a parsed VTG sentence."""
         with self._lock:
             if data.get('speed_kmh') is not None:
-                self.speed_kmh = data['speed_kmh']
+                self._set_speed(data['speed_kmh'])
             if data.get('heading_true') is not None:
                 self.heading = data['heading_true']
 
@@ -476,14 +487,14 @@ class GPSState:
             if data.get('accuracy_m') is not None:
                 self.accuracy_m = data['accuracy_m']
             if data.get('speed_kmh') is not None:
-                self.speed_kmh = data['speed_kmh']
+                self._set_speed(data['speed_kmh'])
             if data.get('heading') is not None:
                 self.heading = data['heading']
             if data.get('time_utc') and data.get('date'):
                 self.utc_time = data['time_utc']
                 self.utc_date = data['date']
             self.fix_valid = True
-            self.last_fix_time = time.time()
+            self.last_fix_time = time.monotonic()
 
     def update_from_line(self, line):
         """Parse one receiver line (NMEA or nRF91 '#X...') and apply it.
@@ -509,8 +520,9 @@ class GPSState:
         """Return a snapshot of the current state as a dict."""
         with self._lock:
             age = None
+            now = time.monotonic()
             if self.last_fix_time is not None:
-                age = round(time.time() - self.last_fix_time, 1)
+                age = round(now - self.last_fix_time, 1)
                 # Mark fix invalid if stale (>10s)
                 if age > 10:
                     fix_valid = False
@@ -519,10 +531,18 @@ class GPSState:
             else:
                 fix_valid = False
 
+            # A speed is only reported while it is fresh and the fix is good:
+            # the controller times every nozzle from it, and a frozen speed
+            # from a receiver that has gone quiet looks exactly like a live one
+            speed = self.speed_kmh
+            if (speed is None or not fix_valid or self.last_speed_time is None
+                    or now - self.last_speed_time > SPEED_STALE_AFTER_S):
+                speed = None
+
             return {
                 'latitude': self.latitude,
                 'longitude': self.longitude,
-                'speed_kmh': round(self.speed_kmh, 1) if self.speed_kmh is not None else None,
+                'speed_kmh': round(speed, 1) if speed is not None else None,
                 'heading': round(self.heading, 1) if self.heading is not None else None,
                 'satellites': self.satellites,
                 'hdop': round(self.hdop, 1) if self.hdop is not None else None,

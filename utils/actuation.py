@@ -22,7 +22,8 @@ GPS_STALE_AFTER_S = 30
 
 
 class SpeedAverager:
-    """Time-windowed moving average of GPS speed."""
+    """Time-windowed moving average of GPS speed. time.monotonic(): a wall
+    clock step (NTP, the app's time sync) must not age or revive samples."""
 
     def __init__(self, window_seconds=5.0):
         self.window_seconds = window_seconds
@@ -33,7 +34,7 @@ class SpeedAverager:
 
     def add_sample(self, speed_kmh):
         """Add a speed sample and return current average."""
-        now = time.time()
+        now = time.monotonic()
         with self._lock:
             self._samples.append((now, speed_kmh))
             self._prune()
@@ -59,11 +60,11 @@ class SpeedAverager:
         with self._lock:
             if self._last_sample_time is None:
                 return None
-            return time.time() - self._last_sample_time
+            return time.monotonic() - self._last_sample_time
 
     def _prune(self):
         """Remove samples older than the window."""
-        cutoff = time.time() - self.window_seconds
+        cutoff = time.monotonic() - self.window_seconds
         while self._samples and self._samples[0][0] < cutoff:
             self._samples.popleft()
 

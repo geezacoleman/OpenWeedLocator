@@ -114,10 +114,32 @@ class TestGPSStateSpeedUpdate:
 
     def test_vtg_updates_speed(self):
         state = GPSState()
+        state.update_from_gga(parse_sentence(make_gpgga()))
         vtg = parse_sentence(make_gpvtg(18.5))
         state.update_from_vtg(vtg)
         snap = state.get_dict()
         assert snap['speed_kmh'] == pytest.approx(18.5, abs=0.1)
+
+    def test_speed_without_a_fix_is_not_reported(self):
+        # A speed with no valid fix used to reach the controller, which timed
+        # every nozzle on the rig from it
+        state = GPSState()
+        state.update_from_vtg(parse_sentence(make_gpvtg(18.5)))
+        assert state.get_dict()['speed_kmh'] is None
+
+    def test_void_rmc_does_not_set_speed(self):
+        state = GPSState()
+        state.update_from_gga(parse_sentence(make_gpgga()))
+        state.update_from_rmc(parse_sentence(make_gprmc(kmh_to_knots(30.0), status='V')))
+        assert state.get_dict()['speed_kmh'] is None
+
+    def test_stale_speed_is_not_reported(self):
+        import time as _time
+        state = GPSState()
+        state.update_from_gga(parse_sentence(make_gpgga()))
+        state.update_from_vtg(parse_sentence(make_gpvtg(18.5)))
+        state.last_speed_time = _time.monotonic() - 4.0
+        assert state.get_dict()['speed_kmh'] is None
 
     def test_gga_then_rmc_gives_valid_fix(self):
         state = GPSState()

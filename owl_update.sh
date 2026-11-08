@@ -27,11 +27,21 @@
 #                      ultralytics, ncnn) into the same venv. OWL profile only.
 #                      Inside the same rollback handling as everything else.
 #   --yes              Manual mode: don't prompt before restarting the service
+#   --recover          Roll back a run that was cut off (power cut, reboot,
+#                      kill): reads .update_journal.json, restores the
+#                      pre-update commit, field config and stash. Launched
+#                      by tools/update_guard.py at the next start.
 #
 # STATUS FILE
 #   Written atomically before each phase; consumed by OWLMQTTPublisher and
 #   published to the MQTT state topic. Terminal statuses: complete,
-#   rolled_back, error.
+#   rolled_back, error (and 'interrupted', set by readers for a status from
+#   another boot). Every write carries this boot's id.
+#
+# JOURNAL
+#   .update_journal.json (fsync'd) from the moment a rollback point exists
+#   until the run ends. If it is still there at the next start, the run was
+#   cut off and --recover rolls it back.
 #
 # ON-DEVICE VERIFICATION CHECKLIST (cannot be tested off-device)
 #   1. Manual run: same-branch, named-branch, tag, bogus ref
@@ -70,9 +80,11 @@ PROFILE=""
 UNATTENDED=0
 REQUEST_ID=""
 STATUS_FILE="$REPO_DIR/.update_status.json"
+JOURNAL_FILE="$REPO_DIR/.update_journal.json"
 NO_RESTART=0
 ASSUME_YES=0
 WITH_AI=0
+RECOVER=0
 
 SERVICE=""
 DASH_SERVICE=""           # owl-dash.service on an OWL that has the dashboard
@@ -91,6 +103,7 @@ ROLLBACK_COMMIT=""
 ROLLBACK_BRANCH=""        # empty => was detached
 BACKUP_DIR=""
 STASHED=0
+STASH_SHA=""              # the field-modification stash, until it is popped
 IN_ROLLBACK=0
 
 LOG_DIR="$REPO_DIR/logs/updates"
@@ -151,6 +164,11 @@ payload = {
     "pid": os.getppid(),
     "log_file": log,
 }
+try:
+    with open("/proc/sys/kernel/random/boot_id") as f:
+        payload["boot_id"] = f.read().strip()
+except OSError:
+    pass
 tmp = path + ".tmp"
 with open(tmp, "w") as f:
     json.dump(payload, f)
@@ -159,6 +177,39 @@ PYEOF
 }
 
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
+
+# --- Journal (what --recover needs to undo a run that was cut off) -----------
+write_journal() {
+    /usr/bin/python3 - "$JOURNAL_FILE" <<'PYEOF' "$ROLLBACK_COMMIT" "$ROLLBACK_BRANCH" "$BACKUP_DIR" "$STASH_SHA" "$REQUEST_ID" "$REF" "$PROFILE" "$TS"
+import json, os, sys
+path = sys.argv[1]
+commit, branch, backup, stash, request_id, ref, profile, ts = sys.argv[2:10]
+try:
+    with open("/proc/sys/kernel/random/boot_id") as f:
+        boot_id = f.read().strip()
+except OSError:
+    boot_id = ""
+payload = {"rollback_commit": commit, "rollback_branch": branch, "backup_dir": backup,
+           "stash_sha": stash, "request_id": request_id, "ref": ref, "profile": profile,
+           "ts": ts, "boot_id": boot_id, "attempts": 0}
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(payload, f)
+    f.flush()
+    os.fsync(f.fileno())
+os.replace(tmp, path)
+fd = os.open(os.path.dirname(path) or ".", os.O_RDONLY)
+try:
+    os.fsync(fd)
+finally:
+    os.close(fd)
+PYEOF
+}
+
+clear_journal() {
+    rm -f "$JOURNAL_FILE"
+    sync 2>/dev/null || true
+}
 
 fail_terminal() {
     # Terminal error before any repo changes — no rollback needed.
@@ -183,6 +234,11 @@ on_failure() {
     if [[ "$CHANGES_MADE" == "1" && "$ROLLBACK_READY" == "1" ]]; then
         rollback "$original_error"
     else
+        # Nothing checked out yet. A stash made before this point is put back.
+        if [[ -n "$STASH_SHA" ]]; then
+            git stash pop >/dev/null 2>&1 || log "WARNING: field modifications are kept in git stash ($STASH_SHA)"
+        fi
+        clear_journal
         write_status error "$original_error"
         exit 1
     fi
@@ -216,6 +272,20 @@ rollback() {
     fi
     # NO git clean — untracked field files (CONTROLLER.ini, models, creds) stay.
 
+    # Field modifications stashed before the checkout and never popped: put
+    # them back. The stash was made on ROLLBACK_COMMIT, so it applies cleanly.
+    if [[ -n "$STASH_SHA" ]] && git stash list --format=%H | grep -qx "$STASH_SHA"; then
+        log "Re-applying the field modifications stashed before the update..."
+        if git stash apply "$STASH_SHA" >/dev/null 2>&1; then
+            local ref_name
+            ref_name="$(git stash list --format='%gd %H' | awk -v sha="$STASH_SHA" '$2 == sha { print $1 }' | head -n 1)"
+            if [[ -n "$ref_name" ]]; then git stash drop "$ref_name" >/dev/null 2>&1 || true; fi
+            git restore --staged -- . >/dev/null 2>&1 || true
+        else
+            log "WARNING: stash re-apply failed; it is kept in git stash ($STASH_SHA)"
+        fi
+    fi
+
     # Field config restore: the backup, not the stash, is authoritative.
     if [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
         cp -a "$BACKUP_DIR/." "$REPO_DIR/config/" || { write_status error "rollback: config restore failed (original: $original_error)" true; exit 1; }
@@ -229,6 +299,9 @@ rollback() {
             # Best effort: the OWL itself is what the rollback must get back
             sudo -n systemctl restart "$DASH_SERVICE" || log "WARNING: $DASH_SERVICE restart failed"
         fi
+        # A crash loop on the broken code can hit systemd's start limit, and
+        # then the restart is refused: clear it first
+        sudo -n systemctl reset-failed "$SERVICE" >/dev/null 2>&1 || true
         sudo -n systemctl restart "$SERVICE" || { write_status error "rollback: service restart failed (original: $original_error)" true; exit 1; }
         local i
         for i in $(seq 1 10); do
@@ -242,9 +315,59 @@ rollback() {
     fi
 
     log "Rollback complete."
+    clear_journal
     write_status rolled_back "$original_error"
     exit 1
 }
+
+# --- Recovery of a run that was cut off -----------------------------------------
+recover() {
+    if [[ ! -f "$JOURNAL_FILE" ]]; then
+        log "Nothing to recover (no journal)."
+        exit 0
+    fi
+    local fields
+    fields="$(/usr/bin/python3 - "$JOURNAL_FILE" <<'PYEOF'
+import json, sys
+path = sys.argv[1]
+with open(path) as f:
+    j = json.load(f)
+j["attempts"] = int(j.get("attempts", 0) or 0) + 1
+with open(path, "w") as f:
+    json.dump(j, f)
+for key in ("rollback_commit", "rollback_branch", "backup_dir", "stash_sha",
+            "request_id", "ref", "attempts"):
+    print(str(j.get(key, "") or ""))
+PYEOF
+)" || { log "ERROR: journal unreadable; removing it"; clear_journal; exit 1; }
+    local parts=()
+    mapfile -t parts <<<"$fields"
+    ROLLBACK_COMMIT="${parts[0]:-}"
+    ROLLBACK_BRANCH="${parts[1]:-}"
+    BACKUP_DIR="${parts[2]:-}"
+    STASH_SHA="${parts[3]:-}"
+    REQUEST_ID="${parts[4]:-}"
+    REF="${parts[5]:-}"
+    if ! [[ "$ROLLBACK_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+        log "ERROR: journal has no valid rollback commit; removing it"
+        clear_journal
+        exit 1
+    fi
+    if [[ -n "$ROLLBACK_BRANCH" ]] && { ! [[ "$ROLLBACK_BRANCH" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$ ]] || [[ "$ROLLBACK_BRANCH" == *..* ]]; }; then
+        ROLLBACK_BRANCH=""
+    fi
+    if [[ -n "$BACKUP_DIR" && "$BACKUP_DIR" != "$REPO_DIR/.update_backup/"* ]]; then
+        BACKUP_DIR=""
+    fi
+    if [[ -n "$STASH_SHA" ]] && ! [[ "$STASH_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+        STASH_SHA=""
+    fi
+    log "Recovering an update that was cut off (attempt ${parts[6]:-1}): back to ${ROLLBACK_COMMIT:0:7}"
+    ROLLBACK_READY=1
+    CHANGES_MADE=1
+    rollback "interrupted update (rolled back at the next start)"
+}
+
 
 # --- Argument parsing -----------------------------------------------------------
 while [[ $# -gt 0 ]]; do
@@ -257,6 +380,7 @@ while [[ $# -gt 0 ]]; do
         --no-restart)   NO_RESTART=1; shift ;;
         --yes)          ASSUME_YES=1; shift ;;
         --with-ai)      WITH_AI=1; shift ;;
+        --recover)      RECOVER=1; shift ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -267,13 +391,17 @@ main() {
     exec > >(tee -a "$LOG_FILE") 2>&1
 
     cd "$REPO_DIR"
-    write_status starting
     log "OWL updater starting (repo: $REPO_DIR, log: $LOG_FILE)"
 
     # --- Lock (held until process exit; survives the service restart) ---------
     exec 9>"$REPO_DIR/.update_lock"
     if ! flock -n 9; then
-        fail_terminal "another update is already in progress"
+        # Not ours to report: the running update owns the status file
+        log "ERROR: another update is already in progress"
+        exit 1
+    fi
+    if [[ "$RECOVER" != "1" ]]; then
+        write_status starting
     fi
 
     # --- Profile detection -----------------------------------------------------
@@ -310,6 +438,16 @@ main() {
     PIP_TMP="$user_home/.cache/owl-pip-tmp"
     rm -rf "$PIP_TMP"
     mkdir -p "$PIP_TMP"
+
+    if [[ "$RECOVER" == "1" ]]; then
+        if [[ "$PROFILE" == "owl" ]] && systemctl cat owl-dash.service >/dev/null 2>&1; then
+            DASH_SERVICE="owl-dash.service"
+        fi
+        recover
+    fi
+    if [[ -f "$JOURNAL_FILE" ]]; then
+        fail_terminal "an earlier update was cut off and has not been rolled back yet (run owl_update.sh --recover)"
+    fi
 
     # --- Preflight ---------------------------------------------------------------
     write_status preflight
@@ -383,6 +521,7 @@ main() {
     # Prune old backups, keep newest 3
     ls -1d "$REPO_DIR"/.update_backup/*/ 2>/dev/null | sort | head -n -3 | xargs -r rm -rf
     ROLLBACK_READY=1
+    write_journal
 
     # --- Stash field config ---------------------------------------------------------
     write_status stashing
@@ -391,6 +530,8 @@ main() {
         log "Stashing local modifications..."
         git stash push -m "owl-update-$TS"
         STASHED=1
+        STASH_SHA="$(git rev-parse -q --verify stash@{0})"
+        write_journal
     fi
 
     # --- Checkout -------------------------------------------------------------------
@@ -426,6 +567,8 @@ main() {
         fi
         # Fleet steady state: field config as plain working-tree modifications.
         git restore --staged -- .
+        STASH_SHA=""
+        write_journal
     fi
 
     # --- Dependencies ---------------------------------------------------------------
@@ -459,6 +602,11 @@ main() {
         write_status import_check
         log "Checking the new code imports..."
         local entries=(owl.py controller/standalone/standalone.py)
+        # The first-boot setup app runs as root on factory units; a broken
+        # import there leaves a new OWL unprovisionable
+        if [[ -f "$REPO_DIR/controller/setup/setup_app.py" ]]; then
+            entries+=(controller/setup/setup_app.py)
+        fi
         if [[ "$PROFILE" == "controller" ]]; then entries=(controller/networked/networked.py); fi
         "$VENV/bin/python" "$REPO_DIR/tools/import_check.py" "${entries[@]}"
     fi
@@ -466,6 +614,7 @@ main() {
     # --- Restart + health check --------------------------------------------------------
     if [[ "$NO_RESTART" == "1" ]]; then
         log "Skipping service restart (--no-restart)."
+        clear_journal
         write_status complete
         log "Update complete: $FROM_DESC -> $TO_DESC (service NOT restarted)"
         prune_logs
@@ -475,6 +624,7 @@ main() {
     if [[ "$UNATTENDED" != "1" && "$ASSUME_YES" != "1" ]]; then
         read -r -p "Restart $SERVICE now? [Y/n]: " yn
         if [[ "$yn" =~ ^[Nn] ]]; then
+            clear_journal
             write_status complete
             log "Update complete: $FROM_DESC -> $TO_DESC (restart skipped by user)"
             prune_logs
@@ -523,6 +673,7 @@ main() {
         done
     done
 
+    clear_journal
     write_status complete
     log "Update complete: $FROM_DESC -> $TO_DESC"
     prune_logs

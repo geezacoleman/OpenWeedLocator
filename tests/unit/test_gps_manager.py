@@ -129,7 +129,7 @@ class TestGPSState:
         })
         # Manually set last_fix_time to 15 seconds ago
         with state._lock:
-            state.last_fix_time = time.time() - 15
+            state.last_fix_time = time.monotonic() - 15
         d = state.get_dict()
         assert d['fix_valid'] is False
         assert d['age_seconds'] > 10

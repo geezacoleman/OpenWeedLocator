@@ -140,6 +140,11 @@ class TestStartupAndScan:
                                          'mode': 'infrastructure',
                                          'active': True, 'psk': 'x',
                                          'props': {}}
+        # This setup run joined FarmWiFi before the reboot (v3.27: only a
+        # join from the same run is resumed)
+        env.fb.wifi_state = 'connected'
+        env.fb._persist()
+        env.fb._load_persisted()
         env.fb.startup()
         assert env.fb.wifi_state == 'connected'
         assert env.fb.wifi_ssid == 'FarmWiFi'

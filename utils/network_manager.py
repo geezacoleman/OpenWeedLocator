@@ -326,6 +326,12 @@ class NetworkManager:
                     f', static {static_ip}' if static_ip else '',
                     '' if autoconnect else ', no autoconnect')
 
+    def set_autoconnect(self, name, on=True, priority=CLIENT_CONNECTION_PRIORITY):
+        """Turn a profile's autoconnect on (at priority) or off."""
+        self._run(['con', 'modify', name,
+                   'connection.autoconnect', 'yes' if on else 'no',
+                   'connection.autoconnect-priority', str(priority)])
+
     def activate_connection(self, name, timeout=DEFAULT_ACTIVATE_TIMEOUT):
         """Activate a profile, blocking until connected. Returns True/False.
 

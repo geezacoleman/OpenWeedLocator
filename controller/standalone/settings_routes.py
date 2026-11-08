@@ -301,7 +301,9 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
                 manager.request_join(ssid, password or None, temporary=True,
                                      wait_s=wait_s)
             else:
-                manager.request_join(ssid, password or None)
+                # Made at the OWL itself (kiosk): nothing to wait for
+                manager.request_join(ssid, password or None,
+                                     confirm_now=request.remote_addr in ('127.0.0.1', '::1'))
         except RuntimeError as e:
             return jsonify({'success': False, 'error': str(e)}), 409
         except NetworkManagerError as e:
@@ -321,6 +323,21 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
     @bp.route('/api/settings/network/result')
     def network_result():
         return jsonify(manager.result())
+
+    @bp.route('/api/settings/network/confirm', methods=['POST'])
+    @guard
+    def network_confirm():
+        """Keep the network just joined. Any request from that network's
+        subnet does the same; without either it reverts after CONFIRM_S."""
+        return jsonify({'success': True, 'confirmed': manager.confirm() or manager.confirmed})
+
+    @bp.before_app_request
+    def _confirm_from_new_network():
+        # The phone reached the OWL over the network it just joined: it works
+        try:
+            manager.confirm_from(request.remote_addr)
+        except Exception as e:
+            log.warning(f"Network confirm check failed: {e}")
 
     @bp.route('/api/settings/network/cancel', methods=['POST'])
     @guard
@@ -392,6 +409,13 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
             software_update.launch(argv, popen)
         except Exception as e:
             log.error(f"Software update failed to launch: {e}")
+            # Not 'starting' any more: the next attempt must not be refused
+            try:
+                software_update.write_seed_status(update_status_file, request_id, ref,
+                                                  status='error',
+                                                  error=f'Failed to launch the updater: {e}')
+            except OSError:
+                pass
             return _fail(500, 'launch_failed',
                          f'Failed to launch the updater: {e}')
         log.warning(f"Software update launched from dashboard: ref={ref} "

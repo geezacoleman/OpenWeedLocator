@@ -401,7 +401,11 @@ const Shell = (function () {
         $('sessionChips').innerHTML = U.labsHTML(chips.slice(0, 3));
     }
 
-    const FAULT_ACTIONS = { nozzles_off: 'Nozzles are off.', blanket: 'Blanket spraying while spraying is on.', spot_spray: 'Spot spraying continues.' };
+    const FAULT_ACTIONS = {
+        nozzles_off: 'Nozzles are off.', blanket: 'Blanket spraying while spraying is on.',
+        spot_spray: 'Spot spraying continues.', blanket_off: 'Blanket spray is off. Spot spraying continues.',
+        continue: 'Spraying continues.',
+    };
     function renderNotices(scoped) {
         const U = UI();
         const out = [];
@@ -413,6 +417,9 @@ const Shell = (function () {
         }
         scoped.forEach((o) => {
             if (o.fault) out.push(U.notice('bad', '<b>' + U.esc(who(o)) + 'Fault: ' + U.esc(o.fault.message) + '.</b> ' + U.esc(FAULT_ACTIONS[o.fault.action] || '')));
+            const stopped = U.sprayNotice(o);
+            if (stopped) out.push(U.notice('warn', '<b>' + U.esc(who(o) + stopped) + '</b>'));
+            if (o.controller_notice) out.push(U.notice('bad', '<b>' + U.esc(who(o) + o.controller_notice) + '.</b> Check its connection.'));
             if (o.algorithm_error) out.push(U.notice('bad', '<b>' + U.esc(who(o)) + 'Detection could not start.</b> ' + U.esc(o.algorithm_error)));
             if (o.speed_warning) out.push(U.notice('warn', '<b>' + U.esc(who(o)) + 'Slow down.</b> ' + U.esc(o.speed_warning)));
             if (o.recording_blocked_reason && !o.image_sample_enable) {
@@ -764,18 +771,14 @@ const Shell = (function () {
 
     // ---------- test nozzles ----------
     function initNozzles() {
-        let restore = [];
+        // Hold to spray is a lease each OWL ends by itself 1.5 s after the last
+        // renew, so spot spraying is never switched off and needs no restore
+        let holdScope = null;
         UI().hold($('holdSpray'), {
             maxMs: 10000,
-            start: () => {
-                restore = scopedOwls().filter((o) => o.detection_enable && o.detection_mode !== 2).map((o) => o._id);
-                sendCommand(currentScope(), 'toggle_all_nozzles', true);
-            },
-            stop: () => {
-                sendCommand(currentScope(), 'toggle_all_nozzles', false).then(() => {
-                    restore.forEach((id) => sendCommand(id, 'toggle_detection', true));
-                });
-            },
+            start: () => { holdScope = currentScope(); sendCommand(holdScope, 'hold_spray', 1500); },
+            renew: () => sendCommand(holdScope, 'hold_spray', 1500),
+            stop: () => sendCommand(holdScope, 'hold_spray', 0),
         });
         // One nozzle at a time, or each in turn (the OWL stops each test itself)
         nozzleTester = UI().nozzleTest($('nozzleTest'), {

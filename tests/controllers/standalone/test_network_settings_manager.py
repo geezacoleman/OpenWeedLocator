@@ -123,7 +123,8 @@ class TestJoinFromHotspot:
         assert mgr.previous == {'ssid': 'OWL-4b7d', 'mode': 'hotspot'}
 
         CapturingTimer.fire_all()
-        nm.add_wifi_connection.assert_called_once_with('HomeNet', 'secret123')
+        # No autoconnect until confirmed (v3.27)
+        nm.add_wifi_connection.assert_called_once_with('HomeNet', 'secret123', autoconnect=False)
         nm.hotspot_down.assert_called_once()
         result = mgr.result()
         assert result['state'] == 'connected'
@@ -170,11 +171,13 @@ class TestJoinFromClient:
         nm.status.return_value = {'mode': 'client', 'ssid': 'OldNet',
                                   'ip': '192.168.0.9', 'hotspot_profile': 'OWL-4b7d'}
 
-    def test_success_deletes_superseded_profile(self, mgr, nm):
+    def test_success_deletes_superseded_profile_once_confirmed(self, mgr, nm):
         mgr.request_join('NewNet', 'secret123')
         CapturingTimer.fire_all()
         assert mgr.result()['state'] == 'connected'
         nm.hotspot_down.assert_not_called()
+        nm.delete_connection.assert_not_called()   # kept until the join is confirmed
+        assert mgr.confirm() is True
         nm.delete_connection.assert_called_once_with('OldNet')
 
     def test_rejoining_same_network_keeps_profile(self, mgr, nm):
@@ -240,8 +243,117 @@ class TestResultShape:
         result = mgr.result()
         assert set(result) == {'state', 'ssid', 'ip', 'error', 'warning',
                                'previous', 'temporary', 'expires_at',
-                               'ended_reason', 'con_name'}
+                               'ended_reason', 'con_name', 'confirmed'}
         assert result['state'] == 'idle'
         assert result['previous'] is None
         assert result['temporary'] is False
         assert result['con_name'] is None
+
+
+# ---------------------------------------------------------------------------
+# v3.27: a permanent join reverts unless confirmed
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def confirm_mgr(nm, sender, tmp_path):
+    return NetworkSettingsManager(nm, timer_factory=CapturingTimer, beacon_sender=sender,
+                                  switch_marker=str(tmp_path / 'net-switching'),
+                                  confirm_timer_factory=ConfirmTimer,
+                                  confirm_record=str(tmp_path / 'confirm.json'))
+
+
+class ConfirmTimer(CapturingTimer):
+    """The 120 s confirm timer, fired only when a test says so."""
+    armed = []
+
+    def start(self):
+        ConfirmTimer.armed.append(self)
+
+    def cancel(self):
+        self.cancelled = True
+
+    def fire(self):
+        self.function()
+
+
+@pytest.fixture(autouse=True)
+def clear_confirm_timers():
+    ConfirmTimer.armed = []
+    yield
+
+
+@pytest.mark.unit
+class TestJoinConfirm:
+    def join(self, mgr, ssid='HomeNet'):
+        mgr.request_join(ssid, 'secret123')
+        CapturingTimer.fire_all()
+        assert mgr.result()['state'] == 'connected'
+
+    def test_unconfirmed_join_reverts_to_the_hotspot(self, confirm_mgr, nm):
+        self.join(confirm_mgr)
+        assert confirm_mgr.result()['confirmed'] is False
+        nm.set_autoconnect.assert_not_called()
+        ConfirmTimer.armed[-1].fire()
+        nm.delete_connection.assert_called_with('HomeNet')
+        nm.hotspot_up.assert_called()
+        result = confirm_mgr.result()
+        assert (result['state'], result['error']) == ('failed', 'not_confirmed')
+
+    def test_confirm_keeps_it_and_turns_autoconnect_on(self, confirm_mgr, nm, tmp_path):
+        self.join(confirm_mgr)
+        assert (tmp_path / 'confirm.json').exists()
+        assert confirm_mgr.confirm() is True
+        nm.set_autoconnect.assert_called_once_with('HomeNet', True)
+        assert not (tmp_path / 'confirm.json').exists()
+        ConfirmTimer.armed[-1].fire()           # too late to matter
+        nm.hotspot_up.assert_not_called()
+        assert confirm_mgr.result()['confirmed'] is True
+
+    def test_request_from_the_new_subnet_confirms(self, confirm_mgr, nm):
+        self.join(confirm_mgr)                 # OWL is 192.168.1.50 now
+        assert confirm_mgr.confirm_from('10.42.0.7') is False   # old hotspot subnet
+        assert confirm_mgr.confirm_from('192.168.1.23') is True
+        nm.set_autoconnect.assert_called_once()
+
+    def test_kiosk_join_confirms_at_once(self, confirm_mgr, nm):
+        confirm_mgr.request_join('HomeNet', 'secret123', confirm_now=True)
+        CapturingTimer.fire_all()
+        nm.add_wifi_connection.assert_called_once_with('HomeNet', 'secret123', autoconnect=True)
+        assert confirm_mgr.result()['confirmed'] is True
+        assert ConfirmTimer.armed == []
+
+    def test_dashboard_restart_inside_the_window_keeps_waiting(self, nm, sender, tmp_path):
+        record = tmp_path / 'confirm.json'
+        first = NetworkSettingsManager(nm, timer_factory=CapturingTimer, beacon_sender=sender,
+                                       switch_marker=str(tmp_path / 'm'),
+                                       confirm_timer_factory=ConfirmTimer,
+                                       confirm_record=str(record))
+        self.join(first)
+        second = NetworkSettingsManager(nm, timer_factory=CapturingTimer, beacon_sender=sender,
+                                        switch_marker=str(tmp_path / 'm'),
+                                        confirm_timer_factory=ConfirmTimer,
+                                        confirm_record=str(record))
+        second.resume_pending_confirm()
+        assert second.result()['confirmed'] is False
+        ConfirmTimer.armed[-1].fire()
+        assert second.result()['error'] == 'not_confirmed'
+
+    def test_dashboard_restart_past_the_deadline_reverts(self, nm, sender, tmp_path):
+        import json as _json
+        record = tmp_path / 'confirm.json'
+        record.write_text(_json.dumps({'ssid': 'HomeNet', 'deadline': 1,
+                                       'previous': {'mode': 'hotspot', 'ssid': 'OWL-4b7d'}}))
+        mgr = NetworkSettingsManager(nm, timer_factory=CapturingTimer, beacon_sender=sender,
+                                     switch_marker=str(tmp_path / 'm'),
+                                     confirm_timer_factory=ConfirmTimer,
+                                     confirm_record=str(record))
+        mgr.resume_pending_confirm()
+        assert ConfirmTimer.armed[-1].interval == 0.0
+        ConfirmTimer.armed[-1].fire()
+        nm.hotspot_up.assert_called()
+
+    def test_rejoining_the_same_network_needs_no_confirm(self, confirm_mgr, nm):
+        nm.status.return_value = {'mode': 'client', 'ssid': 'HomeNet', 'ip': '192.168.1.50',
+                                  'hotspot_profile': 'OWL-4b7d'}
+        self.join(confirm_mgr)
+        assert confirm_mgr.result()['confirmed'] is True

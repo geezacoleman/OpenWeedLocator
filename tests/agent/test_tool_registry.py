@@ -535,6 +535,24 @@ class TestSetDetection:
         result = set_detection(enabled=True, mqtt_client=None)
         assert 'error' in result
 
+    def test_disabled_with_blanket_mode_is_off(self):
+        # enabled=false with mode=2 used to blanket spray
+        ctx = _make_context()
+        set_detection(enabled=False, mode=2, **ctx)
+        assert ctx['mqtt_client'].last_command == {'action': 'set_detection_enable', 'value': False}
+
+    @pytest.mark.parametrize('state, code', [('spot', 0), ('off', 1), ('blanket', 2)])
+    def test_state(self, state, code):
+        ctx = _make_context()
+        set_detection(state=state, **ctx)
+        assert ctx['mqtt_client'].last_command['action'] == 'set_detection_mode'
+        assert ctx['mqtt_client'].last_command['value'] == code
+
+    def test_invalid_state(self):
+        ctx = _make_context()
+        with pytest.raises(ValueError, match='Invalid spray state'):
+            set_detection(state='sideways', **ctx)
+
 
 class TestSetSensitivity:
     def test_sends_command(self):

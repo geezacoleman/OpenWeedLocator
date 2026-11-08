@@ -313,6 +313,8 @@ const Shell = (function () {
         nozzles_off: 'Nozzles are off.',
         blanket: 'Blanket spraying while spraying is switched on.',
         spot_spray: 'Spot spraying continues.',
+        blanket_off: 'Blanket spray is off. Spot spraying continues.',
+        continue: 'Spraying continues.',
     };
     const BLOCKED = {
         no_drive: 'No USB drive found. Insert a drive and press Record again.',
@@ -324,6 +326,8 @@ const Shell = (function () {
         const out = [];
         const UIx = UI();
         if (d.fault) out.push(UIx.notice('bad', '<b>Fault: ' + UIx.esc(d.fault.message) + '.</b> ' + UIx.esc(FAULT_ACTIONS[d.fault.action] || '')));
+        const stopped = UIx.sprayNotice(d);
+        if (stopped) out.push(UIx.notice('warn', '<b>' + UIx.esc(stopped) + '</b>'));
         if (d.algorithm_error) out.push(UIx.notice('bad', '<b>Detection could not start.</b> ' + UIx.esc(d.algorithm_error)));
         if (d.speed_warning) out.push(UIx.notice('warn', '<b>Slow down.</b> ' + UIx.esc(d.speed_warning)));
         if (d.recording_blocked_reason && !d.image_sample_enable) {
@@ -507,18 +511,18 @@ const Shell = (function () {
 
     // ---------- test nozzles ----------
     function initNozzles() {
-        let wasDetecting = false;
+        // Hold to spray is a lease on the OWL: it turns the nozzles off by
+        // itself 1.5 s after the last renew, so nothing here has to restore
+        // spot spraying afterwards (it was never switched off)
+        const holdFor = (ms) => fetch('/api/nozzles/hold', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ms: ms }),
+        }).catch(() => {});
         UI().hold($('holdSpray'), {
             maxMs: 10000,
-            start: () => {
-                wasDetecting = !!last.detection_enable && last.detection_mode !== 2;
-                apiRequest('/api/nozzles/all-on', { method: 'POST' }).catch(() => {});
-            },
-            stop: () => {
-                fetch('/api/nozzles/all-off', { method: 'POST' })
-                    .then(() => { if (wasDetecting) return fetch('/api/detection/start', { method: 'POST' }); })
-                    .then(() => updateSystemStats()).catch(() => {});
-            },
+            start: () => holdFor(1500),
+            renew: () => holdFor(1500),
+            stop: () => { holdFor(0).then(() => updateSystemStats()); },
         });
         // One nozzle at a time, or each in turn (the OWL stops each test itself)
         nozzleTester = UI().nozzleTest($('nozzleTest'), {

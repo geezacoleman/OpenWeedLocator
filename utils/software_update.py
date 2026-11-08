@@ -25,7 +25,10 @@ from pathlib import Path
 
 # Ref allowlist shared with owl_update.sh preflight
 UPDATE_REF_PATTERN = r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$'
-TERMINAL_STATUSES = ('idle', 'complete', 'rolled_back', 'error')
+# 'interrupted': a run that stopped part-way (power cut, reboot, crash):
+# its status is from another boot or too old to be live. Recovery
+# (tools/update_guard.py -> owl_update.sh --recover) rolls it back.
+TERMINAL_STATUSES = ('idle', 'complete', 'rolled_back', 'error', 'interrupted')
 # In the order owl_update.sh writes them
 PHASES = ('starting', 'preflight', 'fetching', 'stashing', 'checking_out',
           'restoring_config', 'installing_deps', 'import_check', 'restarting',
@@ -40,6 +43,12 @@ STALE_AFTER_S = 1800
 
 STATUS_FILE_NAME = '.update_status.json'
 SCRIPT_NAME = 'owl_update.sh'
+# Written by owl_update.sh once it has a rollback point; removed when the run
+# ends. Still there at the next start = the run was cut off.
+JOURNAL_FILE_NAME = '.update_journal.json'
+BOOT_ID_PATH = '/proc/sys/kernel/random/boot_id'
+INTERRUPTED_ERROR = ('The update stopped part-way (the OWL restarted or lost power). '
+                     'It is rolled back to the previous version.')
 
 
 def repo_root():
@@ -52,6 +61,20 @@ def status_path(root=None):
 
 def script_path(root=None):
     return Path(root or repo_root()) / SCRIPT_NAME
+
+
+def journal_path(root=None):
+    return Path(root or repo_root()) / JOURNAL_FILE_NAME
+
+
+def current_boot_id(path=BOOT_ID_PATH):
+    """This boot's id ('' off Linux). Every status write carries it, so a
+    non-terminal status from an earlier boot is known to be dead."""
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return ''
 
 
 def valid_ref(ref):
@@ -100,6 +123,7 @@ def normalise_status(data):
         'rollback_failed': bool(data.get('rollback_failed', False)),
         'started_at': int(data.get('started_at', 0) or 0),
         'updated_at': int(data.get('updated_at', 0) or 0),
+        'boot_id': str(data.get('boot_id', '') or ''),
     }
 
 
@@ -107,14 +131,33 @@ def idle_status():
     return normalise_status({})
 
 
-def read_status(path):
-    """Parsed status file, or None when absent/unreadable. The script writes
-    it via temp+rename so a partial read is not possible."""
+def read_status(path, now=None, boot_id=None):
+    """Parsed status file (see effective_status), or None when
+    absent/unreadable. The script writes it via temp+rename so a partial
+    read is not possible."""
     try:
         with open(path) as f:
-            return normalise_status(json.load(f))
+            return effective_status(normalise_status(json.load(f)), now=now, boot_id=boot_id)
     except (OSError, ValueError):
         return None
+
+
+def effective_status(status_dict, now=None, boot_id=None):
+    """A non-terminal status that cannot be live any more becomes
+    'interrupted' (terminal): written during an earlier boot, or not updated
+    for STALE_AFTER_S. Without this a power cut mid-update left 'installing_deps'
+    in the file and every later update was refused as already running."""
+    if not status_dict or is_terminal(status_dict.get('status')):
+        return status_dict
+    now = now if now is not None else time.time()
+    boot_id = current_boot_id() if boot_id is None else boot_id
+    written_boot = status_dict.get('boot_id') or ''
+    other_boot = bool(written_boot and boot_id and written_boot != boot_id)
+    stale = (now - int(status_dict.get('updated_at', 0) or 0)) >= STALE_AFTER_S
+    if not (other_boot or stale):
+        return status_dict
+    return dict(status_dict, status='interrupted',
+                error=status_dict.get('error') or INTERRUPTED_ERROR)
 
 
 def is_terminal(status):
@@ -130,15 +173,18 @@ def in_progress(status_dict, now=None):
     return (now - int(status_dict.get('updated_at', 0) or 0)) < STALE_AFTER_S
 
 
-def write_seed_status(path, request_id, ref):
+def write_seed_status(path, request_id, ref, status='starting', error=''):
     """Write the 'starting' record before launching, atomically, so a poll
-    that lands before the script's first write already sees this request."""
+    that lands before the script's first write already sees this request.
+    status='error' records a launch that failed, so the next attempt is not
+    refused as already running."""
     path = Path(path)
     now = int(time.time())
     payload = {
-        'request_id': str(request_id), 'status': 'starting', 'ref': str(ref),
-        'from': '', 'to': '', 'error': '', 'rollback_failed': False,
+        'request_id': str(request_id), 'status': status, 'ref': str(ref),
+        'from': '', 'to': '', 'error': str(error), 'rollback_failed': False,
         'started_at': now, 'updated_at': now, 'pid': 0, 'log_file': '',
+        'boot_id': current_boot_id(),
     }
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix='.update_status.',
                                suffix='.tmp')
@@ -167,7 +213,23 @@ def sudo_permits(argv, runner=None):
     return getattr(result, 'returncode', 1) == 0
 
 
+# systemd-run returns as soon as the transient unit has started
+LAUNCH_WAIT_S = 3.0
+
+
 def launch(argv, popen=None):
-    """Fire-and-forget: the transient unit outlives the caller."""
+    """Start the transient unit (it outlives the caller). systemd-run's own
+    exit code is checked for LAUNCH_WAIT_S: a refusal (sudo, a unit of the
+    same name still there) used to leave 'starting' behind with nothing
+    running. Raises RuntimeError on a non-zero exit."""
     start = popen or subprocess.Popen
-    return start(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = start(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        code = proc.wait(timeout=LAUNCH_WAIT_S)
+    except subprocess.TimeoutExpired:
+        return proc  # still starting the unit: not a refusal
+    except Exception:
+        return proc  # a stand-in without wait()
+    if isinstance(code, int) and code != 0:
+        raise RuntimeError(f'systemd-run exited with code {code}')
+    return proc

@@ -513,9 +513,11 @@ EOF
 #!/bin/sh
 # Created by install_firstboot.sh — re-arms OWL first-boot setup mode.
 # Deliberately minimal: the owl-firstboot service restores everything
-# else it needs at startup. sync: the flag lives on FAT32 and must
-# survive an immediate power-off.
-touch "${FLAG_PATH}"
+# else it needs at startup. An EMPTY flag is a new setup run (the service
+# writes its run id into it), so the previous run's state is never
+# resumed. sync: the flag lives on FAT32 and must survive an immediate
+# power-off.
+: > "${FLAG_PATH}"
 sync
 EOF
     chown root:root "${REARM_HELPER}"
@@ -537,7 +539,8 @@ EOF
     # 8. State dir + flag — the actual arm, LAST so a failure anywhere above
     # leaves the unit un-armed rather than half-armed.
     mkdir -p /var/lib/owl
-    if ! touch "${FLAG_PATH}"; then
+    # Empty, not touched: an empty flag is a new setup run (see the helper)
+    if ! : > "${FLAG_PATH}"; then
         echo -e "${CROSS} Could not write the flag file (${FLAG_PATH}). Not armed."
         exit 1
     fi
@@ -553,6 +556,9 @@ EOF
 disarm() {
     echo -e "${GREEN}[INFO] Disarming first-boot setup mode...${NC}"
     rm -f "${FLAG_PATH}"
+    # The run's state goes with it, or a later arm could pick it up
+    rm -f /var/lib/owl/firstboot_state.json
+    sync
     systemctl disable owl-firstboot.service 2>/dev/null || true
     systemctl stop owl-firstboot.service 2>/dev/null || true
     systemctl stop owl-firstboot-fallback.service 2>/dev/null || true

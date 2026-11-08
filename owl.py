@@ -95,6 +95,7 @@ try:
     from utils.log_manager import LogManager, MQTTLogHandler
     from utils import net_watchdog
     from utils.shared_types import Sensitivity
+    from utils import spray_mode
     from utils.gps_manager import GPSState, TrackRecorder, nrf91_command, nrf91_start_gps
     from utils.actuation import SpeedAverager, ActuationCalculator, speed_warning
     from version import SystemInfo, VERSION
@@ -125,6 +126,19 @@ STREAM_FRAME_INTERVAL = 5
 # dropped or late frame is common and used to end the whole job silently; a
 # genuine disconnect still stops the OWL, just loudly and after ~0.5 s.
 MAX_DROPPED_FRAMES = 10
+# A lost camera is re-opened in-process this often
+CAMERA_REOPEN_S = 5.0
+# on_error = off: give up (exit non-zero, systemd restarts us) after this many
+# failed re-opens
+CAMERA_REOPEN_ATTEMPTS = 3
+# Spraying faults raised by the watchdogs
+SYNC_STALL_S = 3.0      # no state-sync tick for this long (stats take up to 1 s)
+LOOP_STALL_S = 10.0     # no main-loop pass for this long (a slow CPU AI model
+                        # can take a few seconds per frame; a hang takes forever)
+CAMERA_STALL_S = 1.0    # no frame from a live camera for this long
+LINK_LOST_S = 5.0       # networked: no word from the controller for this long
+HOLD_LEASE_MAX_S = 1.5  # hold to spray: off this soon after the last renew
+_UNSET = object()
 
 
 def nothing(x):
@@ -304,7 +318,29 @@ class Owl:
         # 'off' = detection off, all nozzles off; 'on' = blanket spray when
         # detection can no longer run. Either way the fault is published.
         self.on_error = self.config.get('System', 'on_error', fallback='off').strip().lower()
-        self._fault_state = None
+
+        # Spraying has one owner. utils/spray_mode.resolve() decides from the
+        # operator's request, the hardware switch, first-boot, faults and link
+        # loss; _apply_spray() applies it through RelayController.set_mode().
+        # Nothing else switches the nozzles.
+        self._spray_lock = threading.RLock()
+        self._spray_ready = False          # True once __init__ has wired everything
+        self._spray_request = spray_mode.OFF
+        self._spray_source = 'boot'        # who made the current request
+        self._spray_requested_at = time.time()
+        self._spray_effective = None
+        self._spray_reason = None          # why the request is not followed right now
+        self._spray_stopped = None         # why the request was last cleared (sticky)
+        self._spray_since = time.time()
+        self._spray_dirty = False          # changed while publishing was impossible
+        self._spray_published = None
+        self._switch_seen = _UNSET
+        self._faults = {}                  # code -> {code, message, action, since, ...}
+        self._link_lost = False
+        self._controller_seen_at = None    # monotonic; networked only
+        self._relay_stuck_message = None
+        self._last_sync_at = time.monotonic()
+        self._last_loop_at = None
 
         # use the [Relays] section to build the dictionary
         for key, value in self.config['Relays'].items():
@@ -320,6 +356,11 @@ class Owl:
                                  exc_info=True)
             raise
         self.relay_controller.on_stuck = self._relay_stuck
+        self.relay_controller.on_test_end = self._publish_spray
+        # Nozzles off until the first _apply_spray (end of __init__)
+        self.relay_controller.set_mode(spray_mode.OFF)
+        # For the SIGTERM / failed-__init__ path in __main__
+        Owl._relay_controller_for_cleanup = self.relay_controller
 
         ### Data collection only ###
         detection_enable_config = self.config.getboolean('DataCollection', 'detection_enable', fallback=False)
@@ -334,7 +375,7 @@ class Owl:
         self._firstboot_active = first_boot_flag.exists()
         self._firstboot_last_check = 0.0
         if self._firstboot_active:
-            self.logger.info("First-boot flag present: detection locked off until setup finishes")
+            self.logger.info("First-boot flag present: spraying locked off until setup finishes")
             detection_enable_config = False
         self.detection_enable = Value('b', detection_enable_config)
         self.image_sample_enable = Value('b', self.config.getboolean('DataCollection', 'image_sample_enable',
@@ -592,18 +633,20 @@ class Owl:
                 switch_purpose=self.config.get('Controller', 'switch_purpose', fallback='recording').strip("'\" ").lower(),
                 switch_board_pin=self._allowed_board_pin('switch_pin', 36)
             )
-            self.controller_process = Process(target=self.controller.run)
+            self.controller_process = Process(target=self.controller.run, daemon=True)
             self.controller_process.start()
 
         elif self.controller_type == 'advanced':
             if not hasattr(self, 'sensitivity_level'):
                 self.sensitivity_level = Value('i', Sensitivity.HIGH.value)
+            # Three-position spray switch: 0 spot, 1 off, 2 blanket
+            self._detection_mode_state = Value('i', 1)
 
             # Status indicator already created above
             self.controller = AdvancedController(
                 recording_state=self.image_sample_enable,
                 sensitivity_level=self.sensitivity_level,
-                detection_mode_state=Value('i', 1),
+                detection_mode_state=self._detection_mode_state,
                 stop_flag=Value('b', False),
                 owl_instance=self,
                 status_indicator=self.status_indicator,
@@ -613,7 +656,7 @@ class Owl:
                 detection_mode_bpin_up=self._allowed_board_pin('detection_mode_pin_up', 36),
                 detection_mode_bpin_down=self._allowed_board_pin('detection_mode_pin_down', 35)
             )
-            self.controller_process = Process(target=self.controller.run)
+            self.controller_process = Process(target=self.controller.run, daemon=True)
             self.controller_process.start()
 
         else:
@@ -688,6 +731,15 @@ class Owl:
             psutil.cpu_percent(interval=None)
         except ImportError:
             pass
+
+        # Spraying at boot. With a dashboard or a switch panel a unit never
+        # sprays at power-up (decided 2026-10-10); a switch held ON at boot
+        # counts as switched on (decided 2026-11-07) and arrives as a switch
+        # edge in the first _apply_spray. Only a bare unit follows the config.
+        if not self.dash and self.controller_type == 'none' and self.detection_enable.value:
+            self._spray_request = spray_mode.SPOT
+        self._spray_ready = True
+        self._apply_spray()
 
         if self.dash or self.controller_type != 'none' or self._gps_state is not None:
             threading.Thread(target=self.update_state, daemon=True).start()
@@ -956,6 +1008,9 @@ class Owl:
             return False
 
     def hoot(self):
+        # The detection loop's thread: it never waits on the dashboard lock
+        # (see _can_publish_here)
+        self._main_thread = threading.current_thread()
         # Signal successful boot with LED blink
         if hasattr(self, 'status_indicator') and hasattr(self.status_indicator, 'setup_success'):
             self.status_indicator.setup_success()
@@ -1070,9 +1125,13 @@ class Owl:
         prev_recording_enable = False
 
         dropped_frames = 0
+        camera_lost_at = None
+        reopen_failures = 0
         try:
             while True:
                 loop_start = time.time()
+                self._last_loop_at = time.monotonic()
+                self._check_sync_watchdog()
                 frame, camera_metadata = self.cam.read_with_metadata()
                 self._last_camera_metadata = camera_metadata
                 if camera_metadata:
@@ -1089,33 +1148,42 @@ class Owl:
 
                     # Live camera: a single dropped or late frame used to end
                     # the job on one quiet log line. Retry briefly, and if the
-                    # camera really is gone say so loudly.
+                    # camera really is gone say so loudly. read_with_metadata
+                    # gives up after 1 s, so a camera stuck mid-capture lands
+                    # here too instead of hanging the loop.
                     dropped_frames += 1
-                    if dropped_frames <= MAX_DROPPED_FRAMES:
+                    if dropped_frames <= MAX_DROPPED_FRAMES and not self._camera_stalled():
                         if dropped_frames == 1:
                             self.logger.warning('[WARNING] No frame from camera - retrying')
                         time.sleep(0.05)
                         continue
-                    if (self._fault_state or {}).get('code') != 'camera_lost':
+                    if 'camera_lost' not in self._faults:
+                        camera_lost_at = time.monotonic()
                         self._fault('camera_lost',
-                                    f'No frame from camera after {MAX_DROPPED_FRAMES} '
+                                    f'No frame from camera after {dropped_frames} '
                                     f'retries - camera disconnected?',
                                     detection_possible=False)
-                    if self._fault_state['action'] != 'blanket':
-                        self.stop()
-                        break
-                    # on_error = on: blanket spray while the operator has
-                    # spraying on, and keep trying the camera.
-                    if self._detection_enable:
-                        self.relay_controller.relay.all_on()
-                    else:
-                        self.relay_controller.relay.all_off()
-                    time.sleep(0.5)
+                    # The nozzles are whatever resolve() says: off, or blanket
+                    # under on_error = on. Keep trying to get the camera back.
+                    if time.monotonic() - camera_lost_at >= CAMERA_REOPEN_S:
+                        camera_lost_at = time.monotonic()
+                        if self._reopen_camera():
+                            reopen_failures = 0
+                        else:
+                            reopen_failures += 1
+                            if self.on_error != 'on' and reopen_failures >= CAMERA_REOPEN_ATTEMPTS:
+                                self.logger.error(
+                                    f'[FAULT] camera_lost: {reopen_failures} re-opens failed, '
+                                    f'exiting so systemd restarts the OWL')
+                                self.stop(exit_code=1)
+                                break
+                    time.sleep(0.2)
                     continue
                 if dropped_frames:
                     self.logger.info(f'[INFO] Camera recovered after {dropped_frames} '
                                      f'dropped frame(s)')
                     dropped_frames = 0
+                    reopen_failures = 0
                     self._clear_fault('camera_lost')
 
                 # Reset tracker when detection toggled off
@@ -1743,8 +1811,13 @@ class Owl:
             self.logger.error(f"[CRITICAL ERROR] STOPPED: {e}", exc_info=True)
             self.stop()
 
-    def stop(self):
-        """Gracefully shut down all OWL components."""
+    def stop(self, exit_code=0):
+        """Gracefully shut down all OWL components. Nozzles go off first:
+        everything after this can take seconds (the image recorder joins its
+        workers) and systemd's TimeoutStopSec is 10 s."""
+        self._relays_off_now()
+        # The loop has ended: a slow shutdown is not a hung detector
+        self._last_loop_at = None
 
         def safe_stop(component, name, fallback_to_terminate=True):
             """
@@ -1826,7 +1899,19 @@ class Owl:
                 self.logger.info("OWL shutdown complete")
             except Exception as log_error:
                 print(f"Failed to stop LogManager: {log_error}", file=sys.stderr)
-            sys.exit(0)
+            sys.exit(exit_code)
+
+    def _relays_off_now(self):
+        """Every nozzle off, now, from any thread. Used on shutdown."""
+        rc = getattr(self, 'relay_controller', None)
+        if rc is None:
+            return
+        for step in (lambda: rc.stop_test(notify=False), lambda: rc.set_mode(spray_mode.OFF),
+                     rc.relay.all_off):
+            try:
+                step()
+            except Exception as e:
+                self.logger.error(f"Turning the nozzles off on shutdown: {e}")
 
     def save_parameters(self):
         timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
@@ -2131,55 +2216,388 @@ class Owl:
         self._video_dts = []
 
     # Status LED blink count per spraying fault
-    _FAULT_LED = {'camera_lost': 3, 'control_lost': 4, 'relay_stuck': 7}
+    _FAULT_LED = {'camera_lost': 3, 'control_lost': 4, 'relay_stuck': 7, 'link_lost': 8}
+
+    @property
+    def _fault_state(self):
+        """The most urgent active fault (what the LED and the old single
+        'fault' state field show), or None."""
+        code = spray_mode.top_fault(self._faults)
+        return self._faults.get(code) if code else None
 
     def _fault(self, code, message, detection_possible):
         """A spraying fault. Always loud (log, LED, dashboard/app); then
-        [System] on_error decides the nozzles: 'off' -> detection off, all
-        nozzles off; 'on' -> blanket spray if detection can no longer run,
-        otherwise keep spot spraying."""
-        if self.on_error == 'on':
+        [System] on_error decides the nozzles (utils/spray_mode): 'off' ->
+        nozzles off and the request cleared; 'on' -> blanket spray if
+        detection can no longer run, otherwise keep spot spraying. Safe from
+        any thread except a relay consumer (see _relay_stuck)."""
+        if code in self._faults:
+            return
+        if code == 'link_lost':
+            action = 'blanket_off' if self.on_error != 'on' else 'continue'
+        elif self.on_error == 'on':
             action = 'spot_spray' if detection_possible else 'blanket'
         else:
             action = 'nozzles_off'
-        self._fault_state = {'code': code, 'message': message,
-                             'action': action, 'since': time.time()}
+        self._faults[code] = {'code': code, 'message': message, 'action': action,
+                              'since': time.time(), 'detection_possible': bool(detection_possible)}
         self.logger.error(f"[FAULT] {code}: {message} "
                           f"(on_error = {self.on_error}: {action.replace('_', ' ')})")
-        if action == 'nozzles_off':
-            self._detection_enable = False
-            self.relay_controller.relay.all_off()
-        elif action == 'blanket' and self._detection_enable:
-            # Blanket follows the operator's detection switch, so spraying
-            # can always be turned off (see the camera-lost wait in hoot).
-            self.relay_controller.relay.all_on()
-        indicator = getattr(self, 'status_indicator', None)
-        if indicator:
-            indicator.error(self._FAULT_LED.get(code, 1))
-        dash = getattr(self, 'dash', None)
-        if dash:
-            dash.set_fault(self._fault_state)
+        self._show_fault_led()
+        self._apply_spray(publish=self._can_publish_here())
 
     def _relay_stuck(self, message):
-        # Called from the relay thread on every failed retry: raise it once.
-        if (self._fault_state or {}).get('code') != 'relay_stuck':
-            self._fault('relay_stuck', message, detection_possible=True)
+        """RelayController.on_stuck: runs on a relay thread holding that
+        relay's lock, so only record it; the next sync tick raises the fault."""
+        self._relay_stuck_message = message
 
     def _clear_fault(self, code):
-        """The fault condition has gone: release the nozzles and say so."""
-        fault = self._fault_state
-        if not fault or fault['code'] != code:
+        """The fault condition has gone: say so. A remembered request does not
+        come back by itself: on_error = off cleared it when the fault began."""
+        if self._faults.pop(code, None) is None:
             return
-        self._fault_state = None
         self.logger.info(f"[FAULT] {code} cleared")
-        if fault['action'] == 'blanket':
-            self.relay_controller.relay.all_off()
+        self._show_fault_led()
+        self._apply_spray(publish=self._can_publish_here())
+
+    # The cab has no screen: a switch left ON after spraying was stopped
+    # (setup finished, a fault cleared, a link-loss blanket stop) flashes this
+    # until it is switched off and on again. Faults flash first.
+    _SWITCH_AGAIN_LED = 9
+
+    def _show_fault_led(self):
+        """Status LED: the most urgent fault, else the switch-again hint,
+        else nothing. Only touches codes it owns (storage codes 5/6 are the
+        storage indicator's)."""
         indicator = getattr(self, 'status_indicator', None)
-        if indicator and indicator.error_code == self._FAULT_LED.get(code, 1):
-            indicator.clear_error()
+        if not indicator:
+            return
+        top = spray_mode.top_fault(self._faults)
+        if top:
+            code = self._FAULT_LED.get(top, 1)
+        elif self._switch_again_needed():
+            code = self._SWITCH_AGAIN_LED
+        else:
+            code = None
+        owned = set(self._FAULT_LED.values()) | {self._SWITCH_AGAIN_LED}
+        try:
+            if code is not None:
+                if indicator.error_code != code:
+                    indicator.error(code)
+            elif indicator.error_code in owned:
+                indicator.clear_error()
+        except Exception as e:
+            self.logger.warning(f"Fault LED update failed: {e}")
+
+    def _switch_again_needed(self):
+        """The spray switch is ON but spraying was stopped and will not come
+        back by itself (never auto-resume): the operator must switch it off
+        and on. Not during setup, which has its own LED pattern."""
+        return (self._switch_seen in ('on', 'spot', 'blanket')
+                and self._spray_request == spray_mode.OFF
+                and not self._firstboot_active
+                and bool(self._spray_stopped))
+
+    # ------------------------------------------------------------------
+    # Spraying: the one owner
+    # ------------------------------------------------------------------
+    def _can_publish_here(self):
+        """The main loop must never wait on the dashboard lock (a stuck
+        handler would stall detection): it leaves publishing to the sync tick."""
+        return threading.current_thread() is not getattr(self, '_main_thread', None)
+
+    def _read_switch(self):
+        """The hardware spray switch: None (no switch, or not used for
+        spraying), 'off', 'on' (Ute), 'spot' / 'blanket' (Advanced)."""
+        controller = getattr(self, 'controller', None)
+        if self.controller_type == 'ute' and self.switch_purpose == 'detection':
+            if controller is not None and getattr(controller, 'switch', True) is None:
+                return None  # no switch fitted (or off-Pi): the dashboard decides
+            with self.detection_enable.get_lock():
+                return 'on' if self.detection_enable.value else 'off'
+        if self.controller_type == 'advanced' and hasattr(self, '_detection_mode_state'):
+            if (controller is not None
+                    and getattr(controller, 'detection_mode_switch_up', True) is None
+                    and getattr(controller, 'detection_mode_switch_down', True) is None):
+                return None
+            with self._detection_mode_state.get_lock():
+                code = self._detection_mode_state.value
+            return {0: 'spot', 2: 'blanket'}.get(code, 'off')
+        return None
+
+    def _spray_inputs(self, request=None):
+        return spray_mode.SprayInputs(
+            request=self._spray_request if request is None else request,
+            switch=self._switch_seen if self._switch_seen is not _UNSET else None,
+            firstboot=bool(self._firstboot_active),
+            faults={code: f['detection_possible'] for code, f in self._faults.items()
+                    if code != 'link_lost'},
+            on_error=self.on_error,
+            link_lost=self._link_lost)
+
+    def _set_request_locked(self, mode, source):
+        """Store the operator's request unless an inhibit refuses it.
+        (accepted, reason). Caller holds _spray_lock."""
+        if mode != spray_mode.OFF:
+            _, reason = spray_mode.resolve(self._spray_inputs(request=mode))
+            if spray_mode.is_inhibit(reason):
+                self.logger.warning(f"Spray request '{mode}' from {source} refused: "
+                                    f"{spray_mode.reason_text(reason)}")
+                return False, reason
+        if mode != self._spray_request:
+            self.logger.info(f"Spray request: {mode} (from {source})")
+            self._spray_source = source
+            self._spray_requested_at = time.time()
+        self._spray_request = mode
+        self._spray_stopped = None
+        return True, None
+
+    def _resolve_spray_locked(self):
+        """Read the switch, resolve, apply. Caller holds _spray_lock.
+        Returns True when anything a dashboard shows changed."""
+        before = (self._spray_request, self._spray_effective, self._spray_reason,
+                  self._spray_stopped)
+        switch = self._read_switch()
+        if switch != self._switch_seen:
+            self._switch_seen = switch
+            if switch in ('on', 'spot', 'blanket'):
+                # Switching ON (or ON at boot) is a request; the dashboard can
+                # change it while the switch stays on
+                self._set_request_locked(spray_mode.BLANKET if switch == 'blanket'
+                                         else spray_mode.SPOT, 'switch')
+
+        mode, reason = spray_mode.resolve(self._spray_inputs())
+        if spray_mode.is_inhibit(reason):
+            if self._spray_request != spray_mode.OFF:
+                self.logger.warning(f"Spraying stopped: {spray_mode.reason_text(reason)}. "
+                                    f"Press Start (or switch on again) to spray again.")
+                self._spray_request = spray_mode.OFF
+                self._spray_source = 'inhibit'
+                self._spray_stopped = reason
+            if (reason == spray_mode.FIRSTBOOT or reason.startswith('fault:off:')):
+                # Tests and hold-to-spray stop too; with the switch off they may run
+                self.relay_controller.stop_test(notify=False)
+        if mode != self._spray_effective:
+            self.relay_controller.set_mode(mode)
+            self._spray_effective = mode
+            self._spray_since = time.time()
+        self._spray_reason = reason
+        self._detection_enable = (mode == spray_mode.SPOT)
+        return (self._spray_request, self._spray_effective, self._spray_reason,
+                self._spray_stopped) != before
+
+    def _spray_snapshot_locked(self):
+        reason = self._spray_reason or self._spray_stopped
+        faults = [{k: v for k, v in self._faults[code].items() if k != 'detection_possible'}
+                  for code in sorted(self._faults, key=lambda c: (
+                      spray_mode.FAULT_PRIORITY.index(c) if c in spray_mode.FAULT_PRIORITY
+                      else len(spray_mode.FAULT_PRIORITY), c))]
+        return {
+            'request': self._spray_request,
+            'source': self._spray_source,
+            'requested_at': self._spray_requested_at,
+            'effective': self._spray_effective,
+            'reason': reason,
+            'reason_text': spray_mode.reason_text(reason),
+            'since': self._spray_since,
+            'test': self.relay_controller.test_relays,
+            'faults': faults,
+        }
+
+    def _apply_spray(self, publish=True):
+        """Resolve and apply the spray mode now. Safe from any thread except a
+        relay consumer. publish=False (main loop, GPIO callbacks) leaves the
+        dashboard update to the next sync tick."""
+        if not self._spray_ready:
+            return None
+        with self._spray_lock:
+            changed = self._resolve_spray_locked()
+            if changed:
+                self._spray_dirty = True
+            snapshot = self._spray_snapshot_locked()
+        if changed:
+            self._show_fault_led()
+        if publish:
+            self._publish_spray(snapshot)
+        return snapshot
+
+    def _publish_spray(self, snapshot=None):
+        """Send the spray state to the dashboards. Never called holding
+        _spray_lock (the MQTT handlers take state_lock, then _spray_lock)."""
+        if snapshot is None:
+            with self._spray_lock:
+                snapshot = self._spray_snapshot_locked()
+        self._spray_dirty = False
         dash = getattr(self, 'dash', None)
-        if dash:
-            dash.set_fault(None)
+        if dash is not None and snapshot != self._spray_published:
+            self._spray_published = snapshot
+            dash.set_spray(snapshot)
+
+    def request_spray(self, mode, source='dashboard'):
+        """The operator asks for off / spot / blanket (dashboard, app,
+        controller, agent). Refused while an inhibit is active (first-boot,
+        switch off, an on_error = off fault, link loss with blanket); the
+        snapshot's 'refused' says why. Returns the spray snapshot."""
+        if mode not in spray_mode.MODES:
+            raise ValueError(f"unknown spray mode: {mode!r}")
+        with self._spray_lock:
+            accepted, refused = self._set_request_locked(mode, source)
+            self._resolve_spray_locked()
+            snapshot = self._spray_snapshot_locked()
+        self._show_fault_led()
+        self._publish_spray(snapshot)
+        snapshot = dict(snapshot, refused=refused)
+        return snapshot
+
+    def _test_refusal_locked(self):
+        if self._firstboot_active:
+            return spray_mode.FIRSTBOOT
+        _, reason = spray_mode.resolve(self._spray_inputs(request=spray_mode.SPOT))
+        if reason and reason.startswith('fault:off:'):
+            return reason
+        return None
+
+    def hold_spray(self, ms, source='dashboard'):
+        """Hold to spray: every nozzle on for a lease the caller renews about
+        every second; off at most HOLD_LEASE_MAX_S after the last renew and
+        never longer than RelayController.TEST_MAX_S in all. Works with the
+        switch off (a bounded test), not during first-boot or an
+        on_error = off fault. ms <= 0 releases. Returns {ok, reason}."""
+        try:
+            ms = float(ms)
+        except (TypeError, ValueError):
+            ms = 0.0
+        rc = self.relay_controller
+        everything = list(range(len(rc.relay_condition_dict)))
+        with self._spray_lock:
+            if ms <= 0:
+                rc.stop_test(notify=False)
+                result = {'ok': True, 'reason': None}
+            else:
+                refused = self._test_refusal_locked()
+                if refused:
+                    result = {'ok': False, 'reason': refused}
+                else:
+                    lease = min(ms / 1000.0, HOLD_LEASE_MAX_S)
+                    if rc.test_relays != everything or not rc.renew_test(lease):
+                        rc.start_test(everything, lease)
+                        self.logger.info(f"Hold to spray from {source}")
+                    result = {'ok': True, 'reason': None}
+        self._publish_spray()
+        return result
+
+    def test_nozzles(self, relays, duration_s, source='dashboard'):
+        """Nozzle test: the listed relays on for duration_s (capped at
+        RelayController.TEST_MAX_S), any mode, switch off included. An empty
+        list stops a running test. Returns {ok, reason, relays}."""
+        rc = self.relay_controller
+        with self._spray_lock:
+            if not relays:
+                rc.stop_test(notify=False)
+                result = {'ok': True, 'reason': None, 'relays': []}
+            else:
+                refused = self._test_refusal_locked()
+                if refused:
+                    self.logger.warning(f"Nozzle test refused: {spray_mode.reason_text(refused)}")
+                    result = {'ok': False, 'reason': refused, 'relays': []}
+                else:
+                    on = rc.start_test(relays, min(duration_s, rc.TEST_MAX_S))
+                    self.logger.info(f"Nozzle test from {source}: relays {on} on for {duration_s:.1f} s")
+                    result = {'ok': True, 'reason': None, 'relays': on}
+        self._publish_spray()
+        return result
+
+    def controller_seen(self):
+        """Any message from the networked controller (owl/{id}/commands,
+        the 1 s actuation broadcast). Called by the MQTT thread before it
+        handles the message, so a slow handler can't look like a lost link."""
+        self._controller_seen_at = time.monotonic()
+
+    def _check_link(self):
+        """Networked OWLs only: no word from the controller for LINK_LOST_S,
+        or no broker, is a link_lost fault (spot continues; a blanket stops
+        under on_error = off)."""
+        dash = self.dash
+        if dash is None or not getattr(dash, 'networked_mode', False):
+            return
+        seen = self._controller_seen_at
+        if seen is None:
+            return  # never heard from a controller: nothing to lose yet
+        lost = (not getattr(dash, 'connected', False)
+                or time.monotonic() - seen > LINK_LOST_S)
+        if lost != self._link_lost:
+            self._link_lost = lost
+            if lost:
+                self._fault('link_lost', 'Lost contact with the networked controller',
+                            detection_possible=True)
+            else:
+                self._clear_fault('link_lost')
+
+    def _check_sync_watchdog(self):
+        """Main loop: the state-sync thread has stopped ticking (a stuck
+        lock, a hung call). Raises control_lost without needing that thread."""
+        if not getattr(self, '_sync_thread_started', False):
+            return
+        stalled = time.monotonic() - self._last_sync_at > SYNC_STALL_S
+        if stalled and 'control_lost' not in self._faults:
+            self._sync_stalled = True
+            self._fault('control_lost', 'Dashboard and switch control stopped responding',
+                        detection_possible=True)
+        elif not stalled and getattr(self, '_sync_stalled', False):
+            self._sync_stalled = False
+            self._clear_fault('control_lost')
+
+    def _check_loop_watchdog(self):
+        """Sync thread: the main loop has stopped (a hung detector or camera
+        call). Raises control_lost from this side."""
+        last = self._last_loop_at
+        if last is None:
+            return
+        stalled = time.monotonic() - last > LOOP_STALL_S
+        if stalled and 'control_lost' not in self._faults:
+            self._loop_stalled = True
+            self._fault('control_lost', 'Detection loop stopped responding',
+                        detection_possible=False)
+        elif not stalled and getattr(self, '_loop_stalled', False):
+            self._loop_stalled = False
+            self._clear_fault('control_lost')
+
+    def _camera_stalled(self):
+        last = getattr(getattr(self, 'cam', None), 'last_frame_at', None)
+        return isinstance(last, float) and time.monotonic() - last > CAMERA_STALL_S
+
+    def _reopen_camera(self):
+        """Try to bring a lost camera back without restarting the OWL. The
+        old stream is stopped on a worker (a capture thread stuck inside
+        libcamera can hang close()); gives up after 15 s. True on success."""
+        old = getattr(self, 'cam', None)
+        self.logger.warning('[WARNING] Re-opening the camera')
+        result = {}
+
+        def work():
+            try:
+                if old is not None:
+                    old.stop()
+            except Exception as e:
+                self.logger.warning(f"Old camera did not stop cleanly: {e}")
+            try:
+                result['cam'] = self.setup_media_source(None, camera_type=self.camera_type)
+            except BaseException as e:
+                result['error'] = e
+
+        worker = threading.Thread(target=work, name='camera-reopen', daemon=True)
+        worker.start()
+        deadline = time.monotonic() + 15.0
+        while worker.is_alive() and time.monotonic() < deadline:
+            worker.join(timeout=0.5)
+            self._last_loop_at = time.monotonic()  # waiting on purpose, not hung
+        if 'cam' in result:
+            self.cam = result['cam']
+            self.logger.info('[INFO] Camera re-opened')
+            return True
+        self.logger.error(f"[ERROR] Camera re-open failed: "
+                          f"{result.get('error', 'timed out')}")
+        return False
 
     def _stop_recording(self, reason):
         """Turn recording off from inside the loop and say why."""
@@ -2339,9 +2757,11 @@ class Owl:
         thread silently, leaving the dashboard unable to turn spraying off and
         GPS frozen; now it is logged, and persistent failure raises a fault."""
         failures = 0
+        self._sync_thread_started = True
         while not self.stop_state_update.is_set():
             try:
                 self._update_state_once()
+                self._last_sync_at = time.monotonic()
                 if failures >= self._STATE_FAILURES_BEFORE_FAULT:
                     self.logger.info("State sync recovered")
                     self._clear_fault('control_lost')
@@ -2368,30 +2788,21 @@ class Owl:
                 # Ute has one switch — only override the control it manages.
                 # The other control + sensitivity come from MQTT (dashboard).
                 if self.switch_purpose == 'recording':
-                    # Hardware controls recording; detection from dashboard
+                    # Hardware controls recording; spraying from the dashboard
                     with self.image_sample_enable.get_lock():
                         hardware_recording = self.image_sample_enable.value
                     self.dash.set_image_sample_enable(hardware_recording)
                     self._image_sample_enable = hardware_recording
-                    self._detection_enable = self.dash.get_detection_enable()
                 else:
-                    # Hardware controls detection; recording from dashboard
-                    with self.detection_enable.get_lock():
-                        hardware_detection = self.detection_enable.value
-                    self.dash.set_detection_enable(hardware_detection)
-                    self._detection_enable = hardware_detection
+                    # Hardware switch is a spray input (_apply_spray reads it);
+                    # recording from the dashboard
                     self._image_sample_enable = self.dash.get_image_sample_enable()
                 # Sensitivity always from dashboard for Ute
                 self._sensitivity_level = self.dash.get_sensitivity_level()
 
             elif self.controller_type == 'advanced':
-                # Advanced controller manages all three
-                if hasattr(self, 'detection_enable'):
-                    with self.detection_enable.get_lock():
-                        hardware_detection = self.detection_enable.value
-                    self.dash.set_detection_enable(hardware_detection)
-                    self._detection_enable = hardware_detection
-
+                # Advanced controller manages all three (its spray switch is
+                # read by _apply_spray)
                 if hasattr(self, 'image_sample_enable'):
                     with self.image_sample_enable.get_lock():
                         hardware_recording = self.image_sample_enable.value
@@ -2407,15 +2818,12 @@ class Owl:
 
             else:
                 # No hardware controller - normal dashboard control
-                self._detection_enable = self.dash.get_detection_enable()
+                # (spraying comes in through request_spray)
                 self._image_sample_enable = self.dash.get_image_sample_enable()
                 self._sensitivity_level = self.dash.get_sensitivity_level()
 
         else:
-            # Hardware only, no dashboard
-            if hasattr(self, 'detection_enable'):
-                with self.detection_enable.get_lock():
-                    self._detection_enable = self.detection_enable.value
+            # Hardware only, no dashboard (spraying: _apply_spray)
             if hasattr(self, 'image_sample_enable'):
                 with self.image_sample_enable.get_lock():
                     self._image_sample_enable = self.image_sample_enable.value
@@ -2427,25 +2835,31 @@ class Owl:
         self._recording_paused = bool(self.dash and self._image_sample_enable
                                       and self.dash.get_recording_paused())
 
-        # First-boot setup mode: detection stays off no matter what the
-        # hardware switch or dashboard said above — a flipped-on Ute
-        # switch must not click relays on the bench. Runs only when the
-        # flag existed at boot; re-stats it at most every 5 s to notice
-        # setup finishing (teardown removes the flag).
+        # First-boot setup mode: spraying stays off whatever the switch or
+        # dashboard asks (resolve() puts first-boot first) — a flipped-on Ute
+        # switch must not click relays on the bench, and a request made during
+        # setup is refused, not replayed when setup ends. Runs only when the
+        # flag existed at boot; re-stats it at most every 5 s.
         if self._firstboot_active:
             now = time.time()
             if now - self._firstboot_last_check >= 5.0:
                 self._firstboot_last_check = now
                 if not self._firstboot_flag_path.exists():
-                    self._firstboot_active = False
-                    self.logger.info("First-boot flag cleared: detection control restored")
-            if self._firstboot_active:
-                self._detection_enable = False
+                    with self._spray_lock:
+                        self._firstboot_active = False
+                        if self._spray_stopped in (None, spray_mode.FIRSTBOOT):
+                            self._spray_stopped = 'setup_finished'
+                    self.logger.info("First-boot flag cleared: spraying can be switched on")
 
-        # on_error = off: a spraying fault holds detection off whatever the
-        # switch or dashboard says, until it clears.
-        if self._fault_state and self._fault_state['action'] == 'nozzles_off':
-            self._detection_enable = False
+        # A relay that would not switch off (recorded by the relay thread)
+        if self._relay_stuck_message and 'relay_stuck' not in self._faults:
+            self._fault('relay_stuck', self._relay_stuck_message, detection_possible=True)
+
+        self._check_link()
+        self._check_loop_watchdog()
+        self._apply_spray()
+        if self._spray_dirty:
+            self._publish_spray()
 
         # GPS: serial takes priority, then dashboard (browser geolocation)
         self.gps_data = self._get_best_gps_data()
@@ -2815,22 +3229,49 @@ if __name__ == "__main__":
     # before Owl() so a camera that will not start cannot hold it up.
     net_watchdog.start()
 
-    owl = Owl(
-        config_file=config_file,
-        show_display=args.show_display,
-        input_file_or_directory=args.input
-    )
+    # A software update cut off part-way (a power cut during installing_deps)
+    # is handed to owl_update.sh --recover. owl.service also runs this as
+    # ExecStartPre; here for units whose unit file predates that.
+    try:
+        import runpy
+        runpy.run_path(str(Path(__file__).resolve().parent / 'tools' / 'update_guard.py'),
+                       run_name='update_guard')['main']()
+    except Exception as e:
+        logger.warning(f'Update recovery check skipped: {e}')
 
-    # Ctrl-C was already handled inside hoot(), but SIGTERM was not: systemd
-    # sends it on `systemctl stop/restart owl.service`, and Python's default
-    # handler exits without running any cleanup, so the relays were left as
-    # they were. Raising KeyboardInterrupt hands control to the existing
-    # shutdown path, which turns every nozzle off.
+    # SIGTERM (systemctl stop/restart) raises KeyboardInterrupt, which hands
+    # control to the shutdown path that turns every nozzle off. Installed
+    # before Owl(): a stop during the slow camera/model start-up used to kill
+    # the process with the relays as they were. A second SIGTERM while
+    # shutting down is ignored so the cleanup can finish.
+    _terminating = []
+
     def _terminate(signum, frame):
+        if _terminating:
+            return
+        _terminating.append(signum)
         logger.info('[INFO] SIGTERM received - shutting down')
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, _terminate)
+
+    try:
+        owl = Owl(
+            config_file=config_file,
+            show_display=args.show_display,
+            input_file_or_directory=args.input
+        )
+    except BaseException:
+        # Includes KeyboardInterrupt from SIGTERM: nozzles off, then out
+        rc = getattr(Owl, '_relay_controller_for_cleanup', None)
+        if rc is not None:
+            try:
+                rc.stop_test(notify=False)
+                rc.set_mode('off')
+                rc.relay.all_off()
+            except Exception as e:
+                logger.error(f'Could not turn the nozzles off after a failed start: {e}')
+        raise
 
     # start the targeting!
     owl.hoot()

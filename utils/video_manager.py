@@ -212,6 +212,14 @@ class WebcamStream:
             self.logger.error(f'Unable to read from video source: {src}')
             raise ValueError(f'Unable to read from video source: {src}')
 
+        # Each frame is handed out once (as PiCamera2Stream), so a webcam that
+        # stops delivering is seen as stopped instead of the last frame being
+        # processed again forever. last_frame_at (monotonic) is stamped on
+        # arrival for owl.py's camera watchdog.
+        self.condition = Condition()
+        self.frame_available = True
+        self.last_frame_at = time.monotonic()
+
         # initialize the thread name, stop event, and the thread itself
         self.stop_event = Event()
         self.thread = Thread(target=self.update, name=self.name, args=())
@@ -226,24 +234,42 @@ class WebcamStream:
         try:
             while not self.stop_event.is_set():
                 # Read the next frame from the stream
-                self.grabbed, self.frame = self.stream.read()
+                grabbed, frame = self.stream.read()
 
                 # If not grabbed, end of the stream has been reached.
-                if not self.grabbed:
+                if not grabbed:
+                    self.grabbed = False
                     self.stop_event.set()  # Ensure the loop stops if no frame is grabbed
+                    break
+                with self.condition:
+                    self.grabbed, self.frame = grabbed, frame
+                    self.frame_available = True
+                    self.last_frame_at = time.monotonic()
+                    self.condition.notify_all()
         except Exception as e:
             self.logger.error(f"Exception in WebcamStream update loop: {e}", exc_info=True)
         finally:
             # Clean up resources after loop is done
             self.stream.release()
+            with self.condition:
+                self.condition.notify_all()
 
     def read(self):
-        # return the frame most recently read
-        return self.frame
+        frame, _ = self.read_with_metadata()
+        return frame
 
-    def read_with_metadata(self):
-        # webcams expose no per-frame capture metadata
-        return self.frame, None
+    def read_with_metadata(self, timeout=1.0):
+        """The next new frame, or (None, None) after timeout seconds or once
+        the stream has ended. Webcams expose no per-frame capture metadata."""
+        deadline = time.monotonic() + timeout
+        with self.condition:
+            while not self.frame_available:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or self.stop_event.is_set():
+                    return None, None
+                self.condition.wait(timeout=remaining)
+            self.frame_available = False
+            return self.frame, None
 
     def stop(self):
         self.stop_event.set()
@@ -266,6 +292,7 @@ class PiCamera2Stream:
         self.frame = None
         self.frame_metadata = None
         self.frame_available = False
+        self.last_frame_at = None
 
         self.stopped = Event()
         self.condition = Condition()
@@ -424,6 +451,9 @@ class PiCamera2Stream:
                     self.frame = frame
                     self.frame_metadata = metadata
                     self.frame_available = True
+                    # Stamped on arrival (capture thread), so owl.py's camera
+                    # watchdog measures the camera, not a slow detector
+                    self.last_frame_at = time.monotonic()
 
                 with self.condition:
                     self.condition.notify_all()
@@ -445,16 +475,19 @@ class PiCamera2Stream:
         frame, _ = self.read_with_metadata()
         return frame
 
-    def read_with_metadata(self):
-        # return the most recent frame and its capture metadata atomically
-        # If the capture thread has died (camera unplugged, I/O error) no
-        # frame will ever arrive: return None so owl.py's dropped-frame check
-        # raises a camera fault, instead of waiting forever.
+    def read_with_metadata(self, timeout=1.0):
+        # return the most recent frame and its capture metadata atomically.
+        # (None, None) once the capture thread has died (camera unplugged, I/O
+        # error) or after timeout seconds with no new frame: a capture thread
+        # stuck inside capture_request is alive but delivers nothing, and the
+        # loop used to wait on it forever with the nozzles as they were.
+        deadline = time.monotonic() + timeout
         with self.condition:
             while not self.frame_available:
-                if not self.thread.is_alive():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not self.thread.is_alive():
                     return None, None
-                self.condition.wait(timeout=1.0)
+                self.condition.wait(timeout=min(remaining, 1.0))
 
             with self.lock:
                 self.frame_available = False
@@ -514,7 +547,16 @@ class PiCamera2Stream:
     def stop(self):
         self.stopped.set()
         self.thread.join(timeout=2)
-        self.camera.stop()
+        try:
+            self.camera.stop()
+        except Exception as e:
+            self.logger.warning(f"Camera stop failed: {e}")
+        # close() releases the device: without it a new Picamera2(0) in the
+        # same process (owl.py re-opening a lost camera) fails as busy
+        try:
+            self.camera.close()
+        except Exception as e:
+            self.logger.warning(f"Camera close failed: {e}")
         time.sleep(2)  # Allow time for the camera to be released properly
 
 
@@ -613,7 +655,7 @@ class PiCameraStream:
         # return the frame most recently read
         return self.frame
 
-    def read_with_metadata(self):
+    def read_with_metadata(self, **kwargs):
         # legacy picamera exposes no per-frame capture metadata
         return self.frame, None
 
@@ -785,9 +827,15 @@ class VideoStream:
         """Return the current frame."""
         return self.stream.read()
 
-    def read_with_metadata(self):
+    def read_with_metadata(self, **kwargs):
         """Return (frame, capture_metadata); metadata is None on backends without it."""
-        return self.stream.read_with_metadata()
+        return self.stream.read_with_metadata(**kwargs)
+
+    @property
+    def last_frame_at(self):
+        """time.monotonic() of the last frame the camera delivered, or None
+        when the backend does not track it."""
+        return getattr(self.stream, 'last_frame_at', None)
 
     def set_camera_controls(self, params: dict) -> bool:
         """Live-apply white balance / exposure controls where the backend

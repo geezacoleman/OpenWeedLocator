@@ -7,6 +7,7 @@ Supports both local (standalone) and networked (central controller) modes
 import json
 import time
 import threading
+import queue
 import logging
 import os
 import re
@@ -737,8 +738,11 @@ class OWLMQTTPublisher:
         self.state_lock = threading.RLock()
         self.config_lock = threading.Lock()
 
-        # Nozzle test: switches the tested relays off when it runs out
-        self._nozzle_test_timer = None
+
+        # One worker for USB/disk writes and subprocesses (see _run_io)
+        self._io_queue = queue.Queue()
+        self._io_thread = None
+        self._io_start_lock = threading.Lock()
 
         # Config file path (set via set_owl_instance or directly)
         self.config_file = None
@@ -1098,6 +1102,12 @@ class OWLMQTTPublisher:
         """Handle incoming MQTT messages"""
         try:
             topic = msg.topic
+            if topic == self.topics['commands'] and self.networked_mode:
+                # Stamped first, before any lock or handler work: a slow
+                # handler must not make the controller look gone (link_lost)
+                seen = getattr(self.owl_instance, 'controller_seen', None)
+                if callable(seen):
+                    seen()
             payload = json.loads(msg.payload.decode())
 
             if topic == self.topics['commands']:
@@ -1143,23 +1153,18 @@ class OWLMQTTPublisher:
         """Nozzle test: turn the listed relays on for duration_ms, then off.
 
         value: {'relays': [0-based relay numbers], 'duration_ms': int}. An
-        empty list stops a running test. Refused while spot or blanket
-        spraying, since the relay workers would fight the test. Caller holds
-        state_lock.
+        empty list stops a running test. The timer and the 10 s cap live in
+        the OWL's RelayController (owl.test_nozzles), so a lost dashboard can
+        never leave a nozzle open. Runs in any spray mode and with the switch
+        off; refused during first-boot or an on_error = off fault.
         """
         value = command.get('value') if isinstance(command.get('value'), dict) else {}
-        rc = getattr(self.owl_instance, 'relay_controller', None) if self.owl_instance else None
-        if rc is None:
+        test = getattr(self.owl_instance, 'test_nozzles', None) if self.owl_instance else None
+        if not callable(test):
             self.logger.warning("Nozzle test refused: no relay controller")
             return
-        wanted = value.get('relays') or []
-        if wanted and getattr(self.owl_instance, '_firstboot_active', False) is True:
-            self.logger.warning("Nozzle test refused: first-boot setup is active")
-            return
-        if wanted and (self.state.get('detection_enable') or self.state.get('detection_mode') == 2):
-            self.logger.warning("Nozzle test refused: turn spraying and blanket spray off first")
-            return
         relay_num = getattr(self.owl_instance, 'relay_num', 0)
+        wanted = value.get('relays') or []
         relays = sorted({r for r in wanted if isinstance(r, int) and not isinstance(r, bool)
                          and 0 <= r < relay_num})
         try:
@@ -1167,46 +1172,36 @@ class OWLMQTTPublisher:
         except (TypeError, ValueError):
             duration_ms = self.NOZZLE_TEST_MAX_MS
         duration_ms = max(100, min(self.NOZZLE_TEST_MAX_MS, duration_ms))
+        test(relays, duration_ms / 1000.0, source='dashboard')
 
-        self._stop_nozzle_test()
-        if not relays:
+    def _handle_hold_spray(self, command):
+        """Hold to spray: every nozzle on while the dashboard keeps renewing
+        (value = lease in ms, about every second; 0 releases). The OWL turns
+        the nozzles off on its own at most 1.5 s after the last renew."""
+        hold = getattr(self.owl_instance, 'hold_spray', None) if self.owl_instance else None
+        if not callable(hold):
+            self.logger.warning("hold_spray refused: no relay controller")
             return
-        for r in relays:
-            rc.relay.relay_on(r, verbose=False)
-        self.state['nozzle_test'] = relays
-        timer = threading.Timer(duration_ms / 1000.0, self._end_nozzle_test, args=(relays,))
-        timer.daemon = True
-        self._nozzle_test_timer = timer
-        timer.start()
-        self.logger.info(f"Nozzle test: relays {relays} on for {duration_ms} ms")
+        try:
+            ms = float(command.get('value', 0) or 0)
+        except (TypeError, ValueError):
+            ms = 0.0
+        hold(ms, source='dashboard')
 
-    def _stop_nozzle_test(self):
-        """Switch off whatever a nozzle test turned on. Caller holds state_lock."""
-        if self._nozzle_test_timer:
-            self._nozzle_test_timer.cancel()
-            self._nozzle_test_timer = None
-        on = self.state.get('nozzle_test') or []
-        self.state['nozzle_test'] = []
-        rc = getattr(self.owl_instance, 'relay_controller', None) if self.owl_instance else None
-        if rc is None:
-            return
-        for r in on:
-            try:
-                rc.relay.relay_off(r, verbose=False)
-            except Exception as e:
-                self.logger.error(f"Nozzle test: relay {r} did not switch off: {e}")
-                if callable(getattr(rc, 'on_stuck', None)):
-                    rc.on_stuck(f"Relay {r} is stuck on: {e}")
+    _MODE_CODES = {'spot': 0, 'off': 1, 'blanket': 2}
 
-    def _end_nozzle_test(self, relays):
-        """Timer callback: the test ran out. A newer test owns the relays now
-        if state['nozzle_test'] has changed."""
-        with self.state_lock:
-            if self.state.get('nozzle_test') != relays:
-                return
-            self._nozzle_test_timer = None
-            self._stop_nozzle_test()
-        self._publish_state()
+    def _request_spray(self, mode, source='dashboard'):
+        """A spray request from a command. The OWL decides (owl.request_spray:
+        switch, first-boot, faults) and publishes through set_spray; the
+        legacy fields are set here from its answer, or from the request when
+        there is no OWL to ask. Caller holds state_lock."""
+        self.state['detection_enable'] = (mode == 'spot')
+        self.state['detection_mode'] = self._MODE_CODES[mode]
+        request = getattr(self.owl_instance, 'request_spray', None) if self.owl_instance else None
+        result = request(mode, source=source) if callable(request) else None
+        if isinstance(result, dict):
+            self.state['detection_enable'] = (result.get('request') == 'spot')
+            self.state['detection_mode'] = self._MODE_CODES.get(result.get('request'), 1)
 
     def _handle_command(self, command):
         """Handle control commands from dashboard or central controller"""
@@ -1219,16 +1214,11 @@ class OWLMQTTPublisher:
 
         with self.state_lock:
             if action == 'set_detection_enable':
-                self.state['detection_enable'] = bool(command.get('value', False))
-                self.logger.info(f"Detection enable set to: {self.state['detection_enable']}")
-                if self.state['detection_enable']:
-                    self._stop_nozzle_test()
-                if self.state.get('detection_mode') == 2:
-                    # Leaving blanket: all_on bypassed the relay workers, so
-                    # nothing would switch the nozzles off again.
-                    self.state['detection_mode'] = 0 if self.state['detection_enable'] else 1
-                    if self.owl_instance and hasattr(self.owl_instance, 'relay_controller'):
-                        self.owl_instance.relay_controller.relay.all_off()
+                # Spot spraying on/off. The OWL decides (switch, first-boot,
+                # faults) and publishes the result.
+                wanted = bool(command.get('value', False))
+                self.logger.info(f"Spot spraying requested: {wanted}")
+                self._request_spray('spot' if wanted else 'off')
 
             elif action == 'set_image_sample_enable':
                 was_recording = self.state['image_sample_enable']
@@ -1242,8 +1232,7 @@ class OWLMQTTPublisher:
                 # a stalled drive stopped every later command (video kept
                 # streaming, controls went dead).
                 if was_recording and not self.state['image_sample_enable']:
-                    threading.Thread(target=self._auto_save_session_metadata,
-                                     name='session-metadata', daemon=True).start()
+                    self._run_io(self._auto_save_session_metadata)
 
             elif action == 'set_recording_paused':
                 # Only a running recording can be paused
@@ -1397,36 +1386,25 @@ class OWLMQTTPublisher:
                     self._handle_set_active_config(config_path)
 
             elif action == 'set_detection_mode':
-                mode = int(command.get('value', 1))
-                valid_modes = {0, 1, 2}
-                if mode not in valid_modes:
-                    self.logger.error(f"Invalid detection mode: {mode}")
+                try:
+                    mode = int(command.get('value', 1))
+                except (TypeError, ValueError):
+                    mode = None
+                if mode not in (0, 1, 2):
+                    self.logger.error(f"Invalid detection mode: {command.get('value')!r}")
                     return
-                self.state['detection_mode'] = mode
-                self._stop_nozzle_test()
-                if mode == 2:  # Blanket — all nozzles on
-                    self.state['detection_enable'] = False
-                    if getattr(self.owl_instance, '_firstboot_active', False) is True:
-                        self.logger.warning("Blanket spray refused: first-boot setup is active")
-                    elif self.owl_instance and hasattr(self.owl_instance, 'relay_controller'):
-                        self.owl_instance.relay_controller.relay.all_on()
-                    self.logger.info("Blanket spray: all nozzles ON, detection disabled")
-                elif mode == 0:  # Spot spray — detection on
-                    self.state['detection_enable'] = True
-                    if self.owl_instance and hasattr(self.owl_instance, 'relay_controller'):
-                        self.owl_instance.relay_controller.relay.all_off()
-                    self.logger.info("Spot spray: detection enabled, nozzles auto")
-                else:  # Off
-                    self.state['detection_enable'] = False
-                    if self.owl_instance and hasattr(self.owl_instance, 'relay_controller'):
-                        self.owl_instance.relay_controller.relay.all_off()
-                    self.logger.info("Off: detection disabled, all nozzles OFF")
+                # 0 spot, 1 off, 2 blanket. The OWL decides and publishes.
+                self.logger.info(f"Spray mode requested: {('spot', 'off', 'blanket')[mode]}")
+                self._request_spray(('spot', 'off', 'blanket')[mode])
 
             elif action == 'set_actuation_params':
                 self._handle_set_actuation_params(command)
 
             elif action == 'test_nozzles':
                 self._handle_test_nozzles(command)
+
+            elif action == 'hold_spray':
+                self._handle_hold_spray(command)
 
             elif action == 'download_model':
                 url = command.get('url')
@@ -1587,13 +1565,9 @@ class OWLMQTTPublisher:
                 # session directory exists yet — the copy held in state is
                 # written into the session dir when recording starts (owl.py)
                 # and again on stop (_auto_save_session_metadata).
-                if self._session_dir_available():
-                    self._write_session_metadata(metadata)
-                    self.logger.info(f"Session metadata saved: {metadata}")
-                else:
-                    self.logger.info(
-                        f"Session metadata buffered until recording starts: "
-                        f"{metadata}")
+                # The drive is touched on the I/O worker, never here: this
+                # runs under state_lock, and a stalled USB drive froze control
+                self._run_io(self._save_metadata_if_recording, metadata)
 
             elif action == 'set_capture_params':
                 self._handle_set_capture_params(command.get('params') or {})
@@ -1663,16 +1637,13 @@ class OWLMQTTPublisher:
                 self._handle_update_software(command)
 
             elif action == 'reboot':
-                self.logger.warning("Reboot command received")
-                self._handle_reboot()
+                self._power_action(action, self._handle_reboot)
 
             elif action == 'restart_service':
-                self.logger.warning("Service restart command received")
-                self._handle_restart_service()
+                self._power_action(action, self._handle_restart_service)
 
             elif action == 'shutdown':
-                self.logger.warning("Shutdown command received")
-                self._handle_shutdown()
+                self._power_action(action, self._handle_shutdown)
 
             else:
                 # Silent no-op handlers are invisible failures — always warn.
@@ -1743,6 +1714,10 @@ class OWLMQTTPublisher:
             self.logger.warning(
                 f"Rejected config change: {ConfigValidator.format_protected_pin_errors(blocked)}")
             return
+
+        # Spray timing gets the same safety bounds as set_actuation_params
+        # and a boot-time INI: a live edit used to reach the relays unclamped
+        params = self._clamped_actuation(params or {})
 
         try:
             gob_changed = False
@@ -1827,6 +1802,13 @@ class OWLMQTTPublisher:
 
             self.logger.info(f"Applied {len(params)} params to [{section}]")
 
+            # The configured timing is what the OWL falls back to when the
+            # controller's speed-adaptive values stop; keep it current
+            if ({'actuation_duration', 'delay'} & set(params)
+                    and isinstance(getattr(self.owl_instance, 'actuation_duration', None), float)):
+                self.owl_instance._config_actuation = (self.owl_instance.actuation_duration,
+                                                       self.owl_instance.delay)
+
             # Push ByteTrack params to live tracker when Tracking section changes
             if section == 'Tracking':
                 # Route tracking_enabled through set_tracking handler (creates
@@ -1892,6 +1874,30 @@ class OWLMQTTPublisher:
 
         except Exception as e:
             self.logger.error(f"Error setting config section [{section}]: {e}")
+
+    def _clamped_actuation(self, params):
+        """params with actuation_duration / delay clamped by
+        ConfigValidator.clamp_actuation (both checked together, missing ones
+        taken from the running OWL). Unparseable values are left for the
+        type conversion to refuse."""
+        if not {'actuation_duration', 'delay'} & set(params):
+            return params
+        owl = self.owl_instance
+        try:
+            duration = float(params.get('actuation_duration', getattr(owl, 'actuation_duration', 0.15)))
+            delay = float(params.get('delay', getattr(owl, 'delay', 0.0)))
+        except (TypeError, ValueError):
+            return params
+        clamped_duration, clamped_delay = ConfigValidator.clamp_actuation(duration, delay)
+        params = dict(params)
+        if 'actuation_duration' in params:
+            params['actuation_duration'] = clamped_duration
+        if 'delay' in params:
+            params['delay'] = clamped_delay
+        if (clamped_duration, clamped_delay) != (duration, delay):
+            self.logger.warning(f"Actuation clamped to safety bounds: duration {duration}s -> "
+                                f"{clamped_duration}s, delay {delay}s -> {clamped_delay}s")
+        return params
 
     def _apply_meta(self, name=None, notes=None):
         """Stamp a [Meta] section onto the live config so a saved file carries its
@@ -2222,10 +2228,14 @@ class OWLMQTTPublisher:
             _refuse(f"invalid ref: {ref!r}")
             return
         with self.state_lock:
-            update_status = self.state['software_update'].get('status', 'idle')
+            update = dict(self.state['software_update'])
             transfer_status = self.state['data_transfer'].get('status', 'idle')
-        if update_status not in self.UPDATE_TERMINAL_STATUSES:
-            _refuse(f"update already in progress (status: {update_status})")
+        # effective_status: a run cut off by a power cut or reboot is
+        # 'interrupted', not in progress, so it no longer blocks this path
+        # forever (the status file is re-read here, not only on change)
+        current = software_update.read_status(self._update_status_path) or update
+        if software_update.in_progress(current):
+            _refuse(f"update already in progress (status: {current.get('status')})")
             return
         if transfer_status not in ('idle', 'complete', 'error'):
             _refuse(f"data transfer in progress (status: {transfer_status})")
@@ -2651,6 +2661,60 @@ class OWLMQTTPublisher:
                 self.state['lut_download'] = {
                     'status': 'error', 'profile': filename, 'error': str(e)}
             self._publish_state()
+
+    def _power_action(self, action, handler):
+        """Reboot / restart / shutdown: nozzles off first, then the command
+        (blocking, up to 15 s) runs on the I/O worker, not under state_lock."""
+        self.logger.warning(f"{action.replace('_', ' ').capitalize()} command received")
+        request_spray = getattr(self.owl_instance, 'request_spray', None)
+        if callable(request_spray):
+            try:
+                request_spray('off', source=action)
+            except Exception as e:
+                self.logger.error(f"Could not turn spraying off before {action}: {e}")
+        self._run_io(handler)
+
+    def _run_io(self, fn, *args, **kwargs):
+        """Run fn on the I/O worker thread, in order.
+
+        USB/disk writes and subprocesses used to run on the MQTT thread under
+        state_lock, so one stalled drive or slow sudo stopped every command and
+        every owl.py setter with no fault raised. The worker starts on first
+        use; jobs run one at a time in the order queued."""
+        with self._io_start_lock:
+            if self._io_thread is None or not self._io_thread.is_alive():
+                self._io_thread = threading.Thread(target=self._io_loop, name='owl-io', daemon=True)
+                self._io_thread.start()
+        self._io_queue.put((fn, args, kwargs))
+
+    def _io_loop(self):
+        while True:
+            fn, args, kwargs = self._io_queue.get()
+            try:
+                fn(*args, **kwargs)
+            except Exception as e:
+                self.logger.error(f"I/O job {getattr(fn, '__name__', fn)} failed: {e}", exc_info=True)
+            finally:
+                self._io_queue.task_done()
+
+    def io_flush(self, timeout=5.0):
+        """Wait until queued I/O jobs have run (tests, orderly shutdown).
+        True when the queue drained in time."""
+        deadline = time.monotonic() + timeout
+        while self._io_queue.unfinished_tasks:
+            if time.monotonic() > deadline:
+                return False
+            time.sleep(0.01)
+        return True
+
+    def _save_metadata_if_recording(self, metadata):
+        """I/O worker: write metadata now if a session is recording; otherwise
+        it stays buffered in state until recording starts."""
+        if self._session_dir_available():
+            self._write_session_metadata(metadata)
+            self.logger.info(f"Session metadata saved: {metadata}")
+        else:
+            self.logger.info(f"Session metadata buffered until recording starts: {metadata}")
 
     def _session_dir_available(self):
         """True only when an ACTIVE recorder session directory exists.
@@ -3647,9 +3711,10 @@ class OWLMQTTPublisher:
             self.state['recording_paused'] = False
             self.state['last_update'] = time.time()
 
-        # Auto-save session metadata when recording stops (hardware switch path)
+        # Auto-save session metadata when recording stops (hardware switch
+        # path). On the I/O worker: the state-sync thread calls this setter.
         if was_recording and not bool(value):
-            self._auto_save_session_metadata()
+            self._run_io(self._auto_save_session_metadata)
 
         self._publish_state()
 
@@ -3690,6 +3755,26 @@ class OWLMQTTPublisher:
             self.state['last_update'] = time.time()
         self._publish_state()
 
+    def set_spray(self, spray):
+        """The OWL's spray state (owl._publish_spray): what was asked, what
+        the nozzles are doing, why they differ, and every active fault. The
+        legacy fields follow the request so older dashboards and the cloud
+        keep working: detection_enable = spot requested, detection_mode =
+        requested mode code, fault = most urgent fault."""
+        faults = list(spray.get('faults') or [])
+        request = spray.get('request', 'off')
+        with self.state_lock:
+            self.state['spray'] = {k: spray.get(k) for k in
+                                   ('request', 'source', 'requested_at', 'effective', 'reason',
+                                    'reason_text', 'since')}
+            self.state['faults'] = faults
+            self.state['fault'] = faults[0] if faults else None
+            self.state['nozzle_test'] = list(spray.get('test') or [])
+            self.state['detection_enable'] = (request == 'spot')
+            self.state['detection_mode'] = {'spot': 0, 'off': 1, 'blanket': 2}.get(request, 1)
+            self.state['last_update'] = time.time()
+        self._publish_state()
+
     def set_fault(self, fault):
         """Publish a spraying fault so dashboards/app can show it, or clear it
         with None. fault: {code, message, action, since} from Owl._fault."""
@@ -3702,8 +3787,9 @@ class OWLMQTTPublisher:
 
     def save_session_metadata(self):
         """Write any buffered session metadata into the active session dir
-        (called by owl.py right after the session directory is created)."""
-        self._auto_save_session_metadata()
+        (called by owl.py right after the session directory is created).
+        Queued on the I/O worker: the main loop must not wait on the drive."""
+        self._run_io(self._auto_save_session_metadata)
 
     def set_storage_status(self, location, free_mb, warning, quota_gb):
         """Push storage watchdog readings into state (additive, contract 1).
@@ -3805,21 +3891,20 @@ class OWLMQTTPublisher:
             })
             self.client.publish(self.topics['indicators'], indicator_msg, qos=0)
 
+    # Single-key reads need no lock (a dict lookup is atomic under the GIL).
+    # The state-sync thread calls these every 0.1 s and must never wait
+    # behind a handler holding state_lock.
     def get_detection_enable(self):
-        with self.state_lock:
-            return self.state['detection_enable']
+        return self.state['detection_enable']
 
     def get_image_sample_enable(self):
-        with self.state_lock:
-            return self.state['image_sample_enable']
+        return self.state['image_sample_enable']
 
     def get_recording_paused(self):
-        with self.state_lock:
-            return bool(self.state.get('recording_paused'))
+        return bool(self.state.get('recording_paused'))
 
     def get_sensitivity_level(self):
-        with self.state_lock:
-            return self.state['sensitivity_level']
+        return self.state['sensitivity_level']
 
     def get_gps_data(self):
         """Return the last GPS payload plus local receipt time, or None."""
@@ -3969,9 +4054,14 @@ class DashMQTTSubscriber:
         self.connected = False
 
     def start(self):
-        """Start the MQTT IPC client"""
+        """Start the MQTT IPC client. connect_async + loop_start: paho keeps
+        retrying in the background, so a dashboard that starts before the
+        broker (boot order, a broker restart) connects when it can. A plain
+        connect() raised once and the dashboard stayed without MQTT until it
+        was restarted."""
         try:
-            self.client.connect(self.broker_host, self.broker_port, keepalive=60)
+            self.client.reconnect_delay_set(min_delay=1, max_delay=10)
+            self.client.connect_async(self.broker_host, self.broker_port, keepalive=60)
             self.client.loop_start()
             self.logger.info(f"MQTT IPC Client started (broker: {self.broker_host}:{self.broker_port})")
         except Exception as e:
@@ -4170,6 +4260,11 @@ class DashMQTTSubscriber:
     def set_detection_mode(self, mode):
         """Set detection mode: 0=spot spray, 1=off, 2=blanket"""
         return self._send_command('set_detection_mode', value=int(mode))
+
+    def hold_spray(self, ms):
+        """Hold to spray: every nozzle on for a lease of ms (renew about
+        every second; 0 releases). The OWL ends it by itself."""
+        return self._send_command('hold_spray', value=max(0, min(1500, int(ms))))
 
     def update_gps(self, lat, lon, accuracy=None, timestamp=None, extra=None):
         """Publish a GPS position to the OWL (owl/gps topic).

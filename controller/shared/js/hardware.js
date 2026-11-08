@@ -17,6 +17,10 @@
  */
 function isControlHardwareLocked(controlName, controllerType, switchPurpose) {
     if (!controllerType || controllerType === 'none') return false;
+    // Spraying is never locked: the OWL decides (a switch set to off wins;
+    // while it is on the dashboard can choose spot, blanket or off) and its
+    // spray state says why when it refuses.
+    if (controlName === 'detection') return false;
 
     if (controllerType === 'ute') {
         // Ute has one switch — it locks only the control it manages

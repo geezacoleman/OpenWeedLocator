@@ -205,7 +205,7 @@ class TestTemporaryJoin:
     def test_ordinary_join_call_shape_unchanged(self, mgr, nm):
         mgr.request_join('HomeNet', 'secret123')
         CapturingTimer.fire_all()
-        nm.add_wifi_connection.assert_called_once_with('HomeNet', 'secret123')
+        nm.add_wifi_connection.assert_called_once_with('HomeNet', 'secret123', autoconnect=False)
         result = mgr.result()
         assert result['temporary'] is False
         assert result['con_name'] is None

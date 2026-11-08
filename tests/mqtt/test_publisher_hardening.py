@@ -44,21 +44,16 @@ class TestChangeGuards:
 
 
 class TestBlanketMode:
-    def test_detection_toggle_leaves_blanket_and_turns_nozzles_off(self, mqtt_publisher, mock_owl):
-        """all_on bypasses the relay workers, so nothing switched the nozzles
-        off when detection was toggled instead of the mode."""
-        mqtt_publisher._handle_command({'action': 'set_detection_mode', 'value': 2})
-        mock_owl.relay_controller.relay.all_off.reset_mock()
-
-        mqtt_publisher._handle_command({'action': 'set_detection_enable', 'value': True})
-
-        mock_owl.relay_controller.relay.all_off.assert_called_once()
-        assert mqtt_publisher.state['detection_mode'] == 0
-
-    def test_blanket_refused_while_first_boot_flag_armed(self, mqtt_publisher, mock_owl):
-        mock_owl._firstboot_active = True
-        mqtt_publisher._handle_command({'action': 'set_detection_mode', 'value': 2})
+    def test_handlers_never_switch_relays_themselves(self, mqtt_publisher, mock_owl):
+        """all_on from the handler bypassed the relay workers and every other
+        input (switch, first-boot); now only the OWL's spray owner does it."""
+        for command in ({'action': 'set_detection_mode', 'value': 2},
+                        {'action': 'set_detection_enable', 'value': True},
+                        {'action': 'set_detection_mode', 'value': 1}):
+            mqtt_publisher._handle_command(command)
         mock_owl.relay_controller.relay.all_on.assert_not_called()
+        mock_owl.relay_controller.relay.all_off.assert_not_called()
+        assert [c.args[0] for c in mock_owl.request_spray.call_args_list] == ['blanket', 'spot', 'off']
 
 
 class TestGPSPayloadValidation:
@@ -120,3 +115,22 @@ class TestDashSubscriber:
         sent = json.loads(subscriber.client.publish.call_args.args[1])
         assert sent == {'action': 'set_config_section', 'section': 'System',
                         'params': {'on_error': 'on'}}
+
+
+class TestLiveActuationClamp:
+    """A live config edit used to reach the relays unclamped (a misplaced
+    decimal point sprayed for minutes); boot and set_actuation_params clamped."""
+
+    def test_set_config_section_clamps_duration_and_delay(self, mqtt_publisher, mock_owl):
+        from utils.config_manager import ConfigValidator
+        mqtt_publisher._handle_set_config_section(
+            'System', {'actuation_duration': '600', 'delay': '-3'})
+        assert mock_owl.actuation_duration == ConfigValidator.MAX_ACTUATION_DURATION
+        assert mock_owl.delay == 0.0
+        assert mock_owl._config_actuation == (mock_owl.actuation_duration, mock_owl.delay)
+        assert float(mock_owl.config.get('System', 'actuation_duration')) == \
+            ConfigValidator.MAX_ACTUATION_DURATION
+
+    def test_values_in_bounds_are_untouched(self, mqtt_publisher, mock_owl):
+        mqtt_publisher._handle_set_config_section('System', {'actuation_duration': '0.2'})
+        assert mock_owl.actuation_duration == 0.2

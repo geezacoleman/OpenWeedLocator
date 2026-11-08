@@ -376,8 +376,18 @@ class TestOwlDetectionSuppression:
                     offenders.add(node.name)
         # update_state contains nested defs? No — but walk visits nested
         # functions separately, so only the directly-containing names appear
-        assert offenders <= {'__init__', '_update_state_once'}, (
-            f'first-boot references leaked into: {offenders}')
+        # v3.27: the spray owner reads the cached bool when it resolves
+        # (sync tick and requests, never per frame): still no filesystem
+        # access outside __init__ / _update_state_once
+        allowed = {'__init__', '_update_state_once', '_spray_inputs',
+                   '_resolve_spray_locked', '_test_refusal_locked'}
+        assert offenders <= allowed, (
+            f'first-boot references leaked into: {offenders - allowed}')
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.FunctionDef) and node.name in allowed - {
+                    '__init__', '_update_state_once'}):
+                segment = ast.get_source_segment(source, node) or ''
+                assert '_firstboot_flag_path' not in segment, node.name
 
     def test_update_state_forces_detection_off_while_armed(self):
         """While the flag exists, a hardware switch or dashboard toggle must
@@ -391,7 +401,11 @@ class TestOwlDetectionSuppression:
             if isinstance(node, ast.FunctionDef) and node.name == '_update_state_once')
         segment = ast.get_source_segment(source, update_state)
         assert '_firstboot_active' in segment
-        assert 'self._detection_enable = False' in segment
+        # v3.27: spraying is decided by utils/spray_mode.resolve, where
+        # first-boot comes first; the sync tick applies it every cycle
+        assert 'self._apply_spray()' in segment
+        from utils.spray_mode import SprayInputs, resolve
+        assert resolve(SprayInputs(request='blanket', switch='on', firstboot=True)) ==             ('off', 'firstboot')
 
 
 @pytest.mark.unit
@@ -924,12 +938,95 @@ class TestStartup:
         assert ufw_calls, 'startup must re-add the setup port ufw rule'
 
     def test_reboot_onto_client_network_resumes(self, nm, state):
+        # This run joined HomeNet, then the unit rebooted mid-setup
+        state.wifi_state = 'connected'
+        state.wifi_ssid = 'HomeNet'
+        state._persist()
+        rebooted = FirstBootState(nm, flag_path=state.flag_path, state_file=state.state_file,
+                                  timer_factory=CapturingTimer, system_runner=MagicMock(),
+                                  exit_fn=MagicMock(), controller_ini=state.controller_ini)
         nm.status.return_value = {'mode': 'client', 'ssid': 'HomeNet',
                                   'ip': '192.168.1.57', 'hotspot_profile': 'OWL-4'}
-        state.startup()
-        assert state.wifi_state == 'connected'
-        assert state.wifi_ip == '192.168.1.57'
+        rebooted.startup()
+        assert rebooted.wifi_state == 'connected'
+        assert rebooted.wifi_ip == '192.168.1.57'
         nm.hotspot_up.assert_not_called()
+
+    def test_new_run_on_an_old_client_network_still_offers_setup(self, nm, state):
+        """A re-armed unit that boots onto last season's network must not
+        skip setup: only a join made in this run counts."""
+        nm.status.return_value = {'mode': 'client', 'ssid': 'OldFarmNet',
+                                  'ip': '192.168.1.57', 'hotspot_profile': 'OWL-4'}
+        state.startup()
+        assert state.wifi_state == 'idle'
+        nm.set_hotspot_password.assert_called()
+
+
+@pytest.mark.unit
+class TestFirstBootRunId:
+    """v3.27: every arm is one setup run; its id lives in the flag."""
+
+    def make(self, nm, tmp_path):
+        return FirstBootState(nm, flag_path=tmp_path / 'owl-firstboot.flag',
+                              state_file=tmp_path / 'state.json', timer_factory=CapturingTimer,
+                              system_runner=MagicMock(), exit_fn=MagicMock(),
+                              controller_ini=tmp_path / 'CONTROLLER.ini')
+
+    def test_empty_flag_starts_a_run_and_records_its_id(self, nm, state):
+        assert state.run_id and state.run_id.startswith('run-')
+        assert state.flag_path.read_text().strip() == state.run_id
+
+    def test_restart_within_a_run_keeps_its_state(self, nm, state, tmp_path):
+        state.wifi_state = 'connected'
+        state.wifi_ssid = 'HomeNet'
+        state._persist()
+        again = self.make(nm, tmp_path)
+        assert again.run_id == state.run_id
+        assert again.wifi_ssid == 'HomeNet'
+
+    def test_re_arm_discards_the_previous_runs_state(self, nm, state, tmp_path):
+        state.wifi_state = 'connected'
+        state.wifi_ssid = 'LastCustomerNet'
+        state._persist()
+        state.flag_path.write_text('')            # re-armed (helper empties the flag)
+        fresh = self.make(nm, tmp_path)
+        assert fresh.run_id != state.run_id
+        assert fresh.wifi_ssid is None
+        assert fresh.wifi_state == 'idle'
+        assert not state.state_file.exists()
+
+    def test_persist_is_atomic_and_carries_the_run(self, state):
+        state._persist()
+        import json as _json
+        assert _json.loads(state.state_file.read_text())['run_id'] == state.run_id
+        assert not state.state_file.with_name(state.state_file.name + '.tmp').exists()
+
+    def test_teardown_removes_flag_and_state(self, state):
+        state._persist()
+        state._teardown()
+        assert not state.flag_path.exists()
+        assert not state.state_file.exists()
+        assert state._exit_code == 0
+
+    def test_flag_that_cannot_be_removed_exits_non_zero(self, state, monkeypatch):
+        from pathlib import Path as _Path
+        real_unlink = _Path.unlink
+
+        def unlink(self, *a, **k):
+            if self == state.flag_path:
+                raise PermissionError('read-only boot partition')
+            return real_unlink(self, *a, **k)
+
+        monkeypatch.setattr(_Path, 'unlink', unlink)
+        state._teardown()
+        assert state._exit_code == 1
+
+    def test_scripts_leave_an_empty_flag(self):
+        from pathlib import Path as _Path
+        text = (_Path(__file__).resolve().parents[3] / 'controller' / 'setup'
+                / 'install_firstboot.sh').read_text(encoding='utf-8')
+        assert ': > "${FLAG_PATH}"' in text
+        assert 'rm -f /var/lib/owl/firstboot_state.json' in text
 
 
 # ---------------------------------------------------------------------------

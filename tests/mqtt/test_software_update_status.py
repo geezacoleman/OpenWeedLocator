@@ -9,6 +9,7 @@ Covers:
 """
 
 import json
+import time
 import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -25,8 +26,10 @@ def _status_payload(**overrides):
         'to': '',
         'error': '',
         'rollback_failed': False,
-        'started_at': 1781136615,
-        'updated_at': 1781136699,
+        # Recent: v3.27 reads a non-terminal status older than 30 min (or
+        # from another boot) as 'interrupted'
+        'started_at': int(time.time()) - 84,
+        'updated_at': int(time.time()),
         'pid': 12345,
         'log_file': '/home/owl/owl/logs/updates/x.log',
     }
@@ -43,6 +46,14 @@ def _point_at(publisher, tmp_path):
 
 @pytest.mark.unit
 class TestReadUpdateStatus:
+
+    def test_stale_status_from_a_cut_off_run_reads_interrupted(self, mqtt_publisher, tmp_path):
+        path = tmp_path / '.update_status.json'
+        path.write_text(json.dumps(_status_payload(status='installing_deps',
+                                                   updated_at=int(time.time()) - 4000)))
+        mqtt_publisher._update_status_path = path
+        mqtt_publisher._read_update_status()
+        assert mqtt_publisher.state['software_update']['status'] == 'interrupted'
 
     def test_missing_file_leaves_state_idle(self, mqtt_publisher, tmp_path):
         _point_at(mqtt_publisher, tmp_path)

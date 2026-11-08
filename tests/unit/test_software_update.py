@@ -78,11 +78,12 @@ class TestStatusFile:
         path = tmp_path / '.update_status.json'
         path.write_text(json.dumps({'request_id': 7, 'status': 'fetching',
                                     'rollback_failed': 'yes', 'updated_at': '12'}))
-        status = swu.read_status(path)
+        # now= keeps it live: effective_status turns an old run 'interrupted'
+        status = swu.read_status(path, now=13, boot_id='')
         assert status == {
             'request_id': '7', 'status': 'fetching', 'ref': '', 'from': '',
             'to': '', 'error': '', 'rollback_failed': True, 'started_at': 0,
-            'updated_at': 12,
+            'updated_at': 12, 'boot_id': '',
         }
 
     def test_missing_or_bad_file_is_none(self, tmp_path):
