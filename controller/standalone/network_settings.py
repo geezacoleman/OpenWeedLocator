@@ -107,6 +107,10 @@ class NetworkSettingsManager:
         self._confirm_timer = None
         self._confirm_now = False
         self.confirmed = True       # False while a permanent join awaits confirmation
+        # Radio ownership: nested marker holds and the single retry chain
+        self._marker_lock = threading.Lock()
+        self._marker_holds = 0
+        self._hotspot_timer = None
         self._switch_marker = switch_marker
         self._status_failures = 0
         self._beacon_sender = beacon_sender or send_udp_beacon
@@ -147,7 +151,13 @@ class NetworkSettingsManager:
     # ------------------------------------------------------------------
     def _mark_switching(self):
         """Tell the watchdog in owl.py that this process owns the radio
-        (no /dev/shm off Linux: nothing to tell there)."""
+        (no /dev/shm off Linux: nothing to tell there). Counted: a scan that
+        finished used to remove the marker while a join was still running,
+        and the watchdog then stepped in mid-join."""
+        with self._marker_lock:
+            self._marker_holds += 1
+            if self._marker_holds > 1:
+                return
         try:
             with open(self._switch_marker, 'w') as f:
                 f.write(str(os.getpid()))
@@ -155,6 +165,19 @@ class NetworkSettingsManager:
             pass
 
     def _clear_switching(self):
+        with self._marker_lock:
+            self._marker_holds = max(0, self._marker_holds - 1)
+            if self._marker_holds:
+                return
+        try:
+            os.remove(self._switch_marker)
+        except OSError:
+            pass
+
+    def _clear_switching_all(self):
+        """Startup: nothing in this process holds the radio yet."""
+        with self._marker_lock:
+            self._marker_holds = 0
         try:
             os.remove(self._switch_marker)
         except OSError:
@@ -182,14 +205,22 @@ class NetworkSettingsManager:
             logger.warning("Could not re-enable hotspot autoconnect: %s", e)
 
     def _schedule_hotspot_retry(self):
-        timer = self._timer_factory(HOTSPOT_RETRY_S, self._hotspot_retry)
-        timer.daemon = True
+        """One retry chain at most: every failure path used to start its own
+        timer, and the chains stacked up, each cycling the radio."""
+        with self._lock:
+            if self._hotspot_timer is not None:
+                return
+            timer = self._timer_factory(HOTSPOT_RETRY_S, self._hotspot_retry)
+            timer.daemon = True
+            self._hotspot_timer = timer
         timer.start()
 
     def _hotspot_retry(self):
         """Raise the hotspot while the unit has no network at all; again in
         HOTSPOT_RETRY_S if that fails. Stops once anything is up, a new
         switch starts, or there is no hotspot profile."""
+        with self._lock:
+            self._hotspot_timer = None
         with self._lock:
             if self.state in ('pending', 'switching') or (
                     self.state == 'connected' and self.temporary):
@@ -222,7 +253,10 @@ class NetworkSettingsManager:
         """Hotspot-mode rescan: AP down -> rescan -> AP up, in the
         background (the phone drops for ~15 s). No-op if one is running."""
         with self._lock:
-            if self.scanning:
+            # A switch or phone session owns the radio: a scan's AP down/up
+            # would take it back mid-join
+            if self.scanning or self.state in ('pending', 'switching') or (
+                    self.state == 'connected' and self.temporary):
                 return
             self.scanning = True
         self._start_marked(SCAN_START_DELAY_S, self._do_hotspot_scan)
@@ -269,6 +303,10 @@ class NetworkSettingsManager:
         with self._lock:
             if self.state in ('pending', 'switching'):
                 raise RuntimeError('A network switch is already in progress')
+            if self.scanning:
+                # The scan's finally: hotspot_up() would take the radio back
+                # from the join, and the app was told "connected"
+                raise RuntimeError('A network scan is running. Try again in a few seconds')
             status = self.nm.status()
             previous = {'ssid': status.get('ssid'), 'mode': status.get('mode')}
             if temporary and previous['mode'] != 'hotspot':
@@ -701,7 +739,7 @@ class NetworkSettingsManager:
         unblock the hotspot, and check in HOTSPOT_RETRY_S that the unit has
         a network. Ends a live phone session: the app has already seen the
         update complete."""
-        self._clear_switching()
+        self._clear_switching_all()
         # Unblock BEFORE the delete: deleting a live phone session frees the
         # radio, and NetworkManager picks its next profile at that instant.
         # With the hotspot still blocked it took a saved phone profile

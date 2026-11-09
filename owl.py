@@ -132,7 +132,10 @@ CAMERA_REOPEN_S = 5.0
 # failed re-opens
 CAMERA_REOPEN_ATTEMPTS = 3
 # Spraying faults raised by the watchdogs
-SYNC_STALL_S = 3.0      # no state-sync tick for this long (stats take up to 1 s)
+# No state-sync tick for this long. Generous on purpose: under on_error = off a
+# control_lost fault stops spraying until someone presses Start, so a busy CPU
+# (an AI model, a slow vcgencmd) must never trip it; a stuck lock still does.
+SYNC_STALL_S = 10.0
 LOOP_STALL_S = 10.0     # no main-loop pass for this long (a slow CPU AI model
                         # can take a few seconds per frame; a hang takes forever)
 CAMERA_STALL_S = 1.0    # no frame from a live camera for this long
@@ -1043,7 +1046,17 @@ class Owl:
         # updated by SensitivityManager.apply_preset(), so do NOT re-read from config.
 
         def _create_detector(algo):
-            """Three-way detector factory."""
+            """Three-way detector factory. Loading a model can take many
+            seconds on a Pi: the loop watchdog is told this is deliberate,
+            not a hung detector."""
+            self._loop_busy = f'loading {algo}'
+            try:
+                return _build_detector(algo)
+            finally:
+                self._loop_busy = None
+                self._last_loop_at = time.monotonic() if self._last_loop_at is not None else None
+
+        def _build_detector(algo):
             current_classes = self._detect_classes_list or None
             # [Tracking] INI values are the runtime source of truth — the
             # tracker yaml only bootstraps ByteTrack before these apply.
@@ -1388,7 +1401,9 @@ class Owl:
                                 if not self.config.has_section('GreenOnGreen'):
                                     self.config.add_section('GreenOnGreen')
                                 self.config.set('GreenOnGreen', 'model_path', new_model)
-                            self.dash._handle_save_config()
+                            # On the dashboard's I/O worker: never an SD-card
+                            # write in the detection loop
+                            self.dash._run_io(self.dash._handle_save_config)
                     except Exception as e:
                         self.logger.error(f"Failed to switch model: {e}")
                         # Keep the model that works for later detector rebuilds
@@ -2551,8 +2566,8 @@ class Owl:
         """Sync thread: the main loop has stopped (a hung detector or camera
         call). Raises control_lost from this side."""
         last = self._last_loop_at
-        if last is None:
-            return
+        if last is None or getattr(self, '_loop_busy', None):
+            return  # not running, or loading a model on purpose
         stalled = time.monotonic() - last > LOOP_STALL_S
         if stalled and 'control_lost' not in self._faults:
             self._loop_stalled = True
@@ -2635,7 +2650,10 @@ class Owl:
             'video_max_s': self.video_max_s,
             'video_seconds': video_s,
             'session_id': getattr(self, '_session_id', None),
+            # Written to disk, not queued (v3.27); failures and backlog shown too
             'saved_count': recorder.saved_count if recorder else 0,
+            'failed_count': recorder.failed_count if recorder else 0,
+            'pending_count': recorder.pending_count if recorder else 0,
             'last_saved': recorder.last_saved if recorder else None,
             'qc': recorder.qc.summary() if recorder else None,
             'exposure_time_us': exposure,
@@ -2739,6 +2757,12 @@ class Owl:
             self.logger.warning(f"Error getting system stats: {e}")
 
         stats['avg_loop_time_ms'] = round(self._avg_loop_time_ms, 1)
+        # How long since the camera delivered a frame (None when the backend
+        # does not track it): a frozen gauge is visible as a growing age
+        last_frame = getattr(getattr(self, 'cam', None), 'last_frame_at', None)
+        stats['last_frame_age_s'] = (round(time.monotonic() - last_frame, 1)
+                                     if isinstance(last_frame, float) else None)
+        stats['loop_busy'] = getattr(self, '_loop_busy', None)
         stats['actuation_duration'] = self.actuation_duration
         stats['delay'] = self.delay
         stats['actuation_source'] = self.actuation_source

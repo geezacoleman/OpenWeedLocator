@@ -1366,13 +1366,15 @@ class OWLMQTTPublisher:
                     self._handle_set_config_section(section, params)
 
             elif action == 'save_config':
-                filename = command.get('filename')
-                self._handle_save_config(filename,
-                                         name=command.get('name'),
-                                         notes=command.get('notes'))
+                # SD-card writes on the I/O worker, not under state_lock:
+                # a slow card stalled every command behind the save. The
+                # worker runs jobs in order, so the save sees every change
+                # handled before it.
+                self._run_io(self._handle_save_config, command.get('filename'),
+                             name=command.get('name'), notes=command.get('notes'))
 
             elif action == 'save_geometry':
-                self._handle_save_geometry(command.get('params') or {})
+                self._run_io(self._handle_save_geometry, command.get('params') or {})
 
             elif action == 'set_preview_mode':
                 mode = command.get('mode', 'cropped')
@@ -1870,7 +1872,7 @@ class OWLMQTTPublisher:
 
             # Auto-persist GreenOnBrown threshold changes (copy-on-write safe)
             if gob_changed:
-                self._handle_save_config()
+                self._run_io(self._handle_save_config)
 
         except Exception as e:
             self.logger.error(f"Error setting config section [{section}]: {e}")
@@ -3964,7 +3966,8 @@ class OWLMQTTPublisher:
             self.state['avg_loop_time_ms'] = stats_dict.get('avg_loop_time_ms', 0.0)
             self.state['actuation_duration'] = stats_dict.get('actuation_duration', self.state.get('actuation_duration', 0.15))
             self.state['delay'] = stats_dict.get('delay', self.state.get('delay', 0.0))
-            for key in ('actuation_source', 'speed_kmh', 'latency_ms', 'speed_warning'):
+            for key in ('actuation_source', 'speed_kmh', 'latency_ms', 'speed_warning',
+                        'last_frame_age_s', 'loop_busy'):
                 if key in stats_dict:
                     self.state[key] = stats_dict[key]
             self.state['last_update'] = time.time()

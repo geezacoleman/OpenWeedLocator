@@ -55,6 +55,19 @@ class TestImageRecorderWorkers:
 
         assert wait_for(lambda: len(list(tmp_path.glob('*.jpg'))) == 5)
 
+    def test_saved_count_is_frames_on_disk(self, tmp_path):
+        """The count went up when a frame was queued, so a read-only drive
+        kept the screen counting while nothing was written."""
+        recorder = ImageRecorder(save_directory=str(tmp_path), mode='whole')
+        try:
+            recorder.add_frame(frame(), 1, None, None)
+            recorder.add_frame(None, 2, None, None)          # fails in the worker
+            assert wait_for(lambda: recorder.saved_count == 1 and recorder.failed_count == 1)
+            assert recorder.pending_count == 0
+            assert not list(tmp_path.glob('*.part')), 'no half-written file left behind'
+        finally:
+            recorder.stop()
+
 
 class TestPiCamera2Read:
     def make_stream(self, thread_alive):

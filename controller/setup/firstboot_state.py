@@ -215,6 +215,15 @@ class FirstBootState:
         except OSError as e:
             logger.warning("Could not record the setup run id in the flag: %s", e)
         logger.info("New first-boot setup run %s", run_id)
+        # A controller-join backup from an earlier run must never be restored
+        # over this unit's newer identity (device token, hostname)
+        try:
+            self._controller_ini_backup.unlink()
+            logger.info("Removed a controller-join backup from an earlier setup run")
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            logger.warning("Could not remove an old controller-join backup: %s", e)
         return run_id
 
     def _load_persisted(self):
@@ -339,12 +348,18 @@ class FirstBootState:
             return False
 
     def _schedule_hotspot_retry(self):
+        """One retry chain at most (each failure path used to start its own,
+        and the chains stacked up)."""
+        if getattr(self, '_hotspot_timer', None) is not None:
+            return
         logger.warning("Retrying setup hotspot in %ds", HOTSPOT_RETRY_S)
         timer = self._timer_factory(HOTSPOT_RETRY_S, self._hotspot_retry)
         timer.daemon = True
+        self._hotspot_timer = timer
         timer.start()
 
     def _hotspot_retry(self):
+        self._hotspot_timer = None
         # A join in progress (or completed) owns the radio — stop retrying
         if self.wifi_state in ('pending', 'switching', 'connected'):
             return

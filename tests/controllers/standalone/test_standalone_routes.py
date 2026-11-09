@@ -1573,3 +1573,62 @@ class TestConfigSectionCameraCoercion:
         dashboard.mqtt_client.current_state['restart_required'] = 'resolution_width'
         data = client.get('/api/system_stats').get_json()
         assert data['restart_required'] == 'resolution_width'
+
+
+@pytest.mark.unit
+class TestLocksFollowTheRunningOwl:
+    """The recording/sensitivity locks read the INI, which can differ from
+    the running OWL until it restarts (e.g. controller_type just changed)."""
+
+    def test_running_owl_wins_over_the_ini(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        dashboard.mqtt_client = MagicMock()
+        dashboard.mqtt_client.get_state.return_value = {
+            'owl_running': True, 'controller_type': 'advanced', 'switch_purpose': 'recording'}
+        assert dashboard._get_controller_type() == 'advanced'
+        assert dashboard._is_hardware_locked('recording') is True
+        assert dashboard._is_hardware_locked('detection') is False
+
+    def test_falls_back_to_the_ini_when_the_owl_is_silent(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        dashboard.mqtt_client = MagicMock()
+        dashboard.mqtt_client.get_state.return_value = {'owl_running': False,
+                                                        'controller_type': 'advanced'}
+        assert dashboard._get_controller_type() == 'none'
+
+
+@pytest.mark.unit
+class TestConfigPersistence:
+    """The dashboard's INI writes: 8 gunicorn threads did read-modify-write
+    with no lock (one of two quick changes was lost), and values the OWL's
+    config load would refuse were written anyway."""
+
+    def _active(self, dashboard):
+        import configparser
+        config = configparser.ConfigParser()
+        config.read(dashboard._resolve_config_path(dashboard._get_active_config_path()))
+        return config
+
+    def test_out_of_range_value_is_not_written(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        assert dashboard._persist_config_change('GreenOnBrown', 'exg_max', '900') is False
+        config = self._active(dashboard)
+        assert config.get('GreenOnBrown', 'exg_max', fallback=None) != '900'
+
+    def test_actuation_is_clamped_before_it_is_written(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        assert dashboard._persist_config_change('System', 'actuation_duration', '600') is True
+        assert float(self._active(dashboard).get('System', 'actuation_duration')) == 5.0
+
+    def test_concurrent_changes_are_all_kept(self, standalone_test_client):
+        import threading as _threading
+        client, dashboard, tmp_dir = standalone_test_client
+        keys = [f'flag_{i}' for i in range(8)]
+        threads = [_threading.Thread(target=dashboard._persist_config_change,
+                                     args=('Extra', k, 'True')) for k in keys]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        config = self._active(dashboard)
+        assert all(config.get('Extra', k, fallback=None) == 'True' for k in keys)

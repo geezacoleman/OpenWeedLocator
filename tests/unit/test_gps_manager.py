@@ -399,3 +399,44 @@ class TestGPSManagerSourceSelection:
         assert mgr.state.connected is True
         mgr._on_connect_change(False)
         assert mgr.state.connected is False
+
+
+class TestTrackFileSafety:
+    """The track was rewritten in place every 100 points, so a power cut
+    mid-write wiped the whole session track; two threads could flush at once."""
+
+    def _points(self, rec, n, start=0):
+        for i in range(start, start + n):
+            rec._last_record_time = 0
+            rec.add_point(-33.0 - i * 0.001, 151.0, speed=5.0, heading=90.0)
+
+    def test_failed_write_keeps_the_previous_file(self, tmp_path, monkeypatch):
+        import json as _json
+        rec = TrackRecorder()
+        rec.start(str(tmp_path))
+        self._points(rec, 3)
+        path = rec._flush()
+        good = path and open(path).read()
+        self._points(rec, 3, start=3)
+
+        def broken_dump(obj, f, *a, **k):
+            f.write('{"half": ')
+            raise OSError('power cut')
+
+        monkeypatch.setattr('utils.gps_manager.json.dump', broken_dump)
+        rec._flush()
+        assert open(path).read() == good, 'the last good track must survive a failed write'
+        assert not os.path.exists(path + '.tmp')
+        assert _json.loads(good)['features'][0]['properties']['point_count'] == 3
+
+    def test_periodic_flush_does_not_block_the_caller(self, tmp_path):
+        rec = TrackRecorder()
+        rec.start(str(tmp_path))
+        rec._flush_lock.acquire()          # a slow flush already running
+        try:
+            self._points(rec, 100)          # 100th point asks for a flush
+        finally:
+            rec._flush_lock.release()
+        assert rec.stop() is not None
+        with open(rec._filepath) as f:
+            assert '"point_count": 100' in f.read()

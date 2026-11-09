@@ -132,6 +132,8 @@ class OWLDashboard:
             self.logger.warning("vcgencmd not found; CPU temperature unavailable")
         self.rpi_version = get_rpi_version()
 
+        # One writer at a time for the INI files (see _persist_config_change)
+        self._config_write_lock = threading.RLock()
         self.app = Flask(__name__,
                          static_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static'),
                          template_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates'))
@@ -1865,6 +1867,11 @@ class OWLDashboard:
                     controller_type = 'none'
                     switch_purpose = 'recording'
 
+                # The switches that are actually wired up and read come from
+                # the running OWL; switch_purpose stays the configured value
+                # (the toggle shows what the next restart will use)
+                controller_type = (self._running_owl_value(
+                    'controller_type', ('none', 'ute', 'advanced')) or controller_type)
                 return jsonify({
                     'controller_type': controller_type,
                     'hardware_active': controller_type not in ('none', ''),
@@ -2078,7 +2085,8 @@ class OWLDashboard:
                 result = self.mqtt_client._send_command(
                     'set_config_section', section=section, params=params)
                 for key, value in params.items():
-                    self._persist_config_change(section, key, str(value))
+                    if self._persist_config_change(section, key, str(value)) is False:
+                        rejected[key] = 'Not saved: outside the allowed range'
                 payload = result if isinstance(result, dict) else {'success': True}
                 if rejected:
                     payload = dict(payload, rejected=rejected)
@@ -2270,11 +2278,12 @@ class OWLDashboard:
 
                 # Stamp human-readable metadata authoritatively. On an update-in-place
                 # the existing name/notes/created are preserved when not resupplied.
-                stamp_config_meta(config, display_name, notes,
-                                  existing_path=new_config_path if overwrite else None)
-
-                # Write the new config file (atomic — survives power loss mid-write)
-                atomic_write_config(new_config_path, config.write)
+                # Write the new config file (atomic — survives power loss
+                # mid-write), one writer at a time
+                with self._config_write_lock:
+                    stamp_config_meta(config, display_name, notes,
+                                      existing_path=new_config_path if overwrite else None)
+                    atomic_write_config(new_config_path, config.write)
 
                 self.logger.info(f"Config saved to new file: {new_config_path}")
 
@@ -2728,8 +2737,28 @@ class OWLDashboard:
         # Return default - will be resolved by _resolve_config_path
         return 'config/GENERAL_CONFIG.ini'
 
+    def _running_owl_value(self, key, valid):
+        """What the running OWL reports for key (controller_type /
+        switch_purpose), or None when it is not reporting. The INI can differ
+        from what is running (both need a restart to change), and the locks
+        must follow the switches that are actually wired up and read."""
+        client = getattr(self, 'mqtt_client', None)
+        if client is None:
+            return None
+        try:
+            state = client.get_state() or {}
+        except Exception:
+            return None
+        value = state.get(key)
+        if state.get('owl_running') and isinstance(value, str) and value.lower() in valid:
+            return value.lower()
+        return None
+
     def _get_controller_type(self):
-        """Read controller_type fresh from the active config file."""
+        """The running OWL's controller_type, else the active config file's."""
+        running = self._running_owl_value('controller_type', ('none', 'ute', 'advanced'))
+        if running is not None:
+            return running
         try:
             active_config = self._get_active_config_path()
             config_path = self._resolve_config_path(active_config)
@@ -2744,7 +2773,10 @@ class OWLDashboard:
         return 'none'
 
     def _get_switch_purpose(self):
-        """Read switch_purpose fresh from the active config file."""
+        """The running OWL's switch_purpose, else the active config file's."""
+        running = self._running_owl_value('switch_purpose', ('recording', 'detection'))
+        if running is not None:
+            return running
         try:
             active_config = self._get_active_config_path()
             config_path = self._resolve_config_path(active_config)
@@ -2759,21 +2791,24 @@ class OWLDashboard:
         return 'recording'
 
     def _is_hardware_locked(self, control):
-        """Check if a control is hardware-locked for the current controller type.
+        """Is this control owned by the running OWL's wired switch panel?
 
-        UTE: the single switch controls either 'recording' or 'detection' (based on switch_purpose).
-        Advanced: 'recording', 'detection', 'sensitivity' are all hardware-controlled.
-        Nozzles, tracking, fan: never locked.
+        UTE: its one switch owns 'recording' when switch_purpose is recording.
+        Advanced: 'recording' and 'sensitivity'.
+        Spraying ('detection') is never locked here: the OWL arbitrates (a
+        switch set to off wins) and says why it refuses. Nozzles, tracking,
+        fan: never locked.
         """
+        if control == 'detection':
+            return False
         controller_type = self._get_controller_type()
         if controller_type in ('none', ''):
             return False
 
         if controller_type == 'ute':
-            switch_purpose = self._get_switch_purpose()
-            return control == switch_purpose
+            return control == self._get_switch_purpose()
         elif controller_type == 'advanced':
-            return control in ('recording', 'detection', 'sensitivity')
+            return control in ('recording', 'sensitivity')
 
         return False
 
@@ -2994,7 +3029,29 @@ class OWLDashboard:
     def _persist_config_change(self, section, key, value):
         """Persist a single config parameter change to the active config file.
         If the active config is a protected default, saves as a new file and sets it active.
+
+        Serialised (8 gunicorn threads each did read-modify-write of the same
+        file, so two quick changes lost one), and validated with the same
+        rules the OWL's config load applies: a value the OWL would refuse is
+        not written, or the next boot would fail on it. False when refused.
         """
+        ok, why = ConfigValidator.validate_value(key, str(value), set())
+        if not ok:
+            self.logger.warning(f"Not saving [{section}] {key}={value}: {why}")
+            return False
+        if key in ('actuation_duration', 'delay'):
+            try:
+                duration, delay = ConfigValidator.clamp_actuation(
+                    float(value) if key == 'actuation_duration' else ConfigValidator.MIN_ACTUATION_DURATION,
+                    float(value) if key == 'delay' else 0.0)
+                value = duration if key == 'actuation_duration' else delay
+            except (TypeError, ValueError):
+                self.logger.warning(f"Not saving [{section}] {key}={value}: not a number")
+                return False
+        with self._config_write_lock:
+            return self._persist_config_change_locked(section, key, value)
+
+    def _persist_config_change_locked(self, section, key, value):
         try:
             active_config = self._get_active_config_path()
             config_path = self._resolve_config_path(active_config)
@@ -3003,7 +3060,7 @@ class OWLDashboard:
                 config_path = self._heal_missing_active_config()
                 if not config_path:
                     self.logger.warning("Config file not found for persistence and healing failed")
-                    return
+                    return False
 
             config = configparser.ConfigParser()
             config.optionxform = str
@@ -3044,9 +3101,11 @@ class OWLDashboard:
             else:
                 atomic_write_config(config_path, config.write)
                 self.logger.info(f"Config updated: {basename} [{section}] {key}={value}")
+            return True
 
         except Exception as e:
             self.logger.error(f"Error persisting config change [{section}].{key}: {e}")
+            return False
 
     def _apply_config_to_owl(self):
         """Read the active config file and push detection parameters to owl.py via MQTT.

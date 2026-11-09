@@ -121,7 +121,8 @@ class TestImageRecorderMainLoopCost:
         r.queue.qsize.return_value = 0
         r.processes, r.max_processes, r.new_process_threshold = [], 0, 90
         r.jpeg_quality = quality
-        r.saved_count, r.last_thumbnail, r.last_saved = 0, None, None
+        r.queued_count, r.last_thumbnail, r.last_saved = 0, None, None
+        r.written = Value('i', 0)
         r.qc = CaptureQC()
         r.logger = MagicMock()
         r.failed, r._failed_seen = Value('i', 0), 0   # worker failure count
@@ -135,7 +136,9 @@ class TestImageRecorderMainLoopCost:
         frame = np.zeros((48, 64, 3), np.uint8)
         for i in range(5):
             r.add_frame(frame, i, None, None)
-        assert len(made) == 1 and r.saved_count == 5 and r.qc.summary()['count'] == 5
+        assert len(made) == 1 and r.queued_count == 5 and r.qc.summary()['count'] == 5
+        # Nothing written by a worker yet: the farmer's count stays honest
+        assert r.saved_count == 0 and r.pending_count == 5
         # Live quality travels with each queued frame (workers are forked copies)
         r.jpeg_quality = 60
         r.add_frame(frame, 5, None, None)

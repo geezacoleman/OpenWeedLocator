@@ -637,6 +637,9 @@ class TrackRecorder:
 
     def __init__(self):
         self._lock = threading.Lock()
+        # One flush at a time: stop() and a periodic flush used to write the
+        # same file from two threads at once
+        self._flush_lock = threading.Lock()
         self._recording = False
         self._filepath = None
         self._coordinates = []
@@ -706,7 +709,11 @@ class TrackRecorder:
             should_flush = (len(self._coordinates) % 100 == 0)
 
         if should_flush:
-            self._flush()
+            # Off the caller's thread (the state-sync loop): a slow USB drive
+            # must not stall it. Skipped if a flush is already running; the
+            # next 100 points or stop() writes everything.
+            threading.Thread(target=self._flush, kwargs={'blocking': False},
+                             name='track-flush', daemon=True).start()
 
     def stop(self):
         """Stop recording and write final GeoJSON file."""
@@ -720,8 +727,16 @@ class TrackRecorder:
         logger.info(f"Track recording stopped: {filepath} ({point_count} points)")
         return filepath
 
-    def _flush(self):
-        """Write current track data to the GeoJSON file."""
+    def _flush(self, blocking=True):
+        """Write the track so far to its GeoJSON file, atomically."""
+        if not self._flush_lock.acquire(blocking=blocking):
+            return self._filepath
+        try:
+            return self._write_geojson()
+        finally:
+            self._flush_lock.release()
+
+    def _write_geojson(self):
         with self._lock:
             if not self._filepath or not self._coordinates:
                 return self._filepath
@@ -762,11 +777,21 @@ class TrackRecorder:
             }],
         }
 
+        # Temp file + fsync + rename: the file was rewritten in place, so a
+        # power cut mid-write (a routine key-off) wiped the whole session track
+        tmp = filepath + '.tmp'
         try:
-            with open(filepath, 'w') as f:
+            with open(tmp, 'w') as f:
                 json.dump(geojson, f)
-        except IOError as e:
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, filepath)
+        except OSError as e:
             logger.warning(f"Failed to write track file: {e}")
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
         return filepath
 

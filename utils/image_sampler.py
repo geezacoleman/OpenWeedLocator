@@ -452,18 +452,39 @@ class ImageRecorder:
         # so a stop has to reach them through an Event.
         self._stop_event = Event()
         self.failed = Value('i', 0)
+        # Frames the workers actually wrote to disk. The count shown to the
+        # farmer used to go up when a frame was QUEUED, so a drive remounted
+        # read-only kept the screen counting while nothing reached the disk.
+        self.written = Value('i', 0)
         self._failed_seen = 0
         self._queue_full_logged_at = float('-inf')
         self.logger = LogManager.get_logger(__name__)
 
         # Main-process view of what was last queued for saving: the gallery
         # thumbnail and the quality summary. Worker processes never touch these.
-        self.saved_count = 0
+        self.queued_count = 0
         self.last_thumbnail = None
         self.last_saved = None
         self.qc = CaptureQC()
 
         self.start_new_process()
+
+    @property
+    def saved_count(self):
+        """Frames written to disk this session (not merely queued)."""
+        written = getattr(self, 'written', None)
+        return written.value if written is not None else getattr(self, 'queued_count', 0)
+
+    @property
+    def failed_count(self):
+        failed = getattr(self, 'failed', None)
+        return failed.value if failed is not None else 0
+
+    @property
+    def pending_count(self):
+        """Queued but not yet written or failed (a backlog that keeps
+        growing means the drive is not keeping up)."""
+        return max(0, getattr(self, 'queued_count', 0) - self.saved_count - self.failed_count)
 
     def start_new_process(self):
         if len(self.processes) < self.max_processes:
@@ -494,8 +515,11 @@ class ImageRecorder:
             # the worker, and saving then stopped with nobody told. Count it
             # for the main process (add_frame reports it) and carry on.
             try:
-                self.process_frame(frame, frame_id, boxes, centres, gps_data,
-                                   camera_metadata, context, capture_time)
+                files = self.process_frame(frame, frame_id, boxes, centres, gps_data,
+                                           camera_metadata, context, capture_time)
+                if files:
+                    with self.written.get_lock():
+                        self.written.value += 1
             except Exception as e:
                 logger.error(f"Image {frame_id} not saved: {e}", exc_info=True)
                 with self.failed.get_lock():
@@ -538,6 +562,17 @@ class ImageRecorder:
         if files and gps_data and gps_data.get('latitude') is not None \
                 and gps_data.get('longitude') is not None:
             self._append_location(frame_id, gps_data, capture_time, files)
+        return files
+
+    @staticmethod
+    def _write_file(filepath, data):
+        """Write via a .part file and rename: a worker stopped mid-write (or a
+        drive pulled) leaves no truncated JPEG behind to be uploaded or
+        labelled. Readers only look at *.jpg."""
+        part = filepath + '.part'
+        with open(part, 'wb') as f:
+            f.write(data)
+        os.replace(part, filepath)
 
     def _append_location(self, frame_id, gps_data, capture_time, files):
         """Append one line to the per-session location sidecar
@@ -575,8 +610,7 @@ class ImageRecorder:
         filepath = os.path.join(self.save_directory, filename)
         image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         image_bytes = encode_jpeg(image, exif_for(0, 0, width, height), quality=self.jpeg_quality)
-        with open(filepath, 'wb') as f:
-            f.write(image_bytes)
+        self._write_file(filepath, image_bytes)
         return [filename]
 
     def save_bboxes(self, frame, frame_id, boxes, timestamp, exif_for):
@@ -588,8 +622,7 @@ class ImageRecorder:
             filepath = os.path.join(self.save_directory, filename)
             image = Image.fromarray(cv2.cvtColor(cropped_image, cv2.COLOR_BGR2RGB))
             image_bytes = encode_jpeg(image, exif_for(startX, startY, width, height), quality=self.jpeg_quality)
-            with open(filepath, 'wb') as f:
-                f.write(image_bytes)
+            self._write_file(filepath, image_bytes)
             filenames.append(filename)
         return filenames
 
@@ -615,8 +648,7 @@ class ImageRecorder:
             image_bytes = encode_jpeg(image, exif_for(startX, startY,
                                                       endX - startX, endY - startY),
                                       quality=self.jpeg_quality)
-            with open(filepath, 'wb') as f:
-                f.write(image_bytes)
+            self._write_file(filepath, image_bytes)
             filenames.append(filename)
         return filenames
 
@@ -660,7 +692,7 @@ class ImageRecorder:
             if thumbnail:
                 self.last_thumbnail = make_thumbnail(frame)
             if saved:
-                self.saved_count += 1
+                self.queued_count = getattr(self, 'queued_count', 0) + 1
             capture_time = capture_time or datetime.now(timezone.utc)
             info = {'count': self.saved_count,
                     'ts': capture_time.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'}

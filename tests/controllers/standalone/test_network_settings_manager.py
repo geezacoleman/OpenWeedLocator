@@ -357,3 +357,36 @@ class TestJoinConfirm:
                                   'hotspot_profile': 'OWL-4b7d'}
         self.join(confirm_mgr)
         assert confirm_mgr.result()['confirmed'] is True
+
+
+@pytest.mark.unit
+class TestRadioOwner:
+    """Item 15 of the 2026-11-07 audit: scan, join, phone session and the
+    hotspot retries each drove the radio with no single owner."""
+
+    def test_join_refused_while_a_scan_holds_the_radio(self, mgr):
+        mgr.start_hotspot_scan()
+        with pytest.raises(RuntimeError, match='scan'):
+            mgr.request_join('HomeNet', 'secret123')
+
+    def test_scan_is_a_no_op_while_a_join_owns_the_radio(self, mgr, nm):
+        mgr.request_join('HomeNet', 'secret123')
+        mgr.start_hotspot_scan()
+        assert mgr.scanning is False
+        CapturingTimer.fire_all()
+        nm.hotspot_down.assert_called_once()     # the join's, not a scan's
+
+    def test_marker_stays_while_any_operation_holds_it(self, mgr, tmp_path):
+        marker = tmp_path / 'net-switching'
+        mgr._mark_switching()                    # e.g. a join
+        mgr._mark_switching()                    # and a revert
+        mgr._clear_switching()
+        assert marker.exists(), 'the first one finishing un-paused the watchdog'
+        mgr._clear_switching()
+        assert not marker.exists()
+
+    def test_only_one_hotspot_retry_chain(self, mgr):
+        mgr._schedule_hotspot_retry()
+        mgr._schedule_hotspot_retry()
+        mgr._schedule_hotspot_retry()
+        assert len([t for t in CapturingTimer.pending if t.function == mgr._hotspot_retry]) == 1

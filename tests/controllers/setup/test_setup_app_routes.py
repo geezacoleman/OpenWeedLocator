@@ -380,7 +380,7 @@ class TestOwlDetectionSuppression:
         # (sync tick and requests, never per frame): still no filesystem
         # access outside __init__ / _update_state_once
         allowed = {'__init__', '_update_state_once', '_spray_inputs',
-                   '_resolve_spray_locked', '_test_refusal_locked'}
+                   '_resolve_spray_locked', '_test_refusal_locked', '_switch_again_needed'}
         assert offenders <= allowed, (
             f'first-boot references leaked into: {offenders - allowed}')
         for node in ast.walk(tree):
