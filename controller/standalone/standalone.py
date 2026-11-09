@@ -669,9 +669,10 @@ class OWLDashboard:
         def nozzles_hold():
             """Hold to spray: {ms} lease, renewed about every second while the
             button is held; 0 releases. The OWL turns every nozzle off by
-            itself at most 1.5 s after the last renew (10 s in all), so a phone
-            that leaves mid-hold cannot leave them on. Works with the switch
-            off; refused during first-boot or an on_error = off fault."""
+            itself at most 1.5 s after the last renew, so a phone that leaves
+            mid-hold cannot leave them on. No time limit while held. Works
+            with the switch off; refused during first-boot or an
+            on_error = off fault."""
             if not self.mqtt_client:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             data = request.get_json(silent=True) or {}

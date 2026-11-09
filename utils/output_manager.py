@@ -799,18 +799,26 @@ class RelayController:
     # ------------------------------------------------------------------
     # Bounded tests: nozzle test and hold to spray
     # ------------------------------------------------------------------
-    # Hard cap on any test, whatever the caller asks or however often it
-    # renews: a lost connection must not leave a nozzle open.
+    # Longest timed nozzle test (one duration, no renews). Hold to spray has
+    # no cap (max_s=None): it is a lease that ends when the renews stop, and
+    # a cap switched the nozzles off every 10 s under a finger still holding.
+    # Nothing that sprays has a maximum on-time: dense weeds keep a nozzle on.
     TEST_MAX_S = 10.0
 
     @property
     def test_relays(self):
         return sorted(self._test_relays)
 
-    def start_test(self, relays, duration_s):
-        """Hold relays on for duration_s (capped at TEST_MAX_S), whatever
-        the mode: tests run with the switch off too. Replaces a running test.
-        Returns the relays now under test."""
+    @property
+    def test_capped(self):
+        """True while the running test has a cap (a timed nozzle test)."""
+        return self._test_cap_until is not None
+
+    def start_test(self, relays, duration_s, max_s=TEST_MAX_S):
+        """Hold relays on for duration_s, whatever the mode: tests run with
+        the switch off too. max_s caps it however often it is renewed; None
+        = no cap (hold to spray, ended by its lease). Replaces a running
+        test. Returns the relays now under test."""
         relays = frozenset(r for r in relays if r in self.relay_condition_dict)
         self.stop_test(notify=False)
         if not relays:
@@ -818,8 +826,8 @@ class RelayController:
         now = time.monotonic()
         with self._mode_lock:
             self._test_relays = relays
-            self._test_cap_until = now + self.TEST_MAX_S
-            self._test_until = min(now + max(0.0, duration_s), self._test_cap_until)
+            self._test_cap_until = None if max_s is None else now + max_s
+            self._test_until = self._capped(now + max(0.0, duration_s))
             for relay in relays:
                 with self.relay_condition_dict[relay]:
                     self._drive(relay, True)
@@ -829,13 +837,19 @@ class RelayController:
 
     def renew_test(self, duration_s):
         """Extend a running test (hold to spray renews every second), never
-        past TEST_MAX_S from its start. False when no test is running."""
+        past its cap if it has one. False when no test is running."""
         with self._mode_lock:
             if not self._test_relays:
                 return False
-            self._test_until = min(time.monotonic() + max(0.0, duration_s), self._test_cap_until)
+            self._test_until = self._capped(time.monotonic() + max(0.0, duration_s))
             self._arm_test_timer()
             return True
+
+    def _capped(self, until):
+        """Caller holds _mode_lock."""
+        if self._test_cap_until is None:
+            return until
+        return min(until, self._test_cap_until)
 
     def stop_test(self, notify=True):
         """End a test now and give its relays back to the current mode.

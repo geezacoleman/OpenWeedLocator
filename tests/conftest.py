@@ -68,13 +68,20 @@ def _no_real_mqtt_broker(monkeypatch):
     A dev machine running mosquitto on localhost:1883 let 40 standalone
     tests pass by talking to it; CI has no broker and they all failed
     (2026-10-11). Tests that need a connected client mock it themselves.
+
+    connect_async and reconnect too: since 3.27 the dashboard starts with
+    connect_async + loop_start, which never calls connect(). On a machine
+    running mosquitto every test dashboard really connected, and paho's
+    loop thread (reconnect()) kept two of them kicking each other off the
+    broker forever, flooding closed log streams until memory ran out.
     """
     import paho.mqtt.client as paho
 
     def _refuse(self, *a, **kw):
         raise ConnectionRefusedError(111, 'tests never use a real MQTT broker')
 
-    monkeypatch.setattr(paho.Client, 'connect', _refuse)
+    for name in ('connect', 'connect_async', 'reconnect'):
+        monkeypatch.setattr(paho.Client, name, _refuse)
 
 # All 8 detection sections present in the OWL INI configs
 # (MQTT, WebDashboard, Network, GPS moved to CONTROLLER.ini)

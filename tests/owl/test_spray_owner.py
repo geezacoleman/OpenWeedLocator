@@ -112,6 +112,22 @@ def test_tests_and_hold_still_work_with_the_switch_off(owl_factory, config_facto
     instance.test_nozzles([], 0)
 
 
+def test_hold_has_no_maximum_on_time(owl_factory, config_factory, input_dir):
+    """Held for a minute, it sprays for a minute: only the lease ends a hold.
+    A timed nozzle test of every relay is replaced by the hold, not renewed
+    under its cap."""
+    instance = build(owl_factory, config_factory, input_dir)
+    rc = instance.relay_controller
+    everything = list(range(len(rc.relay_condition_dict)))
+    instance.test_nozzles(everything, 5)
+    assert rc.test_capped is True
+    assert instance.hold_spray(1500)['ok'] is True
+    assert rc.test_capped is False, 'a hold must not inherit a cap'
+    assert instance.hold_spray(1500)['ok'] is True   # a renew
+    assert rc.test_capped is False and rc.test_relays == everything
+    instance.hold_spray(0)
+
+
 def test_ute_switch_on_at_boot_sprays(owl_factory, config_factory, input_dir, monkeypatch):
     monkeypatch.setattr(input_manager, 'testing', False)
     monkeypatch.setattr(input_manager, 'Button',
@@ -407,3 +423,29 @@ def test_no_hint_without_a_stop(owl_factory, config_factory, input_dir):
     ute_switch(instance, True)
     press(instance, 'set_detection_enable', False)   # dashboard off: a choice, not a stop
     assert instance.status_indicator.error_code is None
+
+
+@pytest.mark.allow_errors  # the second half raises the fault on purpose
+def test_loading_a_model_is_not_a_hung_loop(owl_factory, config_factory, input_dir):
+    """A model hot-swap can take many seconds on a Pi; under on_error = off a
+    false control_lost would stop spraying until someone presses Start."""
+    instance = build(owl_factory, config_factory, input_dir)
+    instance._last_loop_at = time.monotonic() - owl_module.LOOP_STALL_S - 5
+    instance._loop_busy = 'loading gog'
+    instance._check_loop_watchdog()
+    assert 'control_lost' not in instance._faults
+    instance._loop_busy = None
+    instance._check_loop_watchdog()
+    assert 'control_lost' in instance._faults
+    instance._clear_fault('control_lost')
+
+
+def test_frame_age_is_published(owl_factory, config_factory, input_dir):
+    instance = build(owl_factory, config_factory, input_dir)
+
+    class Cam:
+        last_frame_at = time.monotonic() - 2.5
+
+    instance.cam = Cam()
+    age = instance.get_system_stats()['last_frame_age_s']
+    assert 2.0 <= age <= 4.0

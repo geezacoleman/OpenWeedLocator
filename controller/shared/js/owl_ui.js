@@ -485,7 +485,9 @@
     }
 
     // ---------- hold to spray ----------
-    // Spray while held; release, cancel, the page hiding or maxMs stops it.
+    // Spray while held; release, cancel or the page hiding stops it, and
+    // o.maxMs if given (timed nozzle tests only). Hold to spray has no
+    // maxMs: no maximum on-time, held for a minute it sprays for a minute.
     // o.renew (optional) runs every renewMs while held: the OWL holds the
     // nozzles on a short lease and turns them off by itself when the renews
     // stop, so a phone that walks out of range cannot leave them on.
@@ -496,7 +498,7 @@
         let tick = null;
         let renew = null;
         let on = false;
-        const maxMs = o.maxMs || 10000;
+        const maxMs = o.maxMs || 0;
         const renewMs = o.renewMs || 1000;
         const label = btn.querySelector('small');
         const idle = label ? label.textContent : '';
@@ -510,11 +512,15 @@
             btn.classList.add('is-on');
             o.start();
             const t0 = Date.now();
-            timer = setTimeout(stop, maxMs);
             if (o.renew) renew = setInterval(o.renew, renewMs);
-            tick = setInterval(() => {
-                if (label) label.textContent = 'Spraying. Stops in ' + Math.max(0, Math.ceil((maxMs - (Date.now() - t0)) / 1000)) + ' s';
-            }, 250);
+            if (maxMs) {
+                timer = setTimeout(stop, maxMs);
+                tick = setInterval(() => {
+                    if (label) label.textContent = 'Spraying. Stops in ' + Math.max(0, Math.ceil((maxMs - (Date.now() - t0)) / 1000)) + ' s';
+                }, 250);
+            } else if (label) {
+                label.textContent = 'Spraying. Let go to stop';
+            }
         }
         function stop() {
             if (!on) return;

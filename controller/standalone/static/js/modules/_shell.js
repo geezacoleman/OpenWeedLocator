@@ -519,7 +519,6 @@ const Shell = (function () {
             body: JSON.stringify({ ms: ms }),
         }).catch(() => {});
         UI().hold($('holdSpray'), {
-            maxMs: 10000,
             start: () => holdFor(1500),
             renew: () => holdFor(1500),
             stop: () => { holdFor(0).then(() => updateSystemStats()); },

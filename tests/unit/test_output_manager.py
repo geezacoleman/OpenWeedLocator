@@ -840,13 +840,33 @@ class TestBoundedTests:
     def test_renew_extends_but_never_past_the_cap(self):
         rc, events = _recording_controller()
         rc.set_mode('off')
-        rc.TEST_MAX_S = 0.5
-        rc.start_test([0, 1], 0.2)
+        rc.start_test([0, 1], 0.2, max_s=0.5)
         deadline = time.monotonic() + 1.2
         while time.monotonic() < deadline and rc.test_relays:
             rc.renew_test(0.2)
             time.sleep(0.05)
         assert rc.test_relays == [], 'renewing kept the test past its cap'
+        assert _last(events, 0) == 'off' and _last(events, 1) == 'off'
+        rc.stop()
+
+    def test_uncapped_hold_stays_on_while_renewed(self):
+        """Hold to spray (max_s=None) has no maximum on-time: renewed, it
+        never drops out; it ends only once the renews stop. A 10 s cap
+        switched the nozzles off under a finger still holding."""
+        rc, events = _recording_controller()
+        rc.set_mode('off')
+        rc.start_test([0, 1], 0.2, max_s=None)
+        assert rc.test_capped is False
+        since = len(events)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            assert rc.renew_test(0.2) is True
+            assert rc.test_relays == [0, 1], 'hold dropped out while renewed'
+            time.sleep(0.05)
+        held = events[since:]
+        assert ('off', 0) not in held and ('off', 1) not in held, held
+        time.sleep(0.4)   # renews stopped: the lease runs out
+        assert rc.test_relays == []
         assert _last(events, 0) == 'off' and _last(events, 1) == 'off'
         rc.stop()
 

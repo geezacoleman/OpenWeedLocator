@@ -216,8 +216,15 @@ function lutPainterInterlockOn() {
         .then(function (r) { return r.json(); })
         .then(function (data) {
             lutPanelState.detectionWasOn = !!data.detection_enable;
+            lutPanelState.stoppedToken = null;
             if (lutPanelState.detectionWasOn) {
-                fetch('/api/detection/stop', { method: 'POST' }).catch(function () { });
+                return fetch('/api/detection/stop', { method: 'POST' })
+                    .then(function () { return fetch('/api/system_stats'); })
+                    .then(function (r) { return r.json(); })
+                    .then(function (after) {
+                        // The OWL's request token for the painter's own stop
+                        lutPanelState.stoppedToken = after.spray ? after.spray.requested_at : null;
+                    });
             }
         }).catch(function () { });
     apiRequest('/api/preview-mode', {
@@ -233,10 +240,23 @@ function lutPainterInterlockOff() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: 'cropped' })
     }).catch(function () { });
-    if (lutPanelState.detectionWasOn) {
-        lutPanelState.detectionWasOn = false;
-        fetch('/api/detection/start', { method: 'POST' }).catch(function () { });
-    }
+    if (!lutPanelState.detectionWasOn) return;
+    lutPanelState.detectionWasOn = false;
+    const token = lutPanelState.stoppedToken;
+    // Restart only if nothing has asked for anything since the painter's
+    // stop: a Stop pressed elsewhere, a switch turned off or a fault must
+    // not be undone by closing the painter. An OWL without the token
+    // (older than 3.27) keeps the old behaviour.
+    fetch('/api/system_stats')
+        .then(function (r) { return r.json(); })
+        .then(function (now) {
+            const spray = now.spray;
+            const untouched = !spray || token === null || token === undefined ||
+                (spray.requested_at === token && spray.request === 'off' && !spray.reason);
+            if (untouched && !now.detection_enable) {
+                return fetch('/api/detection/start', { method: 'POST' });
+            }
+        }).catch(function () { });
 }
 
 /* Called from the stats polling loop (2s). Guarded against overwriting

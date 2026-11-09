@@ -257,8 +257,17 @@ function lutPainterInterlockOn() {
             lutPanelState.detectingIds.push(id);
         }
     }
+    lutPanelState.stopTokens = {};
     if (lutPanelState.detectingIds.length) {
         sendCommand('all', 'toggle_detection', false);
+        // Once each OWL has reported the painter's stop, remember its request
+        // token: closing the painter restarts only OWLs nobody touched since
+        setTimeout(function () {
+            lutPanelState.detectingIds.forEach(function (id) {
+                const spray = owlsData[id] && owlsData[id].spray;
+                if (spray) lutPanelState.stopTokens[id] = spray.requested_at;
+            });
+        }, 3000);
     }
     lutPanelState.paintDeviceId = getSelectedPreviewDevice();
     if (lutPanelState.paintDeviceId) {
@@ -280,11 +289,19 @@ function lutPainterInterlockOff() {
         lutPanelState.paintDeviceId = null;
     }
     if (lutPanelState.detectingIds.length) {
-        // Explicit value: a bare toggle flipped whatever was reported then
+        // Explicit value: a bare toggle flipped whatever was reported then.
+        // Only OWLs still off for the painter's own stop: a Stop pressed
+        // meanwhile, a switch turned off or a fault is not undone here.
         lutPanelState.detectingIds.forEach(function (id) {
-            sendCommand(id, 'toggle_detection', true);
+            const o = owlsData[id] || {};
+            const spray = o.spray;
+            const token = (lutPanelState.stopTokens || {})[id];
+            const untouched = !spray || (spray.request === 'off' && !spray.reason &&
+                (token === undefined || spray.requested_at === token));
+            if (o.connected && untouched) sendCommand(id, 'toggle_detection', true);
         });
         lutPanelState.detectingIds = [];
+        lutPanelState.stopTokens = {};
     }
     refreshLutProfiles();
 }

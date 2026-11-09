@@ -2474,10 +2474,11 @@ class Owl:
 
     def hold_spray(self, ms, source='dashboard'):
         """Hold to spray: every nozzle on for a lease the caller renews about
-        every second; off at most HOLD_LEASE_MAX_S after the last renew and
-        never longer than RelayController.TEST_MAX_S in all. Works with the
-        switch off (a bounded test), not during first-boot or an
-        on_error = off fault. ms <= 0 releases. Returns {ok, reason}."""
+        every second; off at most HOLD_LEASE_MAX_S after the last renew. No
+        maximum on-time: held for a minute, it sprays for a minute (a cap
+        dropped the nozzles every 10 s under a finger still holding). Works
+        with the switch off, not during first-boot or an on_error = off
+        fault. ms <= 0 releases. Returns {ok, reason}."""
         try:
             ms = float(ms)
         except (TypeError, ValueError):
@@ -2494,8 +2495,9 @@ class Owl:
                     result = {'ok': False, 'reason': refused}
                 else:
                     lease = min(ms / 1000.0, HOLD_LEASE_MAX_S)
-                    if rc.test_relays != everything or not rc.renew_test(lease):
-                        rc.start_test(everything, lease)
+                    # A timed nozzle test of every relay is not a hold: replace it
+                    if rc.test_relays != everything or rc.test_capped or not rc.renew_test(lease):
+                        rc.start_test(everything, lease, max_s=None)
                         self.logger.info(f"Hold to spray from {source}")
                     result = {'ok': True, 'reason': None}
         self._publish_spray()

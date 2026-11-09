@@ -560,6 +560,7 @@ class TestSaveConfigCommand:
             'action': 'save_config',
             'filename': None
         })
+        mqtt_publisher.io_flush()   # the save runs on the I/O worker
         # Saves to the config_path — verify file still exists
         assert mock_owl.config_path.exists()
 
@@ -575,6 +576,7 @@ class TestSaveConfigCommand:
                 'action': 'save_config',
                 'filename': 'my_saved.ini'
             })
+            mqtt_publisher.io_flush()   # the save runs on the I/O worker
         mock_set_active.assert_called_once_with('config/my_saved.ini')
 
     def test_save_config_without_filename_keeps_autosave_pointer(self, mqtt_publisher, mock_owl, tmp_config_dir):
@@ -587,6 +589,7 @@ class TestSaveConfigCommand:
                 'action': 'save_config',
                 'filename': None
             })
+            mqtt_publisher.io_flush()
         for call_args in mock_set_active.call_args_list:
             assert 'config_autosave' in str(call_args), (
                 "unnamed save must only ever point the active config at the autosave file"

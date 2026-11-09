@@ -648,13 +648,14 @@ class TestHybridCropMaskPersistence:
         owl_path = PROJECT_ROOT / 'owl.py'
         tree = ast.parse(owl_path.read_text())
 
-        # Find _create_detector function
+        # _create_detector marks the loop busy and calls _build_detector,
+        # which constructs the detectors
         create_detector = None
         for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == '_create_detector':
+            if isinstance(node, ast.FunctionDef) and node.name == '_build_detector':
                 create_detector = node
                 break
-        assert create_detector is not None, "_create_detector not found in owl.py"
+        assert create_detector is not None, "_build_detector not found in owl.py"
 
         # Find all GreenOnGreen(...) calls inside _create_detector
         gog_calls = []

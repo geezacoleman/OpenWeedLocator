@@ -775,7 +775,6 @@ const Shell = (function () {
         // renew, so spot spraying is never switched off and needs no restore
         let holdScope = null;
         UI().hold($('holdSpray'), {
-            maxMs: 10000,
             start: () => { holdScope = currentScope(); sendCommand(holdScope, 'hold_spray', 1500); },
             renew: () => sendCommand(holdScope, 'hold_spray', 1500),
             stop: () => sendCommand(holdScope, 'hold_spray', 0),
