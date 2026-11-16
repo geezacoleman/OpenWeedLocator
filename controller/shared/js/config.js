@@ -121,7 +121,8 @@ const CONFIG_FIELD_DEFS = {
         'delay': { type: 'number', step: 0.01, min: 0, max: 5.0, help: 'Delay before actuation' },
         'actuation_length_cm': { type: 'number', min: 1, max: 100, help: 'Spray zone length in cm' },
         'offset_cm': { type: 'number', min: 0, max: 200, help: 'Nozzle offset from camera in cm' },
-        'speed_avg_window': { type: 'number', step: 0.5, min: 1, max: 30, help: 'GPS speed averaging window in seconds' }
+        'speed_avg_window': { type: 'number', step: 0.5, min: 1, max: 30, help: 'GPS speed averaging window in seconds' },
+        'min_speed_kmh': { type: 'number', step: 0.5, min: 0.5, max: 10, help: 'Below this GPS speed the rig counts as stationary and the fixed duration and delay apply' }
     },
     'Visualisation': {
         'image_loop_time': { type: 'number', step: 0.1, min: 0.1, max: 10.0, help: 'Display loop time in seconds' }

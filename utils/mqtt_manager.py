@@ -1804,12 +1804,24 @@ class OWLMQTTPublisher:
 
             self.logger.info(f"Applied {len(params)} params to [{section}]")
 
-            # The configured timing is what the OWL falls back to when the
-            # controller's speed-adaptive values stop; keep it current
+            # The configured timing is what the OWL falls back to when
+            # speed-adaptive timing stops or the rig stands still; keep it
+            # current. Only the edited value: while GPS or the controller times the
+            # sprays, the other one on the OWL is a speed-derived number, and
+            # saving it as "configured" brought it back once the rig stopped.
             if ({'actuation_duration', 'delay'} & set(params)
                     and isinstance(getattr(self.owl_instance, 'actuation_duration', None), float)):
-                self.owl_instance._config_actuation = (self.owl_instance.actuation_duration,
-                                                       self.owl_instance.delay)
+                owl = self.owl_instance
+                saved = getattr(owl, '_config_actuation', None)
+                if (getattr(owl, 'actuation_source', 'config') == 'config'
+                        or not isinstance(saved, tuple)):
+                    saved = (owl.actuation_duration, owl.delay)
+                duration, delay = saved
+                if 'actuation_duration' in params:
+                    duration = owl.actuation_duration
+                if 'delay' in params:
+                    delay = owl.delay
+                owl._config_actuation = (duration, delay)
 
             # Push ByteTrack params to live tracker when Tracking section changes
             if section == 'Tracking':

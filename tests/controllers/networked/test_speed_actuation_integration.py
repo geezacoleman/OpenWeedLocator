@@ -5,7 +5,7 @@ Spoofs NMEA sentences at various speeds and verifies the full pipeline:
   Teltonika NMEA (TCP) -> GPSManager -> SpeedAverager -> ActuationCalculator
     -> MQTT broadcast -> OWL _handle_set_actuation_params -> owl.actuation_duration
 
-Tests the full range of spray distances (1-50cm) and field speeds (1-25 km/h),
+Tests the full range of spray distances (1-50cm) and field speeds (2-25 km/h),
 including boundary analysis where MIN_DURATION (0.01s) and MAX_DURATION (5.0s)
 clamps kick in.
 """
@@ -173,10 +173,13 @@ class TestGPSStateSpeedUpdate:
 @pytest.mark.unit
 class TestActuationMath:
     """Verify actuation duration & delay across the full range of spray
-    distances (1-50cm) and field speeds (1-25 km/h), including where
+    distances (1-50cm) and field speeds (2-25 km/h), including where
     safety clamps activate."""
 
-    SPEEDS = [1.0, 2.0, 5.0, 8.0, 10.0, 12.0, 15.0, 20.0, 25.0]  # km/h
+    # From ActuationCalculator.MIN_SPEED up: below it the rig counts as
+    # stationary and the configured timing applies (TestStationary in
+    # test_actuation.py, and tests/owl/test_gps_spray_latency.py end to end)
+    SPEEDS = [2.0, 3.0, 5.0, 8.0, 10.0, 12.0, 15.0, 20.0, 25.0]  # km/h
     DISTANCES = [1, 2, 3, 5, 10, 15, 20, 30, 50]  # cm (API range: 2-50)
 
     def _expected_duration(self, length_cm, speed_kmh):
@@ -259,7 +262,7 @@ class TestActuationMath:
 
     def test_double_distance_doubles_duration(self):
         """2x distance = 2x duration at same speed (when not clamped)."""
-        for speed in [1.0, 2.0, 3.0]:
+        for speed in [2.0, 3.0, 4.0]:
             # Use distances and speeds where neither is clamped
             calc_5 = ActuationCalculator(actuation_length_cm=5.0, offset_cm=0.0)
             calc_10 = ActuationCalculator(actuation_length_cm=10.0, offset_cm=0.0)
@@ -389,10 +392,10 @@ class TestActuationBoundaries:
             # (name, distance_cm, offset_cm, speed_range)
             ('Broadacre low', 10, 30, [8, 10, 12, 15, 18, 20]),
             ('Broadacre high', 20, 30, [10, 15, 20, 25]),
-            ('Horticultural', 3, 15, [1, 3, 5, 8]),
+            ('Horticultural', 3, 15, [2, 3, 5, 8]),
             ('Fallow spray', 10, 20, [8, 10, 12, 15]),
-            ('Precision micro (1cm)', 1, 10, [1, 2, 3, 3.6]),  # 3.6 = exact clamp point
-            ('Precision micro (2cm)', 2, 10, [1, 2, 3, 5, 7.2]),  # 7.2 = exact clamp point
+            ('Precision micro (1cm)', 1, 10, [2, 3, 3.6]),  # 3.6 = exact clamp point
+            ('Precision micro (2cm)', 2, 10, [2, 3, 5, 7.2]),  # 7.2 = exact clamp point
         ]
 
         print('\n  === Typical field scenarios ===')
@@ -427,7 +430,7 @@ class TestActuationBoundaries:
         """
         assert ActuationCalculator.MIN_DURATION == 0.01  # 10ms
         assert ActuationCalculator.MAX_DURATION == 5.0    # 5s
-        assert ActuationCalculator.MIN_SPEED == 0.5       # 0.5 km/h
+        assert ActuationCalculator.MIN_SPEED == 2.0       # above a parked receiver's noise
 
 
 # ---------------------------------------------------------------------------
@@ -462,7 +465,7 @@ class TestSpeedToActuationPipeline:
         calc = ActuationCalculator(actuation_length_cm=50.0, offset_cm=0.0)
 
         results = []
-        for speed in [1.0, 5.0, 10.0, 15.0, 20.0, 25.0]:
+        for speed in [2.0, 5.0, 10.0, 15.0, 20.0, 25.0]:
             avg = sa.add_sample(speed)
             result = calc.compute(avg)
             results.append((speed, avg, result['actuation_duration']))
@@ -621,7 +624,7 @@ class TestGPSTCPToActuation:
         calc = ActuationCalculator(actuation_length_cm=20.0, offset_cm=30.0)
 
         try:
-            test_speeds = [1.0, 5.0, 10.0, 15.0, 20.0]
+            test_speeds = [2.0, 5.0, 10.0, 15.0, 20.0]
             results = []
 
             for speed_kmh in test_speeds:

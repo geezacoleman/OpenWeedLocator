@@ -282,6 +282,8 @@ class CentralController:
             offset_cm=self.config.getfloat('Actuation', 'offset_cm', fallback=30.0),
             fallback_duration=self.config.getfloat('Actuation', 'actuation_duration', fallback=0.15),
             fallback_delay=self.config.getfloat('Actuation', 'delay', fallback=0.0),
+            min_speed_kmh=self.config.getfloat('Actuation', 'min_speed_kmh',
+                                               fallback=ActuationCalculator.MIN_SPEED),
         )
         self._actuation_state = {
             'speed_kmh': 0.0,

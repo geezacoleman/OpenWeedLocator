@@ -720,7 +720,9 @@ class Owl:
             actuation_length_cm=self.config.getfloat('Actuation', 'actuation_length_cm', fallback=10.0),
             offset_cm=self.config.getfloat('Actuation', 'offset_cm', fallback=30.0),
             fallback_duration=self.actuation_duration,
-            fallback_delay=self.delay)
+            fallback_delay=self.delay,
+            min_speed_kmh=self.config.getfloat('Actuation', 'min_speed_kmh',
+                                               fallback=ActuationCalculator.MIN_SPEED))
         # Per detection frame: capture-to-relay time, and how far that ran past
         # the camera-to-nozzle travel time (a spray that started late)
         self._latency_s = deque(maxlen=30)
@@ -2956,10 +2958,19 @@ class Owl:
                 self.logger.info("Spray timing now from this OWL's GPS")
             average = self._speed_averager.add_sample(speed)
             result = self._actuation_calc.compute(average, self._avg_loop_time_ms)
-            self.actuation_duration, self.delay = ConfigValidator.clamp_actuation(
-                result['actuation_duration'], result['delay'])
             self._device_timing = True
-            self.actuation_source = 'device-gps'
+            if result['source'] == 'gps':
+                self.actuation_duration, self.delay = ConfigValidator.clamp_actuation(
+                    result['actuation_duration'], result['delay'])
+                self.actuation_source = 'device-gps'
+            else:
+                # Fix held but standing still (a parked receiver wanders
+                # around 0.5-1.5 km/h): the configured timing, as it is now,
+                # live edits included. The fix still owns timing, so a
+                # controller broadcast does not replace it.
+                if self.actuation_source != 'config':
+                    self.actuation_duration, self.delay = self._config_actuation
+                    self.actuation_source = 'config'
             self.speed_kmh = round(average, 1)
         else:
             if self._device_timing:
@@ -2978,8 +2989,11 @@ class Owl:
         lag_s = sum(self._latency_s) / len(self._latency_s) if self._latency_s else 0.0
         late_s = sum(self._late_s) / len(self._late_s) if self._late_s else 0.0
         self.speed_warning = speed_warning(
-            self.speed_kmh, self._actuation_calc.actuation_length_cm,
-            self._actuation_calc.offset_cm, self._avg_loop_time_ms, lag_s, late_s)
+            self.speed_kmh if self.actuation_source != 'config' else None,
+            self._actuation_calc.actuation_length_cm,
+            self._actuation_calc.offset_cm, self._avg_loop_time_ms, lag_s, late_s,
+            min_speed_kmh=(self._actuation_calc.min_speed_kmh
+                           * ActuationCalculator.RELEASE_RATIO))
 
     @staticmethod
     def _frame_capture_time(camera_metadata):

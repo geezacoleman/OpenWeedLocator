@@ -72,6 +72,38 @@ class TestDeviceTiming:
         assert fake.actuation_duration == pytest.approx(0.036, abs=0.001)
         assert fake.delay == pytest.approx(0.108, abs=0.001)
 
+    # A parked receiver on a poor fix: 0.25 m/s = 0.9 km/h. The relay-level
+    # version of these is tests/owl/test_gps_spray_latency.py.
+    FIX_PARKED = '#XGPS: -33.786234,151.026130,45.3,25.0,0.25,210.0,"2026-09-13 06:25:48"'
+
+    def test_parked_fix_keeps_configured_timing(self):
+        fake = _owl(_fix(self.FIX_PARKED), actuation_duration=0.3, delay=0.02,
+                    _config_actuation=(0.3, 0.02))
+        Owl._update_spray_timing(fake)
+        assert (fake.actuation_duration, fake.delay) == (0.3, 0.02)
+        assert fake.actuation_source == 'config'
+        assert fake.speed_kmh == pytest.approx(0.9, abs=0.05)
+        assert fake.speed_warning == ''
+
+    def test_parked_fix_still_owns_timing_over_the_controller(self):
+        fake = _owl(_fix(self.FIX_PARKED), actuation_source='controller',
+                    actuation_duration=0.05, delay=0.1, _config_actuation=(0.2, 0.0),
+                    _controller_timing_at=time.monotonic())
+        Owl._update_spray_timing(fake)
+        assert fake._device_timing is True
+        assert (fake.actuation_duration, fake.delay) == (0.2, 0.0)
+
+    def test_stopping_restores_configured_timing(self):
+        state = _fix()
+        fake = _owl(state, actuation_duration=0.3, delay=0.02,
+                    _speed_averager=SpeedAverager(window_seconds=0.05))
+        Owl._update_spray_timing(fake)
+        assert fake.delay == pytest.approx(0.108, abs=0.001)
+        time.sleep(0.1)
+        state.update_from_line(self.FIX_PARKED)
+        Owl._update_spray_timing(fake)
+        assert (fake.actuation_duration, fake.delay) == (0.3, 0.02)
+
     def test_config_timing_remembered_when_device_takes_over(self):
         fake = _owl(_fix(), actuation_duration=0.3, delay=0.02)
         Owl._update_spray_timing(fake)

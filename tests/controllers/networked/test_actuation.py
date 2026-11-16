@@ -122,13 +122,14 @@ class TestActuationCalculator:
 
     def test_below_min_speed_fallback(self):
         calc = self._make()
-        result = calc.compute(0.3)  # Below MIN_SPEED of 0.5
+        result = calc.compute(0.3)
         assert result['source'] == 'config'
 
     def test_safety_cap_slow_speed(self):
         """Very slow speed shouldn't produce duration > MAX_DURATION."""
-        calc = self._make(actuation_length_cm=50, offset_cm=100)
-        result = calc.compute(0.6)  # Just above MIN_SPEED
+        calc = self._make(actuation_length_cm=50, offset_cm=100, min_speed_kmh=0.1)
+        result = calc.compute(0.2)
+        assert result['source'] == 'gps'
         assert result['actuation_duration'] <= 5.0
         assert result['delay'] <= 5.0
 
@@ -283,6 +284,94 @@ class TestStretchAndSpeedWarning:
     def test_small_lateness_is_not_a_warning(self):
         from utils.actuation import speed_warning
         assert speed_warning(10.0, 10, 30, lag_s=0.12, late_s=0.01) == ''
+
+
+@pytest.mark.unit
+class TestStationary:
+    """A parked GPS receiver never reads zero: on a poor fix it wanders around
+    0.5-1.5 km/h. Timing from that speed held every spray back by up to
+    30 cm / 0.5 km/h = 2.16 s (field bug, 2026-11-16). Below min_speed_kmh the
+    configured timing applies. The end-to-end version of this, on a real Owl
+    and relay, is tests/owl/test_gps_spray_latency.py."""
+
+    def _make(self, **kwargs):
+        from utils.actuation import ActuationCalculator
+        kwargs.setdefault('fallback_duration', 0.15)
+        kwargs.setdefault('fallback_delay', 0.0)
+        return ActuationCalculator(actuation_length_cm=10, offset_cm=30, **kwargs)
+
+    @pytest.mark.parametrize('noise_kmh', [0.0, 0.1, 0.45, 0.5, 0.6, 0.9, 1.0, 1.5, 1.9])
+    def test_receiver_noise_gets_configured_timing(self, noise_kmh):
+        result = self._make().compute(noise_kmh)
+        assert result['source'] == 'config'
+        assert result['delay'] == 0.0
+        assert result['actuation_duration'] == 0.15
+
+    def test_configured_delay_is_what_comes_back(self):
+        result = self._make(fallback_duration=0.3, fallback_delay=0.05).compute(0.8)
+        assert (result['actuation_duration'], result['delay']) == (0.3, 0.05)
+
+    def test_default_minimum_is_above_parked_receiver_noise(self):
+        from utils.actuation import ActuationCalculator
+        assert ActuationCalculator.MIN_SPEED >= 2.0
+
+    def test_delay_never_exceeds_travel_time_at_the_minimum_speed(self):
+        """The property the 0.5 km/h threshold broke: across every speed,
+        fresh calculator or not, the delay is bounded by offset / (lowest
+        speed that still counts as moving)."""
+        from utils.actuation import ActuationCalculator
+        calc = self._make()
+        slowest = calc.min_speed_kmh * ActuationCalculator.RELEASE_RATIO
+        bound = 0.30 / (slowest / 3.6)
+        assert bound < 0.75
+        sweep = [i / 20 for i in range(0, 601)]            # 0 to 30 km/h up...
+        for speed in sweep + sweep[::-1]:                   # ...and back down
+            assert calc.compute(speed)['delay'] <= bound + 1e-6, f'at {speed} km/h'
+            assert self._make().compute(speed)['delay'] <= bound + 1e-6, f'fresh, at {speed} km/h'
+
+    def test_speed_adaptive_from_the_minimum_up(self):
+        result = self._make().compute(2.0)
+        assert result['source'] == 'gps'
+        assert result['delay'] == pytest.approx(0.54, abs=0.001)
+
+    def test_hysteresis_holds_adaptive_timing_just_below_the_minimum(self):
+        """Slowing through the threshold must not flip the delay between zero
+        and its largest value on every one-second update."""
+        calc = self._make()
+        assert calc.compute(1.8)['source'] == 'config'      # not yet moving
+        assert calc.compute(2.1)['source'] == 'gps'
+        assert calc.compute(1.8)['source'] == 'gps'         # still moving
+        assert calc.compute(1.6)['source'] == 'gps'
+        assert calc.compute(1.4)['source'] == 'config'      # stopped
+        assert calc.compute(1.8)['source'] == 'config'      # noise does not restart it
+
+    def test_jitter_around_the_minimum_does_not_flap(self):
+        calc = self._make()
+        sources = [calc.compute(s)['source'] for s in [1.9, 2.05, 1.95, 2.0, 1.9, 2.1, 1.85]]
+        assert sources == ['config'] + ['gps'] * 6
+
+    def test_lost_speed_resets_to_stationary(self):
+        calc = self._make()
+        calc.compute(10.0)
+        assert calc.compute(None)['source'] == 'config'
+        assert calc.compute(1.8)['source'] == 'config'
+
+    def test_minimum_is_configurable(self):
+        calc = self._make(min_speed_kmh=1.0)
+        assert calc.compute(1.2)['source'] == 'gps'
+        assert calc.compute(0.9)['source'] == 'gps'          # release at 0.75
+        assert calc.compute(0.7)['source'] == 'config'
+
+    def test_zero_minimum_still_never_divides_by_zero(self):
+        result = self._make(min_speed_kmh=0).compute(0.0)
+        assert result['source'] == 'config'
+
+    def test_no_speed_warning_or_coverage_alarm_while_parked(self):
+        from utils.actuation import speed_warning
+        calc = self._make()
+        assert speed_warning(0.9, 10, 30, loop_time_ms=500.0, lag_s=1, late_s=1) == ''
+        assert calc.check_coverage(0.9, 500.0) == {
+            'coverage_ok': True, 'min_gap_cm': 0.0, 'message': ''}
 
 
 @pytest.mark.unit

@@ -131,6 +131,35 @@ class TestLiveActuationClamp:
         assert float(mock_owl.config.get('System', 'actuation_duration')) == \
             ConfigValidator.MAX_ACTUATION_DURATION
 
+    def test_duration_edit_while_gps_times_sprays_keeps_the_configured_delay(
+            self, mqtt_publisher, mock_owl):
+        """While moving on a fix, owl.delay is the travel time at that speed.
+        Editing the duration must not save that as the configured delay: it
+        came back as a permanent delay once the rig stopped."""
+        mock_owl.actuation_source = 'device-gps'
+        mock_owl.actuation_duration = 0.036
+        mock_owl.delay = 0.108
+        mock_owl._config_actuation = (0.15, 0.0)
+        mqtt_publisher._handle_set_config_section('System', {'actuation_duration': '0.4'})
+        assert mock_owl._config_actuation == (0.4, 0.0)
+
+    def test_delay_edit_while_controller_times_sprays_keeps_the_configured_duration(
+            self, mqtt_publisher, mock_owl):
+        mock_owl.actuation_source = 'controller'
+        mock_owl.actuation_duration = 0.05
+        mock_owl.delay = 0.1
+        mock_owl._config_actuation = (0.15, 0.0)
+        mqtt_publisher._handle_set_config_section('System', {'delay': '0.02'})
+        assert mock_owl._config_actuation == (0.15, 0.02)
+
+    def test_edit_in_config_mode_saves_both_live_values(self, mqtt_publisher, mock_owl):
+        mock_owl.actuation_source = 'config'
+        mock_owl.actuation_duration = 0.15
+        mock_owl.delay = 0.03
+        mock_owl._config_actuation = (0.15, 0.0)
+        mqtt_publisher._handle_set_config_section('System', {'actuation_duration': '0.2'})
+        assert mock_owl._config_actuation == (0.2, 0.03)
+
     def test_values_in_bounds_are_untouched(self, mqtt_publisher, mock_owl):
         mqtt_publisher._handle_set_config_section('System', {'actuation_duration': '0.2'})
         assert mock_owl.actuation_duration == 0.2
