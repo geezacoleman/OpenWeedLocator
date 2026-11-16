@@ -544,6 +544,12 @@ class TestControllerBroadcast:
         assert (sent['actuation_duration'], sent['delay'], sent['source']) == (0.15, 0.0, 'config')
         assert sent['speed_kmh'] is None
 
+    def test_speed_on_a_void_fix_never_times_the_boom(self, ctrl):
+        """A source that keeps reporting 10 km/h after its fix has gone."""
+        for _ in range(5):
+            sent = self._pass(ctrl, 10.0, fix_valid=False)
+            assert (sent['delay'], sent['source'], sent['speed_kmh']) == (0.0, 'config', None)
+
     def test_no_gps_manager_broadcasts_configured_timing(self, ctrl):
         ctrl.gps_manager = None
         import json
