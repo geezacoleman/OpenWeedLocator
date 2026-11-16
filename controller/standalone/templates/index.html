@@ -321,6 +321,15 @@
             <div class="ou-panel-head"><h2>Test nozzles</h2><small>This OWL</small></div>
             <button type="button" class="ou-hold" id="holdSpray">Hold to spray every nozzle<small>Stops when you let go, or after 10 s</small></button>
             <div class="ou-stack" id="nozzleTest"></div>
+            <h3 class="ou-sub">Spray timing with GPS</h3>
+            <div id="offsetNotice"></div>
+            <div class="ou-f" style="max-width:420px"><span class="lbl">Nozzles behind the camera (cm)</span>
+                <div class="ou-kstep" id="nozzleOffset"></div>
+                <p class="ou-hint">Measure along the ground from the middle of the camera's view back to the spray line. With a GPS speed, each spray waits this distance of travel. 0 = nozzles spray where the camera looks.</p>
+                <p class="ou-why" hidden></p></div>
+            <div class="ou-f" style="max-width:420px"><span class="lbl">Spray length (cm)</span>
+                <div class="ou-kstep" id="sprayLength"></div>
+                <p class="ou-why" hidden></p></div>
             <div class="ou-stats" id="timingStats"></div>
         </div>
 

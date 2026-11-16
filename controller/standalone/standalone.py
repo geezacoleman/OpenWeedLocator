@@ -31,6 +31,7 @@ from utils.session_metadata import (clean_session_metadata, COLLECT_CAPTURE_DEFA
                                     ini_value, last_pick_values, load_last_pick, merge_session_file,
                                     presets_from_config, read_session_file,
                                     add_custom_crop, remove_custom_crop, CUSTOM_CROPS_KEY)
+from utils.actuation import GEOMETRY_LIMITS, clamp_geometry
 from utils.input_manager import get_rpi_version
 from utils.device_identity import get_device_serial, read_identity
 from utils import support_bundle
@@ -1136,6 +1137,11 @@ class OWLDashboard:
                 'speed_kmh': mqtt_state.get('speed_kmh'),
                 'latency_ms': mqtt_state.get('latency_ms'),
                 'speed_warning': mqtt_state.get('speed_warning') or '',
+                # Nozzle distance / spray length for travel timing, and
+                # whether the distance was ever entered (None on older OWLs)
+                'offset_cm': mqtt_state.get('offset_cm'),
+                'actuation_length_cm': mqtt_state.get('actuation_length_cm'),
+                'offset_configured': mqtt_state.get('offset_configured'),
                 # Camera resolution
                 'resolution_width': mqtt_state.get('resolution_width', 0),
                 'resolution_height': mqtt_state.get('resolution_height', 0),
@@ -2078,6 +2084,23 @@ class OWLDashboard:
                             clean[key] = value      # not a live camera key
                         except (ValueError, TypeError) as e:
                             rejected[key] = str(e)
+                    params = clean
+                    if not params:
+                        return jsonify({'success': False,
+                                        'error': '; '.join(rejected.values()),
+                                        'rejected': rejected}), 400
+                if section == 'Actuation':
+                    # Nozzle distance, spray length, minimum speed: the same
+                    # range the OWL applies, so the INI holds what it runs
+                    clean = {}
+                    for key, value in params.items():
+                        if key not in GEOMETRY_LIMITS:
+                            clean[key] = value
+                            continue
+                        try:
+                            clean[key] = f'{clamp_geometry(key, value):g}'
+                        except (ValueError, TypeError):
+                            rejected[key] = 'Not a number'
                     params = clean
                     if not params:
                         return jsonify({'success': False,

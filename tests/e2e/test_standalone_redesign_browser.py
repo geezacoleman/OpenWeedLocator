@@ -58,6 +58,9 @@ STATE = {
     'speed_kmh': 9.8, 'storage_free_mb': 9830, 'storage_warning': 'ok',
     'config_name': 'GENERAL_CONFIG.ini', 'sensitivity_level': 'medium',
     'relay_num': 8, 'nozzle_test': [],
+    # Travel timing on the 30 cm nozzle distance nobody entered
+    'offset_cm': 30.0, 'actuation_length_cm': 10.0, 'offset_configured': False,
+    'actuation_source': 'device-gps',
     'track_params': {'track_high_thresh': 0.3, 'track_buffer': 30, 'match_thresh': 0.7, 'detection_persist_frames': 5},
 }
 FAKE = {}
@@ -164,6 +167,31 @@ def run_checks():
             for text in ('Speed', '9.8 km/h', 'Frame rate'):
                 if text not in page.inner_text('#fieldStats'):
                     problems.append(f'{name}: Dashboard stats missing {text!r}')
+
+            # Nozzle distance never entered: said on the Dashboard, and the
+            # link opens the setting
+            if 'Nozzle distance not set' not in page.inner_text('#fieldNotices'):
+                problems.append(f'{name}: Dashboard does not warn that the nozzle distance is unset')
+            page.click('#fieldNotices [data-act="offset"]')
+            page.wait_for_timeout(300)
+            if not page.is_visible('#nozzleOffset'):
+                problems.append(f'{name}: "Set it" did not open the nozzle distance setting')
+            elif '30' not in page.inner_text('#nozzleOffset .v'):
+                problems.append(f'{name}: nozzle distance does not show the 30 cm in use')
+            else:
+                FAKE['mqtt']._send_command.reset_mock()
+                page.click('#nozzleOffset button[aria-label="More"]')
+                page.wait_for_timeout(900)
+                sent = [(c.args, c.kwargs) for c in FAKE['mqtt']._send_command.call_args_list]
+                want = (('set_config_section',), {'section': 'Actuation', 'params': {'offset_cm': '31'}})
+                if want not in sent:
+                    problems.append(f'{name}: nozzle distance + sent {sent}')
+            if 'Nozzle distance not set' not in page.inner_text('#offsetNotice'):
+                problems.append(f'{name}: Test nozzles panel does not warn that the distance is unset')
+            page.evaluate("document.getElementById('nozzleOffset').scrollIntoView({block: 'center'})")
+            shot(page, f'settings_nozzle_distance_{name}')
+            page.click('#mainNav [data-view="field"]')
+            page.wait_for_timeout(200)
 
             # Live view pop-up: the stream only runs while it is open
             if page.get_attribute('#stream-img', 'src'):

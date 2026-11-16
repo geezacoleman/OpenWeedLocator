@@ -10,6 +10,19 @@ const ACTUATION_POLL_MS = 1000;
 // through /api/actuation/config. AI confidence and crop buffer live on the
 // Dashboard (configParams).
 let sprayLengthStep = null;
+// Nozzle distance behind the camera view (cm): the travel the delay is worked
+// out from. offsetConfigured is false while it is still the 30 cm default.
+let nozzleOffsetStep = null;
+let actuationState = null;
+
+const OFFSET_UNSET_HTML = '<b>Nozzle distance not set.</b> Sprays are timed for nozzles 30 cm behind the camera. ' +
+    'Measure yours and enter it below.';
+
+// The Dashboard notice (read by Shell.renderNotices) and the one on this panel
+function offsetUnset() {
+    return !!actuationState && actuationState.offset_configured === false &&
+        (actuationState.gps_status || 'no_gps') !== 'no_gps';
+}
 
 // ============================================
 // SVG ARC GAUGE HELPERS
@@ -154,6 +167,14 @@ async function pollActuation() {
             srcEl.className = 'actuation-source ' + (data.source || 'config');
         }
 
+        actuationState = data;
+        if (nozzleOffsetStep) {
+            if (typeof data.offset_cm === 'number') nozzleOffsetStep.set(data.offset_cm);
+            var box = document.getElementById('offsetNotice');
+            var html = data.offset_configured === false ? OwlUI.notice('warn', OFFSET_UNSET_HTML) : '';
+            if (box && box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
+        }
+
         // Spray length: greyed (never hidden) without a GPS speed
         if (sprayLengthStep) {
             if (typeof data.actuation_length_cm === 'number') sprayLengthStep.set(data.actuation_length_cm);
@@ -205,6 +226,27 @@ function initSprayLength() {
                 body: JSON.stringify({ actuation_length_cm: val })
             }).catch(function (err) {
                 console.error('Failed to send actuation config:', err);
+            });
+        },
+    });
+}
+
+function initNozzleOffset() {
+    var el = document.getElementById('nozzleOffset');
+    if (!el) return;
+    nozzleOffsetStep = OwlUI.stepper(el, {
+        value: null, min: 0, max: 200, step: 1, unit: 'cm', label: 'Nozzles behind the camera (cm)', settleMs: 400,
+        onChange: function (val) {
+            fetch('/api/actuation/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ offset_cm: val })
+            }).then(function (res) { return res.json(); }).then(function (data) {
+                if (data && data.saved === false && window.showToast) {
+                    showToast('Applied, but could not be saved. It will reset when the controller restarts.', 'error');
+                }
+            }).catch(function (err) {
+                console.error('Failed to send nozzle offset:', err);
             });
         },
     });

@@ -25,6 +25,25 @@ from collections import deque
 GPS_STALE_AFTER_S = 30
 
 
+# Ground geometry and the moving/parked threshold, with the range every
+# interface accepts (OWL config handler, networked controller API).
+GEOMETRY_LIMITS = {
+    'offset_cm': (0.0, 200.0),           # nozzle distance behind the camera view
+    'actuation_length_cm': (2.0, 50.0),  # ground sprayed per weed
+    'min_speed_kmh': (0.5, 10.0),
+}
+
+
+def clamp_geometry(key, value):
+    """value as a float inside GEOMETRY_LIMITS[key]. ValueError when it is
+    not a number (NaN and infinity included)."""
+    low, high = GEOMETRY_LIMITS[key]
+    number = float(value)
+    if number != number or number in (float('inf'), float('-inf')):
+        raise ValueError(f'{key} must be a number')
+    return max(low, min(high, number))
+
+
 class SpeedAverager:
     """Time-windowed moving average of GPS speed. time.monotonic(): a wall
     clock step (NTP, the app's time sync) must not age or revive samples."""
@@ -81,7 +100,8 @@ class SpeedAverager:
 
 
 class ActuationCalculator:
-    """Pure math: converts speed + geometry into actuation timing."""
+    """Converts speed + geometry into actuation timing, and decides whether a
+    reported speed is real travel (the only state it keeps)."""
 
     # km/h. Speed-adaptive timing starts at or above this; below it the rig
     # counts as stationary and the configured timing applies. It has to sit
@@ -93,6 +113,12 @@ class ActuationCalculator:
     # minimum, so a speed hovering at the threshold does not flip the delay
     # between zero and its largest value from one second to the next.
     RELEASE_RATIO = 0.75
+    # Seconds every reading must stay at or above the minimum before the rig
+    # counts as moving. A poor fix throws single readings of several km/h
+    # while parked; one of those used to be enough to delay sprays. Stopping
+    # is judged on the average instead, so one dropped reading at speed does
+    # not hand timing back to the fixed values.
+    ENGAGE_AFTER_S = 2.0
     MIN_DURATION = 0.01  # seconds floor
     MAX_DURATION = 5.0   # seconds cap
     # A patch shorter than the ground covered between frames leaves unsprayed
@@ -100,31 +126,53 @@ class ActuationCalculator:
     MAX_STRETCH = 3.0
 
     def __init__(self, actuation_length_cm=10.0, offset_cm=30.0,
-                 fallback_duration=0.15, fallback_delay=0.0, min_speed_kmh=None):
+                 fallback_duration=0.15, fallback_delay=0.0, min_speed_kmh=None,
+                 sustain_s=None):
         self.actuation_length_cm = actuation_length_cm
         self.offset_cm = offset_cm
         self.fallback_duration = fallback_duration
         self.fallback_delay = fallback_delay
         self.min_speed_kmh = self.MIN_SPEED if min_speed_kmh is None else max(0.0, float(min_speed_kmh))
+        self.sustain_s = self.ENGAGE_AFTER_S if sustain_s is None else max(0.0, float(sustain_s))
         self._moving = False
+        self._above_since = None
 
-    def _is_moving(self, speed_kmh):
-        """Whether speed_kmh is real travel, with hysteresis between calls."""
+    def _is_moving(self, speed_kmh, sample_kmh=None):
+        """Whether the rig is really travelling. State is kept between calls.
+
+        Starts once every reading has been at or above min_speed_kmh for
+        sustain_s; stops when the average falls below RELEASE_RATIO of it.
+        """
+        latest = speed_kmh if sample_kmh is None else sample_kmh
         if speed_kmh is None:
             self._moving = False
-        elif self._moving:
+            self._above_since = None
+            return False
+        now = time.monotonic()
+        if latest >= self.min_speed_kmh:
+            if self._above_since is None:
+                self._above_since = now
+        else:
+            self._above_since = None
+        if self._moving:
             self._moving = speed_kmh >= self.min_speed_kmh * self.RELEASE_RATIO
         else:
-            self._moving = speed_kmh >= self.min_speed_kmh
+            self._moving = (self._above_since is not None
+                            and speed_kmh >= self.min_speed_kmh
+                            and now - self._above_since >= self.sustain_s)
         return self._moving
 
-    def compute(self, speed_kmh, loop_time_ms=0.0):
+    def compute(self, speed_kmh, loop_time_ms=0.0, sample_kmh=None):
         """Compute actuation params from speed and the detection loop time.
+
+        speed_kmh: the averaged speed the timing is worked out from.
+        sample_kmh: the latest single reading, for the moving/parked decision
+        (speed_kmh when not given).
 
         Returns dict with actuation_duration, delay, source, speed_used,
         gap_cm (ground covered per frame), stretched and coverage_ok.
         """
-        if not self._is_moving(speed_kmh) or speed_kmh <= 0:
+        if not self._is_moving(speed_kmh, sample_kmh) or speed_kmh <= 0:
             return {
                 'actuation_duration': self.fallback_duration,
                 'delay': self.fallback_delay,

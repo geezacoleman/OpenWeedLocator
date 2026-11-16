@@ -42,7 +42,7 @@ from utils.config_manager import (
     write_ini_section,
 )
 # Shared with OWLs that time themselves from their own GPS
-from utils.actuation import GPS_STALE_AFTER_S, SpeedAverager, ActuationCalculator
+from utils.actuation import GPS_STALE_AFTER_S, SpeedAverager, ActuationCalculator, clamp_geometry
 from utils.session_metadata import (clean_session_metadata, CAPTURE_PARAM_KEYS, COLLECT_CAPTURE_DEFAULTS,
                                     COLLECT_LANGUAGES, capture_settings_from, coerce_capture_value,
                                     ini_value, last_pick_values, load_last_pick, presets_from_config,
@@ -285,7 +285,11 @@ class CentralController:
             min_speed_kmh=self.config.getfloat('Actuation', 'min_speed_kmh',
                                                fallback=ActuationCalculator.MIN_SPEED),
         )
+        # False while the nozzle distance is still the 30 cm default nobody
+        # entered; the Spraying panel and the Dashboard say so
+        self.offset_configured = self.config.has_option('Actuation', 'offset_cm')
         self._actuation_state = {
+            'offset_configured': self.offset_configured,
             'speed_kmh': 0.0,
             'actuation_duration': self.actuation_calculator.fallback_duration,
             'delay': self.actuation_calculator.fallback_delay,
@@ -914,97 +918,104 @@ class CentralController:
         """Broadcast computed actuation params to all connected OWLs every 1s."""
         while True:
             try:
-                # Read speed from GPS manager
-                speed_kmh = None
-                gps_status = 'no_gps'
-                fix = None
-
-                if self.gps_manager:
-                    gps_state = self.gps_manager.get_state()
-                    fix = gps_state.get('fix', {})
-                    conn = gps_state.get('connection', {})
-
-                    # GPSState drops a speed older than 3 s or without a valid
-                    # fix; fix_valid is checked here too so a source that
-                    # reports speed on its own can't time the boom from a void fix
-                    if fix.get('speed_kmh') is not None and fix.get('fix_valid'):
-                        raw_speed = fix['speed_kmh']
-                        avg = self.speed_averager.add_sample(raw_speed)
-                        speed_kmh = avg
-                        gps_status = 'active'
-                    else:
-                        # GPS connected but no valid fix. The last good average
-                        # is trustworthy only briefly; past the window the speed
-                        # is genuinely unknown and speed_kmh stays None so
-                        # compute() reverts to the configured duration/delay.
-                        # (Both branches here used to do the same thing, so the
-                        # last speed ever seen was reused indefinitely.)
-                        ssu = self.speed_averager.seconds_since_update()
-                        if ssu is not None and ssu < GPS_STALE_AFTER_S:
-                            speed_kmh = self.speed_averager.get_fallback_speed()
-                            gps_status = 'stale'
-
-                # Compute avg loop time across all OWLs
-                loop_times = []
-                with self.mqtt_lock:
-                    for state in self.owls_state.values():
-                        lt = state.get('avg_loop_time_ms', 0)
-                        if lt > 0:
-                            loop_times.append(lt)
-                avg_loop_time = sum(loop_times) / len(loop_times) if loop_times else 0.0
-
-                # Compute actuation params (duration stretches to cover the
-                # ground travelled between frames)
-                result = self.actuation_calculator.compute(speed_kmh, avg_loop_time)
-
-                # Check coverage
-                coverage = self.actuation_calculator.check_coverage(
-                    speed_kmh, avg_loop_time
-                )
-
-                # Update state
-                self._actuation_state = {
-                    'speed_kmh': round(speed_kmh or 0.0, 2),
-                    'actuation_duration': result['actuation_duration'],
-                    'delay': result['delay'],
-                    'source': result['source'],
-                    'gps_status': gps_status,
-                    'coverage_ok': coverage['coverage_ok'],
-                    'min_gap_cm': coverage['min_gap_cm'],
-                    'coverage_message': coverage['message'],
-                    'actuation_length_cm': self.actuation_calculator.actuation_length_cm,
-                    'offset_cm': self.actuation_calculator.offset_cm,
-                    'avg_loop_time_ms': round(avg_loop_time, 1),
-                }
-
-                # Broadcast to all connected OWLs
-                if self.mqtt_client and self.mqtt_connected:
-                    # Geometry and speed are additive: an OWL timing itself from
-                    # its own GPS keeps its duration/delay but adopts the
-                    # geometry set here, and uses the speed for its warning.
-                    payload = json.dumps({
-                        'action': 'set_actuation_params',
-                        'actuation_duration': result['actuation_duration'],
-                        'delay': result['delay'],
-                        'source': result['source'],
-                        'actuation_length_cm': self.actuation_calculator.actuation_length_cm,
-                        'offset_cm': self.actuation_calculator.offset_cm,
-                        'speed_kmh': round(speed_kmh, 2) if speed_kmh is not None else None,
-                    })
-                    with self.mqtt_lock:
-                        for owl_id, state in self.owls_state.items():
-                            if state.get('connected', False):
-                                topic = f"owl/{owl_id}/commands"
-                                self.mqtt_client.publish(topic, payload)
-
-                # Broadcast GPS position so OWLs can embed it in image EXIF
-                self._broadcast_gps_to_owls(fix)
-
+                self._actuation_broadcast_once()
                 time.sleep(1.0)
-
             except Exception as e:
                 logger.error(f"Error in actuation broadcast loop: {e}")
                 time.sleep(2.0)
+
+    def _actuation_broadcast_once(self):
+        """One pass of the loop: controller GPS speed -> spray timing ->
+        every connected OWL."""
+        # Read speed from GPS manager
+        speed_kmh = None
+        raw_speed = None
+        gps_status = 'no_gps'
+        fix = None
+
+        if self.gps_manager:
+            gps_state = self.gps_manager.get_state()
+            fix = gps_state.get('fix', {})
+            conn = gps_state.get('connection', {})
+
+            # GPSState drops a speed older than 3 s or without a valid
+            # fix; fix_valid is checked here too so a source that
+            # reports speed on its own can't time the boom from a void fix
+            if fix.get('speed_kmh') is not None and fix.get('fix_valid'):
+                raw_speed = fix['speed_kmh']
+                avg = self.speed_averager.add_sample(raw_speed)
+                speed_kmh = avg
+                gps_status = 'active'
+            else:
+                # GPS connected but no valid fix. The last good average
+                # is trustworthy only briefly; past the window the speed
+                # is genuinely unknown and speed_kmh stays None so
+                # compute() reverts to the configured duration/delay.
+                # (Both branches here used to do the same thing, so the
+                # last speed ever seen was reused indefinitely.)
+                ssu = self.speed_averager.seconds_since_update()
+                if ssu is not None and ssu < GPS_STALE_AFTER_S:
+                    speed_kmh = self.speed_averager.get_fallback_speed()
+                    gps_status = 'stale'
+
+        # Compute avg loop time across all OWLs
+        loop_times = []
+        with self.mqtt_lock:
+            for state in self.owls_state.values():
+                lt = state.get('avg_loop_time_ms', 0)
+                if lt > 0:
+                    loop_times.append(lt)
+        avg_loop_time = sum(loop_times) / len(loop_times) if loop_times else 0.0
+
+        # Compute actuation params (duration stretches to cover the
+        # ground travelled between frames)
+        result = self.actuation_calculator.compute(speed_kmh, avg_loop_time,
+                                                   sample_kmh=raw_speed)
+
+        # Check coverage
+        coverage = self.actuation_calculator.check_coverage(
+            speed_kmh, avg_loop_time
+        )
+
+        # Update state
+        self._actuation_state = {
+            'speed_kmh': round(speed_kmh or 0.0, 2),
+            'actuation_duration': result['actuation_duration'],
+            'delay': result['delay'],
+            'source': result['source'],
+            'gps_status': gps_status,
+            'coverage_ok': coverage['coverage_ok'],
+            'min_gap_cm': coverage['min_gap_cm'],
+            'coverage_message': coverage['message'],
+            'actuation_length_cm': self.actuation_calculator.actuation_length_cm,
+            'offset_cm': self.actuation_calculator.offset_cm,
+            'offset_configured': self.offset_configured,
+            'avg_loop_time_ms': round(avg_loop_time, 1),
+        }
+
+        # Broadcast to all connected OWLs
+        if self.mqtt_client and self.mqtt_connected:
+            # Geometry and speed are additive: an OWL timing itself from
+            # its own GPS keeps its duration/delay but adopts the
+            # geometry set here, and uses the speed for its warning.
+            payload = json.dumps({
+                'action': 'set_actuation_params',
+                'actuation_duration': result['actuation_duration'],
+                'delay': result['delay'],
+                'source': result['source'],
+                'actuation_length_cm': self.actuation_calculator.actuation_length_cm,
+                'offset_cm': self.actuation_calculator.offset_cm,
+                'offset_configured': self.offset_configured,
+                'speed_kmh': round(speed_kmh, 2) if speed_kmh is not None else None,
+            })
+            with self.mqtt_lock:
+                for owl_id, state in self.owls_state.items():
+                    if state.get('connected', False):
+                        topic = f"owl/{owl_id}/commands"
+                        self.mqtt_client.publish(topic, payload)
+
+        # Broadcast GPS position so OWLs can embed it in image EXIF
+        self._broadcast_gps_to_owls(fix)
 
     def _broadcast_gps_to_owls(self, fix):
         """Publish the current GPS fix to owl/{id}/gps for all connected OWLs.
@@ -3021,28 +3032,44 @@ def api_actuation():
 
 @app.route('/api/actuation/config', methods=['POST'])
 def api_actuation_config():
-    """Update actuation geometry (length_cm, offset_cm) at runtime."""
+    """Set the ground geometry for travel timing: spray length and the
+    nozzle distance behind the camera. Applied at once, broadcast to the
+    OWLs on the next pass, and saved to [Actuation] so a restart keeps it
+    (until 3.27.2 a restart put both back to their defaults)."""
     data = request.json or {}
     calc = controller.actuation_calculator
 
-    if 'actuation_length_cm' in data:
-        try:
-            val = float(data['actuation_length_cm'])
-            calc.actuation_length_cm = max(2.0, min(50.0, val))
-        except (ValueError, TypeError):
-            return jsonify({'success': False, 'error': 'Invalid actuation_length_cm'}), 400
+    changed = {}
+    for key in ('actuation_length_cm', 'offset_cm'):
+        if key in data:
+            try:
+                changed[key] = clamp_geometry(key, data[key])
+            except (ValueError, TypeError):
+                return jsonify({'success': False, 'error': f'Invalid {key}'}), 400
 
-    if 'offset_cm' in data:
+    for key, value in changed.items():
+        setattr(calc, key, value)
+    if 'offset_cm' in changed:
+        controller.offset_configured = True
+    controller._actuation_state.update(
+        actuation_length_cm=calc.actuation_length_cm, offset_cm=calc.offset_cm,
+        offset_configured=controller.offset_configured)
+
+    saved = True
+    if changed:
         try:
-            val = float(data['offset_cm'])
-            calc.offset_cm = max(0.0, min(100.0, val))
-        except (ValueError, TypeError):
-            return jsonify({'success': False, 'error': 'Invalid offset_cm'}), 400
+            write_ini_section(controller.config_file, 'Actuation',
+                              {k: f'{v:g}' for k, v in changed.items()})
+        except OSError as e:
+            saved = False
+            logger.error(f"Could not save [Actuation] to {controller.config_file}: {e}")
 
     return jsonify({
         'success': True,
+        'saved': saved,
         'actuation_length_cm': calc.actuation_length_cm,
-        'offset_cm': calc.offset_cm
+        'offset_cm': calc.offset_cm,
+        'offset_configured': controller.offset_configured,
     })
 
 

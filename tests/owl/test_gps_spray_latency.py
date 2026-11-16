@@ -166,6 +166,12 @@ class Rig:
                       f'device GPS speed of {kmh} km/h')
         time.sleep(1.2)  # one more timing tick on the settled average
 
+    def wait_for_moving(self, kmh):
+        """Until the OWL has accepted kmh as real travel and times from it."""
+        self.wait_for_speed(kmh)
+        self.wait_for(lambda: self.owl.actuation_source == 'device-gps',
+                      'speed-adaptive timing to start')
+
     def show_card(self, seconds=0.5):
         """Hold the card in view, take it away, and return
         (card seen -> first relay on, card gone -> last relay off) in seconds.
@@ -282,6 +288,35 @@ def test_wandering_fix_never_delays_a_spray(rig):
     assert worst_delay == 0.0
 
 
+def test_speed_spikes_while_parked_never_delay_a_spray(rig):
+    """A poor fix throws readings of several km/h for a moment, then 0 again.
+    One second of 4 km/h in every three must not start travel timing."""
+    start = time.monotonic()
+    r = rig(speed_kmh=lambda: 4.0 if (time.monotonic() - start) % 3.0 < 1.0 else 0.0)
+    r.wait_for(lambda: r.owl._device_timing, 'the GPS fix')
+
+    delays = []
+    watching = True
+
+    def watch():
+        while watching:
+            delays.append(r.owl.delay)
+            time.sleep(0.02)
+    threading.Thread(target=watch, daemon=True).start()
+
+    try:
+        for showing in range(6):
+            on, off = r.show_card(seconds=0.4)
+            assert on is not None and on < PROMPT_S, (
+                f'showing {showing}: relay switched {on} s after the card appeared')
+            assert off < CONFIG_DURATION_S + PROMPT_S
+            time.sleep(0.5)   # showings drift across the 3 s spike cycle
+    finally:
+        watching = False
+    assert max(delays) == 0.0, 'a spike started travel timing between showings'
+    assert r.owl.actuation_source == 'config'
+
+
 # --------------------------------------------------------------------------
 # Moving: the timing the fix must not break
 # --------------------------------------------------------------------------
@@ -291,8 +326,7 @@ def test_moving_delays_the_spray_by_the_travel_time(rig, kmh, travel_s):
     """Nozzle 30 cm behind the camera: the relay switches when the weed gets
     there, neither at once nor later."""
     r = rig(speed_kmh=kmh)
-    r.wait_for_speed(kmh)
-    assert r.owl.actuation_source == 'device-gps'
+    r.wait_for_moving(kmh)
     assert r.owl.delay == pytest.approx(travel_s, abs=0.01)
 
     on, _ = r.show_card()
@@ -302,10 +336,28 @@ def test_moving_delays_the_spray_by_the_travel_time(rig, kmh, travel_s):
         f'expected about {travel_s} s')
 
 
+def test_dropped_readings_at_speed_keep_travel_timing(rig):
+    """The opposite fault: at 10 km/h a reading of 0 now and then must not
+    hand timing back to the fixed values (delay 0 sprays 30 cm early)."""
+    start = time.monotonic()
+    r = rig(speed_kmh=10.0)
+    r.wait_for_moving(10.0)
+    # 0.4 s of zeros in every 3 s: at most one of the once-a-second samples
+    r.gps.speed_kmh = lambda: 0.0 if (time.monotonic() - start) % 3.0 < 0.4 else 10.0
+
+    deadline = time.monotonic() + 7.0
+    while time.monotonic() < deadline:
+        assert r.owl.actuation_source == 'device-gps'
+        assert r.owl.delay > 0.05
+        time.sleep(0.05)
+    on, _ = r.show_card()
+    assert on is not None and on >= 0.06
+
+
 def test_stopping_goes_back_to_spraying_at_once(rig):
     """Driving, then parked on a fix that still reads 0.6 km/h."""
     r = rig(speed_kmh=8.0)
-    r.wait_for_speed(8.0)
+    r.wait_for_moving(8.0)
     assert r.owl.delay > 0.1
 
     r.gps.speed_kmh = 0.6
@@ -318,7 +370,7 @@ def test_stopping_goes_back_to_spraying_at_once(rig):
 
 def test_antenna_unplugged_while_moving_restores_config_timing(rig):
     r = rig(speed_kmh=6.0)
-    r.wait_for_speed(6.0)
+    r.wait_for_moving(6.0)
     assert r.owl.delay == pytest.approx(0.18, abs=0.01)
 
     r.gps.fix = False
@@ -359,6 +411,59 @@ def test_live_timing_edit_survives_while_parked_on_a_fix(rig):
 def test_min_speed_is_configurable(rig):
     """A rig that really does creep at 1.2 km/h can lower the threshold."""
     r = rig(speed_kmh=1.2, overrides=[('Actuation', 'min_speed_kmh', '1.0')])
-    r.wait_for_speed(1.2)
-    assert r.owl.actuation_source == 'device-gps'
+    r.wait_for_moving(1.2)
     assert r.owl.delay == pytest.approx(0.9, abs=0.02)
+
+
+# --------------------------------------------------------------------------
+# Nozzle distance behind the camera ([Actuation] offset_cm)
+# --------------------------------------------------------------------------
+
+def test_default_nozzle_distance_is_reported_as_never_set(rig):
+    """30 cm is a default nobody entered. The dashboards warn on this flag."""
+    r = rig(speed_kmh=0.0)
+    stats = r.owl.get_system_stats()
+    assert stats['offset_configured'] is False
+    assert stats['offset_cm'] == 30.0
+    assert stats['actuation_length_cm'] == 10.0
+
+
+def test_nozzle_distance_from_the_ini_times_the_relay(rig):
+    """60 cm at 6 km/h = 0.36 s between the card and the relay."""
+    r = rig(speed_kmh=6.0, overrides=[('Actuation', 'offset_cm', '60')])
+    assert r.owl.get_system_stats()['offset_configured'] is True
+    r.wait_for_moving(6.0)
+    on, _ = r.show_card()
+    assert on is not None
+    assert 0.32 <= on <= 0.36 + PROMPT_S
+
+
+def test_nozzle_distance_set_from_the_dashboard_times_the_relay_at_once(rig, mqtt_publisher):
+    """The dashboard's command through the OWL's real handler: no restart,
+    and the next spray waits the new distance of travel."""
+    r = rig(speed_kmh=6.0)
+    r.wait_for_moving(6.0)
+    on, _ = r.show_card()
+    assert 0.14 <= on <= 0.18 + PROMPT_S                 # 30 cm default
+
+    mqtt_publisher.set_owl_instance(r.owl)
+    mqtt_publisher._handle_command({'action': 'set_config_section', 'section': 'Actuation',
+                                    'params': {'offset_cm': '90', 'actuation_length_cm': '20'}})
+    assert r.owl.get_system_stats()['offset_configured'] is True
+    r.wait_for(lambda: r.owl.delay == pytest.approx(0.54, abs=0.01), 'the new travel time')
+    assert r.owl.actuation_duration == pytest.approx(0.12, abs=0.005)   # 20 cm at 6 km/h
+    assert r.owl.config.get('Actuation', 'offset_cm') == '90.0'
+
+    on, _ = r.show_card()
+    assert on is not None
+    assert 0.50 <= on <= 0.54 + PROMPT_S
+
+
+@pytest.mark.parametrize('sent, applied', [('-5', 0.0), ('5000', 200.0), ('abc', 30.0), ('nan', 30.0)])
+def test_nozzle_distance_out_of_range_is_clamped_or_refused(rig, mqtt_publisher, sent, applied):
+    r = rig(speed_kmh=0.0)
+    mqtt_publisher.set_owl_instance(r.owl)
+    mqtt_publisher._handle_command({'action': 'set_config_section', 'section': 'Actuation',
+                                    'params': {'offset_cm': sent}})
+    assert r.owl._actuation_calc.offset_cm == applied
+    assert r.owl.offset_configured is (applied != 30.0)

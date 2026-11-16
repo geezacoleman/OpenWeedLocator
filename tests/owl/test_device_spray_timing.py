@@ -42,7 +42,11 @@ def _owl(gps_state=None, **overrides):
         speed_warning='',
         _avg_loop_time_ms=0.0,
         _speed_averager=SpeedAverager(window_seconds=2.0),
-        _actuation_calc=ActuationCalculator(actuation_length_cm=10.0, offset_cm=30.0,
+        # sustain_s=0: these check what one update does with a given speed.
+        # The moving/parked decision over time is TestStationary in
+        # tests/controllers/networked/test_actuation.py and, at the relay,
+        # tests/owl/test_gps_spray_latency.py.
+        _actuation_calc=ActuationCalculator(sustain_s=0, actuation_length_cm=10.0, offset_cm=30.0,
                                             fallback_duration=0.15, fallback_delay=0.0),
         _latency_s=deque(maxlen=30),
         _late_s=deque(maxlen=30),

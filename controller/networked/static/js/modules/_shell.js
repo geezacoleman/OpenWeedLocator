@@ -411,6 +411,11 @@ const Shell = (function () {
         const out = [];
         const many = _scope === 'all';
         const who = (o) => many ? (o.friendly_name || o._id) + ': ' : '';
+        // Travel timing is running on a nozzle distance nobody entered
+        if (typeof offsetUnset === 'function' && offsetUnset()) {
+            out.push(U.notice('warn', '<b>Nozzle distance not set.</b> Sprays are timed for nozzles 30 cm behind the camera. ' +
+                '<button type="button" class="lnk" data-act="offset">Set it ›</button>'));
+        }
         if (_scope !== 'all' && !(owlsData[_scope] && owlsData[_scope].connected)) {
             const s = seen[_scope] || {};
             out.push(U.notice('warn', '<b>' + U.esc(owlName(_scope)) + ' is offline.</b> ' + U.esc(U.relTime(s._seenAt ? Date.now() / 1000 - s._seenAt : null)) + '.'));
@@ -443,6 +448,8 @@ const Shell = (function () {
             box.innerHTML = html;
             const r = box.querySelector('[data-act="restart"]');
             if (r) r.addEventListener('click', () => { sendCommand(currentScope(), 'restart_service'); showToast('Restarting', 'info'); });
+            const off = box.querySelector('[data-act="offset"]');
+            if (off) off.addEventListener('click', () => openSettings('spraying'));
             wireUseModel(box);
         }
         const ai = $('aiNotices');

@@ -723,6 +723,10 @@ class Owl:
             fallback_delay=self.delay,
             min_speed_kmh=self.config.getfloat('Actuation', 'min_speed_kmh',
                                                fallback=ActuationCalculator.MIN_SPEED))
+        # False until someone has entered the nozzle distance (INI, dashboard
+        # or controller): until then travel timing runs on the 30 cm default,
+        # and the dashboards say so.
+        self.offset_configured = self.config.has_option('Actuation', 'offset_cm')
         # Per detection frame: capture-to-relay time, and how far that ran past
         # the camera-to-nozzle travel time (a spray that started late)
         self._latency_s = deque(maxlen=30)
@@ -2774,6 +2778,9 @@ class Owl:
         stats['latency_ms'] = (round(sum(self._latency_s) / len(self._latency_s) * 1000, 1)
                                if self._latency_s else None)
         stats['speed_warning'] = self.speed_warning
+        stats['offset_cm'] = self._actuation_calc.offset_cm
+        stats['actuation_length_cm'] = self._actuation_calc.actuation_length_cm
+        stats['offset_configured'] = self.offset_configured
 
         return stats
 
@@ -2957,7 +2964,8 @@ class Owl:
                     self._config_actuation = (self.actuation_duration, self.delay)
                 self.logger.info("Spray timing now from this OWL's GPS")
             average = self._speed_averager.add_sample(speed)
-            result = self._actuation_calc.compute(average, self._avg_loop_time_ms)
+            result = self._actuation_calc.compute(average, self._avg_loop_time_ms,
+                                                  sample_kmh=speed)
             self._device_timing = True
             if result['source'] == 'gps':
                 self.actuation_duration, self.delay = ConfigValidator.clamp_actuation(

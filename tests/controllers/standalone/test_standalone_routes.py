@@ -861,6 +861,51 @@ class TestConfigParamRoutes:
         assert sent == [{'action': 'set_config_section', 'section': 'Tracking',
                          'params': {'tracking_enabled': 'true'}}]
 
+    def test_nozzle_distance_is_sent_to_the_owl_and_saved(self, standalone_test_client):
+        """Test nozzles panel: [Actuation] offset_cm through /api/config/section."""
+        import configparser
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        sent = []
+        dashboard.mqtt_client._send_command = (
+            lambda action, **kw: sent.append(dict(kw, action=action)) or {'success': True})
+        resp = client.post('/api/config/section',
+                           json={'section': 'Actuation', 'params': {'offset_cm': 45}})
+        assert resp.status_code == 200 and resp.get_json()['success'] is True
+        assert sent == [{'action': 'set_config_section', 'section': 'Actuation',
+                         'params': {'offset_cm': '45'}}]
+        active = (tmp_dir / 'active_config.txt').read_text().strip()
+        saved = configparser.ConfigParser()
+        saved.read(tmp_dir / os.path.basename(active))
+        assert saved.get('Actuation', 'offset_cm') == '45'
+
+    @pytest.mark.parametrize('value, sent_value', [(-3, '0'), (900, '200')])
+    def test_nozzle_distance_is_clamped_before_it_is_sent(self, standalone_test_client,
+                                                          value, sent_value):
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        sent = self._capture(dashboard)
+        client.post('/api/config/section', json={'section': 'Actuation', 'params': {'offset_cm': value}})
+        assert sent[0]['params'] == {'offset_cm': sent_value}
+
+    def test_nozzle_distance_that_is_not_a_number_is_refused(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        sent = self._capture(dashboard)
+        resp = client.post('/api/config/section',
+                           json={'section': 'Actuation', 'params': {'offset_cm': 'far'}})
+        assert resp.status_code == 400
+        assert sent == []
+
+    def test_system_stats_carry_nozzle_distance_state(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        _stabilize_mqtt(dashboard)
+        state = dict(dashboard.mqtt_client.get_state(),
+                     offset_cm=30.0, actuation_length_cm=10.0, offset_configured=False)
+        with patch.object(dashboard.mqtt_client, 'get_state', return_value=state):
+            data = client.get('/api/system_stats').get_json()
+        assert (data['offset_cm'], data['actuation_length_cm'], data['offset_configured']) == (30.0, 10.0, False)
+
     def test_set_config_param_missing_fields(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
         resp = client.post('/api/config/param', json={'param': 'exg_min'})

@@ -28,6 +28,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     checkGPSAvailability();
     initGaugeArcs();
     initSprayLength();
+    initNozzleOffset();
     initSensitivityDial();
     startActuationPolling();
     if (typeof Numpad !== 'undefined') Numpad.init();

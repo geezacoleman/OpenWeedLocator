@@ -27,6 +27,7 @@ from utils.config_manager import (
     AUTOSAVE_CONFIG, seed_autosave, parse_config_meta, config_unsaved_state,
     ConfigValidator, config_profile_path,
 )
+from utils.actuation import GEOMETRY_LIMITS, clamp_geometry
 from utils.directory_manager import scan_sessions, collect_session_files, select_preview_images, is_session_id
 from utils import software_update
 from utils import ai_capability
@@ -655,6 +656,12 @@ class OWLMQTTPublisher:
             'speed_kmh': None,
             'latency_ms': None,
             'speed_warning': '',
+            # Nozzle distance behind the camera and spray length used for
+            # travel timing; offset_configured is False while the distance
+            # is still the 30 cm default nobody entered.
+            'offset_cm': None,
+            'actuation_length_cm': None,
+            'offset_configured': None,
             # BOARD pins this OWL's own GPS hardware uses ({'37': reason});
             # dashboards refuse config changes that would drive them.
             'protected_pins': {},
@@ -1769,6 +1776,23 @@ class OWLMQTTPublisher:
                         continue
                     setattr(self.owl_instance, key, typed)
                     camera_live_params[key] = typed
+                elif section == 'Actuation' and key in GEOMETRY_LIMITS:
+                    # Nozzle distance, spray length, minimum speed: applied
+                    # to the running calculator (they are not Owl attributes,
+                    # so they used to be saved and ignored until a restart)
+                    calc = getattr(self.owl_instance, '_actuation_calc', None)
+                    try:
+                        typed = clamp_geometry(key, value)
+                    except (ValueError, TypeError) as e:
+                        self.logger.warning(f"Rejected {section}.{key}={value}: {e}")
+                        rejected_keys.add(key)
+                        continue
+                    if calc is not None:
+                        setattr(calc, key, typed)
+                    if key == 'offset_cm':
+                        self.owl_instance.offset_configured = True
+                    value = typed
+                    self.logger.info(f"Set {section}.{key} = {typed} on live instance")
                 elif isinstance(getattr(self.owl_instance, key, None), (bool, int, float, str)):
                     # Type-convert to match existing attribute type (INI values are
                     # strings). Only plain values: detection_enable and
@@ -2360,9 +2384,12 @@ class OWLMQTTPublisher:
                 calc = getattr(owl, '_actuation_calc', None)
                 if calc is not None:
                     if command.get('actuation_length_cm') is not None:
-                        calc.actuation_length_cm = float(command['actuation_length_cm'])
+                        calc.actuation_length_cm = clamp_geometry(
+                            'actuation_length_cm', command['actuation_length_cm'])
                     if command.get('offset_cm') is not None:
-                        calc.offset_cm = float(command['offset_cm'])
+                        calc.offset_cm = clamp_geometry('offset_cm', command['offset_cm'])
+                    if command.get('offset_configured') is not None:
+                        owl.offset_configured = bool(command['offset_configured'])
                 if getattr(owl, '_device_timing', False) is True:
                     return
                 if getattr(owl, 'actuation_source', None) == 'config':
@@ -3979,7 +4006,8 @@ class OWLMQTTPublisher:
             self.state['actuation_duration'] = stats_dict.get('actuation_duration', self.state.get('actuation_duration', 0.15))
             self.state['delay'] = stats_dict.get('delay', self.state.get('delay', 0.0))
             for key in ('actuation_source', 'speed_kmh', 'latency_ms', 'speed_warning',
-                        'last_frame_age_s', 'loop_busy'):
+                        'last_frame_age_s', 'loop_busy',
+                        'offset_cm', 'actuation_length_cm', 'offset_configured'):
                 if key in stats_dict:
                     self.state[key] = stats_dict[key]
             self.state['last_update'] = time.time()

@@ -94,6 +94,7 @@ class TestActuationCalculator:
 
     def _make(self, **kwargs):
         from controller.networked.networked import ActuationCalculator
+        kwargs.setdefault('sustain_s', 0)   # the maths, not the moving/parked gate
         return ActuationCalculator(**kwargs)
 
     def test_basic_math_10kmh_10cm(self):
@@ -239,6 +240,7 @@ class TestStretchAndSpeedWarning:
 
     def _make(self, **kwargs):
         from utils.actuation import ActuationCalculator
+        kwargs.setdefault('sustain_s', 0)
         return ActuationCalculator(**kwargs)
 
     def test_no_loop_time_behaves_as_before(self):
@@ -298,6 +300,7 @@ class TestStationary:
         from utils.actuation import ActuationCalculator
         kwargs.setdefault('fallback_duration', 0.15)
         kwargs.setdefault('fallback_delay', 0.0)
+        kwargs.setdefault('sustain_s', 0)
         return ActuationCalculator(actuation_length_cm=10, offset_cm=30, **kwargs)
 
     @pytest.mark.parametrize('noise_kmh', [0.0, 0.1, 0.45, 0.5, 0.6, 0.9, 1.0, 1.5, 1.9])
@@ -366,6 +369,69 @@ class TestStationary:
         result = self._make(min_speed_kmh=0).compute(0.0)
         assert result['source'] == 'config'
 
+    # --- single wild readings (default gate: ENGAGE_AFTER_S of every
+    # reading at or above the minimum). The clock is stepped by hand, one
+    # second per update, as both callers run. ---
+
+    @pytest.fixture
+    def clock(self, monkeypatch):
+        import utils.actuation as actuation
+        now = [1000.0]
+        monkeypatch.setattr(actuation.time, 'monotonic', lambda: now[0])
+        return now
+
+    def _run(self, calc, clock, readings, window_s=1.5):
+        """Feed one reading a second through the averager and calculator,
+        as owl.py and the controller do. Returns the results. 1.5 s holds two
+        readings, which is what the default 2 s window holds on a real clock
+        (the third is a few ms too old)."""
+        from utils.actuation import SpeedAverager
+        averager = SpeedAverager(window_seconds=window_s)
+        results = []
+        for reading in readings:
+            clock[0] += 1.0
+            results.append(calc.compute(averager.add_sample(reading), 0.0, sample_kmh=reading))
+        return results
+
+    def test_default_gate_needs_sustained_speed(self):
+        from utils.actuation import ActuationCalculator
+        assert ActuationCalculator().sustain_s == ActuationCalculator.ENGAGE_AFTER_S >= 2.0
+
+    @pytest.mark.parametrize('spike_kmh', [2.5, 4.0, 8.0, 25.0, 120.0])
+    def test_one_wild_reading_while_parked_never_delays(self, clock, spike_kmh):
+        """Parked, 0 km/h, one reading jumps and comes back."""
+        calc = self._make(sustain_s=None)
+        results = self._run(calc, clock, [0, 0, spike_kmh, 0, 0, 0])
+        assert [r['delay'] for r in results] == [0.0] * 6
+        assert {r['source'] for r in results} == {'config'}
+
+    def test_repeated_spikes_while_parked_never_delay(self, clock):
+        calc = self._make(sustain_s=None)
+        readings = [0.4, 4.0, 0.0, 0.7, 6.0, 5.0, 0.2, 0.0, 9.0, 0.5, 4.0, 4.0, 0.0] * 3
+        results = self._run(calc, clock, readings)
+        assert max(r['delay'] for r in results) == 0.0
+
+    def test_real_departure_engages_after_the_sustain_time(self, clock):
+        calc = self._make(sustain_s=None)
+        results = self._run(calc, clock, [0, 0, 3.0, 5.0, 8.0, 10.0, 10.0])
+        assert [r['source'] for r in results] == ['config'] * 4 + ['gps'] * 3
+        assert results[-1]['delay'] == pytest.approx(0.30 / (results[-1]['speed_used'] / 3.6), abs=0.001)
+
+    def test_one_dropped_reading_at_speed_keeps_adaptive_timing(self, clock):
+        """The opposite fault: 10 km/h with a single 0 must not hand timing
+        back to the fixed values (delay 0 = spraying 30 cm early)."""
+        calc = self._make(sustain_s=None)
+        results = self._run(calc, clock, [10, 10, 10, 10, 0, 10, 10])
+        assert [r['source'] for r in results[3:]] == ['gps'] * 4
+        assert all(r['delay'] > 0 for r in results[3:])
+
+    def test_genuine_stop_releases(self, clock):
+        calc = self._make(sustain_s=None)
+        results = self._run(calc, clock, [10, 10, 10, 10, 0.3, 0.2, 0.4, 0.3])
+        assert results[3]['source'] == 'gps'
+        assert results[-1]['source'] == 'config'
+        assert results[-1]['delay'] == 0.0
+
     def test_no_speed_warning_or_coverage_alarm_while_parked(self):
         from utils.actuation import speed_warning
         calc = self._make()
@@ -406,14 +472,176 @@ class TestControllerTimingOnDeviceGpsOwl:
         assert mock_owl.actuation_source == 'controller'
         assert mock_owl._controller_timing_at >= before
 
-    def test_broadcast_carries_geometry_and_speed(self):
-        from pathlib import Path
-        src = (Path(__file__).resolve().parents[3] / 'controller' / 'networked'
-               / 'networked.py').read_text(encoding='utf-8')
-        loop = src.split('def _actuation_broadcast_loop', 1)[1].split('\n    def ', 1)[0]
-        for field in ("'actuation_length_cm'", "'offset_cm'", "'speed_kmh'"):
-            assert field in loop
-        assert 'compute(speed_kmh, avg_loop_time)' in loop
+
+class TestControllerBroadcast:
+    """CentralController._actuation_broadcast_once on a real controller:
+    controller GPS speed in, the set_actuation_params message each OWL gets
+    out. (Until 3.27.2 this was checked by reading the source text.)"""
+
+    @pytest.fixture
+    def ctrl(self, tmp_path, monkeypatch):
+        from unittest.mock import MagicMock
+        import utils.actuation as actuation
+        from controller.networked.networked import CentralController
+
+        clock = [5000.0]
+        monkeypatch.setattr(actuation.time, 'monotonic', lambda: clock[0])
+        ctrl = CentralController(config_file=str(tmp_path / 'missing.ini'))
+        ctrl.mqtt_connected = True
+        ctrl.mqtt_client = MagicMock()
+        ctrl.owls_state = {'owl-1': {'connected': True, 'avg_loop_time_ms': 30.0},
+                           'owl-2': {'connected': False}}
+        ctrl.gps_manager = MagicMock()
+        ctrl.clock = clock
+        return ctrl
+
+    def _pass(self, ctrl, speed_kmh, fix_valid=True):
+        """One second later, one broadcast pass. Returns what owl-1 was sent."""
+        import json
+        ctrl.clock[0] += 1.0
+        ctrl.gps_manager.get_state.return_value = {
+            'fix': {'speed_kmh': speed_kmh, 'fix_valid': fix_valid,
+                    'latitude': -33.8, 'longitude': 151.0},
+            'connection': {}}
+        ctrl.mqtt_client.publish.reset_mock()
+        ctrl._actuation_broadcast_once()
+        sent = [json.loads(c.args[1]) for c in ctrl.mqtt_client.publish.call_args_list
+                if c.args[0] == 'owl/owl-1/commands']
+        assert len(sent) == 1, 'exactly one timing message per connected OWL per pass'
+        assert not [c for c in ctrl.mqtt_client.publish.call_args_list
+                    if c.args[0] == 'owl/owl-2/commands'], 'a disconnected OWL gets nothing'
+        return sent[0]
+
+    def test_parked_wandering_fix_broadcasts_configured_timing(self, ctrl):
+        for speed in [0.5, 0.9, 0.6, 1.4, 0.5, 0.8, 1.1, 0.5]:
+            sent = self._pass(ctrl, speed)
+            assert sent['action'] == 'set_actuation_params'
+            assert (sent['actuation_duration'], sent['delay']) == (0.15, 0.0), f'at {speed} km/h'
+            assert sent['source'] == 'config'
+
+    def test_spike_while_parked_broadcasts_configured_timing(self, ctrl):
+        for speed in [0.0, 0.0, 4.0, 0.0, 0.0, 6.0, 5.0, 0.0]:
+            assert self._pass(ctrl, speed)['delay'] == 0.0, f'at {speed} km/h'
+
+    def test_driving_broadcasts_travel_time_geometry_and_speed(self, ctrl):
+        ctrl.actuation_calculator.offset_cm = 40.0
+        ctrl.actuation_calculator.actuation_length_cm = 20.0
+        for _ in range(4):
+            sent = self._pass(ctrl, 10.0)
+        assert sent['source'] == 'gps'
+        assert sent['delay'] == pytest.approx(0.144, abs=0.001)             # 40 cm at 10 km/h
+        assert sent['actuation_duration'] == pytest.approx(0.072, abs=0.001)  # 20 cm at 10 km/h
+        assert (sent['offset_cm'], sent['actuation_length_cm'], sent['speed_kmh']) == (40.0, 20.0, 10.0)
+
+    def test_fix_lost_while_driving_reverts_after_the_stale_window(self, ctrl):
+        from utils.actuation import GPS_STALE_AFTER_S
+        for _ in range(4):
+            self._pass(ctrl, 10.0)
+        sent = self._pass(ctrl, None, fix_valid=False)
+        assert sent['delay'] == pytest.approx(0.108, abs=0.001), 'last good speed, briefly'
+        ctrl.clock[0] += GPS_STALE_AFTER_S + 1
+        sent = self._pass(ctrl, None, fix_valid=False)
+        assert (sent['actuation_duration'], sent['delay'], sent['source']) == (0.15, 0.0, 'config')
+        assert sent['speed_kmh'] is None
+
+    def test_no_gps_manager_broadcasts_configured_timing(self, ctrl):
+        ctrl.gps_manager = None
+        import json
+        ctrl._actuation_broadcast_once()
+        sent = json.loads(ctrl.mqtt_client.publish.call_args_list[0].args[1])
+        assert (sent['actuation_duration'], sent['delay']) == (0.15, 0.0)
+
+
+class TestNozzleDistanceOnTheController:
+    """Nozzle distance / spray length on a real CentralController: read from
+    [Actuation], changed through /api/actuation/config, saved, and sent on."""
+
+    def _controller(self, tmp_path, ini_text=''):
+        from unittest.mock import MagicMock
+        from controller.networked.networked import CentralController
+        ini = tmp_path / 'CONTROLLER.ini'
+        ini.write_text(ini_text)
+        ctrl = CentralController(config_file=str(ini))
+        ctrl.mqtt_connected = True
+        ctrl.mqtt_client = MagicMock()
+        ctrl.owls_state = {'owl-1': {'connected': True}}
+        return ctrl, ini
+
+    def _client(self, ctrl, monkeypatch):
+        import controller.networked.networked as net_mod
+        monkeypatch.setattr(net_mod, 'controller', ctrl)
+        net_mod.app.config['TESTING'] = True
+        return net_mod.app.test_client()
+
+    def _broadcast(self, ctrl):
+        import json
+        ctrl.mqtt_client.publish.reset_mock()
+        ctrl._actuation_broadcast_once()
+        return json.loads(ctrl.mqtt_client.publish.call_args_list[0].args[1])
+
+    def test_default_is_reported_as_never_set(self, tmp_path, monkeypatch):
+        ctrl, _ = self._controller(tmp_path)
+        data = self._client(ctrl, monkeypatch).get('/api/actuation').get_json()
+        assert data['offset_configured'] is False
+        assert data['offset_cm'] == 30.0
+        assert self._broadcast(ctrl)['offset_configured'] is False
+
+    def test_ini_values_reach_the_calculator(self, tmp_path):
+        ctrl, _ = self._controller(
+            tmp_path, '[Actuation]\noffset_cm = 55\nactuation_length_cm = 15\n'
+                      'min_speed_kmh = 3\nactuation_duration = 0.2\ndelay = 0.04\n')
+        calc = ctrl.actuation_calculator
+        assert (calc.offset_cm, calc.actuation_length_cm, calc.min_speed_kmh) == (55.0, 15.0, 3.0)
+        assert (calc.fallback_duration, calc.fallback_delay) == (0.2, 0.04)
+        assert ctrl.offset_configured is True
+
+    def test_setting_it_applies_saves_and_reaches_the_owls(self, tmp_path, monkeypatch):
+        import configparser
+        ctrl, ini = self._controller(tmp_path, '# hand-written\n[MQTT]\nbroker_ip = 10.0.0.1\n')
+        client = self._client(ctrl, monkeypatch)
+        resp = client.post('/api/actuation/config', json={'offset_cm': 62})
+        assert resp.get_json() == {'success': True, 'saved': True, 'actuation_length_cm': 10.0,
+                                   'offset_cm': 62.0, 'offset_configured': True}
+        assert client.get('/api/actuation').get_json()['offset_configured'] is True
+
+        sent = self._broadcast(ctrl)
+        assert (sent['offset_cm'], sent['offset_configured']) == (62.0, True)
+
+        saved = configparser.ConfigParser()
+        saved.read(ini)
+        assert saved.get('Actuation', 'offset_cm') == '62'
+        assert saved.get('MQTT', 'broker_ip') == '10.0.0.1'
+        assert '# hand-written' in ini.read_text()
+
+        # a restarted controller comes back with it
+        from controller.networked.networked import CentralController
+        again = CentralController(config_file=str(ini))
+        assert again.actuation_calculator.offset_cm == 62.0
+        assert again.offset_configured is True
+
+    def test_spray_length_alone_does_not_mark_the_distance_as_set(self, tmp_path, monkeypatch):
+        ctrl, _ = self._controller(tmp_path)
+        resp = self._client(ctrl, monkeypatch).post('/api/actuation/config',
+                                                    json={'actuation_length_cm': 18})
+        assert resp.get_json()['offset_configured'] is False
+        assert ctrl.actuation_calculator.actuation_length_cm == 18.0
+
+    @pytest.mark.parametrize('body, expect', [
+        ({'offset_cm': -10}, 0.0), ({'offset_cm': 9999}, 200.0)])
+    def test_out_of_range_is_clamped(self, tmp_path, monkeypatch, body, expect):
+        ctrl, _ = self._controller(tmp_path)
+        resp = self._client(ctrl, monkeypatch).post('/api/actuation/config', json=body)
+        assert resp.get_json()['offset_cm'] == expect
+
+    @pytest.mark.parametrize('body', [{'offset_cm': 'far'}, {'offset_cm': None},
+                                      {'offset_cm': 'nan'}, {'actuation_length_cm': []}])
+    def test_not_a_number_changes_nothing(self, tmp_path, monkeypatch, body):
+        ctrl, ini = self._controller(tmp_path)
+        resp = self._client(ctrl, monkeypatch).post('/api/actuation/config', json=body)
+        assert resp.status_code == 400
+        assert ctrl.actuation_calculator.offset_cm == 30.0
+        assert ctrl.offset_configured is False
+        assert ini.read_text() == ''
 
 
 # ---------------------------------------------------------------------------

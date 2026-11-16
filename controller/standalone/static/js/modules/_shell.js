@@ -56,6 +56,7 @@ const Shell = (function () {
         });
         initCamera();
         initNozzles();
+        initGeometry();
         initTracking();
         initMaintenance();
         initData();
@@ -232,6 +233,7 @@ const Shell = (function () {
             { label: 'Frame rate', value: fps },
             { label: 'Free', value: free },
         ]);
+        renderGeometry(d);
         UI().statCells($('timingStats'), [
             { label: 'Speed', value: typeof d.speed_kmh === 'number' ? d.speed_kmh.toFixed(1) + ' km/h' : null },
             { label: 'Timing', value: { 'device-gps': 'OWL GPS', controller: 'Controller', config: 'Fixed' }[d.actuation_source] || null },
@@ -330,6 +332,7 @@ const Shell = (function () {
         if (stopped) out.push(UIx.notice('warn', '<b>' + UIx.esc(stopped) + '</b>'));
         if (d.algorithm_error) out.push(UIx.notice('bad', '<b>Detection could not start.</b> ' + UIx.esc(d.algorithm_error)));
         if (d.speed_warning) out.push(UIx.notice('warn', '<b>Slow down.</b> ' + UIx.esc(d.speed_warning)));
+        if (offsetUnset(d)) out.push(UIx.notice('warn', OFFSET_UNSET + '<button type="button" class="lnk" data-act="offset">Set it ›</button>'));
         if (d.recording_blocked_reason && !d.image_sample_enable) {
             out.push(UIx.notice('warn', '<b>Cannot record.</b> ' + UIx.esc(BLOCKED[d.recording_blocked_reason] || d.recording_blocked_reason)));
         }
@@ -345,6 +348,8 @@ const Shell = (function () {
             box.innerHTML = html;
             const r = box.querySelector('[data-act="restart"]');
             if (r) r.addEventListener('click', restartService);
+            const off = box.querySelector('[data-act="offset"]');
+            if (off) off.addEventListener('click', () => openSettings('nozzles'));
         }
         const cam = $('cameraNotices');
         const camHtml = d.restart_required
@@ -507,6 +512,54 @@ const Shell = (function () {
             showNotification('Camera', restart ? 'Saved. Restarting detection' : 'Saved', 'success', 2000);
             if (restart) restartService();
         }).catch((e) => { showNotification('Camera', e.message, 'error'); loadCamera(); });
+    }
+
+    // ---------- spray timing geometry (Test nozzles panel) ----------
+    // Nozzle distance behind the camera and spray length: what travel
+    // timing is worked out from when the OWL has a GPS speed.
+    const OFFSET_UNSET = '<b>Nozzle distance not set.</b> Sprays are timed for nozzles 30 cm behind the camera. ';
+    let offsetStep = null;
+    let lengthStep = null;
+
+    function sendGeometry(key, val) {
+        fetch('/api/config/section', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ section: 'Actuation', params: { [key]: val } }),
+        }).then((r) => r.json()).then((res) => {
+            if (!res.success) throw new Error(res.error || 'Could not save');
+            if (res.rejected && res.rejected[key]) throw new Error(res.rejected[key]);
+        }).catch((e) => showNotification('Spray timing', e.message, 'error'));
+    }
+
+    function initGeometry() {
+        offsetStep = UI().stepper($('nozzleOffset'), {
+            value: null, min: 0, max: 200, step: 1, unit: 'cm', label: 'Nozzles behind the camera (cm)', settleMs: 400,
+            onChange: (val) => sendGeometry('offset_cm', val),
+        });
+        lengthStep = UI().stepper($('sprayLength'), {
+            value: null, min: 2, max: 50, step: 1, unit: 'cm', label: 'Spray length (cm)', settleMs: 400,
+            onChange: (val) => sendGeometry('actuation_length_cm', val),
+        });
+    }
+
+    // Travel timing is in play once the OWL has a timing speed (its own GPS
+    // or the controller's); phone GPS never times sprays
+    function offsetUnset(d) {
+        return d.offset_configured === false && typeof d.speed_kmh === 'number';
+    }
+
+    function renderGeometry(d) {
+        if (!offsetStep) return;
+        if (typeof d.offset_cm === 'number') offsetStep.set(d.offset_cm);
+        if (typeof d.actuation_length_cm === 'number') lengthStep.set(d.actuation_length_cm);
+        // The distance can always be entered (set it on the bench, before a
+        // fix); spray length only matters once there is a speed
+        const noSpeed = typeof d.speed_kmh !== 'number';
+        const why = 'Used when the OWL has a GPS speed. Without one it uses its fixed spray time and delay.';
+        UI().stepOff($('sprayLength'), noSpeed && typeof d.actuation_length_cm === 'number', why);
+        const html = d.offset_configured === false ? UI().notice('warn', OFFSET_UNSET + 'Measure yours and enter it below.') : '';
+        const box = $('offsetNotice');
+        if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
     }
 
     // ---------- test nozzles ----------

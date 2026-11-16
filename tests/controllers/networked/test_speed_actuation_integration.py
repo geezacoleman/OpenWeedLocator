@@ -193,7 +193,7 @@ class TestActuationMath:
     @pytest.mark.parametrize('speed_kmh', SPEEDS)
     def test_1cm_spray_distance(self, speed_kmh):
         """1cm spray distance: verify duration changes with speed."""
-        calc = ActuationCalculator(actuation_length_cm=1.0, offset_cm=0.0)
+        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=1.0, offset_cm=0.0)
         result = calc.compute(speed_kmh)
 
         expected = self._expected_duration(1.0, speed_kmh)
@@ -205,7 +205,7 @@ class TestActuationMath:
     @pytest.mark.parametrize('speed_kmh', SPEEDS)
     def test_2cm_spray_distance(self, speed_kmh):
         """2cm spray distance: verify duration changes with speed."""
-        calc = ActuationCalculator(actuation_length_cm=2.0, offset_cm=0.0)
+        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=2.0, offset_cm=0.0)
         result = calc.compute(speed_kmh)
 
         expected = self._expected_duration(2.0, speed_kmh)
@@ -218,7 +218,7 @@ class TestActuationMath:
     @pytest.mark.parametrize('speed_kmh', SPEEDS)
     def test_full_distance_speed_matrix(self, distance_cm, speed_kmh):
         """Every distance x speed combination produces correct clamped result."""
-        calc = ActuationCalculator(actuation_length_cm=distance_cm, offset_cm=0.0)
+        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=distance_cm, offset_cm=0.0)
         result = calc.compute(speed_kmh)
 
         raw = self._expected_duration(distance_cm, speed_kmh)
@@ -230,7 +230,7 @@ class TestActuationMath:
     @pytest.mark.parametrize('speed_kmh', SPEEDS)
     def test_with_30cm_offset(self, speed_kmh):
         """10cm spray + 30cm nozzle offset: verify both duration and delay."""
-        calc = ActuationCalculator(actuation_length_cm=10.0, offset_cm=30.0)
+        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=10.0, offset_cm=30.0)
         result = calc.compute(speed_kmh)
 
         exp_dur = max(0.01, min(5.0, self._expected_duration(10.0, speed_kmh)))
@@ -245,7 +245,7 @@ class TestActuationMath:
         Uses 50cm distance so no speed in range hits the 10ms clamp.
         Max safe speed for 50cm = 50*3.6 = 180 km/h.
         """
-        calc = ActuationCalculator(actuation_length_cm=50.0, offset_cm=0.0)
+        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=50.0, offset_cm=0.0)
         durations = [calc.compute(s)['actuation_duration'] for s in self.SPEEDS]
         for i in range(1, len(durations)):
             assert durations[i] < durations[i - 1], (
@@ -255,7 +255,7 @@ class TestActuationMath:
 
     def test_delay_decreases_with_speed(self):
         """Core property: faster speed -> shorter delay (fixed offset)."""
-        calc = ActuationCalculator(actuation_length_cm=50.0, offset_cm=50.0)
+        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=50.0, offset_cm=50.0)
         delays = [calc.compute(s)['delay'] for s in self.SPEEDS]
         for i in range(1, len(delays)):
             assert delays[i] < delays[i - 1]
@@ -264,8 +264,8 @@ class TestActuationMath:
         """2x distance = 2x duration at same speed (when not clamped)."""
         for speed in [2.0, 3.0, 4.0]:
             # Use distances and speeds where neither is clamped
-            calc_5 = ActuationCalculator(actuation_length_cm=5.0, offset_cm=0.0)
-            calc_10 = ActuationCalculator(actuation_length_cm=10.0, offset_cm=0.0)
+            calc_5 = ActuationCalculator(sustain_s=0, actuation_length_cm=5.0, offset_cm=0.0)
+            calc_10 = ActuationCalculator(sustain_s=0, actuation_length_cm=10.0, offset_cm=0.0)
             d5 = calc_5.compute(speed)['actuation_duration']
             d10 = calc_10.compute(speed)['actuation_duration']
             assert d10 == pytest.approx(d5 * 2, abs=0.0001), (
@@ -297,7 +297,7 @@ class TestActuationBoundaries:
         clamped = []
 
         for dist in self.ALL_DISTANCES:
-            calc = ActuationCalculator(actuation_length_cm=dist, offset_cm=0.0)
+            calc = ActuationCalculator(sustain_s=0, actuation_length_cm=dist, offset_cm=0.0)
             for speed in self.ALL_SPEEDS:
                 if speed < 0.5:
                     continue
@@ -329,7 +329,7 @@ class TestActuationBoundaries:
         clamped = []
 
         for dist in self.ALL_DISTANCES:
-            calc = ActuationCalculator(actuation_length_cm=dist, offset_cm=0.0)
+            calc = ActuationCalculator(sustain_s=0, actuation_length_cm=dist, offset_cm=0.0)
             for speed in self.ALL_SPEEDS:
                 if speed < 0.5:
                     continue
@@ -367,7 +367,7 @@ class TestActuationBoundaries:
             # speed = (dist/100) / 0.01 * 3.6 = dist * 3.6
             max_safe_speed = dist * 3.6  # km/h
 
-            calc = ActuationCalculator(actuation_length_cm=dist, offset_cm=0.0)
+            calc = ActuationCalculator(sustain_s=0, actuation_length_cm=dist, offset_cm=0.0)
             result = calc.compute(max_safe_speed)
 
             print(f'  {dist:10d}  {max_safe_speed:17.1f}  '
@@ -401,7 +401,7 @@ class TestActuationBoundaries:
         print('\n  === Typical field scenarios ===')
 
         for name, dist, offset, speeds in scenarios:
-            calc = ActuationCalculator(actuation_length_cm=dist, offset_cm=offset)
+            calc = ActuationCalculator(sustain_s=0, actuation_length_cm=dist, offset_cm=offset)
             print(f'\n  --- {name}: {dist}cm spray, {offset}cm offset ---')
             print(f'  {"Speed":>8}  {"Duration":>10}  {"Delay":>10}  {"Status":>12}')
             print(f'  {"-"*8}  {"-"*10}  {"-"*10}  {"-"*12}')
@@ -444,7 +444,7 @@ class TestSpeedToActuationPipeline:
     def test_gps_speed_feeds_actuation(self):
         """GPS speed sample -> SpeedAverager -> ActuationCalculator -> params."""
         sa = SpeedAverager(window_seconds=5.0)
-        calc = ActuationCalculator(actuation_length_cm=10.0, offset_cm=30.0)
+        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=10.0, offset_cm=30.0)
 
         # Simulate 3 GPS samples at ~10 km/h
         for speed in [9.8, 10.0, 10.2]:
@@ -462,7 +462,7 @@ class TestSpeedToActuationPipeline:
         Uses 50cm distance to stay well above the 10ms clamp.
         """
         sa = SpeedAverager(window_seconds=60.0)  # Long window so all samples count
-        calc = ActuationCalculator(actuation_length_cm=50.0, offset_cm=0.0)
+        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=50.0, offset_cm=0.0)
 
         results = []
         for speed in [2.0, 5.0, 10.0, 15.0, 20.0, 25.0]:
@@ -481,8 +481,7 @@ class TestSpeedToActuationPipeline:
     def test_gps_dropout_uses_fallback(self):
         """When GPS drops out, SpeedAverager provides fallback speed."""
         sa = SpeedAverager(window_seconds=0.1)
-        calc = ActuationCalculator(
-            actuation_length_cm=10.0, offset_cm=0.0,
+        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=10.0, offset_cm=0.0,
             fallback_duration=0.15, fallback_delay=0.0
         )
 
@@ -507,8 +506,7 @@ class TestSpeedToActuationPipeline:
     def test_no_gps_uses_config_fallback(self):
         """Without any GPS data, falls back to config values."""
         sa = SpeedAverager()
-        calc = ActuationCalculator(
-            actuation_length_cm=10.0, offset_cm=0.0,
+        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=10.0, offset_cm=0.0,
             fallback_duration=0.20, fallback_delay=0.05
         )
 
@@ -621,7 +619,7 @@ class TestGPSTCPToActuation:
         time.sleep(0.3)
 
         sa = SpeedAverager(window_seconds=5.0)
-        calc = ActuationCalculator(actuation_length_cm=20.0, offset_cm=30.0)
+        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=20.0, offset_cm=30.0)
 
         try:
             test_speeds = [2.0, 5.0, 10.0, 15.0, 20.0]
@@ -684,7 +682,7 @@ class TestGPSTCPToActuation:
         gps.start()
         time.sleep(0.3)
 
-        calc = ActuationCalculator(actuation_length_cm=10.0, offset_cm=20.0)
+        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=10.0, offset_cm=20.0)
 
         try:
             sentences = [
@@ -727,7 +725,7 @@ class TestOWLActuationHandler:
 
     def test_handler_updates_owl_attrs(self, mqtt_publisher, mock_owl):
         """set_actuation_params command updates owl instance attributes."""
-        calc = ActuationCalculator(actuation_length_cm=10.0, offset_cm=30.0)
+        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=10.0, offset_cm=30.0)
         result = calc.compute(10.0)
 
         mqtt_publisher._handle_command({
@@ -757,7 +755,7 @@ class TestOWLActuationHandler:
 
         Uses 20cm so neither speed hits the 10ms clamp (max safe = 72 km/h).
         """
-        calc = ActuationCalculator(actuation_length_cm=20.0, offset_cm=0.0)
+        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=20.0, offset_cm=0.0)
 
         r1 = calc.compute(5.0)
         mqtt_publisher._handle_command({
@@ -789,7 +787,7 @@ class TestOWLActuationHandler:
 
         Tests 3 speeds per distance, all below the clamp point.
         """
-        calc = ActuationCalculator(actuation_length_cm=distance_cm, offset_cm=20.0)
+        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=distance_cm, offset_cm=20.0)
 
         # Use speeds well below the clamp point for this distance
         max_safe = distance_cm * 3.6
@@ -828,8 +826,7 @@ class TestFieldReferenceTable:
         speeds = [1.0, 2.0, 3.0, 5.0, 8.0, 10.0, 12.0, 15.0, 20.0, 25.0]
 
         for length_cm in [1.0, 2.0, 5.0, 10.0, 20.0, 50.0]:
-            calc = ActuationCalculator(
-                actuation_length_cm=length_cm,
+            calc = ActuationCalculator(sustain_s=0, actuation_length_cm=length_cm,
                 offset_cm=30.0,
                 fallback_duration=0.15,
                 fallback_delay=0.0
