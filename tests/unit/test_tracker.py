@@ -177,8 +177,11 @@ class TestClassSmootherEdgeCases:
         s.update([1], [0], [0.9], frame_count=2)
         s.update([1], [1], [0.9], frame_count=3)
         result = s.update([1], [1], [0.9], frame_count=4)
-        # Tie — Counter.most_common returns first-inserted
-        assert result[1] in (0, 1)  # Either is valid
+        # Tie: the class seen first in the window holds (a track does not
+        # change class until the new class has a majority)
+        assert result[1] == 0
+        # one more vote for class 1 slides a 0 out of the window: now a majority
+        assert s.update([1], [1], [0.9], frame_count=5)[1] == 1
 
 
 # ============================================
@@ -262,8 +265,9 @@ class TestCropMaskStabilizerMask:
                            dtype=np.int32).reshape(-1, 1, 2)
         stab.update([1], [[50, 50, 50, 50]], contours=[contour])
         mask = stab.build_stabilized_mask((200, 200))
-        # Contour should be used (not box)
-        assert np.any(mask[50:100, 50:100] == 255)
+        # The contour is filled, not the (zero-area) box passed with it
+        assert np.all(mask[50:101, 50:101] == 255)
+        assert np.count_nonzero(mask) == 51 * 51
 
     def test_build_mask_includes_persisted(self):
         """Persisted (aged) tracks still appear in mask."""
@@ -271,8 +275,9 @@ class TestCropMaskStabilizerMask:
         stab.update([1], [[10, 10, 30, 30]])
         stab.update([], [])  # track 1 persisted at age 1
         mask = stab.build_stabilized_mask((100, 100))
-        # Persisted track should still be in mask
-        assert np.any(mask[10:40, 10:40] == 255)
+        # Persisted track is still in the mask, at exactly its last box
+        assert np.all(mask[10:30, 10:30] == 255)
+        assert np.count_nonzero(mask) == 20 * 20
 
     def test_build_mask_empty_stabilizer(self):
         """Empty stabilizer produces all-zero mask."""
@@ -286,14 +291,24 @@ class TestCropMaskStabilizerMask:
         stab.update([1], [[10, 10, 30, 30]])
         mask = stab.build_stabilized_mask((100, 100, 3))
         assert mask.shape == (100, 100)
+        assert np.all(mask[10:30, 10:30] == 255) and np.count_nonzero(mask) == 20 * 20
 
     def test_box_clamped_to_frame(self):
         """Boxes extending beyond frame edges are clamped."""
         stab = CropMaskStabilizer(max_age=3)
         stab.update([1], [[-10, -5, 30, 20]])  # Extends past top-left
         mask = stab.build_stabilized_mask((50, 50))
-        # Should not crash; mask region starts from 0,0
+        # The part inside the frame is masked, from 0,0
         assert mask.shape == (50, 50)
+        assert np.all(mask[0:20, 0:30] == 255)
+        assert np.count_nonzero(mask) == 20 * 30
+
+    def test_box_past_the_far_edges_is_clamped_too(self):
+        stab = CropMaskStabilizer(max_age=3)
+        stab.update([1], [[40, 45, 80, 90]])
+        mask = stab.build_stabilized_mask((50, 50))
+        assert np.all(mask[45:50, 40:50] == 255)
+        assert np.count_nonzero(mask) == 5 * 10
 
 
 class TestCropMaskStabilizerReset:
@@ -334,11 +349,13 @@ class TestSmootherStabilizerIntegration:
         sm = smoother.update([1], [1], [0.9], frame_count=2)
         stabilizer.update([], [])  # Track 2 persisted
 
-        # Smoother: track 1 has [0, 1] → tie, either class valid
-        assert sm[1] in (0, 1)
-        # Stabilizer: track 2 still in mask
+        # Smoother: track 1 has [0, 1], a tie: one flickered frame does not
+        # turn a weed into a crop
+        assert sm == {1: 0}
+        # Stabilizer: track 2 still in mask, at its last box
         mask = stabilizer.build_stabilized_mask((200, 200))
-        assert np.any(mask[50:150, 50:150] == 255)
+        assert np.all(mask[50:100, 50:100] == 255)
+        assert np.count_nonzero(mask) == 50 * 50
 
     def test_both_reset_independently(self):
         smoother = ClassSmoother(window=3)

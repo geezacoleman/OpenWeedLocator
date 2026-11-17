@@ -6,36 +6,23 @@ Simulates realistic detection sequences across multiple frames to verify:
   - CropMaskStabilizer preserves crop mask through detection dropouts
   - End-to-end pipeline correctly filters weed detections
 
-Generates visualization images in tests/tracking_output/ for manual review
-of smoothing behavior. These are gitignored but useful for debugging.
-
-Run: pytest tests/test_tracking_integration.py -v
+Every assertion is on the numbers: classes, flips, masked pixels. Three
+tests here used to render review images and assert only that a PNG had been
+written; they are gone, and what the images showed is asserted instead.
+Nothing in this file writes a file.
 """
 
-import os
-import sys
-from pathlib import Path
-
-import cv2
 import numpy as np
-import pytest
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from utils.tracker import ClassSmoother, CropMaskStabilizer
 
-# Output directory for visualization images
-import tempfile
-# Review images go to OWL_TRACKING_VIZ_DIR when set, otherwise to a temp
-# directory: a test run never writes into the checkout.
-VIZ_DIR = Path(os.environ.get('OWL_TRACKING_VIZ_DIR') or tempfile.mkdtemp(prefix='owl_tracking_viz_'))
 
-
-def ensure_viz_dir():
-    """Create the visualization output directory if it doesn't exist."""
-    VIZ_DIR.mkdir(exist_ok=True)
+def _per_frame_mask(boxes, shape=(480, 640)):
+    """The crop mask with no stabilisation: this frame's boxes only."""
+    mask = np.zeros(shape, dtype=np.uint8)
+    for x1, y1, x2, y2 in boxes:
+        mask[max(0, y1):min(y2, shape[0]), max(0, x1):min(x2, shape[1])] = 255
+    return mask
 
 
 # ============================================
@@ -133,106 +120,11 @@ class SyntheticTrackingScene:
 
 
 # ============================================
-# Visualization helpers
-# ============================================
-
-def draw_frame_state(frame_idx, ground_truth, detected_ids, raw_classes,
-                     smoothed_classes, frame_width=640, frame_height=480):
-    """Draw a visualization frame showing raw vs smoothed class assignments.
-
-    Returns a BGR image with:
-     - Green boxes for weeds (class 0), blue for crops (class 1)
-     - Solid border = smoothed assignment, dashed = raw (when different)
-     - Gray boxes for undetected (dropped) objects
-     - Legend showing flicker stats
-    """
-    img = np.ones((frame_height, frame_width, 3), dtype=np.uint8) * 240  # light gray bg
-
-    colors = {0: (50, 180, 50), 1: (180, 120, 50)}  # weed=green, crop=blue
-    class_names = {0: 'weed', 1: 'crop'}
-
-    for obj_id, gt in ground_truth.items():
-        x1, y1, x2, y2 = gt['box']
-        true_cls = gt['true_class']
-        detected = obj_id in detected_ids
-
-        if detected:
-            idx = detected_ids.index(obj_id)
-            raw_cls = raw_classes[idx]
-            sm_cls = smoothed_classes.get(obj_id, raw_cls)
-
-            # Smoothed border (thick)
-            sm_color = colors[sm_cls]
-            cv2.rectangle(img, (x1, y1), (x2, y2), sm_color, 3)
-
-            # If raw differs from smoothed, show raw as thin dashed inner border
-            if raw_cls != sm_cls:
-                raw_color = colors[raw_cls]
-                cv2.rectangle(img, (x1 + 4, y1 + 4), (x2 - 4, y2 - 4), raw_color, 1)
-                # "FLICKERED" label
-                cv2.putText(img, 'FIXED', (x1, y1 - 5),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 200), 1)
-
-            # Labels
-            label = f'T{obj_id} {class_names[sm_cls]}'
-            cv2.putText(img, label, (x1 + 2, y2 + 14),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, sm_color, 1)
-        else:
-            # Dropped detection — gray dashed box
-            cv2.rectangle(img, (x1, y1), (x2, y2), (180, 180, 180), 1)
-            cv2.putText(img, f'T{obj_id} DROPPED', (x1 + 2, y2 + 14),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, (150, 150, 150), 1)
-
-    # Frame label
-    cv2.putText(img, f'Frame {frame_idx}', (10, 25),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
-
-    return img
-
-
-def draw_mask_comparison(frame_idx, gt, per_frame_mask, stabilized_mask,
-                         frame_width=640, frame_height=480):
-    """Draw side-by-side comparison of per-frame vs stabilized crop mask.
-
-    Left half: per-frame mask (what you get without stabilizer)
-    Right half: stabilized mask (with CropMaskStabilizer)
-    """
-    h, w = frame_height, frame_width
-    img = np.ones((h, w * 2 + 20, 3), dtype=np.uint8) * 240
-
-    # Left: per-frame mask
-    left_mask_color = cv2.cvtColor(per_frame_mask, cv2.COLOR_GRAY2BGR)
-    # Tint crop regions blue
-    left_mask_color[per_frame_mask > 0] = (180, 120, 50)
-    img[0:h, 0:w] = left_mask_color
-
-    # Right: stabilized mask
-    right_mask_color = cv2.cvtColor(stabilized_mask, cv2.COLOR_GRAY2BGR)
-    right_mask_color[stabilized_mask > 0] = (50, 180, 50)
-    img[0:h, w + 20:w * 2 + 20] = right_mask_color
-
-    # Draw GT object positions on both halves
-    for obj_id, info in gt.items():
-        bx1, by1, bx2, by2 = info['box']
-        if info['true_class'] == 1:  # crop
-            cv2.rectangle(img, (bx1, by1), (bx2, by2), (0, 0, 255), 1)
-            cv2.rectangle(img, (bx1 + w + 20, by1), (bx2 + w + 20, by2), (0, 0, 255), 1)
-
-    # Labels
-    cv2.putText(img, f'Frame {frame_idx} - Per-frame mask', (10, 25),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-    cv2.putText(img, f'Frame {frame_idx} - Stabilized mask', (w + 30, 25),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-
-    return img
-
-
-# ============================================
-# Integrated Tests
+# Tests
 # ============================================
 
 class TestClassSmootherMultiFrame:
-    """Multi-frame class smoothing tests with visualization."""
+    """Multi-frame class smoothing tests."""
 
     def test_smoothing_reduces_class_flips(self):
         """ClassSmoother significantly reduces class flips vs raw detections."""
@@ -265,10 +157,12 @@ class TestClassSmootherMultiFrame:
                 raw_last[tid] = raw_c
                 smoothed_last[tid] = sm_c
 
-        # Smoothing should cut flips by at least 50%
-        assert smoothed_flips < raw_flips * 0.5, (
+        # 25% flicker over 60 frames: well over a hundred raw flips (147 with
+        # this seed), and a 5-frame majority vote removes about four in five
+        assert raw_flips > 100, f'the scene only flickered {raw_flips} times'
+        assert smoothed_flips < raw_flips * 0.3, (
             f'Smoothing only reduced flips from {raw_flips} to {smoothed_flips} '
-            f'({smoothed_flips/max(raw_flips,1):.0%}), expected >50% reduction'
+            f'({smoothed_flips/max(raw_flips,1):.0%}), expected under 30% left'
         )
 
     def test_smoothing_converges_to_true_class(self):
@@ -300,63 +194,8 @@ class TestClassSmootherMultiFrame:
             f'({correct}/{total} correct)'
         )
 
-    def test_smoothing_visualization_saved(self):
-        """Generate visualization frames showing smoothing in action."""
-        ensure_viz_dir()
-        scene = SyntheticTrackingScene(num_objects=6, weed_fraction=0.5, seed=42)
-        smoother = ClassSmoother(window=5)
-        num_frames = 20
-        flicker_rate = 0.3  # High flicker for visible effect
-
-        frames = []
-        raw_flip_count = 0
-        smoothed_flip_count = 0
-        raw_last = {}
-        smoothed_last = {}
-
-        for f in range(num_frames):
-            tids, boxes, cls_ids, confs, gt = scene.generate_frame(
-                f, class_flicker_rate=flicker_rate)
-            smoothed = smoother.update(tids, cls_ids, confs, frame_count=f)
-
-            # Count flips
-            for tid, raw_c in zip(tids, cls_ids):
-                sm_c = smoothed.get(tid, raw_c)
-                if tid in raw_last and raw_last[tid] != raw_c:
-                    raw_flip_count += 1
-                if tid in smoothed_last and smoothed_last[tid] != sm_c:
-                    smoothed_flip_count += 1
-                raw_last[tid] = raw_c
-                smoothed_last[tid] = sm_c
-
-            # Draw visualization frame
-            viz = draw_frame_state(f, gt, tids, cls_ids, smoothed)
-            frames.append(viz)
-
-        # Save grid of frames (4 columns)
-        cols = 4
-        rows = (num_frames + cols - 1) // cols
-        cell_h, cell_w = frames[0].shape[:2]
-        grid = np.ones((rows * cell_h, cols * cell_w, 3), dtype=np.uint8) * 255
-
-        for i, frame in enumerate(frames):
-            r, c = divmod(i, cols)
-            grid[r * cell_h:(r + 1) * cell_h, c * cell_w:(c + 1) * cell_w] = frame
-
-        # Add summary text at bottom
-        summary = (f'Raw flips: {raw_flip_count} | '
-                   f'Smoothed flips: {smoothed_flip_count} | '
-                   f'Reduction: {1 - smoothed_flip_count/max(raw_flip_count,1):.0%}')
-        cv2.putText(grid, summary, (20, grid.shape[0] - 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 200), 2)
-
-        out_path = str(VIZ_DIR / 'class_smoothing_grid.png')
-        cv2.imwrite(out_path, grid)
-        assert os.path.exists(out_path), f'Visualization not saved to {out_path}'
-
-
 class TestCropMaskStabilizerMultiFrame:
-    """Multi-frame crop mask stabilization tests with visualization."""
+    """Multi-frame crop mask stabilization tests."""
 
     def test_stabilizer_fills_dropout_gaps(self):
         """CropMaskStabilizer maintains mask coverage during detection dropouts."""
@@ -405,9 +244,17 @@ class TestCropMaskStabilizerMultiFrame:
                 f'per-frame ({per_frame_coverage[f]})'
             )
 
-        # Stabilizer should have lower variance in coverage
-        assert st_std <= pf_std, (
-            f'Stabilizer variance ({st_std:.0f}) > per-frame ({pf_std:.0f})'
+        # On every dropout frame the stabilizer holds pixels the per-frame
+        # mask lost (">=" alone passes a stabilizer that does nothing)
+        dropout_frames = [f for f in range(num_frames) if f % 5 in (2, 3)]
+        assert len(dropout_frames) == 12
+        for f in dropout_frames:
+            assert stabilized_coverage[f] > per_frame_coverage[f], (
+                f'Frame {f}: half the crops dropped out and the stabilized mask kept nothing')
+
+        # and coverage is steadier for it
+        assert st_std < pf_std * 0.5, (
+            f'Stabilizer variance ({st_std:.0f}) is not well under per-frame ({pf_std:.0f})'
         )
 
     def test_stabilizer_expires_old_tracks(self):
@@ -429,52 +276,37 @@ class TestCropMaskStabilizerMultiFrame:
         assert np.all(mask[10:60, 100:150] == 0)  # track 2 expired
         assert np.all(mask[10:60, 200:250] == 0)  # track 3 expired
 
-    def test_mask_stabilization_visualization_saved(self):
-        """Generate side-by-side mask comparison frames."""
-        ensure_viz_dir()
+    def test_a_dropped_crop_stays_masked_where_it_was_last_seen_until_max_age(self):
+        """What the side-by-side mask picture showed: a crop that drops out
+        keeps its last box in the stabilized mask (and has none in the
+        per-frame mask) for max_age frames, then goes."""
         scene = SyntheticTrackingScene(num_objects=4, weed_fraction=0.0, seed=42)
         stabilizer = CropMaskStabilizer(max_age=3)
 
-        num_frames = 15
-        comparison_frames = []
+        tids, boxes, _, _, _ = scene.generate_frame(0)
+        stabilizer.update(tids, boxes)
+        last_seen = dict(zip(tids, boxes))
+        dropped, kept = {0, 2}, {1, 3}
 
-        for f in range(num_frames):
-            # Simulate periodic detection dropout
-            burst_drops = None
-            if f % 4 in (2, 3):
-                burst_drops = {0, 2}  # Drop 2 of 4 objects
-
-            tids, boxes, cls_ids, confs, gt = scene.generate_frame(
-                f, burst_drop_ids=burst_drops)
-
-            # Per-frame mask
-            pf_mask = np.zeros((480, 640), dtype=np.uint8)
-            for box in boxes:
-                x1, y1, x2, y2 = box
-                x1, y1 = max(0, x1), max(0, y1)
-                x2, y2 = min(x2, 640), min(y2, 480)
-                pf_mask[y1:y2, x1:x2] = 255
-
-            # Stabilized mask
+        for frame in range(1, 6):                         # 5 frames with crops 0 and 2 missing
+            tids, boxes, _, _, _ = scene.generate_frame(frame, burst_drop_ids=dropped)
+            assert set(tids) == kept
             stabilizer.update(tids, boxes)
-            st_mask = stabilizer.build_stabilized_mask((480, 640))
-
-            viz = draw_mask_comparison(f, gt, pf_mask, st_mask)
-            comparison_frames.append(viz)
-
-        # Save grid (3 columns, each is 2x wide due to side-by-side)
-        cols = 3
-        rows = (num_frames + cols - 1) // cols
-        cell_h, cell_w = comparison_frames[0].shape[:2]
-        grid = np.ones((rows * cell_h, cols * cell_w, 3), dtype=np.uint8) * 255
-
-        for i, frame in enumerate(comparison_frames):
-            r, c = divmod(i, cols)
-            grid[r * cell_h:(r + 1) * cell_h, c * cell_w:(c + 1) * cell_w] = frame
-
-        out_path = str(VIZ_DIR / 'mask_stabilization_grid.png')
-        cv2.imwrite(out_path, grid)
-        assert os.path.exists(out_path), f'Visualization not saved to {out_path}'
+            stabilized = stabilizer.build_stabilized_mask((480, 640))
+            per_frame = _per_frame_mask(boxes)
+            for tid in dropped:
+                x1, y1, x2, y2 = last_seen[tid]
+                assert not per_frame[y1:y2, x1:x2].any()
+                if frame <= 3:
+                    assert (stabilized[y1:y2, x1:x2] == 255).all(), (
+                        f'frame {frame}: crop {tid} fell out of the mask after {frame} missed frames')
+                else:
+                    assert not stabilized[y1:y2, x1:x2].any(), (
+                        f'frame {frame}: crop {tid} still masked {frame} frames after it was last seen')
+            for tid, (x1, y1, x2, y2) in zip(tids, boxes):  # the ones in view follow their boxes
+                assert (stabilized[y1:y2, x1:x2] == 255).all()
+            assert stabilizer.persisted_count == (2 if frame <= 3 else 0)
+            assert stabilizer.active_count == (4 if frame <= 3 else 2)
 
 
 class TestEndToEndTrackingPipeline:
@@ -524,45 +356,50 @@ class TestEndToEndTrackingPipeline:
         raw_fp_rate = false_positives_raw / max(total_raw_detections, 1)
         smoothed_fp_rate = false_positives_smoothed / max(total_smoothed_detections, 1)
 
-        assert smoothed_fp_rate <= raw_fp_rate, (
-            f'Smoothed FP rate ({smoothed_fp_rate:.1%}) > raw FP rate ({raw_fp_rate:.1%})'
+        # 20% flicker makes a crop look like a weed 23 times in 159 here;
+        # "<=" alone passes a smoother that does nothing
+        assert false_positives_raw >= 15, 'the scene produced too few misclassified crops'
+        assert smoothed_fp_rate < raw_fp_rate / 3, (
+            f'Smoothed FP rate ({smoothed_fp_rate:.1%}) is not well under raw ({raw_fp_rate:.1%})'
         )
+        # without throwing the real weeds away
+        assert total_smoothed_detections >= total_raw_detections * 0.9
 
     def test_pipeline_with_dropouts_and_flicker(self):
-        """Pipeline handles simultaneous dropouts and class flicker."""
+        """15% dropouts and 20% class flicker together, as owl.py feeds the
+        stabilizer (crop-class detections only). A real crop whose centre is
+        outside the mask is a hole a weed detection leaks through: the
+        stabilized mask must close nearly all the holes the per-frame mask has."""
         scene = SyntheticTrackingScene(
             num_objects=6, weed_fraction=0.5, seed=123)
-        smoother = ClassSmoother(window=5)
         stabilizer = CropMaskStabilizer(max_age=3)
 
-        num_frames = 50
-        drop_rate = 0.15
-        flicker_rate = 0.2
-
-        # Track how many frames have mask coverage
-        frames_with_coverage = 0
-
-        for f in range(num_frames):
+        crops_in_view = holes_per_frame = holes_stabilized = 0
+        for f in range(50):
             tids, boxes, cls_ids, confs, gt = scene.generate_frame(
-                f, drop_rate=drop_rate, class_flicker_rate=flicker_rate)
+                f, drop_rate=0.15, class_flicker_rate=0.2)
 
-            smoothed = smoother.update(tids, cls_ids, confs, frame_count=f)
-
-            # Feed crop detections to stabilizer
             crop_tids = [tid for tid, cls in zip(tids, cls_ids) if cls == 1]
             crop_boxes = [box for box, cls in zip(boxes, cls_ids) if cls == 1]
             stabilizer.update(crop_tids, crop_boxes)
-            mask = stabilizer.build_stabilized_mask((480, 640))
+            stabilized = stabilizer.build_stabilized_mask((480, 640))
+            per_frame = _per_frame_mask(crop_boxes)
 
-            if np.any(mask):
-                frames_with_coverage += 1
+            for truth in gt.values():
+                if truth['true_class'] != 1:
+                    continue
+                x1, y1, x2, y2 = truth['box']
+                cy, cx = (y1 + y2) // 2, (x1 + x2) // 2
+                if not 0 <= cy < 480:
+                    continue
+                crops_in_view += 1
+                holes_per_frame += per_frame[cy, cx] == 0
+                holes_stabilized += stabilized[cy, cx] == 0
 
-        # With 50% crops and stabilization, we should have mask coverage
-        # on most frames despite 15% drop rate
-        coverage_ratio = frames_with_coverage / num_frames
-        assert coverage_ratio >= 0.7, (
-            f'Mask coverage only on {coverage_ratio:.0%} of frames, expected >= 70%'
-        )
+        assert crops_in_view == 150
+        assert holes_per_frame >= 30, f'the scene only opened {holes_per_frame} holes'   # 44 here
+        assert holes_stabilized * 5 <= holes_per_frame, (                               # 3 here
+            f'{holes_stabilized} of {holes_per_frame} holes left open by the stabilizer')
 
     def test_pipeline_reset_and_restart(self):
         """Smoother and stabilizer work correctly after reset (detection toggle off/on)."""
@@ -595,95 +432,6 @@ class TestEndToEndTrackingPipeline:
         # Should be working again
         assert len(smoothed) > 0
         assert stabilizer.active_count > 0
-
-    def test_pipeline_visualization_saved(self):
-        """Generate comprehensive visualization showing full pipeline behavior."""
-        ensure_viz_dir()
-        scene = SyntheticTrackingScene(
-            num_objects=6, weed_fraction=0.5, seed=42)
-        smoother = ClassSmoother(window=5)
-        stabilizer = CropMaskStabilizer(max_age=3)
-
-        num_frames = 24
-        drop_rate = 0.1
-        flicker_rate = 0.25
-
-        viz_frames = []
-        stats_log = []
-
-        raw_flip_total = 0
-        sm_flip_total = 0
-        raw_last = {}
-        sm_last = {}
-
-        for f in range(num_frames):
-            # Burst dropout every 6th frame for 2 frames
-            burst = None
-            if f % 6 in (4, 5):
-                burst = {1, 3}  # Drop weed id=1, crop id=3
-
-            tids, boxes, cls_ids, confs, gt = scene.generate_frame(
-                f, drop_rate=drop_rate, class_flicker_rate=flicker_rate,
-                burst_drop_ids=burst)
-
-            smoothed = smoother.update(tids, cls_ids, confs, frame_count=f)
-
-            # Track flips
-            for tid, raw_c in zip(tids, cls_ids):
-                sm_c = smoothed.get(tid, raw_c)
-                if tid in raw_last and raw_last[tid] != raw_c:
-                    raw_flip_total += 1
-                if tid in sm_last and sm_last[tid] != sm_c:
-                    sm_flip_total += 1
-                raw_last[tid] = raw_c
-                sm_last[tid] = sm_c
-
-            # Feed crops to stabilizer
-            crop_tids = [tid for tid, cls in zip(tids, cls_ids) if cls == 1]
-            crop_boxes = [box for box, cls in zip(boxes, cls_ids) if cls == 1]
-            stabilizer.update(crop_tids, crop_boxes)
-            mask = stabilizer.build_stabilized_mask((480, 640))
-
-            viz = draw_frame_state(f, gt, tids, cls_ids, smoothed)
-
-            # Draw mask coverage indicator
-            mask_pct = np.count_nonzero(mask) / (480 * 640) * 100
-            cv2.putText(viz, f'Mask: {mask_pct:.1f}%', (440, 25),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 100), 1)
-            cv2.putText(viz, f'Persisted: {stabilizer.persisted_count}',
-                        (440, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 100, 100), 1)
-            if burst:
-                cv2.putText(viz, 'BURST DROP', (250, 25),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-
-            viz_frames.append(viz)
-
-        # Build grid
-        cols = 4
-        rows = (num_frames + cols - 1) // cols
-        cell_h, cell_w = viz_frames[0].shape[:2]
-        grid = np.ones((rows * cell_h + 60, cols * cell_w, 3), dtype=np.uint8) * 255
-
-        for i, frame in enumerate(viz_frames):
-            r, c = divmod(i, cols)
-            grid[r * cell_h:(r + 1) * cell_h, c * cell_w:(c + 1) * cell_w] = frame
-
-        # Summary bar
-        y_summary = rows * cell_h + 20
-        reduction = 1 - sm_flip_total / max(raw_flip_total, 1)
-        summary = (f'Pipeline: {num_frames}f | '
-                   f'Drop: {drop_rate:.0%} + burst | '
-                   f'Flicker: {flicker_rate:.0%} | '
-                   f'Raw flips: {raw_flip_total} | '
-                   f'Smoothed flips: {sm_flip_total} | '
-                   f'Reduction: {reduction:.0%}')
-        cv2.putText(grid, summary, (20, y_summary),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 150), 1)
-
-        out_path = str(VIZ_DIR / 'full_pipeline_grid.png')
-        cv2.imwrite(out_path, grid)
-        assert os.path.exists(out_path), f'Visualization not saved to {out_path}'
-
 
 class TestTrackingPerformanceBaseline:
     """Verify that tracking overhead is within acceptable bounds.

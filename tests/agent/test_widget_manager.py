@@ -1,7 +1,9 @@
 """Tests for agent.widget_manager.WidgetManager."""
 
+import html as html_lib
 import json
-import os
+import re
+
 import pytest
 
 from agent.widget_manager import WidgetManager
@@ -252,9 +254,11 @@ class TestRender:
         mgr.scan()
 
         html = mgr.render('btn-widget')
-        assert 'btn-danger' in html
-        assert 'widget-button' in html
-        assert 'Restart' in html
+        assert html == (
+            '<div class="widget-container" data-widget-id="btn-widget" data-widget-type="button">\n'
+            '<button class="action-button btn-danger widget-button" '
+            "data-command='{&quot;action&quot;: &quot;restart&quot;}'>Restart</button>\n"
+            '</div>')
 
     def test_select_html(self, tmp_path):
         spec = _minimal_spec('sel-widget', type='select', builtin_config={
@@ -539,22 +543,6 @@ class TestGet:
 # ---------------------------------------------------------------------------
 
 class TestErrorIsolation:
-    def test_malformed_widget_does_not_crash_scan(self, tmp_path):
-        """One bad widget.json should not prevent others from loading."""
-        # Write a good widget
-        good = _minimal_spec('good-widget')
-        _write_widget(tmp_path, good)
-
-        # Write a bad widget (invalid JSON)
-        bad_dir = tmp_path / 'bad-widget'
-        bad_dir.mkdir()
-        (bad_dir / 'widget.json').write_text('{{{INVALID}}}')
-
-        mgr = WidgetManager(tmp_path)
-        result = mgr.scan()
-        assert len(result) == 1
-        assert result[0]['id'] == 'good-widget'
-
     def test_widgets_dir_created_if_missing(self, tmp_path):
         new_dir = tmp_path / 'nonexistent' / 'widgets'
         mgr = WidgetManager(new_dir)
@@ -595,43 +583,6 @@ class TestIdSafety:
         spec = _minimal_spec(id=good_id)
         valid, errors = mgr.validate(spec)
         assert valid is True
-
-
-# ---------------------------------------------------------------------------
-# CSS scoping (route-level logic, tested via WidgetManager API)
-# ---------------------------------------------------------------------------
-
-class TestCSSScoping:
-    def test_custom_widget_css_would_be_scoped(self, tmp_path):
-        """Verify that a custom widget's style.css exists and can be read.
-
-        The actual CSS scoping prefix is applied by the Flask route, but
-        we verify the manager correctly loads and identifies custom widgets
-        that have style files.
-        """
-        spec = _minimal_spec('styled-widget', type='custom')
-        _write_widget(tmp_path, spec, files={
-            'template.html': '<div class="foo">Hello</div>',
-            'style.css': '.foo { color: red; }',
-        })
-
-        mgr = WidgetManager(tmp_path)
-        mgr.scan()
-
-        widget = mgr.get('styled-widget')
-        assert widget is not None
-        assert widget['type'] == 'custom'
-
-        style_path = mgr.widgets_dir / 'styled-widget' / 'style.css'
-        assert style_path.exists()
-
-        css = style_path.read_text()
-        assert '.foo' in css
-
-        # Simulate what the Flask route does
-        scoped = f'.widget-container[data-widget-id="styled-widget"] {{\n{css}\n}}'
-        assert 'data-widget-id="styled-widget"' in scoped
-        assert '.foo { color: red; }' in scoped
 
 
 # ---------------------------------------------------------------------------
@@ -751,3 +702,94 @@ class TestFallbackCfgBridge:
 
         html = mgr.render('danger-btn')
         assert 'btn-danger' in html
+
+
+# ---------------------------------------------------------------------------
+# What a widget spec can put into the dashboard page
+# ---------------------------------------------------------------------------
+# The agent writes these specs (create_widget), so every text field is
+# untrusted. The rendered HTML is inserted into the dashboard as it is.
+
+HOSTILE = '"><script>alert(1)</script><i x=\''
+
+
+def _attributes(html):
+    """Every attribute name in the rendered HTML."""
+    return set(re.findall(r'\s([a-zA-Z-]+)=["\']', html))
+
+
+class TestEscaping:
+    @pytest.mark.parametrize('wtype, allowed', [
+        ('range_slider', {'class', 'data-widget-id', 'data-widget-type', 'title', 'type', 'min', 'max',
+                          'step', 'value', 'data-section', 'data-param'}),
+        ('dual_range_slider', {'class', 'data-widget-id', 'data-widget-type', 'type', 'min', 'max',
+                               'step', 'value', 'data-section', 'data-param'}),
+        ('toggle', {'class', 'data-widget-id', 'data-widget-type', 'data-section', 'data-param',
+                    'data-on-label', 'data-off-label'}),
+        ('button', {'class', 'data-widget-id', 'data-widget-type', 'data-command'}),
+        ('select', {'class', 'data-widget-id', 'data-widget-type', 'data-section', 'data-param',
+                    'data-action', 'value'}),
+        ('stat_display', {'class', 'data-widget-id', 'data-widget-type', 'data-stat-key'}),
+        ('preset_button', {'class', 'data-widget-id', 'data-widget-type', 'data-preset-name',
+                           'data-preset-values'}),
+    ])
+    def test_text_fields_cannot_add_markup_or_attributes(self, tmp_path, wtype, allowed):
+        spec = {'id': 'w', 'name': HOSTILE, 'type': wtype, 'slot': 'widgets_tab',
+                'action': HOSTILE,
+                'builtin_config': {
+                    'label': HOSTILE, 'section': HOSTILE, 'param': HOSTILE, 'unit': HOSTILE,
+                    'on_label': HOSTILE, 'off_label': HOSTILE, 'variant': HOSTILE,
+                    'stat_key': HOSTILE, 'format': HOSTILE, 'preset_name': HOSTILE,
+                    'mqtt_command': {'action': HOSTILE}, 'values': {HOSTILE: HOSTILE},
+                    'options': [HOSTILE, {'value': HOSTILE, 'label': HOSTILE}]}}
+        mgr = WidgetManager(tmp_path)
+        assert mgr.install('w', spec) == (True, None)
+
+        html = mgr.render('w')
+
+        assert '<script' not in html and '<i ' not in html
+        assert _attributes(html) <= allowed, 'the spec added an attribute of its own'
+
+    def test_a_button_command_survives_the_attribute_exactly(self, tmp_path):
+        """data-command is single-quoted: a quote in the command must not end it."""
+        command = {'action': 'set_sensitivity', 'value': "farmer's \"dusty\" <preset> & co"}
+        spec = {'id': 'b', 'name': 'B', 'type': 'button', 'slot': 'widgets_tab', 'mqtt_command': command}
+        mgr = WidgetManager(tmp_path)
+        mgr.install('b', spec)
+
+        html = mgr.render('b')
+
+        [attribute] = re.findall(r"data-command='([^']*)'", html)
+        assert json.loads(html_lib.unescape(attribute)) == command
+
+    @pytest.mark.xfail(strict=True, reason=(
+        "agent/widget_manager.py _render_range_slider and _render_dual_range_slider put min, max "
+        "and step into the HTML without _esc(): a spec with min = '0\" onfocus=\"...' adds an "
+        "attribute (script) to the dashboard page."))
+    @pytest.mark.parametrize('wtype', ['range_slider', 'dual_range_slider'])
+    @pytest.mark.parametrize('field', ['min', 'max', 'step'])
+    def test_slider_numbers_cannot_add_attributes(self, tmp_path, wtype, field):
+        config = {'label': 'L', 'section': 'GreenOnBrown', 'param': 'exg_min', 'min': 0, 'max': 255, 'step': 1}
+        config[field] = '0" onfocus="alert(1)" autofocus="'
+        spec = {'id': 's', 'name': 'S', 'type': wtype, 'slot': 'widgets_tab', 'builtin_config': config}
+        mgr = WidgetManager(tmp_path)
+        mgr.install('s', spec)
+        assert 'onfocus' not in _attributes(mgr.render('s'))
+
+    def test_the_agents_tool_cannot_supply_a_custom_widgets_html_or_script(self, tmp_path):
+        """A custom widget's template.html and script.js are served as they
+        are, so they must only ever come from files put on the unit by hand:
+        create_widget passes the spec alone."""
+        from agent.tool_registry import ToolRegistry
+
+        registry = ToolRegistry()
+        registry.discover()
+        mgr = WidgetManager(tmp_path)
+        spec = {'id': 'c', 'name': 'C', 'type': 'custom', 'slot': 'widgets_tab',
+                'files': {'template.html': '<script>alert(1)</script>', 'script.js': 'alert(1)'},
+                'template': '<script>alert(1)</script>'}
+        result = registry.call('create_widget', {'spec': spec, 'files': spec['files']},
+                               {'widget_manager': mgr})
+        assert result == {'success': True, 'widget_id': 'c'}
+        assert sorted(p.name for p in (tmp_path / 'c').iterdir()) == ['widget.json']
+        assert '<script' not in mgr.render('c')

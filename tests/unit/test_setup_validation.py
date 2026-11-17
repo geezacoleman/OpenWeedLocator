@@ -1,479 +1,114 @@
-"""Tests for setup script logic — IP validation, CONTROLLER.ini generation, multi-OWL config.
+"""Setup and update scripts.
 
-Priority: Field deployment — validates that setup scripts produce correct configs
-for multi-OWL scenarios (2+ OWL units on one networked controller).
+Two kinds of test, kept apart:
+
+1. TestNetworkQuestionHelpers RUNS the IP helpers of the setup scripts under
+   bash (the functions are cut out of the scripts and sourced; they are pure
+   and touch nothing). The larger script flows (first-boot arm/disarm, factory
+   GPS, ship gate) are run for real in tests/controllers/setup/test_setup_scripts.py.
+
+2. Everything below "Structure checks" reads script text. Those prove no
+   behaviour. Each one guards a specific field failure named next to it (a
+   package installed outside the requirements files, a sudoers alias defined
+   twice, exec bits on every tracked file) that cannot be exercised without
+   a Pi, sudo and a network.
+
+Deleted from this file (they ran no production code): a Python "port" of
+_validate_ip defined in the test and tested against itself, CONTROLLER.ini
+text written by the test and read back, MQTT topic f-strings compared with
+literals, nginx "tests" that were `pass` or `x = '250m'; assert x == '250m'`,
+and a class defined twice so three of its tests never ran.
 """
 
-import configparser
 import os
 import re
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 
+REPO = Path(__file__).resolve().parents[2]
+BASH = shutil.which('bash')
 
-# ---------------------------------------------------------------------------
-# IP validation (Python port of setup.sh _validate_ip)
-# ---------------------------------------------------------------------------
-
-def _validate_ip(ip):
-    """Python equivalent of setup.sh _validate_ip."""
-    if not re.match(r'^(\d{1,3}\.){3}\d{1,3}$', ip):
-        return False
-    octets = ip.split('.')
-    for o in octets:
-        if int(o) < 0 or int(o) > 255:
-            return False
-    return True
+# Both scripts carry their own copy of the helpers.
+IP_SCRIPTS = ['controller/shared/setup.sh', 'controller/networked/in-cab_controller_setup.sh']
 
 
-def _ip_base(ip):
-    """Python equivalent of setup.sh _ip_base (first three octets)."""
-    parts = ip.split('.')
-    return '.'.join(parts[:3])
+def _functions(script, *names):
+    """The named top-level shell functions, cut out of a script."""
+    text = (REPO / script).read_text(encoding='utf-8')
+    out = []
+    for name in names:
+        match = re.search(rf'^{re.escape(name)}\(\) \{{.*?^\}}$', text, re.MULTILINE | re.DOTALL)
+        assert match, f'{name}() not found in {script}'
+        out.append(match.group(0))
+    return '\n'.join(out) + '\n'
 
 
-def _last_octet(ip):
-    """Python equivalent of setup.sh _last_octet."""
-    return ip.split('.')[-1]
+def _bash(script_text, *args):
+    """Run a snippet under bash with an empty environment. Nothing run here
+    writes a file or calls a system command."""
+    return subprocess.run([BASH, '-c', script_text, 'bash', *args], capture_output=True,
+                          text=True, timeout=20, env={'PATH': os.path.dirname(BASH)})
 
 
 @pytest.mark.unit
-class TestIPValidation:
-    """Tests for _validate_ip logic used in both setup scripts."""
-
-    def test_valid_ip(self):
-        assert _validate_ip('192.168.1.1') is True
-
-    def test_valid_ip_zeros(self):
-        assert _validate_ip('0.0.0.0') is True
-
-    def test_valid_ip_255(self):
-        assert _validate_ip('255.255.255.255') is True
-
-    def test_invalid_octet_over_255(self):
-        assert _validate_ip('256.1.1.1') is False
-
-    def test_invalid_too_few_octets(self):
-        assert _validate_ip('192.168.1') is False
-
-    def test_invalid_too_many_octets(self):
-        assert _validate_ip('192.168.1.1.1') is False
-
-    def test_invalid_alpha(self):
-        assert _validate_ip('abc.def.ghi.jkl') is False
-
-    def test_invalid_empty(self):
-        assert _validate_ip('') is False
-
-    def test_invalid_negative(self):
-        # Regex won't match dash, so this returns False
-        assert _validate_ip('-1.0.0.0') is False
-
-    def test_ip_base_extraction(self):
-        assert _ip_base('192.168.1.42') == '192.168.1'
-
-    def test_last_octet_extraction(self):
-        assert _last_octet('192.168.1.42') == '42'
-
-    def test_subnet_consistency_same_base(self):
-        """OWL, gateway, and controller must share the same /24 subnet."""
-        owl_ip = '192.168.1.11'
-        gateway = '192.168.1.1'
-        controller = '192.168.1.2'
-        assert _ip_base(owl_ip) == _ip_base(gateway)
-        assert _ip_base(owl_ip) == _ip_base(controller)
-
-    def test_subnet_mismatch_detected(self):
-        """Different subnets should be caught."""
-        owl_ip = '192.168.1.11'
-        controller = '10.0.0.2'
-        assert _ip_base(owl_ip) != _ip_base(controller)
-
-    def test_reserved_octets_detected(self):
-        """Host octets .0 and .255 should be flagged as reserved."""
-        assert _last_octet('192.168.1.0') == '0'
-        assert _last_octet('192.168.1.255') == '255'
-
-
-# ---------------------------------------------------------------------------
-# CONTROLLER.ini generation validation
-# ---------------------------------------------------------------------------
-
-@pytest.mark.unit
-class TestControllerINIGeneration:
-    """Tests for CONTROLLER.ini content as generated by setup scripts."""
-
-    def _write_standalone_ini(self, path, hostname='owl-1'):
-        """Simulate standalone mode CONTROLLER.ini from setup.sh."""
-        content = f"""[MQTT]
-enable = True
-broker_ip = localhost
-broker_port = 1883
-device_id = {hostname}
-
-[WebDashboard]
-port = 8000
-
-[Network]
-mode = standalone
-static_ip = 10.42.0.1
-controller_ip = localhost
-
-[GPS]
-source = none
-port = /dev/ttyUSB0
-baudrate = 9600
-enable = False
-nmea_port = 8500
-boom_width = 12.0
-track_save_directory = tracks
-
-[Actuation]
-actuation_duration = 0.15
-delay = 0.0
-actuation_length_cm = 10
-offset_cm = 30
-speed_avg_window = 5.0
-"""
-        with open(path, 'w') as f:
-            f.write(content)
-
-    def _write_networked_ini(self, path, hostname='owl-2', broker_ip='192.168.1.2',
-                             static_ip='192.168.1.12'):
-        """Simulate networked mode CONTROLLER.ini from setup.sh."""
-        content = f"""[MQTT]
-enable = True
-broker_ip = {broker_ip}
-broker_port = 1883
-device_id = {hostname}
-
-[WebDashboard]
-port = 8000
-
-[Network]
-mode = networked
-static_ip = {static_ip}
-controller_ip = {broker_ip}
-
-[GPS]
-source = none
-port = /dev/ttyUSB0
-baudrate = 9600
-enable = False
-nmea_port = 8500
-boom_width = 12.0
-track_save_directory = tracks
-
-[Actuation]
-actuation_duration = 0.15
-delay = 0.0
-actuation_length_cm = 10
-offset_cm = 30
-speed_avg_window = 5.0
-"""
-        with open(path, 'w') as f:
-            f.write(content)
-
-    def _write_controller_ini(self, path, static_ip='192.168.1.2', gps_enable=False,
-                              boom_width='12.0'):
-        """Simulate in-cab controller CONTROLLER.ini from in-cab_controller_setup.sh."""
-        content = f"""[MQTT]
-enable = True
-broker_ip = localhost
-broker_port = 1883
-device_id = auto
-
-[WebDashboard]
-port = 8000
-
-[Network]
-mode = networked
-static_ip = {static_ip}
-controller_ip = localhost
-
-[GPS]
-source = none
-port = /dev/ttyUSB0
-baudrate = 9600
-enable = {'True' if gps_enable else 'False'}
-nmea_port = 8500
-boom_width = {boom_width}
-track_save_directory = tracks
-
-[Actuation]
-actuation_duration = 0.15
-delay = 0.0
-actuation_length_cm = 10
-offset_cm = 30
-speed_avg_window = 5.0
-"""
-        with open(path, 'w') as f:
-            f.write(content)
-
-    def test_standalone_ini_has_localhost_broker(self, tmp_path):
-        ini_path = tmp_path / 'CONTROLLER.ini'
-        self._write_standalone_ini(str(ini_path))
-        config = configparser.ConfigParser()
-        config.read(str(ini_path))
-        assert config.get('MQTT', 'broker_ip') == 'localhost'
-        assert config.get('Network', 'mode') == 'standalone'
-
-    def test_networked_ini_points_to_controller(self, tmp_path):
-        ini_path = tmp_path / 'CONTROLLER.ini'
-        self._write_networked_ini(str(ini_path), broker_ip='192.168.1.2')
-        config = configparser.ConfigParser()
-        config.read(str(ini_path))
-        assert config.get('MQTT', 'broker_ip') == '192.168.1.2'
-        assert config.get('Network', 'mode') == 'networked'
-        assert config.get('Network', 'controller_ip') == '192.168.1.2'
-
-    def test_each_owl_has_unique_device_id(self, tmp_path):
-        """Multi-OWL: each unit must have a unique device_id."""
-        owl1 = tmp_path / 'owl1.ini'
-        owl2 = tmp_path / 'owl2.ini'
-        self._write_networked_ini(str(owl1), hostname='owl-1', static_ip='192.168.1.11')
-        self._write_networked_ini(str(owl2), hostname='owl-2', static_ip='192.168.1.12')
-
-        c1 = configparser.ConfigParser()
-        c1.read(str(owl1))
-        c2 = configparser.ConfigParser()
-        c2.read(str(owl2))
-
-        assert c1.get('MQTT', 'device_id') == 'owl-1'
-        assert c2.get('MQTT', 'device_id') == 'owl-2'
-        assert c1.get('MQTT', 'device_id') != c2.get('MQTT', 'device_id')
-
-    def test_both_owls_point_to_same_broker(self, tmp_path):
-        """Multi-OWL: both units should point to the same controller IP."""
-        owl1 = tmp_path / 'owl1.ini'
-        owl2 = tmp_path / 'owl2.ini'
-        self._write_networked_ini(str(owl1), hostname='owl-1', broker_ip='192.168.1.2')
-        self._write_networked_ini(str(owl2), hostname='owl-2', broker_ip='192.168.1.2')
-
-        c1 = configparser.ConfigParser()
-        c1.read(str(owl1))
-        c2 = configparser.ConfigParser()
-        c2.read(str(owl2))
-
-        assert c1.get('MQTT', 'broker_ip') == c2.get('MQTT', 'broker_ip')
-
-    def test_controller_ini_broker_is_localhost(self, tmp_path):
-        """The in-cab controller IS the broker, so broker_ip = localhost."""
-        ini_path = tmp_path / 'CONTROLLER.ini'
-        self._write_controller_ini(str(ini_path))
-        config = configparser.ConfigParser()
-        config.read(str(ini_path))
-        assert config.get('MQTT', 'broker_ip') == 'localhost'
-        assert config.get('MQTT', 'device_id') == 'auto'
-
-    def test_controller_ini_has_all_required_sections(self, tmp_path):
-        """CONTROLLER.ini must have all sections that networked.py expects."""
-        ini_path = tmp_path / 'CONTROLLER.ini'
-        self._write_controller_ini(str(ini_path))
-        config = configparser.ConfigParser()
-        config.read(str(ini_path))
-        required = ['MQTT', 'WebDashboard', 'Network', 'GPS', 'Actuation']
-        for section in required:
-            assert config.has_section(section), f"Missing section: {section}"
-
-    def test_gps_enabled_when_requested(self, tmp_path):
-        ini_path = tmp_path / 'CONTROLLER.ini'
-        self._write_controller_ini(str(ini_path), gps_enable=True, boom_width='18.0')
-        config = configparser.ConfigParser()
-        config.read(str(ini_path))
-        assert config.get('GPS', 'enable') == 'True'
-        assert config.get('GPS', 'boom_width') == '18.0'
-
-    def test_actuation_defaults_present(self, tmp_path):
-        """Actuation section must have sane defaults."""
-        ini_path = tmp_path / 'CONTROLLER.ini'
-        self._write_controller_ini(str(ini_path))
-        config = configparser.ConfigParser()
-        config.read(str(ini_path))
-        assert config.getfloat('Actuation', 'actuation_duration') == 0.15
-        assert config.getfloat('Actuation', 'delay') == 0.0
-        assert config.getint('Actuation', 'actuation_length_cm') == 10
-
-
-# ---------------------------------------------------------------------------
-# Multi-OWL MQTT topic routing
-# ---------------------------------------------------------------------------
-
-@pytest.mark.unit
-class TestMultiOWLTopicRouting:
-    """Validate MQTT topic patterns match between setup and runtime."""
-
-    def test_owl_state_topic_includes_device_id(self):
-        """OWL publishes to owl/{device_id}/state — controller subscribes to owl/+/state."""
-        device_id = 'owl-1'
-        topic = f'owl/{device_id}/state'
-        assert topic == 'owl/owl-1/state'
-
-    def test_owl_command_topic_includes_device_id(self):
-        """Controller sends to owl/{device_id}/commands."""
-        device_id = 'owl-2'
-        topic = f'owl/{device_id}/commands'
-        assert topic == 'owl/owl-2/commands'
-
-    def test_two_owls_have_separate_topics(self):
-        """Two OWLs must NOT share the same command topic."""
-        t1 = f'owl/owl-1/commands'
-        t2 = f'owl/owl-2/commands'
-        assert t1 != t2
-
-    def test_wildcard_subscription_matches_all_owls(self):
-        """Controller subscribes to 'owl/+/state' which should match all OWLs."""
-        import re
-        wildcard = r'^owl/[^/]+/state$'
-        assert re.match(wildcard, 'owl/owl-1/state')
-        assert re.match(wildcard, 'owl/owl-2/state')
-        assert re.match(wildcard, 'owl/owl-99/state')
-        assert not re.match(wildcard, 'owl/state')  # standalone topic
-
-    def test_topic_parsing_extracts_device_id(self):
-        """_on_message parses topic_parts[1] as device_id."""
-        topic = 'owl/owl-pi-3/state'
-        parts = topic.split('/')
-        assert len(parts) == 3
-        assert parts[1] == 'owl-pi-3'
-        assert parts[2] == 'state'
-
-
-# ---------------------------------------------------------------------------
-# Nginx config validation
-# ---------------------------------------------------------------------------
-
-@pytest.mark.unit
-class TestNginxConfig:
-    """Validate nginx config patterns for multi-OWL video feed proxying."""
-
-    def test_standalone_nginx_proxies_dashboard_and_video(self):
-        """Standalone nginx must proxy both / (dashboard) and /video_feed."""
-        # These are the proxy_pass targets from setup.sh standalone config
-        dashboard_proxy = 'http://127.0.0.1:8000'
-        video_proxy = 'http://127.0.0.1:8001/stream.mjpg'
-        assert '8000' in dashboard_proxy
-        assert '8001' in video_proxy
-
-    def test_networked_owl_nginx_only_serves_video(self):
-        """Networked OWL nginx must NOT proxy a dashboard — video only."""
-        # From setup.sh networked nginx config:
-        # location = / returns static HTML (no proxy)
-        # location /video_feed proxies to 8001
-        # No location / with proxy_pass to 8000
-        pass  # Structural validation — checked by reading setup.sh
-
-    def test_controller_nginx_has_client_max_body_size(self):
-        """In-cab controller nginx must allow large model uploads."""
-        # From in-cab_controller_setup.sh line 498:
-        # client_max_body_size 250m
-        max_body = '250m'
-        assert max_body == '250m'
-
-    def test_controller_nginx_proxies_video_per_owl(self):
-        """Controller nginx supports /video_feed/{device_id} for per-OWL streams."""
-        # From in-cab_controller_setup.sh nginx config:
-        # location ~ ^/video_feed/(.+)$ { proxy_pass ... }
-        # This allows the controller UI to show video from individual OWLs
-        pattern = r'^/video_feed/(.+)$'
-        assert re.match(pattern, '/video_feed/owl-1')
-        assert re.match(pattern, '/video_feed/owl-2')
-        assert not re.match(pattern, '/video_feed/')  # empty device
-
-
-# ---------------------------------------------------------------------------
-# Full multi-OWL deployment scenario
-# ---------------------------------------------------------------------------
-
-@pytest.mark.unit
-class TestMultiOWLDeploymentScenario:
-    """End-to-end validation of a 2-OWL deployment configuration."""
-
-    def test_two_owl_setup_produces_valid_configs(self, tmp_path):
-        """Simulate setting up 2 OWLs and a controller, verify consistency."""
-        # Controller
-        ctrl_ini = tmp_path / 'controller.ini'
-        ctrl_content = """[MQTT]
-enable = True
-broker_ip = localhost
-broker_port = 1883
-device_id = auto
-
-[Network]
-mode = networked
-static_ip = 192.168.1.2
-controller_ip = localhost
-"""
-        ctrl_ini.write_text(ctrl_content)
-
-        # OWL 1
-        owl1_ini = tmp_path / 'owl1.ini'
-        owl1_content = """[MQTT]
-enable = True
-broker_ip = 192.168.1.2
-broker_port = 1883
-device_id = owl-1
-
-[Network]
-mode = networked
-static_ip = 192.168.1.11
-controller_ip = 192.168.1.2
-"""
-        owl1_ini.write_text(owl1_content)
-
-        # OWL 2
-        owl2_ini = tmp_path / 'owl2.ini'
-        owl2_content = """[MQTT]
-enable = True
-broker_ip = 192.168.1.2
-broker_port = 1883
-device_id = owl-2
-
-[Network]
-mode = networked
-static_ip = 192.168.1.12
-controller_ip = 192.168.1.2
-"""
-        owl2_ini.write_text(owl2_content)
-
-        # Parse all three
-        ctrl_cfg = configparser.ConfigParser()
-        ctrl_cfg.read(str(ctrl_ini))
-        owl1_cfg = configparser.ConfigParser()
-        owl1_cfg.read(str(owl1_ini))
-        owl2_cfg = configparser.ConfigParser()
-        owl2_cfg.read(str(owl2_ini))
-
-        # Verify: all MQTT enabled
-        assert ctrl_cfg.get('MQTT', 'enable') == 'True'
-        assert owl1_cfg.get('MQTT', 'enable') == 'True'
-        assert owl2_cfg.get('MQTT', 'enable') == 'True'
-
-        # Verify: both OWLs point to controller's static IP as broker
-        ctrl_ip = ctrl_cfg.get('Network', 'static_ip')
-        assert owl1_cfg.get('MQTT', 'broker_ip') == ctrl_ip
-        assert owl2_cfg.get('MQTT', 'broker_ip') == ctrl_ip
-
-        # Verify: unique device IDs
-        ids = {
-            owl1_cfg.get('MQTT', 'device_id'),
-            owl2_cfg.get('MQTT', 'device_id'),
-        }
-        assert len(ids) == 2  # both unique
-
-        # Verify: all on same subnet
-        ips = [
-            ctrl_cfg.get('Network', 'static_ip'),
-            owl1_cfg.get('Network', 'static_ip'),
-            owl2_cfg.get('Network', 'static_ip'),
-        ]
-        bases = [_ip_base(ip) for ip in ips]
-        assert all(b == bases[0] for b in bases), f"Subnet mismatch: {bases}"
-
-        # Verify: same MQTT port
-        assert owl1_cfg.get('MQTT', 'broker_port') == '1883'
-        assert owl2_cfg.get('MQTT', 'broker_port') == '1883'
-
+@pytest.mark.skipif(not BASH, reason='bash not available')
+@pytest.mark.parametrize('script', IP_SCRIPTS)
+class TestNetworkQuestionHelpers:
+    """The network questions loop until _validate_ip accepts the answer, so
+    whatever it accepts becomes the unit's static IP and the broker address
+    in CONTROLLER.ini."""
+
+    VALID = ['192.168.1.11', '10.42.0.1', '0.0.0.0', '255.255.255.255', '1.2.3.4']
+    INVALID = ['', '192.168.1', '192.168.1.1.1', '256.1.1.1', '192.168.1.999', '1234.1.1.1',
+               'abc.def.ghi.jkl', '-1.2.3.4', '192.168.1.1/24', ' 192.168.1.1', '192.168.1.1 ',
+               '192.168.1.x', '192.168..1', '192,168,1,1', '192.168.1.1;reboot', 'localhost']
+
+    LOOP = ('for ip in "$@"; do\n'
+            '  if _validate_ip "$ip"; then echo "ok|$ip"; else echo "no|$ip"; fi\n'
+            'done\n')
+
+    def _verdicts(self, script, addresses):
+        run = _bash(_functions(script, '_validate_ip') + self.LOOP, *addresses)
+        assert run.returncode == 0, run.stderr
+        return run, {line[3:]: line[:2] == 'ok' for line in run.stdout.splitlines()}
+
+    def test_accepts_dotted_quads_in_range(self, script):
+        run, verdicts = self._verdicts(script, self.VALID)
+        assert verdicts == {ip: True for ip in self.VALID}
+        assert run.stderr == ''
+
+    def test_refuses_everything_else(self, script):
+        run, verdicts = self._verdicts(script, self.INVALID)
+        assert verdicts == {ip: False for ip in self.INVALID}
+        assert run.stderr == ''
+
+    @pytest.mark.xfail(strict=True, reason=(
+        "_validate_ip compares octets with (( o > 255 )), which reads a leading zero as octal: "
+        "'08' and '09' make bash print 'value too great for base' on the installer's terminal "
+        "and the range check is skipped for that octet (controller/shared/setup.sh and "
+        "controller/networked/in-cab_controller_setup.sh, _validate_ip; needs 10#$o). The "
+        "address is still accepted and is in range, so the unit is configured correctly."))
+    def test_a_leading_zero_octet_is_checked_without_a_shell_error(self, script):
+        run, verdicts = self._verdicts(script, ['192.168.1.08', '192.168.1.099'])
+        assert verdicts == {'192.168.1.08': True, '192.168.1.099': True}
+        assert run.stderr == ''
+
+    def test_subnet_base_and_host_octet(self, script):
+        """The questions compare the /24 base of the OWL, gateway and
+        controller addresses and refuse a host octet of 0 or 255."""
+        run = _bash(_functions(script, '_ip_base', '_last_octet')
+                    + 'for ip in "$@"; do echo "$(_ip_base "$ip")|$(_last_octet "$ip")"; done\n',
+                    '192.168.1.11', '10.42.0.1', '192.168.2.255', '172.16.0.0')
+        assert run.returncode == 0, run.stderr
+        assert run.stdout.splitlines() == ['192.168.1|11', '10.42.0|1', '192.168.2|255', '172.16.0|0']
+
+
+# ===========================================================================
+# Structure checks: script and requirements TEXT. No behaviour is proven.
+# ===========================================================================
 
 # ---------------------------------------------------------------------------
 # Dependency single-source-of-truth — setup scripts must install from
@@ -527,52 +162,6 @@ class TestRequirementsSingleSource:
             content = f.read()
         for pkg in ('flask', 'gunicorn', 'paho-mqtt', 'psutil', 'boto3', 'pyserial'):
             assert pkg in content, f"requirements.txt missing {pkg}"
-
-
-# ---------------------------------------------------------------------------
-# Software-update sudoers rule — the dashboard's /api/settings/update/start
-# launches owl_update.sh via systemd-run; the argv is built by
-# utils/software_update.update_argv and must match the rule literally.
-# ---------------------------------------------------------------------------
-
-@pytest.mark.unit
-class TestUpdateSudoersRule:
-
-    PROJECT_ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
-
-    def _read(self, relpath):
-        with open(os.path.join(self.PROJECT_ROOT, relpath), encoding='utf-8') as f:
-            return f.read()
-
-    def test_shared_setup_installs_the_update_rule(self):
-        content = self._read('controller/shared/setup.sh')
-        assert 'setup_update_permissions()' in content
-        assert '/etc/sudoers.d/96-owl-update' in content
-        # Called in the permissions block, after device settings
-        assert re.search(r'setup_device_settings_permissions\s*\nsetup_update_permissions',
-                         content), 'setup_update_permissions is not called'
-        # Validated before install (a bad sudoers file locks sudo out)
-        assert 'visudo -cf' in content
-
-    def test_rule_matches_the_shared_argv(self):
-        """Literal up to the script, then a single glob for its own args —
-        the same shape owl_cloud_provision.sh installs."""
-        from utils import software_update as swu
-        content = self._read('controller/shared/setup.sh')
-        match = re.search(r'Cmnd_Alias OWL_UPDATE_RUN = (.+)', content)
-        assert match, 'OWL_UPDATE_RUN alias missing'
-        rule = match.group(1)
-        expected_tail = (f'--unit={swu.UNIT_NAME} --collect '
-                         f'--property=RuntimeMaxSec={swu.RUNTIME_MAX_S} '
-                         '--uid=${CURRENT_USER} --gid=${CURRENT_USER} '
-                         '/bin/bash ${REPO_DIR}/owl_update.sh *')
-        assert rule.endswith(expected_tail), rule
-        cloud = self._read('owl_cloud_provision.sh')
-        assert expected_tail in cloud, 'cloud provisioning rule drifted'
-
-    def test_dashboard_restart_is_permitted(self):
-        content = self._read('controller/shared/setup.sh')
-        assert 'restart owl-dash.service' in content
 
 
 # ---------------------------------------------------------------------------

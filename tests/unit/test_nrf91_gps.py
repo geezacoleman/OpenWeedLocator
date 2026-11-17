@@ -1,9 +1,9 @@
 """
 nRF9151 GPS source (Nordic Serial LTE Modem on the production CM5 carrier).
 
-Covers the '#XGPS' parser, GPSState handling, the AT start sequence against a
-scripted fake modem, and the owl.py / setup-script wiring (source inspection:
-owl.py can't be imported on Windows).
+Covers the '#XGPS' parser, GPSState handling and the AT start sequence against a
+scripted fake modem. The reader thread in owl.py that uses them runs on a real
+Owl in tests/owl/test_gps_sources.py.
 """
 
 from pathlib import Path
@@ -168,46 +168,15 @@ class TestNrf91Commands:
 
 
 @pytest.mark.unit
-class TestNrf91Wiring:
+class TestNrf91ScriptStructure:
+    """Text checks on files that cannot be run here. They prove no
+    behaviour. What used to sit beside them and is now run for real:
 
-    @pytest.fixture
-    def owl_src(self):
-        return (REPO / 'owl.py').read_text(encoding='utf-8')
-
-    def test_owl_reader_handles_nrf91(self, owl_src):
-        assert "self.gps_source in ('serial', 'nrf91')" in owl_src
-        assert "('/dev/ttyAMA3', 460800)" in owl_src
-        assert 'nrf91_start_gps(' in owl_src
-        assert 'self._gps_state.update_from_line(raw_line)' in owl_src
-
-    def test_modem_restart_and_silence_trigger_restart(self, owl_src):
-        reader = owl_src.split('def _serial_gps_reader(self):', 1)[1]
-        assert "raw_line == 'Ready'" in reader
-        assert "nrf91_command(self._gps_serial, 'AT'" in reader
-
-    def test_metres_accuracy_preferred_over_hdop(self, owl_src):
-        assert "snapshot['accuracy_m'] if snapshot.get('accuracy_m') is not None" in owl_src
-
-    def test_boot_config_mode(self):
-        script = (REPO / 'controller' / 'setup' / 'install_firstboot.sh').read_text(encoding='utf-8')
-        fn = script.split('configure_gps_uart() {', 1)[1].split('\n}\n', 1)[0]
-        assert '--gps-config) configure_gps_uart' in script
-        assert 'GPS_UART_OVERLAY="uart3-pi5"' in script
-        assert 'GPS_POWER_GPIO=26' in script
-        assert 'echo "gpio=${GPS_POWER_GPIO}=op,dh"' in fn
-        # CM5 carrier only, idempotent per line, exit 2 when config.txt changed
-        assert '"Compute Module 5"' in fn
-        assert 'grep -qE "^gpio=${GPS_POWER_GPIO}=op,dh' in fn
-        assert 'grep -qE "^dtoverlay=${GPS_UART_OVERLAY}' in fn
-        assert 'return 2' in fn
-        assert 'echo "dtoverlay=${GPS_UART_OVERLAY}"' in fn
-        # GPIO 10/11 are output channels on the carrier: ctsrts is removed, never written
-        assert 'echo "dtoverlay=${GPS_UART_OVERLAY},ctsrts' not in fn
-        # Every production CM5 has an external Wi-Fi antenna: ant2, and a
-        # stray ant1/noant (which would win) is commented out
-        assert 'echo "dtparam=ant2"' in fn
-        assert 'grep -qE "^dtparam=ant2' in fn
-        assert 's/^dtparam=(ant1|noant)/#&/' in fn
+    - owl.py's reader (start sequence, 'Ready' restart, silence ping, metres
+      accuracy over HDOP, default port and baud): tests/owl/test_gps_sources.py
+    - install_firstboot.sh --gps-config and owl_setup.sh setup_factory_gps:
+      tests/controllers/setup/test_setup_scripts.py
+    """
 
     def test_probe_checks_boot_lines_not_its_marker(self):
         # The probe re-added gpio=26=op,dh on a --factory unit because it only
@@ -227,20 +196,6 @@ class TestNrf91Wiring:
         raw = (REPO / script).read_bytes()
         assert b'\x00' not in raw
         assert b'\r' not in raw
-
-    def test_board_model_read_strips_nul_escape(self):
-        script = (REPO / 'controller' / 'setup' / 'install_firstboot.sh').read_text(encoding='utf-8')
-        fn = script.split('configure_gps_uart() {', 1)[1].split('\n}\n', 1)[0]
-        assert "tr -d '\\0' < /proc/device-tree/model" in fn
-
-    def test_factory_gps_uses_bench_values_and_boot_config(self):
-        script = (REPO / 'owl_setup.sh').read_text(encoding='utf-8')
-        assert 'NRF_GPS_SOURCE="nrf91"' in script
-        assert 'NRF_GPS_PORT="/dev/ttyAMA3"' in script
-        assert 'NRF_GPS_BAUD="460800"' in script
-        fn = script.split('setup_factory_gps() {', 1)[1].split('\n}\n', 1)[0]
-        assert 'install_firstboot.sh" --gps-config' in fn
-        assert '-crtscts' in fn
 
     def test_config_editor_offers_nrf91(self):
         js = (REPO / 'controller' / 'shared' / 'js' / 'config.js').read_text(encoding='utf-8')

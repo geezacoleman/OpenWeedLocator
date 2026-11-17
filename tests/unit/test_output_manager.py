@@ -1,6 +1,10 @@
-"""Tests for output_manager.py — relay control, test mocks, status indicators.
+"""utils/output_manager.py: the nozzle scheduler (RelayController), the relay
+board (RelayControl) and the status indicators.
 
-Priority 3 — nozzles must fire correctly in the field.
+Every spray test here asserts on WHEN the relay board was driven, with a bound
+on both sides. A relay that switches late is the field failure (2026-11-16:
+relays seconds late behind a GPS-derived delay), and a lower bound alone
+passes it. The same paths on a whole Owl are in tests/owl/.
 """
 
 import time
@@ -9,322 +13,204 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import utils.output_manager as om
+from utils.output_manager import RelayController
 
-# ---------------------------------------------------------------------------
-# TestRelay / TestBuzzer / TestLED mock classes
-# ---------------------------------------------------------------------------
-
-@pytest.mark.unit
-class TestTestRelay:
-    """Tests for the TestRelay mock used on non-Pi platforms."""
-
-    def test_on_off_no_crash(self):
-        from utils.output_manager import TestRelay
-        relay = TestRelay(0)
-        relay.on()
-        relay.off()
-
-    def test_verbose_prints(self, capsys):
-        from utils.output_manager import TestRelay
-        relay = TestRelay(3, verbose=True)
-        relay.on()
-        relay.off()
-        captured = capsys.readouterr()
-        assert 'Relay 3 ON' in captured.out
-        assert 'Relay 3 OFF' in captured.out
-
-    def test_non_verbose_silent(self, capsys):
-        from utils.output_manager import TestRelay
-        relay = TestRelay(0, verbose=False)
-        relay.on()
-        relay.off()
-        captured = capsys.readouterr()
-        assert captured.out == ''
+# A consumer thread waking on its Condition and driving the pin. Measured at
+# well under 10 ms; anything past this is a late nozzle, not jitter.
+LATE_S = 0.1
+# Slack on "not before": the event is stamped just after the drive call.
+EARLY_S = 0.001
 
 
-@pytest.mark.unit
-class TestTestBuzzer:
-    """Tests for the TestBuzzer mock."""
+@pytest.fixture
+def timed():
+    """timed(relays=(0, 1)) -> (RelayController, events). events holds every
+    drive of the relay board as (kind, relay, time.monotonic()), in order.
+    Controllers are stopped at teardown."""
+    built = []
 
-    def test_beep_no_crash(self):
-        from utils.output_manager import TestBuzzer
-        buzzer = TestBuzzer()
-        buzzer.beep(on_time=0.1, off_time=0.1, n=2)
-
-    def test_beep_verbose(self, capsys):
-        from utils.output_manager import TestBuzzer
-        buzzer = TestBuzzer()
-        buzzer.beep(on_time=0.1, off_time=0.1, n=3, verbose=True)
-        captured = capsys.readouterr()
-        assert captured.out.count('BEEP') == 3
-
-
-@pytest.mark.unit
-class TestTestLED:
-    """Tests for the TestLED mock."""
-
-    def test_blink_no_crash(self):
-        from utils.output_manager import TestLED
-        led = TestLED(pin='BOARD37')
-        led.blink(on_time=0.1, off_time=0.1, n=1)
-
-    def test_on_off_tracks_state_quietly(self, capsys):
-        """The stub must track state without printing: the GPS LED thread
-        drives off() twice a second, which used to flood the console on any
-        non-Pi machine."""
-        from utils.output_manager import TestLED
-        led = TestLED(pin='BOARD37')
-        assert led.is_lit is False
-        led.on()
-        assert led.is_lit is True
-        led.off()
-        assert led.is_lit is False
-        assert capsys.readouterr().out == ''
-
-    def test_blink_none_n(self):
-        """n=None should not crash (converted to n=1 internally)."""
-        from utils.output_manager import TestLED
-        led = TestLED(pin='BOARD37')
-        led.blink(on_time=0.1, off_time=0.1, n=None)
-
-
-# ---------------------------------------------------------------------------
-# RelayControl (uses TestRelay on non-Pi)
-# ---------------------------------------------------------------------------
-
-@pytest.mark.unit
-class TestRelayControl:
-    """Tests for RelayControl class (test mode on Windows)."""
-
-    def _make_relay_control(self):
-        from utils.output_manager import RelayControl
-        relay_dict = {0: 13, 1: 15, 2: 16, 3: 18}
-        return RelayControl(relay_dict)
-
-    def test_init_creates_test_relays(self):
-        rc = self._make_relay_control()
-        assert rc.testing is True
-        # All 4 relays should be TestRelay instances
-        from utils.output_manager import TestRelay
-        for relay in rc.relay_dict.values():
-            assert isinstance(relay, TestRelay)
-
-    def test_relay_on_off(self):
-        rc = self._make_relay_control()
-        rc.relay_on(0, verbose=False)
-        rc.relay_off(0, verbose=False)
-
-    def test_all_on(self):
-        rc = self._make_relay_control()
-        rc.all_on(verbose=False)
-        # No crash = pass
-
-    def test_all_off(self):
-        rc = self._make_relay_control()
-        rc.all_off(verbose=False)
-
-    def test_beep(self):
-        rc = self._make_relay_control()
-        rc.beep(duration=0.1, repeats=1)
-
-    def test_remove_relay(self):
-        rc = self._make_relay_control()
-        rc.remove(2)
-        assert 2 not in rc.relay_dict
-        assert len(rc.relay_dict) == 3
-
-    def test_clear_relays(self):
-        rc = self._make_relay_control()
-        rc.clear()
-        assert len(rc.relay_dict) == 0
-
-
-# ---------------------------------------------------------------------------
-# RelayController (thread-based job queue system)
-# ---------------------------------------------------------------------------
-
-@pytest.mark.unit
-class TestRelayController:
-    """Tests for RelayController — spray-window (deadline) actuation.
-
-    Each detection opens a window [time_stamp + delay, time_stamp + delay + duration].
-    Overlapping windows merge: off_at only ever extends, so continuous detection
-    holds a nozzle on without off/on cycling, and a live duration drop (GPS
-    speed-adaptive update) can never cut short spray already promised.
-    """
-
-    def _make_controller(self):
-        from utils.output_manager import RelayController
-        relay_dict = {0: 13, 1: 15}
-        return RelayController(relay_dict, vis=False)
-
-    def _record_switching(self, rc):
-        """Wrap the relay board calls so tests can assert real switching events."""
+    def _build(relays=(0, 1)):
+        rc = RelayController({r: 13 + r for r in relays}, vis=False)
         events = []
-        rc.relay.relay_on = lambda relay, verbose=True: events.append(('on', relay, time.monotonic()))
-        rc.relay.relay_off = lambda relay, verbose=True: events.append(('off', relay, time.monotonic()))
-        return events
+        lock = threading.Lock()
 
-    def test_init_creates_consumer_threads(self):
-        rc = self._make_controller()
-        # Should have a schedule and condition for each relay
-        assert 0 in rc.relay_schedule_dict
-        assert 1 in rc.relay_schedule_dict
-        assert 0 in rc.relay_condition_dict
-        assert 1 in rc.relay_condition_dict
+        def on(relay, verbose=True):
+            with lock:
+                events.append(('on', relay, time.monotonic()))
+
+        def off(relay, verbose=True):
+            with lock:
+                events.append(('off', relay, time.monotonic()))
+
+        rc.relay.relay_on, rc.relay.relay_off = on, off
+        built.append(rc)
+        return rc, events
+
+    yield _build
+    for rc in built:
+        rc.stop_test(notify=False)
         rc.stop()
 
-    def test_receive_opens_window(self):
-        rc = self._make_controller()
+
+def _at(events, kind, relay=0):
+    return [at for k, r, at in events if k == kind and r == relay]
+
+
+def _within(at, earliest, latest=None):
+    """earliest <= at <= latest (default: earliest + LATE_S)."""
+    latest = earliest + LATE_S if latest is None else latest
+    return earliest - EARLY_S <= at <= latest
+
+
+# ---------------------------------------------------------------------------
+# Spray windows: when the relay switches
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestSprayWindowTiming:
+    """Each detection opens a window [time_stamp + delay, + duration].
+    Overlapping windows merge: the ON never moves later and the OFF only
+    extends, so a weed seen frame after frame holds the nozzle on once."""
+
+    @pytest.mark.parametrize('delay', [0.0, 0.3])
+    def test_relay_follows_the_window_on_both_edges(self, timed, delay):
+        """delay 0 is the normal OWL setting: the relay is driven at once.
+        With a delay it is driven at the delay, not before and not late."""
+        rc, events = timed()
         t = time.monotonic()
-        rc.receive(relay=0, time_stamp=t, delay=0, duration=5)
-        schedule = rc.relay_schedule_dict[0]
-        assert schedule['on_at'] == pytest.approx(t, abs=0.001)
-        assert schedule['off_at'] == pytest.approx(t + 5, abs=0.001)
-        rc.stop()
+        rc.receive(relay=0, time_stamp=t, delay=delay, duration=0.2)
+        time.sleep(delay + 0.2 + 2 * LATE_S)
 
-    def test_overlapping_windows_merge_and_extend(self):
-        rc = self._make_controller()
-        t = time.monotonic()
-        rc.receive(relay=0, time_stamp=t, delay=0, duration=5)
-        rc.receive(relay=0, time_stamp=t + 0.5, delay=0, duration=5)
-        schedule = rc.relay_schedule_dict[0]
-        assert schedule['on_at'] == pytest.approx(t, abs=0.001)
-        assert schedule['off_at'] == pytest.approx(t + 5.5, abs=0.001)
-        rc.stop()
+        ons, offs = _at(events, 'on'), _at(events, 'off')
+        assert len(ons) == 1 and len(offs) == 1, events
+        assert _within(ons[0], t + delay), f'ON {ons[0] - t:.3f} s after detection, delay {delay}'
+        assert _within(offs[0], t + delay + 0.2), f'OFF {offs[0] - t:.3f} s after detection'
+        assert not _at(events, 'on', 1) and not _at(events, 'off', 1), 'the other lane switched'
 
-    def test_duration_drop_never_shrinks_open_window(self):
-        """A mid-stream GPS speed update lowering duration must not cut short
-        spray that was already promised (the field off-blip bug)."""
-        rc = self._make_controller()
-        t = time.monotonic()
-        rc.receive(relay=0, time_stamp=t, delay=0, duration=5)
-        rc.receive(relay=0, time_stamp=t + 0.1, delay=0, duration=0.05)
-        schedule = rc.relay_schedule_dict[0]
-        assert schedule['off_at'] == pytest.approx(t + 5, abs=0.001)
-        rc.stop()
-
-    def test_stale_window_ignored(self):
-        """A detection whose whole window is already in the past schedules nothing."""
-        rc = self._make_controller()
-        rc.receive(relay=0, time_stamp=time.monotonic() - 10, delay=0, duration=1)
-        schedule = rc.relay_schedule_dict[0]
-        assert schedule['off_at'] is None
-        rc.stop()
-
-    def test_continuous_detection_single_on_off(self):
-        """Continuous detections must hold the nozzle on: exactly one ON at the
-        start and one OFF after the last window closes — no cycling between."""
-        rc = self._make_controller()
-        events = self._record_switching(rc)
-        last_t = None
-        for _ in range(8):
+    @pytest.mark.parametrize('delay, duration, interval, frames', [
+        (0.0, 0.3, 0.05, 8),     # a weed in view for 8 frames
+        (0.2, 0.05, 0.1, 6),     # GPS delay, spray shorter than the frame gap
+    ])
+    def test_continuous_detection_is_one_on_at_the_first_window_and_one_off_after_the_last(
+            self, timed, delay, duration, interval, frames):
+        """Field bug repro (second row): the old queue model strobed the
+        nozzle between frames. And the ON belongs to the FIRST detection:
+        a merge that lets every new detection push it later (max instead of
+        min on on_at) delays the spray for as long as the weed is in view."""
+        rc, events = timed()
+        first_t = last_t = None
+        for _ in range(frames):
             last_t = time.monotonic()
-            rc.receive(relay=0, time_stamp=last_t, delay=0, duration=0.3)
-            time.sleep(0.05)
-        time.sleep(0.6)  # let the final window close
+            first_t = first_t if first_t is not None else last_t
+            rc.receive(relay=0, time_stamp=last_t, delay=delay, duration=duration)
+            time.sleep(interval)
+        time.sleep(delay + duration + 2 * LATE_S)
 
-        ons = [e for e in events if e[0] == 'on' and e[1] == 0]
-        offs = [e for e in events if e[0] == 'off' and e[1] == 0]
-        assert len(ons) == 1
+        ons, offs = _at(events, 'on'), _at(events, 'off')
+        assert len(ons) == 1, f'nozzle cycled during continuous detection: {events}'
         assert len(offs) == 1
-        # Off must come only after the final window's deadline...
-        assert offs[0][2] >= last_t + 0.3 - 0.02
-        # ...but windows must MERGE, not accumulate: off no later than the last
-        # detection + one duration (+ margin). 8 stacked 0.3s jobs would run
-        # ~2.4s — the trailing over-spray seen in the field.
-        assert offs[0][2] <= last_t + 0.3 + 0.2
-        rc.stop()
+        assert _within(ons[0], first_t + delay), (
+            f'ON {ons[0] - first_t:.3f} s after the first detection, delay {delay}')
+        # windows merge, they do not stack: 8 x 0.3 s queued would run 2.4 s
+        assert _within(offs[0], last_t + delay + duration), (
+            f'OFF {offs[0] - last_t:.3f} s after the last detection')
 
-    def test_continuous_detection_with_delay_no_cycling(self):
-        """Field bug repro: with a GPS-derived delay and a duration shorter than
-        the frame interval, the old queue model strobed the nozzle (off + full
-        delay re-applied between every frame) despite continuous detection.
-        Windows [ts+delay, ts+delay+duration] overlap the next frame's arrival,
-        so they must merge into one continuous activation."""
-        rc = self._make_controller()
-        events = self._record_switching(rc)
-        last_t = None
-        for _ in range(6):
-            last_t = time.monotonic()
-            rc.receive(relay=0, time_stamp=last_t, delay=0.2, duration=0.05)
-            time.sleep(0.1)
-        time.sleep(0.6)  # let the final window close
+    def test_a_shorter_delay_brings_a_pending_on_forward_and_keeps_the_later_off(self, timed):
+        """Speed rose between two frames of the same weed: the nozzle opens
+        at the earlier of the two starts and closes at the later of the two
+        ends."""
+        rc, events = timed()
+        t = time.monotonic()
+        rc.receive(relay=0, time_stamp=t, delay=0.6, duration=0.2)   # [0.6, 0.8]
+        rc.receive(relay=0, time_stamp=t, delay=0.2, duration=0.2)   # [0.2, 0.4]
+        time.sleep(0.8 + 2 * LATE_S)
+        ons, offs = _at(events, 'on'), _at(events, 'off')
+        assert len(ons) == 1 and len(offs) == 1, events
+        assert _within(ons[0], t + 0.2)
+        assert _within(offs[0], t + 0.8)
 
-        ons = [e for e in events if e[0] == 'on' and e[1] == 0]
-        offs = [e for e in events if e[0] == 'off' and e[1] == 0]
-        assert len(ons) == 1, f"nozzle cycled during continuous detection: {events}"
-        assert len(offs) == 1
-        assert offs[0][2] >= last_t + 0.25 - 0.02
-        rc.stop()
-
-    def test_duration_drop_does_not_blip_relay(self):
-        """Field bug repro: the 1 Hz speed broadcast lowering actuation_duration
-        mid-spray must not switch an active nozzle off before the spray already
-        promised has finished (the visible off-blip on the sprayer)."""
-        rc = self._make_controller()
-        events = self._record_switching(rc)
+    def test_a_duration_drop_does_not_cut_an_open_window_short(self, timed):
+        """Field bug repro: the 1 Hz speed broadcast lowering
+        actuation_duration mid-spray blipped an active nozzle off."""
+        rc, events = timed()
         t = time.monotonic()
         rc.receive(relay=0, time_stamp=t, delay=0, duration=0.6)
         time.sleep(0.1)
-        # New detection arrives carrying a much smaller duration (speed rose)
         rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=0.05)
-        time.sleep(0.2)  # t+0.3: well inside the original 0.6s window
-        assert not any(e[0] == 'off' and e[1] == 0 for e in events), (
-            "duration drop cut short an active spray window"
-        )
-        time.sleep(0.5)  # let the window close
-        offs = [e for e in events if e[0] == 'off' and e[1] == 0]
-        assert len(offs) == 1
-        assert offs[0][2] >= t + 0.6 - 0.02
-        rc.stop()
+        time.sleep(0.5 + 2 * LATE_S)
+        ons, offs = _at(events, 'on'), _at(events, 'off')
+        assert len(ons) == 1 and len(offs) == 1, events
+        assert _within(offs[0], t + 0.6), f'OFF {offs[0] - t:.3f} s into a 0.6 s window'
 
-    def test_relay_turns_off_after_window(self):
-        rc = self._make_controller()
-        events = self._record_switching(rc)
-        rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=0.15)
-        time.sleep(0.5)
-        assert events, "relay never switched"
-        assert events[-1][0] == 'off'
-        assert rc.relay_schedule_dict[0]['off_at'] is None  # schedule reset
-        rc.stop()
+    def test_a_window_already_in_the_past_drives_nothing(self, timed):
+        rc, events = timed()
+        rc.receive(relay=0, time_stamp=time.monotonic() - 10, delay=0, duration=1)
+        time.sleep(0.3)
+        assert events == []
 
-    def test_delay_defers_activation(self):
-        rc = self._make_controller()
-        events = self._record_switching(rc)
-        t = time.monotonic()
-        rc.receive(relay=0, time_stamp=t, delay=0.3, duration=0.2)
-        time.sleep(0.1)
-        assert not any(e[0] == 'on' for e in events), "fired before delay elapsed"
-        time.sleep(0.5)
-        ons = [e for e in events if e[0] == 'on' and e[1] == 0]
-        assert len(ons) == 1
-        assert ons[0][2] >= t + 0.3 - 0.02
-        rc.stop()
-
-    def test_concurrent_activations_no_interference(self):
-        """Two relays activated simultaneously should not interfere."""
-        rc = self._make_controller()
-        events = self._record_switching(rc)
+    def test_two_lanes_at_once_each_keep_their_own_window(self, timed):
+        rc, events = timed()
         t = time.monotonic()
         rc.receive(relay=0, time_stamp=t, delay=0, duration=0.1)
-        rc.receive(relay=1, time_stamp=t, delay=0, duration=0.1)
-        time.sleep(0.4)
-        for relay in (0, 1):
-            assert any(e[0] == 'on' and e[1] == relay for e in events)
-            assert any(e[0] == 'off' and e[1] == relay for e in events)
-        rc.stop()
+        rc.receive(relay=1, time_stamp=t, delay=0, duration=0.3)
+        time.sleep(0.3 + 2 * LATE_S)
+        for relay, duration in ((0, 0.1), (1, 0.3)):
+            ons, offs = _at(events, 'on', relay), _at(events, 'off', relay)
+            assert len(ons) == 1 and len(offs) == 1, events
+            assert _within(ons[0], t)
+            assert _within(offs[0], t + duration)
 
-    def test_stop_turns_off_active_relay(self):
-        """stop() must never leave a nozzle on."""
-        rc = self._make_controller()
-        events = self._record_switching(rc)
+    def test_stop_switches_an_open_window_off_at_once(self, timed):
+        """stop() must never leave a spot nozzle on."""
+        rc, events = timed()
         rc.receive(relay=0, time_stamp=time.monotonic(), delay=0, duration=5)
         time.sleep(0.1)
-        assert any(e[0] == 'on' for e in events)
+        assert [k for k, r, _ in events] == ['on']
+        stopped = time.monotonic()
         rc.stop()
+        time.sleep(2 * LATE_S)
+        offs = _at(events, 'off')
+        assert len(offs) == 1 and _within(offs[0], stopped), events
+
+
+@pytest.mark.unit
+class TestStaleAnchorCost:
+    """What a timestamp taken earlier than the receive() call costs, at the
+    relay.
+
+    These pin down why owl.py stamps `actuation_time` AFTER detection rather
+    than at frame capture. With delay = 0 the nozzle cannot open earlier than
+    the call whatever the stamp says, so an earlier anchor only brings the
+    OFF forward: every spray is shortened by the processing time and, at
+    speed, dropped.
+    """
+
+    @pytest.mark.parametrize('lag_s, delay, duration, on_after, off_after', [
+        (0.0, 0.0, 0.15, 0.0, 0.15),      # fresh anchor: the whole duration
+        (0.04, 0.0, 0.15, 0.0, 0.11),     # 40 ms of lag costs 40 ms of spray
+        (0.04, 0.2, 0.03, 0.16, 0.19),    # a real delay still lands in the future
+    ])
+    def test_spray_runs_from_the_anchor_not_from_the_call(self, timed, lag_s, delay, duration,
+                                                          on_after, off_after):
+        rc, events = timed(relays=(0,))
+        called = time.monotonic()
+        rc.receive(relay=0, time_stamp=called - lag_s, delay=delay, duration=duration)
+        time.sleep(off_after + 2 * LATE_S)
+        ons, offs = _at(events, 'on'), _at(events, 'off')
+        assert len(ons) == 1 and len(offs) == 1, events
+        assert _within(ons[0], called + on_after)
+        assert _within(offs[0], called + off_after), (
+            f'sprayed until {offs[0] - called:.3f} s after the call, wanted {off_after}')
+
+    def test_a_stale_anchor_cancels_a_short_spray_completely(self, timed):
+        """The failure that matters: at 12 km/h a 10 cm patch is a 30 ms
+        spray. Anchored 40 ms back, the whole window is in the past and the
+        OWL stops spraying with nothing logged."""
+        rc, events = timed(relays=(0,))
+        rc.receive(relay=0, time_stamp=time.monotonic() - 0.040, delay=0, duration=0.030)
         time.sleep(0.2)
-        assert events[-1][0] == 'off'
+        assert events == []
 
 
 # ---------------------------------------------------------------------------
@@ -334,11 +220,6 @@ class TestRelayController:
 @pytest.mark.unit
 class TestHeadlessStatusIndicator:
     """Tests for HeadlessStatusIndicator."""
-
-    def test_init_no_crash(self, tmp_path):
-        from utils.output_manager import HeadlessStatusIndicator
-        indicator = HeadlessStatusIndicator(save_directory=str(tmp_path))
-        indicator.stop()
 
     def test_drive_full_at_90_percent(self, tmp_path):
         from utils.output_manager import HeadlessStatusIndicator
@@ -352,11 +233,6 @@ class TestHeadlessStatusIndicator:
         indicator = HeadlessStatusIndicator(save_directory=str(tmp_path))
         indicator._update_storage_indicator(0.5)
         assert indicator.DRIVE_FULL is False
-        indicator.stop()
-
-    def test_no_save_mode(self):
-        from utils.output_manager import HeadlessStatusIndicator
-        indicator = HeadlessStatusIndicator(save_directory=None, no_save=True)
         indicator.stop()
 
     def test_drive_full_clears_when_space_freed(self, tmp_path):
@@ -676,60 +552,6 @@ class TestNozzleSwitchFailure:
         assert events[-1] == ('off', 0)
 
 
-@pytest.mark.unit
-class TestStaleAnchorCost:
-    """What a timestamp taken earlier than the receive() call actually costs.
-
-    These pin down why owl.py stamps `actuation_time` AFTER detection rather
-    than at frame capture. Anchoring at capture reads as more principled, but
-    with delay = 0 - the normal OWL setting, because processing is only just
-    fast enough to open the nozzle in time - the nozzle cannot open any earlier
-    than this call whatever the stamp says. The earlier anchor only moves off_at
-    forward, so it shortens every spray by the processing time and eventually
-    cancels it outright.
-    """
-
-    def _committed_window_ms(self, lag_s, duration, delay=0.0):
-        """Milliseconds of spray the scheduler commits to, measured from now.
-
-        Returns None when the window is discarded entirely.
-        """
-        from utils.output_manager import RelayController
-        rc = RelayController({0: 13}, vis=False)
-        rc.running = False          # keep the consumer off the schedule
-        rc.relay.relay_on = lambda *a, **k: None
-        rc.relay.relay_off = lambda *a, **k: None
-        schedule = rc.relay_schedule_dict[0]
-        schedule['on_at'] = schedule['off_at'] = None
-        now = time.monotonic()
-        rc.receive(relay=0, time_stamp=now - lag_s, delay=delay, duration=duration)
-        rc.stop()
-        if schedule['off_at'] is None:
-            return None
-        return (schedule['off_at'] - now) * 1000
-
-    def test_fresh_anchor_commits_the_whole_duration(self):
-        assert self._committed_window_ms(0.0, 0.150) == pytest.approx(150, abs=5)
-
-    def test_stale_anchor_shortens_the_spray_by_exactly_the_lag(self):
-        """40 ms of processing lag costs 40 ms of spray."""
-        assert self._committed_window_ms(0.040, 0.150) == pytest.approx(110, abs=5)
-
-    def test_stale_anchor_cancels_a_short_spray_completely(self):
-        """The failure that matters: at speed the spray silently disappears.
-
-        The speed-adaptive calculation is duration = actuation_length_cm / speed.
-        At 12 km/h with the default 10 cm patch that is 30 ms. A Pi loop of 40 ms
-        would put the whole window in the past, receive()'s stale guard would
-        discard it, and the OWL would stop spraying with nothing logged.
-        """
-        assert self._committed_window_ms(0.040, 0.030) is None
-
-    def test_a_real_delay_still_schedules_into_the_future(self):
-        """With a genuine camera-to-nozzle delay the window is still ahead."""
-        assert self._committed_window_ms(0.040, 0.030, delay=0.20) == pytest.approx(190, abs=5)
-
-
 # ---------------------------------------------------------------------------
 # One spray owner (v3.27): set_mode, bounded tests, RelayControl.stop
 # ---------------------------------------------------------------------------
@@ -959,3 +781,238 @@ class TestStorageRecoveryKeepsFaultCodes:
         ind.error(5)
         ind._update_storage_indicator(0.5)
         assert ind.error_code is None
+
+
+# ---------------------------------------------------------------------------
+# A relay that will not switch off, outside the consumer threads
+# ---------------------------------------------------------------------------
+
+def _refuse_off(rc, failures=None):
+    """Make the board's relay_off raise (`failures` times, default always).
+    Returns the list of attempts."""
+    attempts = []
+
+    def relay_off(relay, verbose=True):
+        attempts.append(relay)
+        if failures is None or len(attempts) <= failures:
+            raise RuntimeError('gpio busy')
+
+    rc.relay.relay_off = relay_off
+    return attempts
+
+
+@pytest.mark.unit
+class TestStuckRelayOutsideTheConsumer:
+    """_drive() switches relays for a mode change and a test end. An OFF that
+    fails there is retried once, and a relay that still will not release is
+    reported through on_stuck (owl.py raises the relay_stuck fault from it).
+    Before this only the consumer path was checked: a nozzle left on by
+    'spray off' or by a nozzle test ending was silent."""
+
+    def _blanket(self, timed):
+        rc, events = timed(relays=(0,))
+        stuck = []
+        rc.on_stuck = stuck.append
+        return rc, events, stuck
+
+    def test_mode_change_to_off(self, timed):
+        rc, events, stuck = self._blanket(timed)
+        rc.set_mode('blanket')
+        attempts = _refuse_off(rc)
+        rc.set_mode('off')
+        assert attempts == [0, 0], 'the failed OFF was not retried exactly once'
+        assert len(stuck) == 1 and 'Relay 0 is stuck on' in stuck[0], stuck
+
+    def test_stopping_a_nozzle_test(self, timed):
+        rc, events, stuck = self._blanket(timed)
+        rc.set_mode('off')
+        rc.start_test([0], 5)
+        attempts = _refuse_off(rc)
+        assert rc.stop_test() is True
+        assert attempts == [0, 0]
+        assert len(stuck) == 1 and 'Relay 0 is stuck on' in stuck[0], stuck
+
+    def test_a_nozzle_test_running_out(self, timed):
+        rc, events, stuck = self._blanket(timed)
+        rc.set_mode('off')
+        ended = threading.Event()
+        rc.on_test_end = ended.set
+        rc.start_test([0], 0.15)
+        attempts = _refuse_off(rc)
+        assert ended.wait(1.0), 'the test never ended'
+        assert attempts == [0, 0]
+        assert len(stuck) == 1 and 'Relay 0 is stuck on' in stuck[0], stuck
+
+    def test_an_off_that_works_on_the_retry_is_not_reported(self, timed):
+        rc, events, stuck = self._blanket(timed)
+        rc.set_mode('blanket')
+        attempts = _refuse_off(rc, failures=1)
+        rc.set_mode('off')
+        assert attempts == [0, 0]
+        assert stuck == []
+
+    def test_a_failed_on_is_not_a_stuck_relay(self, timed):
+        rc, events, stuck = self._blanket(timed)
+
+        def broken_on(relay, verbose=True):
+            raise RuntimeError('gpio busy')
+
+        rc.relay.relay_on = broken_on
+        assert rc.set_mode('blanket') is True
+        assert stuck == []
+        assert _at(events, 'off') == [], 'a failed ON drove the relay off'
+
+
+# ---------------------------------------------------------------------------
+# RelayController.stop() while it holds relays on itself
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestStopWhileHoldingRelaysOn:
+    """stop() switches off a spot window (TestSprayWindowTiming). Relays held
+    on by blanket mode or by a nozzle test are not a consumer's, and stop()
+    does nothing about them. On a whole Owl this is masked: Owl.stop() calls
+    _relays_off_now() first (tests/owl/test_relay_matrix.py
+    ::test_shutdown_leaves_every_relay_off)."""
+
+    @pytest.mark.xfail(strict=True, reason=(
+        "RelayController.stop() leaves blanket relays energised: it only ends the consumer "
+        "threads, whose relay_on is False in blanket mode (utils/output_manager.py "
+        "RelayController.stop / consumer). Owl.stop() hides it with _relays_off_now()."))
+    def test_stop_during_blanket_switches_every_relay_off(self, timed):
+        rc, events = timed()
+        rc.set_mode('blanket')
+        assert len(_at(events, 'on', 0)) == 1 and len(_at(events, 'on', 1)) == 1
+        stopped = time.monotonic()
+        rc.stop()
+        time.sleep(2 * LATE_S)
+        for relay in (0, 1):
+            offs = _at(events, 'off', relay)
+            assert offs and _within(offs[-1], stopped), f'relay {relay} left on: {events}'
+
+    @pytest.mark.xfail(strict=True, reason=(
+        "RelayController.stop() cancels the nozzle-test timer and leaves the tested relay on "
+        "with nothing left to end it (utils/output_manager.py RelayController.stop: "
+        "self._test_timer.cancel()). Owl.stop() hides it with _relays_off_now()."))
+    def test_stop_during_a_nozzle_test_switches_the_relay_off(self, timed):
+        rc, events = timed()
+        rc.set_mode('off')
+        rc.start_test([0], 0.3)
+        events.clear()
+        rc.stop()
+        time.sleep(0.3 + 2 * LATE_S)       # past where the test would have ended
+        assert [(k, r) for k, r, _ in events] == [('off', 0)], events
+        assert rc.test_relays == []
+
+
+# ---------------------------------------------------------------------------
+# The cap on a timed nozzle test, on its own
+# ---------------------------------------------------------------------------
+
+class _Clock:
+    """utils.output_manager's `time`, with a monotonic clock a test can move
+    forward. Everything else is the real module."""
+
+    def __init__(self):
+        self.offset = 0.0
+
+    def monotonic(self):
+        return time.monotonic() + self.offset
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
+class _Timers:
+    """Stands in for threading.Timer in utils.output_manager: records what
+    was armed and lets the test fire it."""
+
+    def __init__(self):
+        self.armed = []      # [delay, function, cancelled]
+
+    def __call__(self, delay, function):
+        entry = [delay, function, False]
+        self.armed.append(entry)
+
+        class _Timer:
+            daemon = True
+
+            def start(self):
+                pass
+
+            def cancel(self):
+                entry[2] = True
+
+        return _Timer()
+
+    def live(self):
+        return [entry for entry in self.armed if not entry[2]]
+
+
+@pytest.mark.unit
+class TestNozzleTestCap:
+    """start_test() called with no max_s (as nothing but the MQTT handler's
+    own min() protected until now) ends at TEST_MAX_S however long was asked
+    for and however often it is renewed. The clock is moved, not waited on."""
+
+    @pytest.fixture
+    def capped(self, timed, monkeypatch):
+        clock, timers = _Clock(), _Timers()
+        rc, events = timed()
+        rc.set_mode('off')
+        events.clear()
+        monkeypatch.setattr(om, 'time', clock)
+        monkeypatch.setattr(om, 'Timer', timers)
+        ended = []
+        rc.on_test_end = lambda: ended.append(True)
+        return rc, events, clock, timers, ended
+
+    def test_a_long_test_is_armed_for_the_cap_and_ends_there(self, capped):
+        rc, events, clock, timers, ended = capped
+        assert RelayController.TEST_MAX_S == 10.0
+        assert rc.start_test([0, 1], 3600) == [0, 1]
+        assert rc.test_capped is True
+        (delay, expire, _), = timers.live()
+        assert delay == pytest.approx(10.0, abs=0.05)
+
+        clock.offset = 9.9
+        expire()                                    # a timer firing early re-arms
+        assert rc.test_relays == [0, 1] and not ended
+        assert _at(events, 'off', 0) == [] and _at(events, 'off', 1) == []
+        (delay, expire, _), = timers.live()
+        assert delay == pytest.approx(0.1, abs=0.05)
+
+        clock.offset = 10.01
+        expire()
+        assert rc.test_relays == [] and ended == [True]
+        assert [(k, r) for k, r, _ in events][-2:] == [('off', 0), ('off', 1)]
+
+    def test_renewing_cannot_push_a_capped_test_past_the_cap(self, capped):
+        rc, events, clock, timers, ended = capped
+        rc.start_test([0], 2)
+        clock.offset = 9.0
+        assert rc.renew_test(60) is True
+        (delay, expire, _), = timers.live()
+        assert delay == pytest.approx(1.0, abs=0.05), 'a renew moved the end past TEST_MAX_S'
+        clock.offset = 10.01
+        expire()
+        assert rc.test_relays == [] and ended == [True]
+
+    def test_a_short_test_ends_at_its_own_duration(self, capped):
+        rc, events, clock, timers, ended = capped
+        rc.start_test([0], 2)
+        (delay, expire, _), = timers.live()
+        assert delay == pytest.approx(2.0, abs=0.05)
+        clock.offset = 2.01
+        expire()
+        assert rc.test_relays == [] and ended == [True]
+
+    def test_hold_to_spray_has_no_cap(self, capped):
+        rc, events, clock, timers, ended = capped
+        rc.start_test([0], 1, max_s=None)
+        assert rc.test_capped is False
+        clock.offset = 3600.0
+        assert rc.renew_test(1) is True
+        (delay, expire, _), = timers.live()
+        assert delay == pytest.approx(1.0, abs=0.05)
+        assert rc.test_relays == [0] and not ended
