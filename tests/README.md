@@ -27,6 +27,35 @@ mosquitto can't hide a broken test; for the other two, mock the model
 (`@patch('utils.greenongreen.YOLO')`) and never read the repo's
 `CONTROLLER.ini` from a test.
 
+## Tests never write to anything real
+
+Enforced, not a convention:
+
+- `tests/conftest.py` sets `OWL_HOME` to a temp directory before any
+  production import. Everything the OWL writes at run time (`config/`,
+  `logs/`, `models/`, `downloads/`, `uploads/`, `agent/widgets|sessions`)
+  resolves through `utils/paths.home_dir()`, so it lands there. The temp home
+  is seeded with the shipped `config/` and `models/` files only: your own
+  `CONTROLLER.ini` and active-config pointer never reach a test.
+- `tests/_write_guard.py` is an audit hook on every file open-for-write,
+  rename, delete, mkdir, chmod and truncate in the test process. A target
+  outside the temp directory is refused and the test fails, naming the file,
+  even when the code under test swallows the error.
+- `/etc/hosts` and the avahi service file are repointed per test.
+
+Until 3.27.3 a run rewrote `config/active_config.txt` (to a 4-relay fixture
+the OWL then booted with), appended a test hostname to `/etc/hosts` when run
+as root, and created `logs/`, `downloads/`, `agent/` and `/home/logs`.
+
+Need a private home for one test (to check what lands in `models/`)? Use the
+`owl_home` fixture. New production code that writes a file: build the path
+with `home_dir(...)`, never from `__file__`. To see what a run would have
+written instead of failing: `OWL_TEST_WRITE_GUARD=report pytest ...` then
+read `$TMPDIR/owl_test_writes.log`.
+
+Child processes are not seen by the hook; do not shell out to something that
+writes outside `tmp_path`.
+
 ## Layout
 
 | Folder | Covers | Fakes |

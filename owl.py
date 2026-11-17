@@ -34,8 +34,9 @@ def setup_basic_logger():
     # Beside owl.py, not in the working directory: LogManager writes here
     # too, and `python /path/to/owl.py` from elsewhere (common on a laptop)
     # must not scatter half-written logs/ folders around the filesystem.
-    log_dir = Path(__file__).resolve().parent / 'logs'
-    log_dir.mkdir(exist_ok=True)
+    from utils.paths import home_dir
+    log_dir = home_dir('logs')
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     file_handler = logging.FileHandler(log_dir / 'owl.jsonl')
     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
@@ -169,7 +170,8 @@ class Owl:
                  input_file_or_directory=None,
                  config_file='config/GENERAL_CONFIG.ini'):
         # set up the logger
-        log_dir = Path(os.path.join(os.path.dirname(__file__), 'logs'))
+        from utils.paths import home_dir
+        log_dir = home_dir('logs')
         LogManager.setup(log_dir=log_dir, log_level='INFO')
         self.logger = LogManager.get_logger(__name__)
 

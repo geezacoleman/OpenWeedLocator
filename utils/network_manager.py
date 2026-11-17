@@ -444,7 +444,7 @@ class NetworkManager:
     # Hostname (used by first-boot controller-join only)
     # ------------------------------------------------------------------
     @staticmethod
-    def set_hostname(name, system_runner, hosts_path=ETC_HOSTS):
+    def set_hostname(name, system_runner, hosts_path=None):
         """Rename the device (owl-N identity for networked rigs).
 
         system_runner: callable(argv, ...) -> CompletedProcess (injected —
@@ -460,6 +460,9 @@ class NetworkManager:
             raise NetworkManagerError(
                 (result.stderr or '').strip() or 'hostnamectl failed')
 
+        # Looked up at call time, not bound as a default: the test suite
+        # points ETC_HOSTS at a temp file
+        hosts_path = hosts_path or ETC_HOSTS
         try:
             hosts = Path(hosts_path)
             lines = [line for line in hosts.read_text().splitlines()

@@ -42,6 +42,8 @@ from utils.config_manager import (
     write_ini_section,
 )
 # Shared with OWLs that time themselves from their own GPS
+from utils.shared_types import parse_switch
+from utils.paths import home_dir
 from utils.actuation import GPS_STALE_AFTER_S, SpeedAverager, ActuationCalculator, clamp_geometry
 from utils.session_metadata import (clean_session_metadata, CAPTURE_PARAM_KEYS, COLLECT_CAPTURE_DEFAULTS,
                                     COLLECT_LANGUAGES, capture_settings_from, coerce_capture_value,
@@ -97,13 +99,13 @@ logger = logging.getLogger(__name__)
 SHARED_DIR = os.path.join(os.path.dirname(__file__), '..', 'shared')
 
 # Model management constants
-UPLOADS_DIR = Path(__file__).parent.parent.parent / 'uploads'
+UPLOADS_DIR = home_dir('uploads')
 ALLOWED_MODEL_EXTENSIONS = {'pt', 'zip'}
 PROTECTED_MODEL_FILES = set()  # .gitignore protected by secure_filename stripping dots
 MAX_ZIP_UNCOMPRESSED_SIZE = 500 * 1024 * 1024  # 500MB zip bomb guard
 
 # Downloads staging directory
-DOWNLOADS_DIR = Path(__file__).parent.parent.parent / 'downloads'
+DOWNLOADS_DIR = home_dir('downloads')
 DOWNLOADS_DIR.mkdir(exist_ok=True)
 MAX_DOWNLOADS_SIZE_MB = 2000  # 2GB default staging quota
 
@@ -213,7 +215,7 @@ class CentralController:
 
     def __init__(self, config_file=None):
         if config_file is None:
-            config_file = Path(__file__).parent.parent.parent / 'config' / 'CONTROLLER.ini'
+            config_file = home_dir('config', 'CONTROLLER.ini')
         self.config_file = Path(config_file)
         self.config = self._load_config(config_file)
 
@@ -1150,7 +1152,7 @@ class CentralController:
 
     def list_local_presets(self):
         """List INI config files in the config/ directory"""
-        config_dir = Path(__file__).parent.parent.parent / 'config'
+        config_dir = home_dir('config')
         presets = []
         if config_dir.exists():
             for ini_file in sorted(config_dir.glob('*.ini')):
@@ -1167,7 +1169,7 @@ class CentralController:
 
     def read_preset(self, filename):
         """Read a preset INI file and return as dict"""
-        config_dir = Path(__file__).parent.parent.parent / 'config'
+        config_dir = home_dir('config')
         config_path = config_dir / filename
 
         if not config_path.exists():
@@ -1257,8 +1259,13 @@ class CentralController:
         return {'success': True, 'message': f'Sent to {len(sent_to)} OWLs'}
 
     def set_detection_enable(self, value):
-        """Tool-compatible detection toggle."""
-        return self.send_command('all', 'toggle_detection', bool(value))
+        """Tool-compatible detection toggle. True/False only: None here
+        would toggle, which no tool call means."""
+        try:
+            value = parse_switch(value)
+        except ValueError as e:
+            return {'success': False, 'error': f'set_detection_enable: {e}', 'refused': True}
+        return self.send_command('all', 'toggle_detection', value)
 
     def set_sensitivity_level(self, level):
         """Tool-compatible sensitivity setter."""
@@ -1335,6 +1342,17 @@ class CentralController:
             reason = self.algorithm_refusal(device_id, str(value or '').lower())
             if reason:
                 return {'success': False, 'error': reason, 'refused': True}
+
+        # On/off commands: a value that is not clearly on or off is refused
+        # (the string "false" used to count as on and started spraying).
+        # None still means "toggle" where the action supports it.
+        if action in ('toggle_detection', 'toggle_recording', 'set_recording_paused') and value is not None:
+            try:
+                value = parse_switch(value)
+            except ValueError as e:
+                return {'success': False, 'error': f'{action}: {e}', 'refused': True}
+        if action == 'set_recording_paused' and value is None:
+            return {'success': False, 'error': 'set_recording_paused needs true or false', 'refused': True}
 
         # Build payload
         payload = {'action': action}
@@ -1704,7 +1722,7 @@ app.register_blueprint(support_bundle.create_support_blueprint(
 widget_manager = None
 try:
     from agent.widget_manager import WidgetManager
-    widget_manager = WidgetManager(str(Path(__file__).parent.parent.parent / 'agent' / 'widgets'))
+    widget_manager = WidgetManager(str(home_dir('agent', 'widgets')))
 except Exception as e:
     logger.warning(f"Widget system unavailable: {e}")
 
@@ -1714,7 +1732,7 @@ try:
     from agent import ToolRegistry, AgentEngine
     _registry = ToolRegistry(developer_mode=False)
     _registry.discover()
-    _sessions_dir = str(Path(__file__).parent.parent.parent / 'agent' / 'sessions')
+    _sessions_dir = str(home_dir('agent', 'sessions'))
     agent_engine = AgentEngine(
         tool_registry=_registry,
         context={'mqtt_client': controller, 'config': controller.config, 'widget_manager': widget_manager},
@@ -2743,7 +2761,7 @@ def get_sensitivity_presets():
 def list_config_library():
     """List all config files (presets + custom saved) — mirrors standalone /api/config/list"""
     try:
-        config_dir = Path(__file__).parent.parent.parent / 'config'
+        config_dir = home_dir('config')
         configs = []
         protected = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini']
 
@@ -2798,7 +2816,7 @@ def save_to_config_library():
         else:
             safe_name = build_config_filename(display_name, data.get('filename'), timestamp)
 
-        config_dir = Path(__file__).parent.parent.parent / 'config'
+        config_dir = home_dir('config')
         new_config_path = config_dir / safe_name
 
         # Don't allow overwriting protected/infrastructure configs
@@ -2854,7 +2872,7 @@ def delete_from_config_library(name):
         if name in protected or name.endswith('_TEMPLATE.ini'):
             return jsonify({'success': False, 'error': 'Cannot delete default configs'}), 400
 
-        config_dir = Path(__file__).parent.parent.parent / 'config'
+        config_dir = home_dir('config')
         config_path = config_dir / name
 
         # Security: only allow files in config directory

@@ -632,12 +632,15 @@ class TestNozzleDistanceOnTheController:
         assert resp.get_json()['offset_configured'] is False
         assert ctrl.actuation_calculator.actuation_length_cm == 18.0
 
-    @pytest.mark.parametrize('body, expect', [
-        ({'offset_cm': -10}, 0.0), ({'offset_cm': 9999}, 200.0)])
-    def test_out_of_range_is_clamped(self, tmp_path, monkeypatch, body, expect):
+    @pytest.mark.parametrize('body, key, expect', [
+        ({'offset_cm': -10}, 'offset_cm', 0.0), ({'offset_cm': 9999}, 'offset_cm', 200.0),
+        ({'actuation_length_cm': 0}, 'actuation_length_cm', 2.0),
+        ({'actuation_length_cm': 999}, 'actuation_length_cm', 50.0)])
+    def test_out_of_range_is_clamped(self, tmp_path, monkeypatch, body, key, expect):
         ctrl, _ = self._controller(tmp_path)
         resp = self._client(ctrl, monkeypatch).post('/api/actuation/config', json=body)
-        assert resp.get_json()['offset_cm'] == expect
+        assert resp.get_json()[key] == expect
+        assert getattr(ctrl.actuation_calculator, key) == expect
 
     @pytest.mark.parametrize('body', [{'offset_cm': 'far'}, {'offset_cm': None},
                                       {'offset_cm': 'nan'}, {'actuation_length_cm': []}])
@@ -681,36 +684,3 @@ class TestActuationAPI:
         data = resp.get_json()
         assert data['speed_kmh'] == 12.5
         assert data['source'] == 'gps'
-
-    def test_post_actuation_config(self, networked_test_client):
-        client, mock_ctrl = networked_test_client
-        import controller.networked.networked as net_mod
-
-        # Create a real ActuationCalculator for the test
-        from controller.networked.networked import ActuationCalculator
-        net_mod.controller.actuation_calculator = ActuationCalculator()
-
-        resp = client.post('/api/actuation/config', json={
-            'actuation_length_cm': 15,
-            'offset_cm': 40
-        })
-        assert resp.status_code == 200
-        data = resp.get_json()
-        assert data['success'] is True
-        assert data['actuation_length_cm'] == 15
-        assert data['offset_cm'] == 40
-
-    def test_post_actuation_config_bounds_clamping(self, networked_test_client):
-        client, mock_ctrl = networked_test_client
-        import controller.networked.networked as net_mod
-        from controller.networked.networked import ActuationCalculator
-        net_mod.controller.actuation_calculator = ActuationCalculator()
-
-        resp = client.post('/api/actuation/config', json={
-            'actuation_length_cm': 999,  # Should clamp to 50
-            'offset_cm': -5              # Should clamp to 0
-        })
-        assert resp.status_code == 200
-        data = resp.get_json()
-        assert data['actuation_length_cm'] == 50.0
-        assert data['offset_cm'] == 0.0

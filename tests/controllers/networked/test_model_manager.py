@@ -367,17 +367,12 @@ class TestPathTraversal:
 @pytest.mark.unit
 class TestOWLDownloadHandler:
 
-    def test_download_handler_saves_file(self, mqtt_publisher, tmp_path):
+    def test_download_handler_saves_file(self, mqtt_publisher, tmp_path, monkeypatch):
         """Test that _download_model saves a file correctly."""
         test_data = b'fake model data for testing'
         expected_sha = hashlib.sha256(test_data).hexdigest()
 
-        # Redirect models_dir by temporarily changing the module's __file__
-        import utils.mqtt_manager as mm_mod
-        original_file = mm_mod.__file__
-        fake_utils = os.path.join(str(tmp_path), 'utils')
-        os.makedirs(fake_utils, exist_ok=True)
-        mm_mod.__file__ = os.path.join(fake_utils, 'mqtt_manager.py')
+        monkeypatch.setenv('OWL_HOME', str(tmp_path))
 
         try:
             with patch('urllib.request.urlopen') as mock_urlopen, \
@@ -394,7 +389,7 @@ class TestOWLDownloadHandler:
                     is_archive=False
                 )
         finally:
-            mm_mod.__file__ = original_file
+            pass
 
         assert mqtt_publisher.state['model_download']['status'] in ('complete', 'error')
         # Verify file was written to tmp_path, not project models/

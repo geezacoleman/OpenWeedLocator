@@ -1109,7 +1109,9 @@ class TestUpdateSoftware:
         import getpass
         from pathlib import Path
         user = getpass.getuser()
-        repo_dir = Path(mqtt_publisher._update_status_path).parent
+        # the update script is code (the checkout); only its status file
+        # lives in the OWL home
+        repo_dir = Path(__file__).resolve().parents[2]
         return [
             'sudo', '-n', '/usr/bin/systemd-run',
             '--unit=owl-update', '--collect',

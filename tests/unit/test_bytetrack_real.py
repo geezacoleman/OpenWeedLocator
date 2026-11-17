@@ -50,7 +50,7 @@ from ultralytics.engine.results import Results
 from utils.tracker import ClassSmoother
 from utils.greenongreen import GreenOnGreen, TRACKER_YAML
 
-VIZ_DIR = Path(__file__).resolve().parents[1] / 'tracking_output' / 'real_bytetrack'
+VIZ_DIR = Path(__import__('os').environ.get('OWL_TRACKING_VIZ_DIR') or __import__('tempfile').mkdtemp(prefix='owl_tracking_viz_')) / 'real_bytetrack'
 TRACKER_YAML_PATH = PROJECT_ROOT / 'config' / 'bytetrack_owl.yaml'
 
 # Pi-realistic frame rate. ultralytics hardcodes frame_rate=30 when creating

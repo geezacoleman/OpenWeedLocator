@@ -27,7 +27,10 @@ if str(PROJECT_ROOT) not in sys.path:
 from utils.tracker import ClassSmoother, CropMaskStabilizer
 
 # Output directory for visualization images
-VIZ_DIR = Path(__file__).resolve().parents[1] / 'tracking_output'
+import tempfile
+# Review images go to OWL_TRACKING_VIZ_DIR when set, otherwise to a temp
+# directory: a test run never writes into the checkout.
+VIZ_DIR = Path(os.environ.get('OWL_TRACKING_VIZ_DIR') or tempfile.mkdtemp(prefix='owl_tracking_viz_'))
 
 
 def ensure_viz_dir():

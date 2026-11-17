@@ -83,54 +83,28 @@ class TestSetModel:
 class TestListAvailableModels:
     """Tests for the _list_available_models helper."""
 
-    def test_finds_pt_files(self, mqtt_publisher, tmp_path):
+    def test_finds_pt_files(self, mqtt_publisher, owl_home):
         """Should find .pt files in the models directory."""
-        models_dir = tmp_path / 'models'
-        models_dir.mkdir()
-        (models_dir / 'yolo8n.pt').touch()
-        (models_dir / 'yolo11s.pt').touch()
+        (owl_home / 'models' / 'yolo8n.pt').touch()
+        (owl_home / 'models' / 'yolo11s.pt').touch()
+        assert sorted(mqtt_publisher._list_available_models()) == ['yolo11s.pt', 'yolo8n.pt']
 
-        with patch('utils.mqtt_manager.os.path.dirname') as mock_dir:
-            # Make the models dir resolve to our tmp path
-            mock_dir.return_value = str(tmp_path)
-            result = mqtt_publisher._list_available_models()
-
-        assert 'yolo8n.pt' in result
-        assert 'yolo11s.pt' in result
-
-    def test_finds_ncnn_dirs(self, mqtt_publisher, tmp_path):
+    def test_finds_ncnn_dirs(self, mqtt_publisher, owl_home):
         """Should find NCNN model subdirectories (contain .param files)."""
-        models_dir = tmp_path / 'models'
-        models_dir.mkdir()
-        ncnn_dir = models_dir / 'yolo8n_ncnn'
+        ncnn_dir = owl_home / 'models' / 'yolo8n_ncnn'
         ncnn_dir.mkdir()
         (ncnn_dir / 'model.param').touch()
         (ncnn_dir / 'model.bin').touch()
+        assert mqtt_publisher._list_available_models() == ['yolo8n_ncnn']
 
-        with patch('utils.mqtt_manager.os.path.dirname') as mock_dir:
-            mock_dir.return_value = str(tmp_path)
-            result = mqtt_publisher._list_available_models()
-
-        assert 'yolo8n_ncnn' in result
-
-    def test_empty_models_dir(self, mqtt_publisher, tmp_path):
+    def test_empty_models_dir(self, mqtt_publisher, owl_home):
         """Should return empty list when no models found."""
-        models_dir = tmp_path / 'models'
-        models_dir.mkdir()
+        assert mqtt_publisher._list_available_models() == []
 
-        with patch('utils.mqtt_manager.os.path.dirname') as mock_dir:
-            mock_dir.return_value = str(tmp_path)
-            result = mqtt_publisher._list_available_models()
-
-        assert result == []
-
-    def test_no_models_dir(self, mqtt_publisher, tmp_path):
+    def test_no_models_dir(self, mqtt_publisher, owl_home):
         """Should return empty list when models/ doesn't exist."""
-        with patch('utils.mqtt_manager.os.path.dirname') as mock_dir:
-            mock_dir.return_value = str(tmp_path)
-            result = mqtt_publisher._list_available_models()
-
-        assert result == []
+        (owl_home / 'models').rmdir()
+        assert mqtt_publisher._list_available_models() == []
 
 
 # ---------------------------------------------------------------------------

@@ -32,6 +32,8 @@ from utils.session_metadata import (clean_session_metadata, COLLECT_CAPTURE_DEFA
                                     presets_from_config, read_session_file,
                                     add_custom_crop, remove_custom_crop, CUSTOM_CROPS_KEY)
 from utils.actuation import GEOMETRY_LIMITS, clamp_geometry
+from utils.shared_types import parse_switch
+from utils.paths import home_dir
 from utils.input_manager import get_rpi_version
 from utils.device_identity import get_device_serial, read_identity
 from utils import support_bundle
@@ -161,7 +163,7 @@ class OWLDashboard:
         # Standalone runs on the same Pi as owl.py, so profiles are written
         # straight to the directory the detection loop reads from.
         self.painter_store = PainterSessionStore()
-        repo_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')
+        repo_root = str(home_dir())
         self.lut_profile_manager = LUTProfileManager(
             os.path.abspath(os.path.join(repo_root, 'config', 'lut_profiles')))
         self.lut_profile_manager.ensure_builtin_profiles()
@@ -172,7 +174,7 @@ class OWLDashboard:
         # headerless allow). nmcli runs through sudo -n, permitted by the
         # 95-owl-device-settings sudoers file from controller/shared/setup.sh.
         self.controller_ini_path = str(
-            Path(__file__).parent.parent.parent / 'config' / 'CONTROLLER.ini')
+            home_dir('config', 'CONTROLLER.ini'))
         self.token_reader = make_token_reader(self.controller_ini_path)
         nm = NetworkManager(runner=self._sudo_runner)
         self.network_settings = NetworkSettingsManager(nm)
@@ -195,7 +197,7 @@ class OWLDashboard:
         self.setup_routes()
 
         # Widget system (optional — does not block dashboard startup)
-        widgets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'agent', 'widgets')
+        widgets_dir = str(home_dir('agent', 'widgets'))
         try:
             from agent.widget_manager import WidgetManager
             self.widget_manager = WidgetManager(widgets_dir)
@@ -213,7 +215,7 @@ class OWLDashboard:
                 'config': self.config,
                 'widget_manager': self.widget_manager,
             }
-            sessions_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'agent', 'sessions')
+            sessions_dir = str(home_dir('agent', 'sessions'))
             self.agent_engine = AgentEngine(
                 tool_registry=registry,
                 context=agent_context,
@@ -267,7 +269,7 @@ class OWLDashboard:
         """BOARD pins this OWL's own GPS hardware uses, from CONTROLLER.ini as it
         is now (owl.py reads [GPS] from the same file, so both agree)."""
         cfg = configparser.ConfigParser()
-        cfg.read(Path(__file__).parent.parent.parent / 'config' / 'CONTROLLER.ini')
+        cfg.read(home_dir('config', 'CONTROLLER.ini'))
         return ConfigValidator.protected_pins(cfg)
 
     def load_config(self):
@@ -279,7 +281,7 @@ class OWLDashboard:
         """
         self.config = configparser.ConfigParser()
 
-        controller_ini = Path(__file__).parent.parent.parent / 'config' / 'CONTROLLER.ini'
+        controller_ini = home_dir('config', 'CONTROLLER.ini')
         if controller_ini.exists():
             # configparser silently skips unreadable files — a root-owned
             # CONTROLLER.ini (past provisioning bug) would quietly drop the
@@ -306,8 +308,10 @@ class OWLDashboard:
 
     def setup_logging(self):
         """Setup logging"""
-        log_dir = Path('../../logs')
-        log_dir.mkdir(exist_ok=True)
+        # Was Path('../../logs'): relative to wherever the dashboard was
+        # started from, so anything but controller/standalone/ wrote elsewhere
+        log_dir = home_dir('logs')
+        log_dir.mkdir(parents=True, exist_ok=True)
 
         log_file = log_dir / f"owl_dashboard_{datetime.now().strftime('%Y%m%d')}.log"
         logging.basicConfig(
@@ -710,7 +714,10 @@ class OWLDashboard:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             try:
                 data = request.get_json() or {}
-                value = bool(data.get('value', False))
+                try:
+                    value = parse_switch(data.get('value'))
+                except ValueError as e:
+                    return jsonify({'success': False, 'error': str(e)}), 400
                 result = self.mqtt_client._send_command('set_tracking', value=value)
                 self._persist_config_change('Tracking', 'tracking_enabled', str(value))
                 self.logger.info(f"Tracking {'enabled' if value else 'disabled'} via dashboard")
@@ -1238,7 +1245,10 @@ class OWLDashboard:
             """
             try:
                 data = request.get_json(silent=True) or {}
-                value = bool(data.get('value', True))
+                try:
+                    value = parse_switch(data.get('value', True))
+                except ValueError as e:
+                    return jsonify({'success': False, 'error': str(e)}), 400
                 self._persist_config_change('Camera', 'allow_high_resolution', 'True' if value else 'False')
                 return jsonify({
                     'success': True,

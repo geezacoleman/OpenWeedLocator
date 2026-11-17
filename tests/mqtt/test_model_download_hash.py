@@ -39,15 +39,13 @@ def legacy_hash(files=FILES):
 
 @contextmanager
 def models_in(tmp_path):
-    """Point the publisher's models/ at tmp_path/models (it derives the path
-    from the module file, as test_model_manager.py does)."""
-    original = mm_mod.__file__
-    (tmp_path / 'utils').mkdir(exist_ok=True)
-    mm_mod.__file__ = str(tmp_path / 'utils' / 'mqtt_manager.py')
+    """Point the publisher's models/ at tmp_path/models (OWL_HOME)."""
+    previous = os.environ.get('OWL_HOME')
+    os.environ['OWL_HOME'] = str(tmp_path)
     try:
         yield tmp_path / 'models'
     finally:
-        mm_mod.__file__ = original
+        os.environ['OWL_HOME'] = previous
 
 
 def download(publisher, payload, sha, filename='weeds_ncnn.zip'):

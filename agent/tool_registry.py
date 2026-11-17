@@ -29,6 +29,7 @@ VALID_ALGORITHMS = frozenset({
 PROTECTED_SECTIONS = frozenset({'Relays', 'MQTT', 'Network', 'WebDashboard'})
 
 from utils.config_manager import GREENONBROWN_PARAMS
+from utils.shared_types import parse_switch
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -556,6 +557,15 @@ def set_detection(enabled=None, mode=None, state=None, **context):
     if mqtt_client is None:
         return {'error': 'No MQTT client available'}
     codes = {'spot': 0, 'off': 1, 'blanket': 2}
+    # A model may send "false" or 0 for a boolean. bool("false") is True,
+    # which switched spot spraying on, and with mode=2 it blanket sprayed.
+    if enabled is not None:
+        try:
+            enabled = parse_switch(enabled)
+        except ValueError:
+            raise ValueError(f"Invalid enabled value {enabled!r}. Must be true or false.")
+    if state is None and mode is None and enabled is None:
+        raise ValueError("Give state: 'off', 'spot' or 'blanket'.")
     if state is not None:
         if state not in codes:
             raise ValueError(f"Invalid spray state {state!r}. Must be 'off', 'spot' or 'blanket'.")
@@ -567,7 +577,7 @@ def set_detection(enabled=None, mode=None, state=None, **context):
         if enabled is False:
             return mqtt_client.set_detection_enable(False)
         return mqtt_client._send_command('set_detection_mode', value=int(mode))
-    return mqtt_client.set_detection_enable(bool(enabled))
+    return mqtt_client.set_detection_enable(enabled)
 
 
 @owl_tool(
