@@ -74,11 +74,6 @@ class TestShippedConfig:
         template.read(CONFIG_DIR / 'CONTROLLER_TEMPLATE.ini', encoding='utf-8')
         assert set(CONTROLLER_INI_SECTIONS) <= set(template.sections())
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "ConfigValidator.CONTROLLER_INI_SECTIONS (utils/config_manager.py:363) lists "
-        "'Actuation', which config/CONTROLLER_TEMPLATE.ini does not have, so "
-        "validate_controller_ini (utils/config_manager.py:1122) warns 'CONTROLLER.ini missing "
-        "sections: Actuation' at every boot of a unit set up from the template."))
     def test_a_controller_file_made_from_the_template_raises_no_warning(self, tmp_path, caplog):
         import logging
         import shutil
@@ -352,11 +347,6 @@ class TestFrontendBackendConfigSync:
             f"[Cloud] keys missing frontend field defs: {template_keys - frontend_keys}"
         )
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "[WebDashboard] ui (config/CONTROLLER_TEMPLATE.ini:58, values full|collect) has no "
-        "entry in CONFIG_FIELD_DEFS (controller/shared/js/config.js:135), so the config "
-        "editor shows it as a free-text box. Not seen before: the old test read the "
-        "developer's CONTROLLER.ini and skipped in CI."))
     def test_controller_template_keys_have_frontend_field_defs(self):
         """CONTROLLER.ini is created from the template on the unit (CI has
         none, and a test never reads the developer's own)."""

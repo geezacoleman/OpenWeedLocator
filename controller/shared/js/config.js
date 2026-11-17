@@ -133,7 +133,8 @@ const CONFIG_FIELD_DEFS = {
         'controller_ip': { type: 'text', help: 'Central controller IP address' }
     },
     'WebDashboard': {
-        'port': { type: 'number', min: 1, max: 65535, help: 'Dashboard web server port' }
+        'port': { type: 'number', min: 1, max: 65535, help: 'Dashboard web server port' },
+        'ui': { type: 'select', options: ['full', 'collect'], help: 'In-cab controller screen: full control, or data collection only' }
     },
     'Cloud': {
         'enable': { type: 'boolean', help: 'Enable cloud bridge (managed by owl_cloud_provision.sh)' },
