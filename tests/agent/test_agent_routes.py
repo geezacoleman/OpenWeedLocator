@@ -256,10 +256,6 @@ class TestChat:
         assert {tool['type'] for tool in request['tools']} == {'function'}
         assert 'set_detection' in {tool['function']['name'] for tool in request['tools']}
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "session_id from the request body is used as a file name unchecked: "
-        "agent/engine.py _save_session (filepath = sessions_dir / f'{session_id}.json') "
-        "writes outside the sessions directory for '../x'"))
     def test_a_session_id_cannot_write_outside_the_sessions_directory(self, agent_app, llm):
         agent_app.connect(llm)
         llm.replies = [says('ok')]

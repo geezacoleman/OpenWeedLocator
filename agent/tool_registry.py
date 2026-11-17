@@ -450,7 +450,9 @@ def list_presets(**context):
     },
 )
 def set_config_param(section, key, value, **context):
-    if section in PROTECTED_SECTIONS:
+    # Compared without case or padding: configparser section names are
+    # case-sensitive, but "relays" or "Relays " must not slip past the guard
+    if str(section).strip().lower() in {name.lower() for name in PROTECTED_SECTIONS}:
         raise ValueError(
             f"Section [{section}] is protected and cannot be modified"
         )

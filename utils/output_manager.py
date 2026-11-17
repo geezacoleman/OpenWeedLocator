@@ -1045,6 +1045,14 @@ class RelayController:
                 switch(False)
 
     def stop(self):
+        # Every nozzle off first. A blanket, a hold or a nozzle test was left
+        # energised here (the consumers only close what they opened); Owl.stop()
+        # happened to cover it with its own all-off.
+        try:
+            self.stop_test(notify=False)
+            self.set_mode(MODE_OFF)
+        except Exception as e:
+            self.logger.error(f"Could not switch the nozzles off on stop: {e}")
         self.running = False
         if self._test_timer:
             self._test_timer.cancel()

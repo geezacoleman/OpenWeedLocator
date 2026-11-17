@@ -67,8 +67,39 @@ writes outside `tmp_path`.
 | `controllers/networked/` | The in-cab controller: routes, collect screen, fleet, downloads, actuation | `CentralController` |
 | `controllers/setup/` | First-boot setup API and trust chain | nmcli, systemctl |
 | `contract/` | Producer vs consumer: every command a dashboard sends has an OWL handler | nothing, reads source |
-| `agent/` | The AI agent and its tools | LLM provider |
+| `agent/` | The AI agent and its tools, through a real dashboard client and a real in-cab controller | the LLM provider's HTTP API, the broker (`agent_fakes.py`) |
 | `integration/` | First-boot app over real HTTP (also the owl-app Playwright backend: keep `serve_setup_app.py` here) | nmcli |
+
+## Spraying is asserted at the relay
+
+Anything that decides whether, when or which nozzle opens is tested on a real
+`Owl` with the shared rig (`tests/owl/harness.py`: `Rig`, `CardCamera`,
+`GpsReceiver`; built by the `rig` fixture in `tests/owl/conftest.py`). The
+assertion is on `RelayControl.relay_on` / `relay_off`, the last call before
+the pin, with two-sided time bounds. A test that stops at
+`relay_controller.mode`, at `receive()` being called, or at an attribute on a
+`MagicMock` Owl does not count: the 2026-11-16 audit seeded bugs behind all
+three and nothing noticed.
+
+| File in `tests/owl/` | What it proves at the relay |
+|------|------|
+| `test_relay_matrix.py` | spot / off / blanket in every install, lanes, band, duration, delay, late frames, stopping with a nozzle open, hold and nozzle-test timers, controller timing |
+| `test_gps_spray_latency.py` | own GPS: parked, wandering, spikes, moving, dropouts, antenna unplugged, nozzle distance, phone GPS, controller hand-over |
+| `test_mqtt_commands_at_the_relay.py` | live timing and band edits, power commands, bad values, link silence |
+| `test_dashboard_to_relay.py` | standalone dashboard route -> published message -> OWL -> relay |
+| `test_controller_to_owl_relay.py` | NMEA -> in-cab controller -> its broadcast -> OWL -> relay |
+| `test_agent_tool_at_the_relay.py` | the AI assistant's spray tool |
+| `test_tracked_detections_at_the_relay.py`, `test_min_weed_size_and_resolution_at_the_relay.py` | tracking, zone actuation, min weed size, resolution clamp |
+| `test_gps_sources.py` | the real serial reader and which GPS source wins |
+
+Prove a new safety test catches something: seed the bug in a copy and run the
+test (flip the comparison, drop the clamp). A test that still passes is not
+testing it.
+
+A production bug found while writing a test is recorded as
+`@pytest.mark.xfail(strict=True, reason="file: what is wrong")`, never worked
+around: the suite stays green, the bug stays visible, and fixing it turns the
+test red until the mark is removed.
 
 ## Where a new test goes
 

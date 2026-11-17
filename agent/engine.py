@@ -8,6 +8,7 @@ response or the iteration limit is reached.
 """
 
 import json
+import re
 import logging
 import os
 import time
@@ -199,6 +200,18 @@ class AgentEngine:
                             return block['text'][:80]
         return 'New conversation'
 
+    # A session id comes from the request body and becomes a file name:
+    # "../x" used to write outside the sessions directory.
+    _SESSION_ID = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+
+    def _session_file(self, session_id):
+        """The file for a session, or None when the id is not a plain name
+        (nothing is then read, written or deleted)."""
+        if not isinstance(session_id, str) or not self._SESSION_ID.match(session_id):
+            logger.warning('Session id %r is not a valid name; not stored', session_id)
+            return None
+        return self.sessions_dir / f"{session_id}.json"
+
     def _save_session(self, session_id: str):
         """Persist session to disk as JSON."""
         if not self.sessions_dir:
@@ -216,7 +229,9 @@ class AgentEngine:
             'message_count': len(session.messages),
             'messages': session.messages,
         }
-        filepath = self.sessions_dir / f"{session_id}.json"
+        filepath = self._session_file(session_id)
+        if filepath is None:
+            return
         tmp = filepath.with_suffix('.tmp')
         with open(tmp, 'w') as f:
             json.dump(data, f)
@@ -249,8 +264,8 @@ class AgentEngine:
         """Load a session from disk into memory and return full data."""
         if not self.sessions_dir:
             return None
-        filepath = self.sessions_dir / f"{session_id}.json"
-        if not filepath.exists():
+        filepath = self._session_file(session_id)
+        if filepath is None or not filepath.exists():
             return None
         try:
             with open(filepath) as f:
@@ -272,8 +287,8 @@ class AgentEngine:
         self._sessions.pop(session_id, None)
         if not self.sessions_dir:
             return False
-        filepath = self.sessions_dir / f"{session_id}.json"
-        if filepath.exists():
+        filepath = self._session_file(session_id)
+        if filepath is not None and filepath.exists():
             filepath.unlink()
             return True
         return False

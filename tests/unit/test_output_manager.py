@@ -170,8 +170,12 @@ class TestSprayWindowTiming:
         stopped = time.monotonic()
         rc.stop()
         time.sleep(2 * LATE_S)
-        offs = _at(events, 'off')
-        assert len(offs) == 1 and _within(offs[0], stopped), events
+        # stop() drives every relay off itself, and the consumer closes its
+        # own window too: a second off is harmless, a later on is not
+        offs = _at(events, 'off', 0)
+        assert offs and _within(offs[0], stopped), events
+        assert [k for k, r, at in events if at > stopped] == ['off'] * len(
+            [e for e in events if e[2] > stopped]), events
 
 
 @pytest.mark.unit
@@ -875,10 +879,6 @@ class TestStopWhileHoldingRelaysOn:
     _relays_off_now() first (tests/owl/test_relay_matrix.py
     ::test_shutdown_leaves_every_relay_off)."""
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "RelayController.stop() leaves blanket relays energised: it only ends the consumer "
-        "threads, whose relay_on is False in blanket mode (utils/output_manager.py "
-        "RelayController.stop / consumer). Owl.stop() hides it with _relays_off_now()."))
     def test_stop_during_blanket_switches_every_relay_off(self, timed):
         rc, events = timed()
         rc.set_mode('blanket')
@@ -890,10 +890,6 @@ class TestStopWhileHoldingRelaysOn:
             offs = _at(events, 'off', relay)
             assert offs and _within(offs[-1], stopped), f'relay {relay} left on: {events}'
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "RelayController.stop() cancels the nozzle-test timer and leaves the tested relay on "
-        "with nothing left to end it (utils/output_manager.py RelayController.stop: "
-        "self._test_timer.cancel()). Owl.stop() hides it with _relays_off_now()."))
     def test_stop_during_a_nozzle_test_switches_the_relay_off(self, timed):
         rc, events = timed()
         rc.set_mode('off')

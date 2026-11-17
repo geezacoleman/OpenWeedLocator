@@ -406,10 +406,6 @@ class TestProtectedSections:
                           ctx(dash))
         assert published(dash) == []
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "agent/tool_registry.py set_config_param: `if section in PROTECTED_SECTIONS` is an exact, "
-        "case-sensitive string match, so 'relays', 'RELAYS', 'Relays ' and 'mqtt' are forwarded to "
-        "the OWL as set_config_section (the OWL then adds that section to its config)."))
     @pytest.mark.parametrize('section', ['relays', 'RELAYS', 'Relays ', ' Relays', 'mqtt', 'network',
                                          'webdashboard'])
     def test_a_protected_section_in_another_spelling_is_refused_too(self, registry, dash, section):
