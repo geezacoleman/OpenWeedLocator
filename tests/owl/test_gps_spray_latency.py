@@ -467,3 +467,25 @@ def test_nozzle_distance_out_of_range_is_clamped_or_refused(rig, mqtt_publisher,
                                     'params': {'offset_cm': sent}})
     assert r.owl._actuation_calc.offset_cm == applied
     assert r.owl.offset_configured is (applied != 30.0)
+
+
+def test_unit_with_its_own_gps_reports_travel_timing_possible(rig):
+    """The dashboards ask for the nozzle distance up front on these units."""
+    assert rig(speed_kmh=0.0).owl.get_system_stats()['travel_timing'] is True
+
+
+def test_unit_without_gps_or_controller_does_not(rig):
+    assert rig(gps=False).owl.get_system_stats()['travel_timing'] is False
+
+
+def test_controller_timing_counts_as_travel_timing_while_it_is_live(rig, mqtt_publisher):
+    r = rig(gps=False)
+    mqtt_publisher.set_owl_instance(r.owl)
+    mqtt_publisher._handle_command({'action': 'set_actuation_params', 'actuation_duration': 0.05,
+                                    'delay': 0.1, 'source': 'gps', 'offset_cm': 30,
+                                    'offset_configured': False})
+    stats = r.owl.get_system_stats()
+    assert stats['travel_timing'] is True
+    assert stats['offset_configured'] is False
+    r.owl._controller_timing_at -= r.owl._CONTROLLER_TIMING_TIMEOUT_S + 1    # controller went quiet
+    assert r.owl.get_system_stats()['travel_timing'] is False

@@ -1149,6 +1149,7 @@ class OWLDashboard:
                 'offset_cm': mqtt_state.get('offset_cm'),
                 'actuation_length_cm': mqtt_state.get('actuation_length_cm'),
                 'offset_configured': mqtt_state.get('offset_configured'),
+                'travel_timing': mqtt_state.get('travel_timing'),
                 # Camera resolution
                 'resolution_width': mqtt_state.get('resolution_width', 0),
                 'resolution_height': mqtt_state.get('resolution_height', 0),

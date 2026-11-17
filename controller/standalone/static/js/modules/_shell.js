@@ -522,7 +522,7 @@ const Shell = (function () {
     let lengthStep = null;
 
     function sendGeometry(key, val) {
-        fetch('/api/config/section', {
+        return fetch('/api/config/section', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ section: 'Actuation', params: { [key]: val } }),
         }).then((r) => r.json()).then((res) => {
@@ -557,6 +557,16 @@ const Shell = (function () {
         const noSpeed = typeof d.speed_kmh !== 'number';
         const why = 'Used when the OWL has a GPS speed. Without one it uses its fixed spray time and delay.';
         UI().stepOff($('sprayLength'), noSpeed && typeof d.actuation_length_cm === 'number', why);
+        // Asked up front on a unit that can time sprays from travel speed
+        UI().askNozzleDistance({
+            needed: d.offset_configured === false && d.travel_timing === true && typeof d.offset_cm === 'number',
+            spraying: !!d.detection_enable || d.detection_mode === 2,
+            value: d.offset_cm,
+            save: (cm) => sendGeometry('offset_cm', cm).then(() => {
+                showNotification('Spray timing', 'Nozzle distance saved: ' + cm + ' cm', 'success', 2500);
+                updateSystemStats();
+            }),
+        });
         const html = d.offset_configured === false ? UI().notice('warn', OFFSET_UNSET + 'Measure yours and enter it below.') : '';
         const box = $('offsetNotice');
         if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }

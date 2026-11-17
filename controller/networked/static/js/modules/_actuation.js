@@ -168,6 +168,23 @@ async function pollActuation() {
         }
 
         actuationState = data;
+        // Asked up front on a rig with controller GPS, while nothing sprays
+        OwlUI.askNozzleDistance({
+            needed: data.offset_configured === false && data.gps_enabled === true && typeof data.offset_cm === 'number',
+            spraying: typeof Shell !== 'undefined' && Shell.anySpraying ? Shell.anySpraying() : false,
+            value: data.offset_cm,
+            save: function (cm) {
+                fetch('/api/actuation/config', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ offset_cm: cm })
+                }).then(function (res) { return res.json(); }).then(function (res) {
+                    if (window.showToast) showToast(res && res.saved === false
+                        ? 'Applied, but could not be saved. It will reset when the controller restarts.'
+                        : 'Nozzle distance saved: ' + cm + ' cm', res && res.saved === false ? 'error' : 'success');
+                    pollActuation();
+                }).catch(function (err) { console.error('Failed to save nozzle distance:', err); });
+            },
+        });
         if (nozzleOffsetStep) {
             if (typeof data.offset_cm === 'number') nozzleOffsetStep.set(data.offset_cm);
             var box = document.getElementById('offsetNotice');

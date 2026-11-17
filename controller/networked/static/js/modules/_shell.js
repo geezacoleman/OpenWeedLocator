@@ -35,6 +35,7 @@ const Shell = (function () {
     let livePop = null;
     let liveId = null;          // OWL picked in the live view pop-up (null = the selection)
     let nozzleTester = null;
+    let owlsLoaded = false;   // first OWL report received
     let trackPersistStep = null;
     let trackBufferStep = null;
 
@@ -272,6 +273,7 @@ const Shell = (function () {
     // ---------- per-poll update ----------
     function update(data) {
         lastData = data || {};
+        owlsLoaded = true;
         const now = Date.now() / 1000;
         Object.keys(owlsData).forEach((id) => {
             const o = owlsData[id];
@@ -874,5 +876,9 @@ const Shell = (function () {
     return {
         init: init, update: update, render: render, scopeOwl: scopeOwl, openSettings: openSettings,
         modeRefused: modeRefused, onCollectConfig: onCollectConfig, setScope: setScope,
+        // Any connected OWL spot or blanket spraying (no pop-ups over a working rig)
+        // True until the first OWL report has arrived: unknown counts as spraying.
+        anySpraying: () => !owlsLoaded || Object.keys(owlsData).some((id) => owlsData[id] && owlsData[id].connected &&
+            (owlsData[id].detection_enable || owlsData[id].detection_mode === 2)),
     };
 })();

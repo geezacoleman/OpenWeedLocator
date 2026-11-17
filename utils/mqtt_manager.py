@@ -664,6 +664,7 @@ class OWLMQTTPublisher:
             'offset_cm': None,
             'actuation_length_cm': None,
             'offset_configured': None,
+            'travel_timing': None,
             # BOARD pins this OWL's own GPS hardware uses ({'37': reason});
             # dashboards refuse config changes that would drive them.
             'protected_pins': {},
@@ -4024,7 +4025,8 @@ class OWLMQTTPublisher:
             self.state['delay'] = stats_dict.get('delay', self.state.get('delay', 0.0))
             for key in ('actuation_source', 'speed_kmh', 'latency_ms', 'speed_warning',
                         'last_frame_age_s', 'loop_busy',
-                        'offset_cm', 'actuation_length_cm', 'offset_configured'):
+                        'offset_cm', 'actuation_length_cm', 'offset_configured',
+                        'travel_timing'):
                 if key in stats_dict:
                     self.state[key] = stats_dict[key]
             self.state['last_update'] = time.time()

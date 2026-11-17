@@ -426,6 +426,46 @@
         });
     }
 
+    // Asks for the nozzle distance behind the camera when travel timing is
+    // possible and nobody has entered it (the OWL would time sprays for the
+    // 30 cm default). nozzleDistanceSheet({value}) -> Promise<number|null>:
+    // the distance to save, or null for "Later".
+    function nozzleDistanceSheet(opts) {
+        const o = opts || {};
+        return new Promise((resolve) => {
+            const scrim = document.createElement('div');
+            scrim.className = 'ou-scrim';
+            scrim.id = 'nozzleDistanceSheet';
+            scrim.innerHTML = '<div class="ou-modal" role="dialog" aria-modal="true"><h3>Set the nozzle distance</h3>' +
+                '<p>With a GPS speed, each spray waits for the weed to travel from the camera to the nozzles. ' +
+                'Nobody has entered that distance, so the OWL is using <b>' + esc(o.value) + ' cm</b>. ' +
+                'If yours is different, sprays land early or late.</p>' +
+                '<p class="ou-hint">Measure along the ground from the middle of the camera\'s view back to the spray line.</p>' +
+                '<div class="ou-f"><span class="lbl">Nozzles behind the camera (cm)</span><div class="ou-kstep" data-nd></div></div>' +
+                '<div class="ou-modal-foot"><button type="button" class="ou-btn ghost" data-a="no">Later</button>' +
+                '<button type="button" class="ou-btn navy" data-a="yes">Save distance</button></div></div>';
+            (document.querySelector('.ou-app') || document.body).appendChild(scrim);
+            const step = stepper(scrim.querySelector('[data-nd]'), {
+                value: o.value, min: 0, max: 200, step: 1, unit: 'cm',
+                label: 'Nozzles behind the camera (cm)', onChange: () => {},
+            });
+            function done(v) { scrim.remove(); resolve(v); }
+            scrim.querySelector('[data-a="yes"]').addEventListener('click', () => done(step.get()));
+            scrim.querySelector('[data-a="no"]').addEventListener('click', () => done(null));
+        });
+    }
+
+    // Shows nozzleDistanceSheet at most once per page load, and never over a
+    // rig that is spraying (the Dashboard notice covers that case).
+    // o: {needed, spraying, value, save(cm) -> Promise}
+    let nozzleDistanceAsked = false;
+    function askNozzleDistance(o) {
+        if (nozzleDistanceAsked || !o.needed || o.spraying) return;
+        if (document.querySelector('.ou-scrim')) return;      // another sheet is open
+        nozzleDistanceAsked = true;
+        nozzleDistanceSheet({ value: o.value }).then((cm) => { if (cm !== null) o.save(cm); });
+    }
+
     // prompt({title, body, label, password}) -> Promise<string|null>
     function promptSheet(opts) {
         const o = opts || {};
@@ -910,6 +950,7 @@
         canRunAI: canRunAI, aiReported: aiReported, isHailo: isHailo, aiRunBadge: aiRunBadge, aiSummary: aiSummary,
         modelRows: modelRows, renderAIModels: renderAIModels, toggleClass: toggleClass,
         confirm: confirmSheet, choose: choiceSheet, prompt: promptSheet,
+        askNozzleDistance: askNozzleDistance,
         guardedFetch: guardedFetch, hold: hold, sprayNotice: sprayNotice, stepper: stepper, repeatPress: repeatPress, typeNumber: typeNumber,
         paramSteppers: paramSteppers, showParam: showParam, stepOff: stepOff, showModeSettings: showModeSettings,
         TRACK_PRESETS: TRACK_PRESETS, trackPreset: trackPreset,

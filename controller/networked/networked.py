@@ -292,6 +292,7 @@ class CentralController:
         self.offset_configured = self.config.has_option('Actuation', 'offset_cm')
         self._actuation_state = {
             'offset_configured': self.offset_configured,
+            'gps_enabled': self.gps_manager is not None,
             'speed_kmh': 0.0,
             'actuation_duration': self.actuation_calculator.fallback_duration,
             'delay': self.actuation_calculator.fallback_delay,
@@ -992,6 +993,7 @@ class CentralController:
             'actuation_length_cm': self.actuation_calculator.actuation_length_cm,
             'offset_cm': self.actuation_calculator.offset_cm,
             'offset_configured': self.offset_configured,
+            'gps_enabled': self.gps_manager is not None,
             'avg_loop_time_ms': round(avg_loop_time, 1),
         }
 

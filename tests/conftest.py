@@ -38,26 +38,16 @@ os.environ.setdefault('OWL_SKIP_INIT', '1')
 # Tests never write to anything real.
 # 1. OWL_HOME: the folders the OWL writes at run time (config/, logs/,
 #    models/, downloads/, uploads/, agent/widgets|sessions) move to a temp
-#    directory, one per test process, seeded with the checkout's tracked
-#    config/ and models/ files. Set before anything imports production code,
+#    directory, one per test process, seeded with the shipped config/ and
+#    models/ files (tests/sandbox_home.py). Set before anything imports production code,
 #    because some of those paths are fixed at import.
 # 2. tests/_write_guard.py fails any test that still changes a file outside
 #    the temp directory, whatever code path does it.
-import tempfile  # noqa: E402
-
-_OWL_HOME = Path(tempfile.mkdtemp(prefix='owl_test_home_'))
-for _folder in ('config', 'models'):
-    (_OWL_HOME / _folder).mkdir()
-    for _item in (PROJECT_ROOT / _folder).iterdir():
-        # Shipped files only: a developer's own CONTROLLER.ini, active config
-        # pointer or downloaded models must not decide what the tests see
-        if _item.is_file() and _item.name in (
-                'GENERAL_CONFIG.ini', 'CONTROLLER_TEMPLATE.ini', 'GEOMETRY_TEMPLATE.ini',
-                'bytetrack_owl.yaml', 'README.md', 'labels.txt'):
-            shutil.copy(_item, _OWL_HOME / _folder / _item.name)
-os.environ['OWL_HOME'] = str(_OWL_HOME)
-
 sys.path.insert(0, str(Path(__file__).parent))
+import sandbox_home  # noqa: E402
+
+_OWL_HOME = sandbox_home.use()
+
 import _write_guard  # noqa: E402
 
 _write_guard.install()

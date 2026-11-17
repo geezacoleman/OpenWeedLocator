@@ -2783,6 +2783,12 @@ class Owl:
         stats['offset_cm'] = self._actuation_calc.offset_cm
         stats['actuation_length_cm'] = self._actuation_calc.actuation_length_cm
         stats['offset_configured'] = self.offset_configured
+        # Could sprays be timed from travel speed on this unit: it has its
+        # own GPS receiver, or a controller is sending timing. The dashboards
+        # ask for the nozzle distance up front when this is true.
+        stats['travel_timing'] = bool(
+            self._gps_state is not None
+            or time.monotonic() - self._controller_timing_at <= self._CONTROLLER_TIMING_TIMEOUT_S)
 
         return stats
 

@@ -592,6 +592,16 @@ class TestNozzleDistanceOnTheController:
         assert data['offset_cm'] == 30.0
         assert self._broadcast(ctrl)['offset_configured'] is False
 
+    def test_gps_enabled_tells_the_screen_whether_to_ask(self, tmp_path, monkeypatch):
+        from unittest.mock import MagicMock
+        ctrl, _ = self._controller(tmp_path)
+        client = self._client(ctrl, monkeypatch)
+        assert client.get('/api/actuation').get_json()['gps_enabled'] is False
+        ctrl.gps_manager = MagicMock()
+        ctrl.gps_manager.get_state.return_value = {'fix': {}, 'connection': {}}
+        ctrl._actuation_broadcast_once()
+        assert client.get('/api/actuation').get_json()['gps_enabled'] is True
+
     def test_ini_values_reach_the_calculator(self, tmp_path):
         ctrl, _ = self._controller(
             tmp_path, '[Actuation]\noffset_cm = 55\nactuation_length_cm = 15\n'

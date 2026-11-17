@@ -31,6 +31,10 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 REPO = Path(__file__).resolve().parents[2]
+# Nothing this script runs may write into the checkout (tests/sandbox_home.py)
+sys.path.insert(0, str(REPO / 'tests'))
+import sandbox_home  # noqa: E402
+sandbox_home.use()
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / 'controller' / 'standalone'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -60,7 +64,7 @@ STATE = {
     'relay_num': 8, 'nozzle_test': [],
     # Travel timing on the 30 cm nozzle distance nobody entered
     'offset_cm': 30.0, 'actuation_length_cm': 10.0, 'offset_configured': False,
-    'actuation_source': 'device-gps',
+    'actuation_source': 'device-gps', 'travel_timing': True,
     'track_params': {'track_high_thresh': 0.3, 'track_buffer': 30, 'match_thresh': 0.7, 'detection_persist_frames': 5},
 }
 FAKE = {}
@@ -168,8 +172,43 @@ def run_checks():
                 if text not in page.inner_text('#fieldStats'):
                     problems.append(f'{name}: Dashboard stats missing {text!r}')
 
-            # Nozzle distance never entered: said on the Dashboard, and the
-            # link opens the setting
+            # Nozzle distance never entered. No pop-up over a rig that is
+            # spraying; once spraying is off it asks, with the value to set.
+            if page.query_selector('#nozzleDistanceSheet'):
+                problems.append(f'{name}: nozzle distance pop-up shown while spraying')
+            STATE['detection_enable'] = False
+            try:
+                page.wait_for_selector('#nozzleDistanceSheet', timeout=6000)
+                sheet = page.inner_text('#nozzleDistanceSheet')
+                if '30 cm' not in sheet or 'Measure' not in sheet:
+                    problems.append(f'{name}: nozzle distance pop-up does not say what is in use: {sheet!r}')
+                shot(page, f'nozzle_distance_popup_{name}')
+                check_screen(page, f'{name} nozzle distance pop-up', problems)
+                FAKE['mqtt']._send_command.reset_mock()
+                for _ in range(5):
+                    page.click('#nozzleDistanceSheet button[aria-label="More"]')
+                page.click('#nozzleDistanceSheet [data-a="yes"]')
+                page.wait_for_timeout(500)
+                sent = [(c.args, c.kwargs) for c in FAKE['mqtt']._send_command.call_args_list]
+                want = (('set_config_section',), {'section': 'Actuation', 'params': {'offset_cm': '35'}})
+                if want not in sent:
+                    problems.append(f'{name}: nozzle distance pop-up Save sent {sent}')
+                if page.query_selector('#nozzleDistanceSheet'):
+                    problems.append(f'{name}: nozzle distance pop-up stayed open after Save')
+                # Later closes it for this page load; a reload asks again
+                page.reload()
+                page.wait_for_selector('#nozzleDistanceSheet', timeout=6000)
+                page.click('#nozzleDistanceSheet [data-a="no"]')
+                page.wait_for_timeout(2500)
+                if page.query_selector('#nozzleDistanceSheet'):
+                    problems.append(f'{name}: nozzle distance pop-up came back after Later')
+            except Exception as e:
+                problems.append(f'{name}: nozzle distance pop-up: {e}')
+            finally:
+                STATE['detection_enable'] = True
+            page.wait_for_timeout(1200)
+
+            # Still said on the Dashboard, and the link opens the setting
             if 'Nozzle distance not set' not in page.inner_text('#fieldNotices'):
                 problems.append(f'{name}: Dashboard does not warn that the nozzle distance is unset')
             page.click('#fieldNotices [data-act="offset"]')
