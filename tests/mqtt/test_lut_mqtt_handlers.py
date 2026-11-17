@@ -1,13 +1,16 @@
-"""Tests for the LUT profile MQTT command handlers (set_lut_profile,
-set_lut_sensitivity, delete_lut_profile, list_lut_profiles) and owl.py's
-LUT integration points (source assertions; real-Owl tests are in tests/owl/)."""
+"""The LUT profile MQTT command handlers (set_lut_profile,
+set_lut_sensitivity, delete_lut_profile): validation, state and what is
+queued for the detection loop.
 
-from pathlib import Path
+What the detection loop does with what is queued (profile and algorithm
+arriving together, re-bake on a sensitivity change) is asserted on a real
+Owl in tests/owl/test_mqtt_commands_at_the_relay.py. Eight tests here used
+to assert it by searching owl.py for string literals."""
+
+import logging
 from unittest.mock import MagicMock
 
 import pytest
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.unit
@@ -53,13 +56,22 @@ class TestDeleteLutProfile:
         mqtt_publisher._handle_command({'action': 'delete_lut_profile', 'name': 'gone'})
         mock_owl.lut_manager.delete.assert_called_once_with('gone')
 
-    def test_delete_error_does_not_crash(self, mqtt_publisher, mock_owl):
+    def test_a_failed_delete_is_logged_and_the_selection_kept(self, mqtt_publisher, mock_owl, caplog):
         from utils.lut_manager import LUTProfileError
         mock_owl.lut_manager = MagicMock()
         mock_owl.lut_manager.delete.side_effect = LUTProfileError('missing')
-        mqtt_publisher._handle_command({'action': 'delete_lut_profile', 'name': 'ghost'})
-        # no exception propagated; state still published
-        assert mqtt_publisher.client.publish.called
+        mqtt_publisher.state['lut_profile'] = 'ghost'
+        with caplog.at_level(logging.ERROR):
+            mqtt_publisher._handle_command({'action': 'delete_lut_profile', 'name': 'Ghost'})
+        mock_owl.lut_manager.delete.assert_called_once_with('ghost')
+        assert any("Failed to delete LUT profile 'ghost': missing" in r.message
+                   for r in caplog.records)
+        assert mqtt_publisher.state['lut_profile'] == 'ghost'
+
+    def test_delete_without_a_name_deletes_nothing(self, mqtt_publisher, mock_owl):
+        mock_owl.lut_manager = MagicMock()
+        mqtt_publisher._handle_command({'action': 'delete_lut_profile', 'name': '  '})
+        mock_owl.lut_manager.delete.assert_not_called()
 
 
 @pytest.mark.unit
@@ -100,61 +112,3 @@ class TestSetAlgorithmLut:
         mqtt_publisher._handle_command({'action': 'set_algorithm', 'value': 'lut'})
         assert mqtt_publisher.state['algorithm_pending'] == 'lut'
         assert mock_owl._pending_algorithm == 'lut'
-
-
-# ---------------------------------------------------------------------------
-# owl.py integration points — source assertions (owl.py imports hardware
-# modules and can't be imported on the dev host)
-# ---------------------------------------------------------------------------
-
-@pytest.mark.unit
-class TestOwlLutSource:
-    @pytest.fixture(scope='class')
-    def owl_source(self):
-        return (PROJECT_ROOT / 'owl.py').read_text(encoding='utf-8')
-
-    def test_lut_detector_branch_exists(self, owl_source):
-        assert "elif algo == 'lut':" in owl_source
-        assert "GreenOnBrown(algorithm='lut', lut_table=lut_table)" in owl_source
-
-    def test_lut_config_keys_read_in_init(self, owl_source):
-        assert "self.lut_profile = self.config.get('GreenOnBrown', 'lut_profile'" in owl_source
-        assert "self.lut_sensitivity = self.config.getint('GreenOnBrown', 'lut_sensitivity'" in owl_source
-
-    def test_pending_drains_exist(self, owl_source):
-        assert 'self._pending_lut_profile = None' in owl_source
-        assert 'self._pending_lut_sensitivity = None' in owl_source
-        assert 'if self._pending_lut_profile is not None:' in owl_source
-
-    def test_lut_drain_precedes_algorithm_drain(self, owl_source):
-        """A set_lut_profile + set_algorithm pair arriving together must
-        build the new detector from the new profile."""
-        lut_drain = owl_source.index('if self._pending_lut_profile is not None:')
-        algo_drain = owl_source.index('if self._pending_algorithm and (')
-        assert lut_drain < algo_drain
-
-    def test_exhsv_failsafe_fallback(self, owl_source):
-        assert "if algorithm == 'lut':" in owl_source
-        assert "algorithm = 'exhsv'" in owl_source
-
-    def test_min_detection_area_percent_wired(self, owl_source):
-        """Percent mode derives px from the cropped detection frame and is
-        passed to inference in place of the raw px attribute."""
-        assert "self.min_detection_area_percent = self.config.getfloat" in owl_source
-        assert "self.min_detection_area_percent / 100.0" in owl_source
-        assert "* self.cropped_width * self.cropped_height" in owl_source
-        assert 'min_detection_area=min_detection_area' in owl_source
-        assert 'min_detection_area=self.min_detection_area' not in owl_source
-
-    def test_greenonbrown_registers_lut(self):
-        source = (PROJECT_ROOT / 'utils' / 'greenonbrown.py').read_text(encoding='utf-8')
-        assert "'lut': self._lut_inference" in source
-        assert 'def set_lut(' in source
-
-    def test_networked_pushes_lut_desired_state(self):
-        source = (PROJECT_ROOT / 'controller' / 'networked' / 'networked.py').read_text(encoding='utf-8')
-        push = source.index('def _push_desired_state')
-        push_end = source.index('def _actuation_broadcast_loop')
-        body = source[push:push_end]
-        assert 'set_lut_profile' in body
-        assert 'set_lut_sensitivity' in body

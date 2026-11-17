@@ -2,78 +2,27 @@
 Tests for AI tab: model selection, class filtering, MQTT command handlers.
 """
 
-import os
-import json
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
 
 
 # ---------------------------------------------------------------------------
-# set_detect_classes command
+# set_detect_classes / set_model before an OWL is attached
+# (with an OWL: test_mqtt_command_handlers.py TestSetDetectClasses, TestSetModelCommand)
 # ---------------------------------------------------------------------------
 
-class TestSetDetectClasses:
-    """Tests for the set_detect_classes MQTT command handler."""
-
-    def test_empty_list_clears_classes(self, mqtt_publisher, mock_owl):
-        """Sending an empty list should queue an empty list on the owl."""
-        command = {'action': 'set_detect_classes', 'value': []}
-        mqtt_publisher._handle_command(command)
-
-        assert mock_owl._pending_detect_classes == []
-        assert mqtt_publisher.state['detect_classes'] == []
-
-    def test_name_list_sets_classes(self, mqtt_publisher, mock_owl):
-        """Sending a list of class names should queue them on the owl."""
-        command = {'action': 'set_detect_classes', 'value': ['wheat', 'ryegrass']}
-        mqtt_publisher._handle_command(command)
-
-        assert mock_owl._pending_detect_classes == ['wheat', 'ryegrass']
-        assert mqtt_publisher.state['detect_classes'] == ['wheat', 'ryegrass']
-
-    def test_comma_string_parsed(self, mqtt_publisher, mock_owl):
-        """Sending a comma-separated string should be split into a list."""
-        command = {'action': 'set_detect_classes', 'value': 'wheat, ryegrass, barley'}
-        mqtt_publisher._handle_command(command)
-
-        assert mock_owl._pending_detect_classes == ['wheat', 'ryegrass', 'barley']
-
-    def test_no_owl_instance(self, mqtt_publisher):
-        """Should not crash when owl_instance is None."""
+class TestNoOwlAttached:
+    def test_detect_classes_are_kept_in_state(self, mqtt_publisher):
         mqtt_publisher.owl_instance = None
-        command = {'action': 'set_detect_classes', 'value': ['wheat']}
-        mqtt_publisher._handle_command(command)
+        mqtt_publisher._handle_command({'action': 'set_detect_classes', 'value': ['wheat']})
         assert mqtt_publisher.state['detect_classes'] == ['wheat']
 
-
-# ---------------------------------------------------------------------------
-# set_model command
-# ---------------------------------------------------------------------------
-
-class TestSetModel:
-    """Tests for the set_model MQTT command handler."""
-
-    def test_sets_pending_model(self, mqtt_publisher, mock_owl):
-        """Should set _pending_model on the owl instance with models/ path."""
-        command = {'action': 'set_model', 'value': 'yolo26n-seg.pt'}
-        mqtt_publisher._handle_command(command)
-
-        assert mock_owl._pending_model == os.path.join('models', 'yolo26n-seg.pt')
-
-    def test_empty_model_ignored(self, mqtt_publisher, mock_owl):
-        """Empty model name should not set pending."""
-        command = {'action': 'set_model', 'value': ''}
-        mqtt_publisher._handle_command(command)
-
-        assert mock_owl._pending_model is None
-
-    def test_no_owl_instance(self, mqtt_publisher):
-        """Should not crash when owl_instance is None."""
+    def test_a_model_switch_is_not_reported_as_done(self, mqtt_publisher):
+        """Nothing can load it yet: the dashboard must not show it as current."""
         mqtt_publisher.owl_instance = None
-        command = {'action': 'set_model', 'value': 'model.pt'}
-        mqtt_publisher._handle_command(command)  # Should not raise
+        before = mqtt_publisher.state['current_model']
+        mqtt_publisher._handle_command({'action': 'set_model', 'value': 'model.pt'})
+        assert mqtt_publisher.state['current_model'] == before
 
 
 # ---------------------------------------------------------------------------
@@ -113,13 +62,6 @@ class TestListAvailableModels:
 
 class TestStateSyncAIFields:
     """Verify _sync_parameters_to_state populates AI tab fields."""
-
-    def test_state_has_ai_fields(self, mqtt_publisher):
-        """After set_owl_instance, state should contain AI tab fields."""
-        assert 'current_model' in mqtt_publisher.state
-        assert 'available_models' in mqtt_publisher.state
-        assert 'model_classes' in mqtt_publisher.state
-        assert 'detect_classes' in mqtt_publisher.state
 
     def test_no_gog_detector_yields_empty(self, mqtt_publisher, mock_owl):
         """Without a GoG detector, model info should be empty."""

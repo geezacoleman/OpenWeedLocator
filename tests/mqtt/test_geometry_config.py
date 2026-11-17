@@ -3,31 +3,32 @@ saves ([Meta] section).
 
 Covers:
 - build_config_filename / parse_config_meta helpers
-- geometry math via the shared utils.geometry.compute_geometry (the SAME function
-  owl.py calls, so the tests can't drift from production); owl.py's use of it is
-  also checked at source level (real-Owl tests are in tests/owl/)
-- live geometry recompute trigger + restart-required flag in mqtt_manager
-- hot-path timing guard for the per-frame crop + actuation-band filter
+- geometry math via the shared utils.geometry.compute_geometry and assign_lanes
+  (the SAME functions owl.py calls)
+- the restart-required flag in mqtt_manager
+- save_geometry / get_config against a real GEOMETRY.ini in a private OWL home
+
+That a live band or geometry edit changes which weeds spray is asserted at
+the relay of a real Owl: tests/owl/test_mqtt_commands_at_the_relay.py
+(test_a_live_band_edit_changes_which_weeds_spray, test_save_geometry_...) and
+tests/owl/test_relay_matrix.py (band, lanes). The tests that used to stand in
+for that here asserted `recompute_geometry.called` on a MagicMock, searched
+owl.py for literals, or timed a loop written in the test.
 """
 
-import ast
 import configparser
 import io
-import os
+import json
 import sys
-import tempfile
-import time
 from pathlib import Path
-from unittest.mock import patch
 
-import numpy as np
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from utils.config_manager import (
-    build_config_filename, parse_config_meta, strip_geometry_keys, GEOMETRY_KEYS,
+    build_config_filename, parse_config_meta, strip_geometry_keys,
 )
 from utils.geometry import compute_geometry
 
@@ -149,72 +150,26 @@ class TestGeometryMath:
 
 
 # ---------------------------------------------------------------------------
-# owl.py source-level checks
+# Structure only: owl.py must call the shared lane function, not carry a copy
 # ---------------------------------------------------------------------------
 
 @pytest.mark.unit
-class TestOwlGeometrySource:
-    def _src(self):
-        return (PROJECT_ROOT / 'owl.py').read_text(encoding='utf-8')
-
-    def test_recompute_method_defined(self):
-        tree = ast.parse(self._src())
-        names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
-        assert 'recompute_geometry' in names
-
-    def test_init_calls_recompute(self):
-        assert 'self.recompute_geometry()' in self._src()
-
-    def test_centre_mode_uses_the_shared_lane_assignment(self):
-        """owl.py must call assign_lanes, not re-implement the band check.
-
-        Band membership itself is now covered behaviourally in
-        TestLaneAssignment; this only pins that owl.py routes through the
-        shared function, so a future inline copy is caught here rather than
-        silently drifting the way the three old replicas did.
-        """
-        src = self._src()
-        assert 'from utils.geometry import compute_geometry, assign_lanes' in src
-        assert 'assign_lanes(weed_centres' in src
-
-    def test_zone_mode_slices_the_band(self):
-        # Zone mode slices the band, not a single threshold
-        assert 'self.actuation_y_top:self.actuation_y_bottom' in self._src()
-
-    def test_per_edge_config_read(self):
-        src = self._src()
-        for key in ('crop_left', 'crop_right', 'crop_top', 'crop_bottom',
-                    'actuation_top', 'actuation_bottom'):
-            assert key in src
+def test_owl_uses_the_shared_lane_assignment():
+    """Structure check, not behaviour (that is TestLaneAssignment below and
+    tests/owl/test_relay_matrix.py). Until v3.16 the band check existed as
+    three hand-copied replicas that drifted; this fails if owl.py stops
+    importing and calling utils.geometry.assign_lanes."""
+    src = (PROJECT_ROOT / 'owl.py').read_text(encoding='utf-8')
+    assert 'from utils.geometry import compute_geometry, assign_lanes' in src
+    assert 'assign_lanes(weed_centres' in src
 
 
 # ---------------------------------------------------------------------------
-# Live geometry recompute trigger + restart-required (mqtt_manager)
+# Restart-required flag (mqtt_manager)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.unit
-class TestLiveGeometryTrigger:
-    def test_constants_defined(self):
-        from utils.mqtt_manager import GEOMETRY_KEYS, RESTART_REQUIRED_KEYS
-        assert {'crop_left', 'crop_right', 'crop_top', 'crop_bottom',
-                'actuation_top', 'actuation_bottom'} <= GEOMETRY_KEYS
-        assert {'resolution_width', 'resolution_height', 'relay_num'} <= RESTART_REQUIRED_KEYS
-
-    def test_crop_change_triggers_recompute(self, mqtt_publisher, mock_owl):
-        mock_owl.recompute_geometry.reset_mock()
-        mqtt_publisher._handle_set_config_section('Camera', {'crop_left': '0.1'})
-        assert mock_owl.recompute_geometry.called
-
-    def test_band_change_triggers_recompute(self, mqtt_publisher, mock_owl):
-        mock_owl.recompute_geometry.reset_mock()
-        mqtt_publisher._handle_set_config_section('System', {'actuation_top': '0.2'})
-        assert mock_owl.recompute_geometry.called
-
-    def test_threshold_change_does_not_recompute(self, mqtt_publisher, mock_owl):
-        mock_owl.recompute_geometry.reset_mock()
-        mqtt_publisher._handle_set_config_section('GreenOnBrown', {'exg_min': '30'})
-        assert not mock_owl.recompute_geometry.called
-
+class TestRestartRequired:
     def test_resolution_sets_restart_required(self, mqtt_publisher, mock_owl):
         mqtt_publisher.state.pop('restart_required', None)
         mqtt_publisher._handle_set_config_section('Camera', {'resolution_width': '1280'})
@@ -246,19 +201,36 @@ class TestLiveGeometryTrigger:
         mqtt_publisher._handle_set_config_section('Camera', {'resolution_width': '640'})
         assert 'resolution_width' in mqtt_publisher.state.get('restart_required', '')
 
-    def test_controller_drops_stale_restart_notice(self):
-        # networked.py can't be imported (instantiates CentralController at
-        # import) — source-level check like the heartbeat tests: a state
-        # payload WITHOUT restart_required must evict the cached copy,
-        # otherwise the notice outlives the restart it asked for.
-        net = (PROJECT_ROOT / 'controller' / 'networked' / 'networked.py'
-               ).read_text(encoding='utf-8')
-        assert "if 'restart_required' not in payload:" in net
-        assert ".pop('restart_required', None)" in net
+    def test_controller_drops_a_restart_notice_the_owl_no_longer_publishes(self):
+        """A state payload WITHOUT restart_required (older firmware after its
+        restart) must evict the controller's cached copy, otherwise the
+        notice outlives the restart it asked for."""
+        import threading
+        from unittest.mock import MagicMock
+        from controller.networked.networked import CentralController
+
+        ctrl = CentralController.__new__(CentralController)
+        ctrl.owls_state, ctrl.desired_state, ctrl.lwt_timestamps = {}, {}, {}
+        ctrl.mqtt_connected, ctrl.mqtt_lock, ctrl.mqtt_client = True, threading.Lock(), MagicMock()
+        ctrl.offline_timeout, ctrl.gps_manager = 15.0, None
+
+        def state(payload):
+            msg = MagicMock()
+            msg.topic = 'owl/owl-1/state'
+            msg.payload = json.dumps(payload).encode()
+            ctrl._on_message(None, None, msg)
+
+        state({'restart_required': 'relay_num', 'algorithm': 'exhsv'})
+        assert ctrl.owls_state['owl-1']['restart_required'] == 'relay_num'
+        state({'restart_required': 'relay_num,resolution_width'})
+        assert ctrl.owls_state['owl-1']['restart_required'] == 'relay_num,resolution_width'
+        state({'algorithm': 'exhsv'})
+        assert 'restart_required' not in ctrl.owls_state['owl-1']
 
     def test_frontend_labels_cover_all_restart_keys(self):
-        # The notice shows operator language, not config keys — every key the
-        # OWL can flag needs an entry in the frontend label map.
+        # Structure check across two files: the notice shows operator
+        # language, not config keys, so every key the OWL can flag needs an
+        # entry in the frontend label map.
         from utils.mqtt_manager import RESTART_REQUIRED_KEYS
         js = (PROJECT_ROOT / 'controller' / 'networked' / 'static' / 'js' /
               'modules' / '_config_editor.js').read_text(encoding='utf-8')
@@ -266,26 +238,9 @@ class TestLiveGeometryTrigger:
             assert f'{key}:' in js, f'RESTART_KEY_LABELS missing {key}'
 
 
-# ---------------------------------------------------------------------------
-# Hot-path timing guard — per-frame crop slice + actuation-band filter must stay
-# negligible. Flags accidental per-frame regressions (e.g. a per-pixel mask).
-# ---------------------------------------------------------------------------
-
 @pytest.mark.unit
 class TestGeometrySeparation:
     """GEOMETRY.ini is device-resident and kept out of named detection configs."""
-
-    def test_geometry_ini_overrides_active_config(self, tmp_path):
-        # Merge order owl.py uses: active config first, GEOMETRY.ini last (wins).
-        active = tmp_path / 'active.ini'
-        active.write_text('[Camera]\ncrop_left = 0.05\nresolution_width = 1456\n')
-        geom = tmp_path / 'GEOMETRY.ini'
-        geom.write_text('[Camera]\ncrop_left = 0.2\n')
-        cp = configparser.ConfigParser()
-        cp.read(str(active))
-        cp.read(str(geom))
-        assert cp.get('Camera', 'crop_left') == '0.2'        # geometry wins
-        assert cp.get('Camera', 'resolution_width') == '1456'  # non-geometry preserved
 
     def test_strip_geometry_keys(self):
         d = {
@@ -299,10 +254,6 @@ class TestGeometrySeparation:
         assert 'actuation_top' not in out['System']
         assert out['System']['relay_num'] == '4'
         assert out['GreenOnBrown']['exg_min'] == '25'
-
-    def test_geometry_keys_set(self):
-        assert GEOMETRY_KEYS == {'crop_left', 'crop_right', 'crop_top',
-                                 'crop_bottom', 'actuation_top', 'actuation_bottom'}
 
     def test_write_config_without_geometry(self, mqtt_publisher):
         cfg = configparser.ConfigParser()
@@ -324,40 +275,38 @@ class TestGeometrySeparation:
 
 @pytest.mark.unit
 class TestSaveGeometryAndPreview:
-    def test_save_geometry_applies_recompute_and_persists(self, mqtt_publisher, mock_owl, tmp_path):
-        import utils.mqtt_manager as mm
-        mock_owl.recompute_geometry.reset_mock()
-        real_path = os.path.join(str(tmp_path), 'g.ini')
-        fd = os.open(real_path, os.O_WRONLY | os.O_CREAT)
-        with patch.object(mm.os, 'replace') as mock_replace, \
-             patch.object(mm.tempfile, 'mkstemp', return_value=(fd, real_path)):
-            mqtt_publisher._handle_save_geometry({'crop_left': '0.1', 'actuation_top': '0.2'})
-        assert mock_owl.recompute_geometry.called   # applied live
-        assert mock_replace.called                   # persisted (atomic replace)
-        assert float(mock_owl.crop_left) == 0.1
+    def test_save_geometry_writes_only_geometry_keys_to_this_units_file(
+            self, mqtt_publisher, mock_owl, owl_home):
+        mqtt_publisher._handle_command({'action': 'save_geometry', 'params': {
+            'crop_left': '0.1', 'actuation_top': '0.2', 'relay_num': '8', 'exg_min': '1'}})
+        assert mqtt_publisher.io_flush()
 
-    def test_save_geometry_ignores_non_geometry_keys(self, mqtt_publisher, mock_owl, tmp_path):
-        import utils.mqtt_manager as mm
-        real_path = os.path.join(str(tmp_path), 'g2.ini')
-        fd = os.open(real_path, os.O_WRONLY | os.O_CREAT)
-        with patch.object(mm.os, 'replace'), \
-             patch.object(mm.tempfile, 'mkstemp', return_value=(fd, real_path)):
-            mqtt_publisher._handle_save_geometry({'relay_num': '8', 'crop_left': '0.3'})
-        # relay_num is not a geometry key — must not be written to GEOMETRY.ini
         written = configparser.ConfigParser()
-        written.read(real_path)
-        assert not (written.has_section('System') and written.has_option('System', 'relay_num'))
+        written.read_string((owl_home / 'config' / 'GEOMETRY.ini').read_text())
+        assert {s: dict(written[s]) for s in written.sections()} == {
+            'Camera': {'crop_left': '0.1'}, 'System': {'actuation_top': '0.2'}}
+        # nothing else in config/: not the pointer, not a profile, no temp file
+        assert [p.name for p in (owl_home / 'config').iterdir()] == ['GEOMETRY.ini']
+        # and the running config a later get_config reads carries them
+        assert mock_owl.config.get('Camera', 'crop_left') == '0.1'
+        assert mock_owl.config.get('System', 'relay_num') == '4'
 
-    def test_config_payload_merges_geometry_ini(self, mqtt_publisher, tmp_path):
+    def test_save_geometry_keeps_the_keys_it_was_not_sent(self, mqtt_publisher, mock_owl, owl_home):
+        geom = owl_home / 'config' / 'GEOMETRY.ini'
+        geom.write_text('[Camera]\ncrop_left = 0.11\ncrop_right = 0.07\n')
+        mqtt_publisher._handle_save_geometry({'crop_left': '0.3', 'crop_top': 'wide'})
+        written = configparser.ConfigParser()
+        written.read_string(geom.read_text())
+        assert dict(written['Camera']) == {'crop_left': '0.3', 'crop_right': '0.07'}
+
+    def test_config_payload_merges_geometry_ini(self, mqtt_publisher, owl_home):
         """get_config must seed the editor with GEOMETRY.ini values — otherwise the
         geometry editor opens on defaults and Done re-saves defaults over the real
         file (2026-07-10 field bug: geometry 'reverting' after save)."""
-        import json
-        geom = tmp_path / 'GEOMETRY.ini'
-        geom.write_text('[Camera]\ncrop_left = 0.11\ncrop_right = 0.07\n'
-                        '[System]\nactuation_top = 0.25\nactuation_bottom = 0.9\n')
-        with patch.object(mqtt_publisher, '_geometry_ini_path', return_value=str(geom)):
-            mqtt_publisher._handle_get_config()
+        (owl_home / 'config' / 'GEOMETRY.ini').write_text(
+            '[Camera]\ncrop_left = 0.11\ncrop_right = 0.07\n'
+            '[System]\nactuation_top = 0.25\nactuation_bottom = 0.9\n')
+        mqtt_publisher._handle_get_config()
 
         mqtt_publisher.client.publish.assert_called_once()
         payload = json.loads(mqtt_publisher.client.publish.call_args[0][1])
@@ -369,37 +318,31 @@ class TestSaveGeometryAndPreview:
         assert payload['config']['Camera']['resolution_width'] == '416'
         assert payload['config']['GreenOnBrown']['exg_min'] == '25'
 
-    def test_geometry_save_then_get_round_trips(self, mqtt_publisher, mock_owl, tmp_path):
+    def test_geometry_save_then_get_round_trips(self, mqtt_publisher, mock_owl, owl_home):
         """Full field-bug repro: save geometry, then get_config must return the
         SAVED values — not defaults. (The broken round trip is what made saved
         geometry 'revert', and re-saving from the default-seeded editor then
         destroyed the real GEOMETRY.ini.)"""
-        import json
-        geom = tmp_path / 'GEOMETRY.ini'
-        with patch.object(mqtt_publisher, '_geometry_ini_path', return_value=str(geom)):
-            mqtt_publisher._handle_save_geometry({'crop_left': '0.13', 'actuation_top': '0.31'})
-            assert geom.exists(), "save_geometry did not write GEOMETRY.ini"
-            mqtt_publisher.client.publish.reset_mock()
-            mqtt_publisher._handle_get_config()
+        mqtt_publisher._handle_save_geometry({'crop_left': '0.13', 'actuation_top': '0.31'})
+        mqtt_publisher.client.publish.reset_mock()
+        mqtt_publisher._handle_get_config()
 
         publishes = [c for c in mqtt_publisher.client.publish.call_args_list
-                     if 'config' in c[0][0]]
-        assert publishes, "get_config published nothing"
-        payload = json.loads(publishes[-1][0][1])
+                     if c[0][0] == mqtt_publisher.topics['config']]
+        assert len(publishes) == 1
+        payload = json.loads(publishes[0][0][1])
         assert payload['config']['Camera']['crop_left'] == '0.13'
         assert payload['config']['System']['actuation_top'] == '0.31'
 
-    def test_config_payload_ok_without_geometry_ini(self, mqtt_publisher, tmp_path):
+    def test_config_payload_ok_without_geometry_ini(self, mqtt_publisher, owl_home):
         """A unit that has never used the geometry editor has no GEOMETRY.ini —
-        get_config must still publish normally."""
-        import json
-        with patch.object(mqtt_publisher, '_geometry_ini_path',
-                          return_value=str(tmp_path / 'GEOMETRY.ini')):
-            mqtt_publisher._handle_get_config()
+        get_config must still publish normally, without inventing geometry."""
+        mqtt_publisher._handle_get_config()
 
         mqtt_publisher.client.publish.assert_called_once()
         payload = json.loads(mqtt_publisher.client.publish.call_args[0][1])
         assert payload['config']['GreenOnBrown']['exg_min'] == '25'
+        assert 'crop_left' not in payload['config']['Camera']
 
     def test_set_preview_mode_toggles_flag(self, mqtt_publisher, mock_owl):
         mqtt_publisher._handle_command({'action': 'set_preview_mode', 'mode': 'full'})
@@ -409,36 +352,7 @@ class TestSaveGeometryAndPreview:
 
     def test_config_name_published_in_state(self, mqtt_publisher, mock_owl):
         mqtt_publisher._sync_parameters_to_state()
-        assert 'config_name' in mqtt_publisher.state
-
-
-@pytest.mark.unit
-class TestHotPathTiming:
-    def test_crop_and_band_filter_per_frame_budget(self):
-        frame = np.zeros((1088, 1456, 3), dtype=np.uint8)
-        geo = compute_geometry(1456, 1088, 0.02, 0.02, 0.02, 0.02, 4, 0.0, 1.0)
-        crop_slice = geo['crop_slice']
-        y_top, y_bottom, lane_width = geo['y_top'], geo['y_bottom'], geo['lane_width']
-        centres = [[(i * 31) % 1400, (i * 17) % 1000] for i in range(50)]
-
-        N = 2000
-        for _ in range(50):           # warmup
-            _ = frame[crop_slice]
-
-        start = time.perf_counter()
-        for _ in range(N):
-            _cropped = frame[crop_slice]          # view, no copy
-            fired = set()
-            for centre in centres:
-                if y_top <= centre[1] <= y_bottom:
-                    fired.add(min(int(centre[0] / lane_width), 3))
-        per_frame_ms = (time.perf_counter() - start) / N * 1000
-
-        print(f"\n  hot-path crop+band filter: {per_frame_ms:.4f} ms/frame "
-              f"({len(centres)} centres, {N} iters)")
-        # Generous ceiling — the real op is microseconds; this only catches a
-        # gross regression such as adding a per-pixel mask to the hot path.
-        assert per_frame_ms < 1.0
+        assert mqtt_publisher.state['config_name'] == 'test_config.ini'
 
 
 @pytest.mark.unit

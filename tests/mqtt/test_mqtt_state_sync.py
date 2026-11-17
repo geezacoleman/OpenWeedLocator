@@ -157,20 +157,15 @@ class TestReconnectBroadcast:
     def test_new_device_gets_desired_state_pushed(self, controller):
         """When a new OWL appears, desired state should be pushed to it."""
         controller.desired_state = {
-            'all': {'detection_enable': True, 'image_sample_enable': False}
+            'all': {'spray': 'spot', 'image_sample_enable': False}
         }
 
         self._inject_message(controller, 'owl-pi-new')
 
-        # Should have published detection_enable and image_sample_enable to the new device
         calls = controller.mqtt_client.publish.call_args_list
-        topics = [c[0][0] for c in calls]
-        assert any('owl-pi-new/commands' in t for t in topics)
-
-        # Check the payloads
-        payloads = [json.loads(c[0][1]) for c in calls if 'owl-pi-new/commands' in c[0][0]]
-        actions = [p['action'] for p in payloads]
-        assert 'set_detection_enable' in actions
+        payloads = [json.loads(c[0][1]) for c in calls if c[0][0] == 'owl/owl-pi-new/commands']
+        assert payloads == [{'action': 'set_detection_enable', 'value': True},
+                            {'action': 'set_image_sample_enable', 'value': False}]
 
     def test_reconnected_device_gets_desired_state(self, controller):
         """When an OWL reconnects (was offline), desired state is pushed."""
@@ -181,14 +176,14 @@ class TestReconnectBroadcast:
             'last_seen': time.time() - 100
         }
         controller.desired_state = {
-            'all': {'detection_enable': True}
+            'all': {'spray': 'blanket'}
         }
 
         self._inject_message(controller, 'owl-pi-1')
 
         calls = controller.mqtt_client.publish.call_args_list
-        payloads = [json.loads(c[0][1]) for c in calls if 'owl-pi-1/commands' in c[0][0]]
-        assert any(p['action'] == 'set_detection_enable' for p in payloads)
+        payloads = [json.loads(c[0][1]) for c in calls if c[0][0] == 'owl/owl-pi-1/commands']
+        assert payloads == [{'action': 'set_detection_mode', 'value': 2}]
 
     def test_no_push_when_no_desired_state(self, controller):
         """If desired_state is empty, no commands pushed on reconnect."""
@@ -343,41 +338,49 @@ class TestLWTOfflineDetection:
 
 
 # ---------------------------------------------------------------------------
-# Timeout configuration
+# Offline after 15 s of silence, forgotten after 60 s
 # ---------------------------------------------------------------------------
 
 @pytest.mark.unit
-class TestTimeoutConfiguration:
-    """Tests for offline/stale timeout values."""
+class TestOfflineAndStaleOwls:
+    """One pass of the controller's real check_connections loop. (The tests
+    here used to assert the timeout the fixture had just set, and run a
+    copy of the loop pasted into the test.)"""
 
-    def test_offline_timeout_is_15s(self, controller):
-        """offline_timeout should be 15s to allow boot-time connection delays."""
-        assert controller.offline_timeout == 15.0
+    class _OnePass(BaseException):
+        """Raised from the first call after the sweep, to leave the loop."""
 
-    def test_stale_removal_at_4x_timeout(self, controller):
-        """Stale OWLs should only be removed after 4x offline_timeout (60s)."""
-        # Register then make stale (just over 4x timeout)
-        controller.owls_state['owl-stale'] = {
-            'device_id': 'owl-stale',
-            'connected': False,
-            'last_seen': time.time() - (controller.offline_timeout * 4 + 1)
-        }
-        controller.owls_state['owl-recent'] = {
-            'device_id': 'owl-recent',
-            'connected': True,
-            'last_seen': time.time()
-        }
+    def _sweep(self, controller):
+        controller.mqtt_connected = False          # no reconcile, no cloud presence
+        with patch.object(controller, '_update_session_state', side_effect=self._OnePass):
+            with pytest.raises(self._OnePass):
+                controller.check_connections()
 
-        # Run one iteration of check_connections logic inline
-        current_time = time.time()
-        with controller.mqtt_lock:
-            for device_id, state in list(controller.owls_state.items()):
-                last_seen = state.get('last_seen', 0)
-                time_since = current_time - last_seen
-                if time_since > controller.offline_timeout:
-                    state['connected'] = False
-                if time_since > (controller.offline_timeout * 4):
-                    del controller.owls_state[device_id]
+    def _owl(self, controller, device_id, silent_for):
+        controller.owls_state[device_id] = {'device_id': device_id, 'connected': True,
+                                            'last_seen': time.time() - silent_for}
 
-        assert 'owl-stale' not in controller.owls_state
-        assert 'owl-recent' in controller.owls_state
+    def test_quiet_owls_go_offline_and_long_gone_owls_are_forgotten(self, controller):
+        self._owl(controller, 'owl-fresh', 0)
+        self._owl(controller, 'owl-slow-boot', 13)       # under the 15 s allowed for booting
+        self._owl(controller, 'owl-quiet', 17)
+        self._owl(controller, 'owl-almost-stale', 57)
+        self._owl(controller, 'owl-stale', 63)           # over 4 x 15 s
+
+        self._sweep(controller)
+
+        assert {oid: st['connected'] for oid, st in controller.owls_state.items()} == {
+            'owl-fresh': True, 'owl-slow-boot': True,
+            'owl-quiet': False, 'owl-almost-stale': False}
+
+    def test_an_owl_heard_again_is_connected_again(self, controller):
+        self._owl(controller, 'owl-1', 17)
+        self._sweep(controller)
+        assert controller.owls_state['owl-1']['connected'] is False
+
+        msg = MagicMock()
+        msg.topic = 'owl/owl-1/state'
+        msg.payload = json.dumps({'owl_running': True}).encode()
+        controller._on_message(None, None, msg)
+        self._sweep(controller)
+        assert controller.owls_state['owl-1']['connected'] is True

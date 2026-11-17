@@ -211,6 +211,12 @@ class TestPublisherCloudState:
 
 @pytest.mark.unit
 class TestBridgeLines:
+    """Structure only: owl_cloud_provision.sh writes the mosquitto bridge
+    config, and there is no broker in CI to run it against. These pin the
+    lines that decide what leaves the farm (state through the slim cloud_out
+    topic, never GPS) and which topic cloud commands arrive on (the
+    allowlisted one). They fail on a rename as well as on a real change."""
+
     @pytest.fixture
     def cloud_sh(self):
         return (REPO / 'owl_cloud_provision.sh').read_text(encoding='utf-8')

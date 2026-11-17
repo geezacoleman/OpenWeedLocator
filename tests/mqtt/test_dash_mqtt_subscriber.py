@@ -5,7 +5,7 @@ Priority 4 — dashboard-to-OWL communication link.
 
 import json
 import time
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -57,11 +57,24 @@ class TestCommandDispatch:
         assert result['success'] is False
         assert 'Not connected' in result['error']
 
-    def test_set_detection_enable(self, subscriber):
-        result = subscriber.set_detection_enable(True)
-        assert result['success'] is True
-        payload = json.loads(subscriber.client.publish.call_args[0][1])
-        assert payload['action'] == 'set_detection_enable'
+    @pytest.mark.parametrize('send, expected', [
+        (lambda s: s.set_detection_enable(True), {'action': 'set_detection_enable', 'value': True}),
+        (lambda s: s.set_detection_enable(False), {'action': 'set_detection_enable', 'value': False}),
+        (lambda s: s.set_detection_mode('2'), {'action': 'set_detection_mode', 'value': 2}),
+        (lambda s: s.set_detection_mode(1), {'action': 'set_detection_mode', 'value': 1}),
+        (lambda s: s.hold_spray(900), {'action': 'hold_spray', 'value': 900}),
+        # the dashboard never asks for a lease longer than the OWL allows
+        (lambda s: s.hold_spray(60000), {'action': 'hold_spray', 'value': 1500}),
+        (lambda s: s.hold_spray(-5), {'action': 'hold_spray', 'value': 0}),
+    ])
+    def test_spray_commands_are_sent_exactly(self, subscriber, send, expected):
+        """What the OWL's handler receives (its side: tests/owl/
+        test_relay_matrix.py and test_mqtt_commands_at_the_relay.py)."""
+        assert send(subscriber)['success'] is True
+        subscriber.client.publish.assert_called_once()
+        topic, payload = subscriber.client.publish.call_args[0]
+        assert topic == 'owl/commands'
+        assert json.loads(payload) == expected
 
     def test_set_image_sample_enable(self, subscriber):
         result = subscriber.set_image_sample_enable(False)
@@ -95,12 +108,6 @@ class TestCommandDispatch:
         assert result['success'] is False
         subscriber.client.publish.assert_not_called()
 
-    def test_set_detection_mode(self, subscriber):
-        result = subscriber.set_detection_mode(2)
-        assert result['success'] is True
-        payload = json.loads(subscriber.client.publish.call_args[0][1])
-        assert payload['action'] == 'set_detection_mode'
-        assert payload['value'] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -191,8 +198,10 @@ class TestStateMessageParsing:
         msg = MagicMock()
         msg.topic = 'owl/state'
         msg.payload = b'not valid json {{{}'
+        before = dict(subscriber.current_state)
         subscriber._on_message(None, None, msg)
-        # No crash, state unchanged
+        assert subscriber.current_state == before
+        assert subscriber.get_and_clear_errors() == []
 
 
 # ---------------------------------------------------------------------------
