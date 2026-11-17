@@ -2387,8 +2387,12 @@ class OWLMQTTPublisher:
         from utils.config_manager import ConfigValidator
 
         try:
-            duration = float(command.get('actuation_duration', 0))
-            delay = float(command.get('delay', 0))
+            # Both are required. A missing duration used to be read as 0 and
+            # clamped up to 10 ms, so every spray became a click.
+            if command.get('actuation_duration') is None or command.get('delay') is None:
+                raise ValueError('actuation_duration and delay are both required')
+            duration = float(command['actuation_duration'])
+            delay = float(command['delay'])
             speed = command.get('speed_kmh')
             speed = float(speed) if speed is not None else None
 

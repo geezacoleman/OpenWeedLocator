@@ -1801,12 +1801,6 @@ class TestActuationThroughConfigSection:
         assert resp.get_json()['rejected'] == {'delay': 'Not saved: outside the allowed range'}
         assert _active_ini(dashboard).get('System', 'delay') == '0'
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "controller/standalone/standalone.py set_config_section (the "
-        "`payload = result ...; return jsonify(payload)` tail, line 2125): with the "
-        "broker down it answers HTTP 200 (body success:false) and still writes the INI, "
-        "so the page shows the change as made while the running OWL never got it. The "
-        "spray buttons and /api/tracking/set answer 503 for the same failure."))
     def test_broker_down_is_reported_as_a_failure(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
         sent = _published(dashboard, connected=False)
@@ -1815,15 +1809,17 @@ class TestActuationThroughConfigSection:
         assert resp.get_json()['success'] is False
         assert resp.status_code == 503
 
-    def test_broker_down_today_still_saves_for_the_next_start(self, standalone_test_client):
-        """Pins what happens now (see the xfail above): the body says
-        success:false and the value is in the INI, clamped."""
+    def test_broker_down_saves_nothing(self, standalone_test_client):
+        """Not delivered means not saved: the page and the running OWL
+        cannot disagree (it used to answer 200 and write the INI)."""
         client, dashboard, tmp_dir = standalone_test_client
+        before = _active_ini(dashboard).get('System', 'actuation_duration')
         sent = _published(dashboard, connected=False)
         resp = self._post(client, {'actuation_duration': 600})
         assert sent == []
+        assert resp.status_code == 503
         assert resp.get_json() == {'success': False, 'error': 'Not connected to MQTT broker'}
-        assert float(_active_ini(dashboard).get('System', 'actuation_duration')) == 5.0
+        assert _active_ini(dashboard).get('System', 'actuation_duration') == before
 
 
 @pytest.mark.unit
@@ -1874,11 +1870,6 @@ class TestGeometryRoute:
         dashboard.mqtt_client = None
         assert client.post('/api/geometry', json={'params': self.BAND}).status_code == 500
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "controller/standalone/standalone.py set_geometry (lines 2144-2153): the live "
-        "branch throws away the result of both _send_command calls and answers "
-        "{'success': True}; the persist branch answers HTTP 200 with success:false. With "
-        "the broker down the geometry editor shows the band as applied when it was not."))
     @pytest.mark.parametrize('persist', [False, True])
     def test_broker_down_is_reported_as_a_failure(self, standalone_test_client, persist):
         client, dashboard, tmp_dir = standalone_test_client
@@ -1923,10 +1914,6 @@ class TestSwitchPurposeRoute:
         assert resp.get_json()['success'] is False
         assert self._purpose(dashboard) == before
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "controller/standalone/standalone.py set_switch_purpose (line 1920): the return "
-        "of _persist_config_change is ignored, so a write that failed is answered "
-        "'Switch purpose set to detection. Restart OWL to apply.'"))
     def test_a_failed_write_is_not_reported_as_saved(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
         dashboard._persist_config_change_locked = lambda section, key, value: False

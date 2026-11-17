@@ -1917,7 +1917,9 @@ class OWLDashboard:
                         'error': f'Invalid switch_purpose: {purpose}. Must be "recording" or "detection".'
                     }), 400
 
-                self._persist_config_change('Controller', 'switch_purpose', purpose)
+                if self._persist_config_change('Controller', 'switch_purpose', purpose) is False:
+                    return jsonify({'success': False,
+                                    'error': 'Could not save the switch purpose'}), 500
                 return jsonify({
                     'success': True,
                     'message': f'Switch purpose set to {purpose}. Restart OWL to apply.'
@@ -2119,6 +2121,12 @@ class OWLDashboard:
                                         'rejected': rejected}), 400
                 result = self.mqtt_client._send_command(
                     'set_config_section', section=section, params=params)
+                if isinstance(result, dict) and not result.get('success', True):
+                    # Not delivered: nothing is saved either, so the page
+                    # and the running OWL cannot disagree. (It used to
+                    # answer 200 and write the INI.)
+                    self.logger.error(f"[{section}] change not sent: {result.get('error', 'unknown')}")
+                    return jsonify(result), 503
                 for key, value in params.items():
                     if self._persist_config_change(section, key, str(value)) is False:
                         rejected[key] = 'Not saved: outside the allowed range'
@@ -2145,11 +2153,17 @@ class OWLDashboard:
                 else:
                     cam = {k: v for k, v in params.items() if k.startswith('crop_')}
                     sysp = {k: v for k, v in params.items() if k.startswith('actuation_')}
-                    if cam:
-                        self.mqtt_client._send_command('set_config_section', section='Camera', params=cam)
-                    if sysp:
-                        self.mqtt_client._send_command('set_config_section', section='System', params=sysp)
                     result = {'success': True}
+                    for section, part in (('Camera', cam), ('System', sysp)):
+                        if part:
+                            sent = self.mqtt_client._send_command(
+                                'set_config_section', section=section, params=part)
+                            if isinstance(sent, dict) and not sent.get('success', True):
+                                result = sent
+                # An undelivered command was answered as applied
+                if isinstance(result, dict) and not result.get('success', True):
+                    self.logger.error(f"Geometry not sent: {result.get('error', 'unknown')}")
+                    return jsonify(result), 503
                 return jsonify(result if isinstance(result, dict) else {'success': True})
             except Exception as e:
                 self.logger.error(f"Error setting geometry: {e}")

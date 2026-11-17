@@ -285,16 +285,18 @@ def test_controller_timing_holds_between_broadcasts(rig):
     assert r.owl.actuation_source == 'controller'
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "utils/mqtt_manager.py:2390 _handle_set_actuation_params: a broadcast with no "
-    "actuation_duration is read as 0 and clamped up to 0.01 s, so every spray becomes "
-    "10 ms until the controller goes quiet. A missing field should be refused, as a "
-    "non-numeric one already is."))
-def test_a_broadcast_with_no_duration_does_not_cut_sprays_to_ten_milliseconds(rig):
+@pytest.mark.allow_errors      # the refused broadcast is logged
+@pytest.mark.parametrize('fields', [{'delay': 0.0}, {'actuation_duration': 0.4},
+                                    {'actuation_duration': None, 'delay': 0.0}, {}])
+def test_a_broadcast_missing_duration_or_delay_is_refused_whole(rig, fields):
+    """A missing duration was read as 0 and clamped up to 10 ms: every spray
+    became a click until the controller went quiet (fixed 3.27.5)."""
     r = rig(dash='networked')
-    r.command('set_actuation_params', delay=0.0, source='gps')
+    r.command('set_actuation_params', source='gps', **fields)
+    assert r.owl.actuation_source == 'config'
     showing = r.show_card(seconds=0.2)
-    assert showing.off >= CONFIG_DURATION_S - 0.05, \
+    assert showing.on < PROMPT_S
+    assert CONFIG_DURATION_S - 0.05 <= showing.off <= CONFIG_DURATION_S + PROMPT_S, \
         f'relay let go {showing.off:.3f} s after the weed (configured {CONFIG_DURATION_S} s)'
 
 

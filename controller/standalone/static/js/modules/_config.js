@@ -448,8 +448,16 @@ async function toggleStandaloneGeometry() {
                     },
                     persist: info && info.persist
                 })
-            });
-            if (info && info.persist) showNotification('Success', 'Geometry saved', 'success');
+            }).then(function (r) { return r.json().catch(function () { return { success: false }; }); })
+                .then(function (res) {
+                    // "Geometry saved" used to show whatever the OWL answered
+                    if (!res || res.success === false) {
+                        showNotification('Geometry', (res && res.error) || 'Could not reach the OWL. Not applied.', 'error');
+                    } else if (info && info.persist) {
+                        showNotification('Success', 'Geometry saved', 'success');
+                    }
+                })
+                .catch(function () { showNotification('Geometry', 'Could not reach the OWL. Not applied.', 'error'); });
         },
         onClose: function () {
             standaloneGeometryActive = false;
