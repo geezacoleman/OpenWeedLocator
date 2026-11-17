@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+import harness
 from harness import BASE_CONFIG
 
 
@@ -129,3 +130,53 @@ def owl_factory(isolate_repo_configs, monkeypatch, tmp_path, request):
             pass
     if logged and not request.node.get_closest_marker('allow_errors'):
         pytest.fail('ERROR logged while the OWL ran:\n  ' + '\n  '.join(logged))
+
+
+@pytest.fixture
+def rig(owl_factory, config_factory, input_dir, monkeypatch):
+    """Build a running Owl whose relays are watched (harness.Rig).
+
+    rig(controller='none'|'ute'|'advanced', dash='none'|'standalone'|'networked',
+        gps=False, speed_kmh=0.0, fix=True, overrides=[(section, key, value)],
+        spray=True, lag_s=0.0)
+
+    gps=True gives the unit its own serial GPS receiver (harness.GpsReceiver)
+    reading speed_kmh. spray=True turns spot spraying on the way that
+    deployment does (config, switch or dashboard command).
+    """
+    import owl as owl_module
+
+    monkeypatch.setattr(owl_module, 'Process', harness.ThreadProcess)
+    rigs = []
+
+    def _build(controller='none', dash='none', gps=False, speed_kmh=0.0, fix=True,
+               overrides=(), spray=True, lag_s=0.0):
+        receiver = harness.GpsReceiver(speed_kmh=speed_kmh, fix=fix) if gps else None
+        if gps:
+            from types import SimpleNamespace
+            monkeypatch.setattr(owl_module, 'serial', SimpleNamespace(
+                Serial=lambda **kwargs: receiver, SerialException=OSError))
+        config = config_factory(overrides=[
+            ('Controller', 'controller_type', controller),
+            ('Controller', 'switch_purpose', 'detection'),
+            # A bare unit sprays from its config; with a switch or a
+            # dashboard, spray_on() below asks the way the operator does
+            ('DataCollection', 'detection_enable', str(spray)),
+            ('GPS', 'source', 'serial' if gps else 'none'),
+            ('GPS', 'port', '/dev/fake-gps'),
+            *harness.DASH[dash], *overrides])
+        instance = owl_factory(config, input_file_or_directory=str(input_dir))
+        built = harness.Rig(instance, harness.CardCamera(lag_s=lag_s), receiver)
+        rigs.append(built)
+        if gps:
+            assert instance._gps_state is not None, 'the serial GPS reader did not start'
+        if spray:
+            built.spray_on() if (controller != 'none' or dash != 'none') else \
+                built.wait_for(lambda: instance.relay_controller.mode == 'spot', 'spot spraying')
+        return built
+
+    yield _build
+    for built in rigs:
+        built.stop()
+        if built.gps:
+            built.gps.close()
