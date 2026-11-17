@@ -121,12 +121,6 @@ def test_a_legacy_px_minimum_in_the_profile_is_honoured_from_boot(
         r.stop()
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    'A legacy px minimum in the active sensitivity preset is converted against 416x320 '
-    'whatever the camera resolution: SensitivityManager.apply_preset '
-    '(utils/sensitivity_manager.py:123) reads owl.resolution, but owl.py applies the preset '
-    'at boot (owl.py:255) before self.resolution exists (owl.py:284), so the (416, 320) '
-    'fallback is used. At 832x640 a 2000 px minimum becomes about 7400 px.'))
 def test_a_legacy_preset_minimum_means_the_same_px_at_any_resolution(
         owl_factory, config_factory, input_dir):
     instance = legacy_owl(owl_factory, config_factory, input_dir, 'active preset', 2000,
@@ -135,11 +129,6 @@ def test_a_legacy_preset_minimum_means_the_same_px_at_any_resolution(
     assert 1800 <= minimum_px <= 2000
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    'On a Pi 3/4 whose resolution is clamped, the boot migration of [GreenOnBrown] '
-    'min_detection_area (owl.py:228-233) divides by the REQUESTED resolution, read from the '
-    'config before the clamp at owl.py:773; the loop then applies the percent to the 640x480 '
-    'frame actually run. With the shipped 1456x1088 a 2000 px minimum becomes about 360 px.'))
 def test_a_legacy_minimum_survives_the_pi4_resolution_clamp(
         owl_factory, config_factory, input_dir, monkeypatch):
     monkeypatch.setattr(owl_module, 'get_rpi_version', lambda: 'rpi-4')

@@ -108,7 +108,9 @@ rm -rvf /var/lib/sudo/lectured/* 2>/dev/null || true
 echo -e "${GREEN}[INFO] Cleaning network connections (preserving OWL hotspot)${NC}"
 
 # Find OWL hotspot connection name - be more flexible with pattern matching
-OWL_HOTSPOT=$(nmcli -t -f NAME,TYPE connection show | grep -E "OWL|Hotspot" | grep "wireless" | cut -d: -f1 | head -n1)
+# || true: with no hotspot grep exits 1, and under set -euo pipefail that
+# ended the script here (no services restarted, nothing after this ran)
+OWL_HOTSPOT=$(nmcli -t -f NAME,TYPE connection show | grep -E "OWL|Hotspot" | grep "wireless" | cut -d: -f1 | head -n1 || true)
 
 if [[ -n "$OWL_HOTSPOT" ]]; then
     echo -e "${GREEN}[INFO] Found OWL hotspot: $OWL_HOTSPOT - will preserve${NC}"

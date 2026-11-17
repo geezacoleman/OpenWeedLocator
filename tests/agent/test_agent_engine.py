@@ -314,14 +314,11 @@ class TestHistory:
         list(agent.chat('s1', 'newest'))
         sent = agent.provider.seen[0]['messages']
         assert MAX_HISTORY == 50
-        assert len(sent) == 50
-        assert (sent[0]['content'], sent[-1]['content']) == ('m11', 'newest')
+        # the cut lands on an assistant message (m11): the history sent
+        # starts at the next question, as the provider requires
+        assert len(sent) == 49
+        assert (sent[0]['role'], sent[0]['content'], sent[-1]['content']) == ('user', 'm12', 'newest')
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "agent/engine.py _trim_history slices session.messages[-MAX_HISTORY:] wherever that falls. "
-        "When it falls between an assistant tool_use and its tool_result, the history sent starts "
-        "with an orphan tool_result, which the provider rejects (HTTP 400) on every later message "
-        "of that session."))
     def test_trimming_never_separates_a_tool_result_from_its_tool_call(self, engine):
         agent = engine([[text('ok')]])
         agent._get_session('s1').messages = [

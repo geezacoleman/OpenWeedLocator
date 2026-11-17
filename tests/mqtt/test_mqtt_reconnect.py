@@ -509,7 +509,13 @@ class TestSimultaneousPowerOn:
         })
         assert ctrl.owls_state['owl-pi-1']['connected'] is False
 
-        # Step 3: OWL reconnects (sends state again)
+        # Step 3: a heartbeat that was already in flight when it died is
+        # not a reconnection
+        inject('state', {'detection_enable': True, 'owl_running': True})
+        assert ctrl.owls_state['owl-pi-1']['connected'] is False
+
+        # Step 4: the OWL really is back (six seconds later)
+        ctrl.lwt_timestamps['owl-pi-1'] -= 6
         inject('state', {'detection_enable': True, 'owl_running': True})
         assert ctrl.owls_state['owl-pi-1']['connected'] is True
 

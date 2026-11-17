@@ -912,12 +912,6 @@ esac''')
             'nmcli connection delete uuid uuid-phone',
         ]
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "dev/clean.sh:111: under `set -euo pipefail`, OWL_HOTSPOT=$(nmcli ... | grep -E "
-        "'OWL|Hotspot' | ...) fails when no profile matches, so the script exits 1 there. "
-        "The 'No OWL hotspot found - preserving all connections' branch is unreachable, the "
-        "rest of the clean never runs and owl.service / owl-dash.service, stopped at the "
-        "top, are not started again. Needs `|| true` on that assignment."))
     def test_with_no_hotspot_nothing_is_deleted(self, box):
         """Deleting every profile on a unit with no hotspot leaves no way in."""
         connections = self.CONNECTIONS.replace('OWL-12EF', 'Workshop')

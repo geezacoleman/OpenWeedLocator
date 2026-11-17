@@ -85,12 +85,6 @@ class TestNetworkQuestionHelpers:
         assert verdicts == {ip: False for ip in self.INVALID}
         assert run.stderr == ''
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "_validate_ip compares octets with (( o > 255 )), which reads a leading zero as octal: "
-        "'08' and '09' make bash print 'value too great for base' on the installer's terminal "
-        "and the range check is skipped for that octet (controller/shared/setup.sh and "
-        "controller/networked/in-cab_controller_setup.sh, _validate_ip; needs 10#$o). The "
-        "address is still accepted and is in range, so the unit is configured correctly."))
     def test_a_leading_zero_octet_is_checked_without_a_shell_error(self, script):
         run, verdicts = self._verdicts(script, ['192.168.1.08', '192.168.1.099'])
         assert verdicts == {'192.168.1.08': True, '192.168.1.099': True}

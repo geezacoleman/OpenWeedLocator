@@ -762,10 +762,6 @@ class TestEscaping:
         [attribute] = re.findall(r"data-command='([^']*)'", html)
         assert json.loads(html_lib.unescape(attribute)) == command
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "agent/widget_manager.py _render_range_slider and _render_dual_range_slider put min, max "
-        "and step into the HTML without _esc(): a spec with min = '0\" onfocus=\"...' adds an "
-        "attribute (script) to the dashboard page."))
     @pytest.mark.parametrize('wtype', ['range_slider', 'dual_range_slider'])
     @pytest.mark.parametrize('field', ['min', 'max', 'step'])
     def test_slider_numbers_cannot_add_attributes(self, tmp_path, wtype, field):

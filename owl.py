@@ -227,7 +227,12 @@ class Owl:
             'GreenOnBrown', 'min_detection_area', fallback=10)
         self.min_detection_area_percent = self.config.getfloat(
             'GreenOnBrown', 'min_detection_area_percent', fallback=0.0)
+        # A legacy px minimum is converted again once the frame the detector
+        # really sees is known (_convert_legacy_min_area, after the geometry):
+        # the requested resolution is not it on a clamped Pi 3/4.
+        self._legacy_min_px = None
         if self.min_detection_area_percent <= 0:
+            self._legacy_min_px = self.min_detection_area
             frame_area = (self.config.getint('Camera', 'resolution_width', fallback=416)
                           * self.config.getint('Camera', 'resolution_height', fallback=320))
             migrated = max(0.0005, min(5.0, self.min_detection_area / frame_area * 100))
@@ -858,6 +863,7 @@ class Owl:
 
         # Derive crop_slice, lane coords and actuation band pixel bounds.
         self.recompute_geometry()
+        self._convert_legacy_min_area()
 
         # The dashboard took its state snapshot early in __init__, before
         # controller_type, save_directory and the resolution clamp were set.
@@ -956,6 +962,22 @@ class Owl:
         if 'free-space floor' in msg:
             return 'storage_full'
         return 'storage_error'
+
+    def _convert_legacy_min_area(self):
+        """A minimum weed size given in px (profiles from before the percent
+        key) as a percent of the frame the detector sees. Run once at boot,
+        after the geometry: the first conversion used the requested
+        resolution (wrong on a clamped Pi 3/4: 2000 px became 360 px), and a
+        preset's used 416x320 whatever the camera (2000 px became 7400 px)."""
+        px = getattr(self, '_legacy_min_px', None)
+        area = (getattr(self, 'cropped_width', 0) or 0) * (getattr(self, 'cropped_height', 0) or 0)
+        if px is None or area <= 0:
+            return
+        percent = max(0.0005, min(5.0, px / area * 100))
+        self.min_detection_area_percent = percent
+        self.config.set('GreenOnBrown', 'min_detection_area_percent', f'{percent:.4f}')
+        self.logger.info(f'[CONFIG] legacy min_detection_area {px}px = {percent:.4f}% '
+                         f'of the {self.cropped_width}x{self.cropped_height} detection frame')
 
     def _storage_choice(self):
         """The Settings choices storage was resolved from. Both are applied
@@ -3103,8 +3125,10 @@ class Owl:
                         self.gps_status_led.set_state(GPSLEDState.ERROR)
                     return None
 
-        # No GPS source available
-        if self.gps_status_led:
+        # No GPS source available. On a unit with its own receiver the reader
+        # thread owns the LED here (searching, or no receiver): writing OFF
+        # ten times a second made it read "GPS disabled" instead.
+        if self.gps_status_led and self._gps_state is None:
             self.gps_status_led.set_state(GPSLEDState.OFF)
         return None
 

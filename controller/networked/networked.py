@@ -580,6 +580,16 @@ class CentralController:
                 else:
                     was_connected = self.owls_state[device_id].get('connected', False)
                     if not was_connected:
+                        # A heartbeat within 5 s of this OWL's last will was
+                        # already in flight when it died. It is dropped: it
+                        # used to mark the OWL connected and use up the
+                        # rejoin, so an OWL back within the 15 s offline
+                        # timeout never had recording, model or tracking
+                        # pushed to it again.
+                        if (topic_type != 'status'
+                                and current_time - self.lwt_timestamps.get(device_id, 0) <= 5):
+                            logger.debug(f"Ignored stale heartbeat from {device_id} (just went offline)")
+                            return
                         is_reconnect = True
 
                 # Merge payload into state
@@ -626,19 +636,14 @@ class CentralController:
             except Exception as e:
                 logger.error(f"Fleet roster update failed: {e}")
 
-            # Push desired state on reconnect (outside lock to avoid deadlock)
-            # Skip if device was marked offline by LWT within 5s — that's a
-            # stale in-flight heartbeat, not a real reconnect (Pi boot takes 10-30s)
+            # Push desired state on reconnect (outside lock to avoid deadlock).
+            # Stale heartbeats just after a last will never get this far.
             if is_reconnect:
                 # Back after a restart: camera changes made before it now apply
                 collect = getattr(self, 'collect', None)
                 if collect is not None:
                     collect.camera_restart.discard(device_id)
-                lwt_time = self.lwt_timestamps.get(device_id, 0)
-                if current_time - lwt_time > 5:
-                    self._push_desired_state(device_id)
-                else:
-                    logger.debug(f"Suppressed reconnect push for {device_id}: LWT grace period")
+                self._push_desired_state(device_id)
 
             logger.debug(f"Updated {device_id} ({topic_type})")
 

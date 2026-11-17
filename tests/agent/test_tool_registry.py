@@ -80,7 +80,10 @@ class TestSchemas:
                 'key': {'type': 'string', 'description': 'Config key to set'},
                 'value': {'type': 'string', 'description': 'Value to set'}},
             'required': ['section', 'key', 'value']}
-        assert 'Protected sections' in schema['description']
+        # the model is told what it may not touch, so it says so instead of trying
+        for word in ('Relays', 'Controller', 'GPS', 'MQTT', 'Network', 'WebDashboard', 'Cloud',
+                     'relay_num', 'on_error'):
+            assert word in schema['description']
 
     def test_openai_schema_wraps_the_same_parameters(self, registry):
         anthropic = {s['name']: s for s in registry.get_schemas('anthropic')}
@@ -388,11 +391,18 @@ class TestCommandsSent:
 # --------------------------------------------------------------------------
 
 class TestProtectedSections:
-    def test_the_protected_sections_are_these_four(self):
-        assert PROTECTED_SECTIONS == {'Relays', 'MQTT', 'Network', 'WebDashboard'}
+    def test_what_the_assistant_may_never_change(self):
+        """Wiring, how the unit is reached, and what a fault does to the
+        nozzles (decided 2026-11-17). Adding to these lists is a decision,
+        not a refactor: this test is the list."""
+        from agent.tool_registry import PROTECTED_KEYS
+        assert PROTECTED_SECTIONS == {'Relays', 'Controller', 'GPS',
+                                      'MQTT', 'Network', 'WebDashboard', 'Cloud'}
+        assert PROTECTED_KEYS == {'System': {'relay_num', 'on_error'}}
 
     @pytest.mark.parametrize('section, key', [
-        ('Relays', '0'), ('MQTT', 'broker_ip'), ('Network', 'mode'), ('WebDashboard', 'ui')])
+        ('Relays', '0'), ('MQTT', 'broker_ip'), ('Network', 'mode'), ('WebDashboard', 'ui'),
+        ('Controller', 'switch_pin'), ('GPS', 'source'), ('GPS', 'port'), ('Cloud', 'broker_host')])
     def test_a_protected_section_is_refused_and_nothing_is_published(
             self, registry, mqtt_client, section, key):
         with pytest.raises(ValueError, match=rf'Section \[{section}\] is protected'):
@@ -420,9 +430,9 @@ class TestProtectedSections:
         ('System', 'actuation_duration', '600'),
         ('System', 'delay', '2.5'),
         ('Actuation', 'offset_cm', '500'),
-        ('GPS', 'source', 'none'),
+        ('System', 'algorithm', 'exhsv'),
     ])
-    def test_spray_timing_and_gps_keys_are_forwarded_unchanged_for_the_owl_to_clamp(
+    def test_spray_timing_keys_are_forwarded_unchanged_for_the_owl_to_clamp(
             self, registry, mqtt_client, section, key, value):
         """What the code does. The tool checks nothing here: the bounds are
         the OWL's (_handle_set_config_section clamps timing and geometry;
@@ -432,11 +442,6 @@ class TestProtectedSections:
         assert commands(mqtt_client) == [
             {'action': 'set_config_section', 'section': section, 'params': {key: value}}]
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "agent/tool_registry.py PROTECTED_SECTIONS covers [Relays] only. The same hardware and "
-        "safety wiring outside it is forwarded as set_config_section: [System] relay_num and "
-        "on_error (what a fault does to the nozzles), [Controller] controller_type, switch_purpose "
-        "and the switch/LED pins. The OWL persists them and applies them at the next restart."))
     @pytest.mark.parametrize('section, key, value', [
         ('System', 'relay_num', '8'),
         ('System', 'on_error', 'on'),
@@ -444,6 +449,8 @@ class TestProtectedSections:
         ('Controller', 'switch_purpose', 'recording'),
         ('Controller', 'switch_pin', '13'),
         ('Controller', 'detection_mode_pin_up', '15'),
+        ('system', 'RELAY_NUM', '8'), (' System ', 'on_error ', 'on'),
+        ('GPS', 'baudrate', '9600'), ('Cloud', 'enable', 'False'),
     ])
     def test_hardware_and_fault_policy_keys_outside_relays_are_refused(
             self, registry, dash, section, key, value):
@@ -632,16 +639,20 @@ class TestWidgetTools:
                                 ('update_widget', {'widget_id': 'x', 'updates': {}})]:
             assert registry.call(name, arguments, context) == {'error': 'No widget manager available'}
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "agent/tool_registry.py create_widget installs any spec WidgetManager.validate accepts, and "
-        "validate (agent/widget_manager.py) checks only id/name/type/slot. A button's mqtt_command "
-        "is stored and rendered as-is, so the agent can install a button that writes [Relays], "
-        "blanket sprays or shuts the OWL down: PROTECTED_SECTIONS is sidestepped."))
     @pytest.mark.parametrize('command', [
         {'action': 'set_config_section', 'value': {'section': 'Relays', 'params': {'0': '7'}}},
         {'action': 'set_config_section', 'section': 'Relays', 'params': {'0': '7'}},
         {'action': 'set_detection_mode', 'value': 2},
-        {'action': 'shutdown'},
+        {'action': 'set_detection_enable', 'value': True},
+        {'action': 'toggle_detection', 'value': True},
+        {'action': 'hold_spray', 'value': 1500},
+        {'action': 'test_nozzles', 'value': {'relays': [0], 'duration_ms': 10000}},
+        {'action': 'shutdown'}, {'action': 'reboot'}, {'action': 'restart_service'},
+        {'action': 'install_algorithm', 'name': 'x', 'code': 'import os'},
+        {'action': 'set_config_section', 'section': 'System', 'params': {'on_error': 'on'}},
+        {'action': 'set_config', 'section': 'System', 'key': 'relay_num', 'value': '8'},
+        {'action': 'set_config_section', 'section': 'gps', 'params': {'source': 'none'}},
+        {}, 'not json', None,
     ])
     def test_a_button_cannot_carry_a_command_the_agent_itself_may_not_send(self, registry, widgets, command):
         spec = {'id': 'handy', 'name': 'Handy', 'type': 'button', 'slot': 'dashboard_controls',
@@ -649,6 +660,41 @@ class TestWidgetTools:
         result = registry.call('create_widget', {'spec': spec}, ctx(None, widget_manager=widgets))
         assert result['success'] is False
         assert widgets.scan() == []
+
+    @pytest.mark.parametrize('wtype, fields', [
+        ('range_slider', {'config_section': 'System', 'config_key': 'relay_num'}),
+        ('range_slider', {'builtin_config': {'section': 'Relays', 'param': '0'}}),
+        ('toggle', {'action_params': {'section': 'Controller', 'param': 'controller_type'}}),
+        ('select', {'config_section': 'System', 'config_key': 'on_error', 'options': ['on', 'off']}),
+        ('select', {'action': 'shutdown', 'options': ['now']}),
+        ('dual_range_slider', {'config_section': 'GPS', 'action_params': {'key_low': 'port', 'key_high': 'baudrate'}}),
+        ('preset_button', {'builtin_config': {'preset_name': 'p', 'values': {'relay_num': 8}}}),
+    ])
+    def test_no_other_widget_type_reaches_a_protected_setting_either(self, registry, widgets, wtype, fields):
+        spec = dict({'id': 'w', 'name': 'W', 'type': wtype, 'slot': 'widgets_tab'}, **fields)
+        result = registry.call('create_widget', {'spec': spec}, ctx(None, widget_manager=widgets))
+        assert result['success'] is False and 'protected' in result['error'] or 'cannot send' in result['error']
+        assert widgets.scan() == []
+
+    def test_an_update_cannot_turn_a_harmless_widget_into_a_forbidden_one(self, registry, widgets):
+        spec = {'id': 'ok', 'name': 'OK', 'type': 'button', 'slot': 'widgets_tab',
+                'mqtt_command': {'action': 'set_sensitivity', 'value': 'high'}}
+        assert registry.call('create_widget', {'spec': spec}, ctx(None, widget_manager=widgets))['success']
+        result = registry.call('update_widget', {'widget_id': 'ok', 'updates': {
+            'mqtt_command': {'action': 'set_detection_mode', 'value': 2}}}, ctx(None, widget_manager=widgets))
+        assert result['success'] is False
+        assert widgets.get('ok')['mqtt_command'] == {'action': 'set_sensitivity', 'value': 'high'}
+
+    @pytest.mark.parametrize('command', [
+        {'action': 'set_sensitivity', 'value': 'high'}, {'action': 'set_algorithm', 'value': 'exhsv'},
+        {'action': 'set_tracking', 'value': True},
+        {'action': 'set_config_section', 'section': 'GreenOnBrown', 'params': {'exg_min': '30'}},
+    ])
+    def test_a_detection_tuning_button_is_allowed(self, registry, widgets, command):
+        spec = {'id': 'tune', 'name': 'Tune', 'type': 'button', 'slot': 'widgets_tab', 'mqtt_command': command}
+        assert registry.call('create_widget', {'spec': spec}, ctx(None, widget_manager=widgets)) == {
+            'success': True, 'widget_id': 'tune'}
+
 
 
 # --------------------------------------------------------------------------

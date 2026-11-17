@@ -296,13 +296,6 @@ def test_a_read_error_shows_on_the_led_and_the_reader_reconnects(gps_owl):
         second.close()
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "With [GPS] source = serial the GPS LED is written by two threads that disagree: the "
-    "reader sets ACQUIRING (no fix) or ERROR (no receiver), and 100 ms later the state "
-    "thread's _get_best_gps_data sets OFF because no source has a position (owl.py "
-    "_get_best_gps_data: 'No GPS source available' -> GPSLEDState.OFF, with no check that a "
-    "serial reader owns the LED). The LED shows 'GPS disabled' on a unit that is searching "
-    "or has lost its receiver."))
 @pytest.mark.parametrize('receiver, shows', [('searching', GPSLEDState.ACQUIRING),
                                              ('absent', GPSLEDState.ERROR)])
 def test_the_led_of_a_serial_gps_unit_without_a_fix_never_reads_gps_disabled(

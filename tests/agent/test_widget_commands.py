@@ -8,9 +8,9 @@ The click is the one part done by hand here: widgets.js reads data-command,
 takes `action` out of it and posts {action, ...the rest} to /api/config/param.
 `press` below does the same.
 
-These tests record what happens today. A button's mqtt_command is not
-checked anywhere on this path; the test that says it should be is
-test_tool_registry.py::TestWidgetTools (xfail).
+The assistant may only make buttons that tune detection. Spray, power,
+relay and other protected commands are refused when the button is created
+(agent/tool_registry.widget_spec_refusal), on both dashboards.
 """
 
 import html as html_lib
@@ -19,7 +19,7 @@ import re
 
 import pytest
 
-from agent_fakes import calls, says, as_the_cab_sends
+from agent_fakes import calls, says
 
 TOPIC = {'standalone': 'owl/commands', 'networked': 'owl/owl-1/commands'}
 
@@ -45,23 +45,44 @@ def press(app, widget_id='agent-button'):
     return app.client.post('/api/config/param', json=dict(command, action=action))
 
 
-@pytest.mark.parametrize('command, sent', [
-    ({'action': 'set_detection_mode', 'value': 2}, {'action': 'set_detection_mode', 'value': 2}),
-    ({'action': 'set_detection_mode', 'value': 1}, {'action': 'set_detection_mode', 'value': 1}),
-    ({'action': 'shutdown'}, None),            # per dashboard, below
-])
-def test_an_agent_made_button_sends_its_command_as_written(agent_app, llm, command, sent):
+def test_an_agent_made_button_sends_its_command_as_written(agent_app, llm):
+    command = {'action': 'set_tracking', 'value': True}
     install_button(agent_app, llm, command)
     assert agent_app.published() == [], 'making the button sends nothing'
 
     response = press(agent_app)
 
     assert response.get_json()['success'] is True
-    if sent is None:
-        sent = {'action': 'shutdown'}
-    if agent_app.kind == 'networked':
-        sent = as_the_cab_sends(sent)
-    assert agent_app.published() == [(TOPIC[agent_app.kind], sent)]
+    assert agent_app.published() == [(TOPIC[agent_app.kind], command)]
+
+
+@pytest.mark.parametrize('command', [
+    {'action': 'set_detection_mode', 'value': 2},                     # blanket
+    {'action': 'set_detection_mode', 'value': 0},
+    {'action': 'toggle_detection', 'value': True},
+    {'action': 'toggle_all_nozzles', 'value': True},
+    {'action': 'hold_spray', 'value': 1500},
+    {'action': 'shutdown'}, {'action': 'reboot'}, {'action': 'restart_service'},
+    {'action': 'set_config_section', 'section': 'Relays', 'params': {'0': '7'}},
+    {'action': 'set_config_section', 'value': {'section': 'Relays', 'params': {'0': '7'}}},
+    {'action': 'set_config_section', 'section': 'System', 'params': {'on_error': 'on'}},
+    {'action': 'get_config'},                                         # not on the list: refused
+])
+def test_the_assistant_cannot_make_a_button_for_anything_else(agent_app, llm, command):
+    """Spray, power, wiring: refused when the button is asked for. Nothing
+    is installed, so there is nothing on the dashboard to press."""
+    spec = {'id': 'agent-button', 'name': 'Agent button', 'type': 'button',
+            'slot': 'dashboard_controls', 'label': 'Press me', 'mqtt_command': command}
+    agent_app.connect(llm)
+    llm.replies = [calls(('create_widget', {'spec': spec})), says('I cannot add that.')]
+
+    events = agent_app.ask('add a button')
+
+    [result] = [e['data'] for e in events if e['type'] == 'tool_result']
+    assert result['result']['success'] is False
+    assert agent_app.client.get('/api/widgets').get_json() == []
+    assert agent_app.client.get('/api/widgets/agent-button/template').status_code == 404
+    assert agent_app.published() == []
 
 
 def test_a_sensitivity_button_reaches_the_owl_as_a_preset_name(agent_app, llm):
@@ -70,36 +91,20 @@ def test_a_sensitivity_button_reaches_the_owl_as_a_preset_name(agent_app, llm):
     assert agent_app.commands() == [{'action': 'set_sensitivity_level', 'level': 'high'}]
 
 
-def test_on_the_standalone_dashboard_a_button_can_write_a_protected_section(standalone_app, llm):
-    """Every field of the command is forwarded: [Relays] is one press away
-    from an agent that may not call set_config_param on it."""
-    install_button(standalone_app, llm,
-                   {'action': 'set_config_section', 'section': 'Relays', 'params': {'0': '7'}})
-    press(standalone_app)
-    assert standalone_app.commands() == [
-        {'action': 'set_config_section', 'section': 'Relays', 'params': {'0': '7'}}]
-
-
-def test_on_the_cab_controller_only_value_is_forwarded(networked_app, llm):
-    """/api/config/param on the controller passes `value` and nothing else."""
-    install_button(networked_app, llm, {
-        'action': 'set_config_section', 'value': {'section': 'Relays', 'params': {'0': '7'}}})
-    press(networked_app)
-    assert networked_app.commands() == [
-        {'action': 'set_config_section', 'section': 'Relays', 'params': {'0': '7'}}]
-
-
-def test_a_spray_button_on_the_cab_controller_obeys_the_same_on_off_rules(networked_app, llm):
-    """toggle_detection through a button: 'false' is off, and the screen
-    remembers it (unlike set_detection_mode, see TestSprayOnTheCabController)."""
-    install_button(networked_app, llm, {'action': 'toggle_detection', 'value': 'false'})
+def test_a_spray_button_put_on_the_unit_by_hand_obeys_the_on_off_rules(networked_app):
+    """A person can still install any widget on the unit (files on disk);
+    its command goes through the controller like the screen's own buttons:
+    'false' is off, and the screen remembers it."""
+    spec = {'id': 'agent-button', 'name': 'Stop', 'type': 'button', 'slot': 'dashboard_controls',
+            'mqtt_command': {'action': 'toggle_detection', 'value': 'false'}}
+    assert networked_app.widgets.install('agent-button', spec) == (True, None)
     press(networked_app)
     assert networked_app.commands() == [{'action': 'set_detection_enable', 'value': False}]
     assert networked_app.mqtt.desired_state == {'all': {'spray': 'off'}}
 
 
 def test_a_widget_can_be_deleted_from_the_dashboard(agent_app, llm):
-    install_button(agent_app, llm, {'action': 'get_config'})
+    install_button(agent_app, llm, {'action': 'set_sensitivity', 'value': 'high'})
     assert [w['id'] for w in agent_app.client.get('/api/widgets').get_json()] == ['agent-button']
 
     assert agent_app.client.delete('/api/widgets/agent-button').get_json() == {'status': 'ok'}
@@ -151,7 +156,7 @@ def test_a_custom_widgets_style_is_scoped_to_its_own_container(agent_app):
 
 
 def test_style_and_script_are_for_custom_widgets_only(agent_app, llm):
-    install_button(agent_app, llm, {'action': 'get_config'})
+    install_button(agent_app, llm, {'action': 'set_sensitivity', 'value': 'high'})
     assert agent_app.client.get('/api/widgets/agent-button/style').status_code == 404
     assert agent_app.client.get('/api/widgets/agent-button/script').status_code == 404
     assert agent_app.client.get('/api/widgets/nope/style').status_code == 404

@@ -172,9 +172,29 @@ class AgentEngine:
         return self._sessions[session_id]
 
     def _trim_history(self, session: Session):
-        """Keep only the last MAX_HISTORY messages."""
-        if len(session.messages) > MAX_HISTORY:
-            session.messages = session.messages[-MAX_HISTORY:]
+        """Keep the last MAX_HISTORY messages, starting at a real question.
+
+        A cut between an assistant tool call and its result left the history
+        opening with an orphan tool_result, which the provider rejects on
+        every later message of that session. The kept part therefore starts
+        at the first user message that is not a tool result.
+        """
+        if len(session.messages) <= MAX_HISTORY:
+            return
+        kept = session.messages[-MAX_HISTORY:]
+        while kept and not self._opens_a_turn(kept[0]):
+            kept.pop(0)
+        session.messages = kept
+
+    @staticmethod
+    def _opens_a_turn(message):
+        if message.get('role') != 'user':
+            return False
+        content = message.get('content')
+        if isinstance(content, list):
+            return not any(isinstance(block, dict) and block.get('type') == 'tool_result'
+                           for block in content)
+        return True
 
     def get_session_info(self, session_id: str) -> dict:
         """Return token counts and message count for a session."""

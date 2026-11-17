@@ -253,12 +253,6 @@ def test_a_heartbeat_still_in_flight_after_the_last_will_is_not_a_rejoin(
     assert sent(ctrl, 'owl-1') == [{'action': 'set_detection_enable', 'value': False}]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "controller/networked/networked.py _on_message: a heartbeat arriving within 5 s of an "
-    "OWL's last will marks it connected again and uses up the rejoin (the push is "
-    "suppressed, `is_reconnect` branch near 'Suppressed reconnect push'). If the OWL is "
-    "back before the 15 s offline timeout, its first real heartbeat is not a rejoin, so "
-    "recording / model / tracking are never pushed. (Spray is: _reconcile_spray re-sends it.)"))
 def test_an_owl_that_restarts_within_15s_of_its_last_will_still_gets_recording_back(
         make_controller, hears, sent):
     ctrl = make_controller()

@@ -10,6 +10,7 @@ The registry validates inputs, enforces tier permissions, and generates tool
 schemas in both Anthropic and OpenAI formats.
 """
 
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
@@ -26,7 +27,100 @@ VALID_ALGORITHMS = frozenset({
     'exg', 'exhsv', 'hsv', 'gog', 'gog-hybrid',
 })
 
-PROTECTED_SECTIONS = frozenset({'Relays', 'MQTT', 'Network', 'WebDashboard'})
+# What the assistant may never change, whichever tool or widget it goes
+# through. These decide how the unit is wired, how it is reached and what a
+# fault does to the nozzles; a wrong value takes the unit off the network,
+# moves a relay to another pin or changes the safety behaviour, and none of
+# it can be undone from the chat.
+#   Relays      relay -> pin map
+#   Controller  switch panel type, switch purpose, switch and LED pins
+#   GPS         receiver source, port, baud rate
+#   MQTT, Network, WebDashboard, Cloud   how the unit is reached, credentials
+PROTECTED_SECTIONS = frozenset({'Relays', 'Controller', 'GPS',
+                                'MQTT', 'Network', 'WebDashboard', 'Cloud'})
+# ... and single keys inside sections it may otherwise tune
+PROTECTED_KEYS = {
+    'System': frozenset({'relay_num', 'on_error'}),
+}
+# The only commands an assistant-made dashboard button may send: detection
+# tuning. Never spray on/off/blanket, power, restart, relays or code.
+WIDGET_BUTTON_ACTIONS = frozenset({
+    'set_sensitivity', 'set_sensitivity_level', 'set_algorithm', 'set_tracking',
+    'set_crop_buffer', 'set_greenongreen_confidence', 'set_config', 'set_config_section',
+})
+
+
+def config_change_refusal(section, key=None):
+    """Why the assistant may not change [section] key, or None when it may.
+    Compared without case or padding ("relays", "Relays " are still Relays)."""
+    name = str(section if section is not None else '').strip().lower()
+    for protected in PROTECTED_SECTIONS:
+        if name == protected.lower():
+            return f'Section [{protected}] is protected and cannot be modified'
+    wanted = str(key if key is not None else '').strip().lower()
+    for protected, keys in PROTECTED_KEYS.items():
+        if wanted in keys and name in (protected.lower(), ''):
+            return f'[{protected}] {wanted} is protected and cannot be modified'
+    return None
+
+
+def _command_refusal(command):
+    """Why a button may not carry this command, or None."""
+    if isinstance(command, str):
+        try:
+            command = json.loads(command or '{}')
+        except ValueError:
+            return 'mqtt_command is not valid JSON'
+    if not isinstance(command, dict) or not command:
+        return 'a button needs an mqtt_command object'
+    action = command.get('action')
+    if action not in WIDGET_BUTTON_ACTIONS:
+        return (f'buttons cannot send {action!r}; allowed: '
+                f'{", ".join(sorted(WIDGET_BUTTON_ACTIONS))}')
+    if action in ('set_config', 'set_config_section'):
+        # both shapes the dashboards accept: fields beside action, or in value
+        for holder in (command, command.get('value') if isinstance(command.get('value'), dict) else {}):
+            section = holder.get('section')
+            keys = list((holder.get('params') or {}).keys()) if isinstance(holder.get('params'), dict) else []
+            keys += [holder.get(name) for name in ('key', 'param') if holder.get(name) is not None]
+            for key in keys or [None]:
+                reason = config_change_refusal(section, key)
+                if reason:
+                    return reason
+    return None
+
+
+def widget_spec_refusal(spec):
+    """Why the assistant may not install this widget, or None. A widget is a
+    control on the dashboard that sends commands when the operator touches
+    it, so it gets the same limits as the assistant's own tools."""
+    if not isinstance(spec, dict):
+        return 'Widget spec must be an object'
+    cfg = spec.get('builtin_config') if isinstance(spec.get('builtin_config'), dict) else {}
+    params = spec.get('action_params') if isinstance(spec.get('action_params'), dict) else {}
+    wtype = spec.get('type')
+
+    if wtype == 'button' or 'mqtt_command' in spec or 'mqtt_command' in cfg:
+        reason = _command_refusal(cfg.get('mqtt_command', spec.get('mqtt_command')))
+        if reason:
+            return reason
+
+    action = spec.get('action')
+    if action is not None and action not in WIDGET_BUTTON_ACTIONS:
+        return f'widgets cannot send {action!r}'
+
+    sections = {cfg.get('section'), spec.get('config_section'), params.get('section')} - {None, ''}
+    keys = {cfg.get('param'), spec.get('config_key'), params.get('param'),
+            params.get('key_low'), params.get('key_high')} - {None, ''}
+    values = cfg.get('values') if isinstance(cfg.get('values'), dict) else {}
+    keys |= set(values.keys())
+    for section in sections or {None}:
+        for key in keys or {None}:
+            reason = config_change_refusal(section, key)
+            if reason:
+                return reason
+    return None
+
 
 from utils.config_manager import GREENONBROWN_PARAMS
 from utils.shared_types import parse_switch
@@ -430,7 +524,10 @@ def list_presets(**context):
 
 @owl_tool(
     tier='apply',
-    description='Set a configuration parameter. Protected sections (Relays, MQTT, Network, WebDashboard) are rejected.',
+    description=('Set a configuration parameter for detection or spray timing. Refused for wiring, '
+                 'connectivity and safety settings: sections Relays, Controller, GPS, MQTT, Network, '
+                 'WebDashboard, Cloud, and [System] relay_num and on_error. Tell the user those must '
+                 'be changed on the unit by a person.'),
     parameters={
         'section': {
             'type': 'string',
@@ -450,12 +547,9 @@ def list_presets(**context):
     },
 )
 def set_config_param(section, key, value, **context):
-    # Compared without case or padding: configparser section names are
-    # case-sensitive, but "relays" or "Relays " must not slip past the guard
-    if str(section).strip().lower() in {name.lower() for name in PROTECTED_SECTIONS}:
-        raise ValueError(
-            f"Section [{section}] is protected and cannot be modified"
-        )
+    reason = config_change_refusal(section, key)
+    if reason:
+        raise ValueError(reason)
     # Normalize: detection threshold keys always target GreenOnBrown
     if key in GREENONBROWN_PARAMS:
         section = 'GreenOnBrown'
@@ -584,7 +678,10 @@ def set_detection(enabled=None, mode=None, state=None, **context):
 
 @owl_tool(
     tier='apply',
-    description='Create and install a new UI widget from a JSON spec',
+    description=('Create and install a new UI widget from a JSON spec. Widgets may only tune '
+                 'detection (sensitivity, algorithm, tracking, detection thresholds). A button or '
+                 'control for spraying on/off/blanket, nozzle tests, power, restart, relays or any '
+                 'protected setting is refused.'),
     parameters={
         'spec': {
             'type': 'object',
@@ -601,6 +698,9 @@ def create_widget(spec, **context):
         widget_id = spec.get('id') if isinstance(spec, dict) else None
         if not widget_id:
             return {'success': False, 'error': 'Widget spec must include an "id" field'}
+        reason = widget_spec_refusal(spec)
+        if reason:
+            return {'success': False, 'error': reason}
         ok, err = wm.install(widget_id, spec)
         if ok:
             return {'success': True, 'widget_id': widget_id}
@@ -654,6 +754,13 @@ def update_widget(widget_id, updates, **context):
     if wm is None:
         return {'error': 'No widget manager available'}
     try:
+        # Checked as it will be once merged, so an update cannot turn a
+        # harmless widget into one the assistant could not have created
+        merged = dict(wm.get(widget_id) or {})
+        merged.update(updates if isinstance(updates, dict) else {})
+        reason = widget_spec_refusal(merged)
+        if reason:
+            return {'success': False, 'error': reason}
         ok, err = wm.update(widget_id, updates)
         if ok:
             return {'success': True, 'widget_id': widget_id}
