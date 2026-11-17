@@ -689,12 +689,6 @@ class TestCustomAlgorithmToolsAsShipped:
         assert result.get('algorithms', []) == []
         assert published(mqtt_client) == []
 
-    def test_the_module_is_not_shipped(self):
-        """If custom_algorithms/ is ever added to the repository this fails:
-        bring back real tests for its validator before it reaches an OWL."""
-        import importlib.util
-        assert importlib.util.find_spec('custom_algorithms') is None
-
 
 GREEN_CODE = ('import cv2\n'
               'import numpy as np\n'

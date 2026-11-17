@@ -250,17 +250,18 @@ class TestToolFailures:
 
     @pytest.mark.parametrize('name, arguments, error', [
         ('read_file', {'path': '/etc/passwd'}, "Tool 'read_file' requires developer mode"),
-        ('set_detection', {'state': 'sideways'}, "Invalid spray state 'sideways'"),
-        ('set_config_param', {'section': 'Camera'}, "Missing required parameter 'key'"),
-        ('make_coffee', {}, 'Unknown tool'),
+        ('set_detection', {'state': 'sideways'},
+         "Invalid spray state 'sideways'. Must be 'off', 'spot' or 'blanket'."),
+        ('set_config_param', {'section': 'Camera'},
+         "Missing required parameter 'key' for tool 'set_config_param'"),
+        ('make_coffee', {}, "Unknown tool: 'Unknown tool: make_coffee'"),
         ('broken', {}, 'Tool execution failed: sensor exploded'),
     ])
     def test_the_error_is_the_tools_result(self, agent, owl_client, name, arguments, error):
         engine = agent(name, arguments)
         chunks = list(engine.chat('s1', 'do it'))
         [result] = results(chunks)
-        assert list(result['result']) == ['error']
-        assert error in result['result']['error']
+        assert result['result'] == {'error': error}
         assert commands(owl_client) == []
         assert chunks[-1].data == 'Sorry.', 'the model got its turn to explain'
         assert json.loads(engine._get_session('s1').messages[2]['content'][0]['content']) == result['result']
