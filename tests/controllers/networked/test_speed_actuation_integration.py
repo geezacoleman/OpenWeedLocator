@@ -1,856 +1,423 @@
+"""GPS speed -> spray timing on the networked controller, end to end:
+
+    NMEA (as a receiver sends it) -> GPSManager / GPSState -> SpeedAverager
+      -> ActuationCalculator -> the set_actuation_params message each OWL gets
+
+Every pipeline test drives a real CentralController with a real GPSManager and
+reads what CentralController._actuation_broadcast_once() publishes. Nothing
+here re-implements the loop or the formula. What an OWL's relay then does
+with that message is tests/owl/test_controller_to_owl_relay.py.
 """
-Integration test: GPS speed -> dynamic actuation timing.
 
-Spoofs NMEA sentences at various speeds and verifies the full pipeline:
-  Teltonika NMEA (TCP) -> GPSManager -> SpeedAverager -> ActuationCalculator
-    -> MQTT broadcast -> OWL _handle_set_actuation_params -> owl.actuation_duration
-
-Tests the full range of spray distances (1-50cm) and field speeds (2-25 km/h),
-including boundary analysis where MIN_DURATION (0.01s) and MAX_DURATION (5.0s)
-clamps kick in.
-"""
-
+import json
 import socket
 import time
+
 import pytest
 
-from utils.gps_manager import GPSManager, GPSState, parse_sentence, KNOTS_TO_KMH
-from controller.networked.networked import SpeedAverager, ActuationCalculator
+from utils.gps_manager import GPSState, KNOTS_TO_KMH, parse_sentence
 
 
 # ---------------------------------------------------------------------------
-# Helpers -- build valid NMEA sentences with correct checksums
+# NMEA as a receiver sends it (valid checksums)
 # ---------------------------------------------------------------------------
 
-def _nmea_checksum(body):
-    """Compute XOR checksum for an NMEA sentence body (between $ and *)."""
-    cs = 0
+def _nmea(body):
+    checksum = 0
     for ch in body:
-        cs ^= ord(ch)
-    return f'{cs:02X}'
+        checksum ^= ord(ch)
+    return f'${body}*{checksum:02X}\r\n'
 
 
-def make_gprmc(speed_knots, lat='3351.8900', lat_h='S', lon='15110.5300', lon_h='E',
-               status='A', heading='045.0', time_utc='120000.00', date='200226'):
-    """Build a valid $GPRMC sentence with correct checksum."""
-    body = f'GPRMC,{time_utc},{status},{lat},{lat_h},{lon},{lon_h},{speed_knots:.1f},{heading},{date},,A'
-    return f'${body}*{_nmea_checksum(body)}\r\n'
+def rmc(speed_kmh, status='A'):
+    knots = speed_kmh / KNOTS_TO_KMH
+    return _nmea(f'GPRMC,120000.00,{status},3351.8900,S,15110.5300,E,{knots:.2f},045.0,200226,,,A')
 
 
-def make_gpvtg(speed_kmh, heading='045.0'):
-    """Build a valid $GPVTG sentence with correct checksum."""
-    speed_knots = speed_kmh / KNOTS_TO_KMH
-    body = f'GPVTG,{heading},T,,M,{speed_knots:.1f},N,{speed_kmh:.1f},K,A'
-    return f'${body}*{_nmea_checksum(body)}\r\n'
+def vtg(speed_kmh):
+    return _nmea(f'GPVTG,045.0,T,,M,{speed_kmh / KNOTS_TO_KMH:.2f},N,{speed_kmh:.1f},K,A')
 
 
-def make_gpgga(lat='3351.8900', lat_h='S', lon='15110.5300', lon_h='E',
-               fix_quality=1, satellites=8, hdop=1.2, altitude=120.0):
-    """Build a valid $GPGGA sentence with correct checksum."""
-    body = (f'GPGGA,120000.00,{lat},{lat_h},{lon},{lon_h},'
-            f'{fix_quality},{satellites:02d},{hdop:.1f},{altitude:.1f},M,0.0,M,,')
-    return f'${body}*{_nmea_checksum(body)}\r\n'
-
-
-def kmh_to_knots(speed_kmh):
-    return speed_kmh / KNOTS_TO_KMH
+def gga(fix_quality=1):
+    return _nmea(f'GPGGA,120000.00,3351.8900,S,15110.5300,E,{fix_quality},08,1.2,120.0,M,0.0,M,,')
 
 
 # ---------------------------------------------------------------------------
-# Test 1: NMEA parsing produces correct speed values
+# Parsing
 # ---------------------------------------------------------------------------
 
-@pytest.mark.unit
-class TestNMEASpeedParsing:
-    """Verify that spoofed NMEA sentences parse to correct speed values."""
+@pytest.mark.parametrize('speed_kmh', [0.9, 10.0, 25.0])
+def test_rmc_speed_is_parsed_in_knots(speed_kmh):
+    parsed = parse_sentence(rmc(speed_kmh))
+    assert parsed['type'] == 'RMC'
+    assert parsed['status'] == 'A'
+    assert parsed['speed_knots'] * KNOTS_TO_KMH == pytest.approx(speed_kmh, abs=0.01)
 
-    @pytest.mark.parametrize('speed_kmh', [1.0, 2.0, 5.0, 8.0, 10.0, 15.0, 20.0, 25.0])
-    def test_rmc_speed_roundtrip(self, speed_kmh):
-        """RMC sentence -> parsed speed matches input."""
-        knots = kmh_to_knots(speed_kmh)
-        sentence = make_gprmc(knots)
-        parsed = parse_sentence(sentence)
-        assert parsed is not None, f'Failed to parse: {sentence!r}'
-        assert parsed['type'] == 'RMC'
-        assert parsed['speed_knots'] == pytest.approx(knots, abs=0.1)
-        reconstructed_kmh = parsed['speed_knots'] * KNOTS_TO_KMH
-        assert reconstructed_kmh == pytest.approx(speed_kmh, abs=0.2)
 
-    @pytest.mark.parametrize('speed_kmh', [1.0, 2.0, 10.0, 25.0])
-    def test_vtg_speed_roundtrip(self, speed_kmh):
-        """VTG sentence -> parsed speed matches input."""
-        sentence = make_gpvtg(speed_kmh)
-        parsed = parse_sentence(sentence)
-        assert parsed is not None
-        assert parsed['type'] == 'VTG'
-        assert parsed['speed_kmh'] == pytest.approx(speed_kmh, abs=0.1)
+def test_vtg_speed_is_parsed_in_kmh():
+    parsed = parse_sentence(vtg(18.5))
+    assert (parsed['type'], parsed['speed_kmh']) == ('VTG', 18.5)
 
-    def test_gga_provides_fix(self):
-        """GGA sentence -> fix_quality > 0 means valid fix."""
-        sentence = make_gpgga()
-        parsed = parse_sentence(sentence)
-        assert parsed is not None
-        assert parsed['type'] == 'GGA'
-        assert parsed['fix_quality'] == 1
-        assert parsed['lat'] is not None
-        assert parsed['lon'] is not None
+
+def test_gga_carries_the_fix_and_position():
+    parsed = parse_sentence(gga())
+    assert (parsed['type'], parsed['fix_quality']) == ('GGA', 1)
+    assert parsed['lat'] == pytest.approx(-33.8648, abs=0.0001)
+    assert parsed['lon'] == pytest.approx(151.1755, abs=0.0001)
+
+
+def test_a_corrupted_sentence_is_dropped():
+    good = rmc(10.0)
+    assert parse_sentence(good.replace('S,151', 'N,151')) is None, 'checksum no longer matches'
 
 
 # ---------------------------------------------------------------------------
-# Test 2: GPSState correctly accumulates speed from NMEA
+# GPSState: which speeds are allowed out (the controller times every nozzle
+# on the rig from this value)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.unit
-class TestGPSStateSpeedUpdate:
-    """Verify GPSState.speed_kmh updates from both RMC and VTG sentences."""
+class TestGPSStateSpeed:
 
-    def test_rmc_updates_speed(self):
+    def _state(self, *sentences):
         state = GPSState()
-        rmc = parse_sentence(make_gprmc(kmh_to_knots(12.0)))
-        assert rmc is not None, 'RMC parse failed'
-        state.update_from_rmc(rmc)
-        snap = state.get_dict()
-        assert snap['speed_kmh'] == pytest.approx(12.0, abs=0.3)
+        for sentence in sentences:
+            state.update_from_line(sentence.strip())
+        return state
 
-    def test_vtg_updates_speed(self):
-        state = GPSState()
-        state.update_from_gga(parse_sentence(make_gpgga()))
-        vtg = parse_sentence(make_gpvtg(18.5))
-        state.update_from_vtg(vtg)
-        snap = state.get_dict()
-        assert snap['speed_kmh'] == pytest.approx(18.5, abs=0.1)
+    def test_rmc_speed_with_a_fix_is_reported(self):
+        snap = self._state(gga(), rmc(12.0)).get_dict()
+        assert snap['fix_valid'] is True
+        assert snap['speed_kmh'] == 12.0
+
+    def test_vtg_speed_with_a_fix_is_reported(self):
+        assert self._state(gga(), vtg(18.5)).get_dict()['speed_kmh'] == 18.5
 
     def test_speed_without_a_fix_is_not_reported(self):
         # A speed with no valid fix used to reach the controller, which timed
         # every nozzle on the rig from it
-        state = GPSState()
-        state.update_from_vtg(parse_sentence(make_gpvtg(18.5)))
-        assert state.get_dict()['speed_kmh'] is None
+        snap = self._state(vtg(18.5)).get_dict()
+        assert (snap['fix_valid'], snap['speed_kmh']) == (False, None)
 
     def test_void_rmc_does_not_set_speed(self):
-        state = GPSState()
-        state.update_from_gga(parse_sentence(make_gpgga()))
-        state.update_from_rmc(parse_sentence(make_gprmc(kmh_to_knots(30.0), status='V')))
-        assert state.get_dict()['speed_kmh'] is None
+        """A void RMC (status V) can still carry the receiver's last speed."""
+        assert self._state(gga(), rmc(30.0, status='V')).get_dict()['speed_kmh'] is None
 
-    def test_stale_speed_is_not_reported(self):
-        import time as _time
-        state = GPSState()
-        state.update_from_gga(parse_sentence(make_gpgga()))
-        state.update_from_vtg(parse_sentence(make_gpvtg(18.5)))
-        state.last_speed_time = _time.monotonic() - 4.0
-        assert state.get_dict()['speed_kmh'] is None
+    def test_void_rmc_does_not_replace_a_good_speed(self):
+        assert self._state(gga(), rmc(8.0), rmc(30.0, status='V')).get_dict()['speed_kmh'] == 8.0
 
-    def test_gga_then_rmc_gives_valid_fix(self):
-        state = GPSState()
-        gga = parse_sentence(make_gpgga())
-        assert gga is not None, 'GGA parse failed'
-        state.update_from_gga(gga)
-        rmc = parse_sentence(make_gprmc(kmh_to_knots(10.0), status='A'))
-        assert rmc is not None, 'RMC parse failed'
-        state.update_from_rmc(rmc)
+    @pytest.mark.parametrize('age_s, reported', [(2.5, 18.5), (3.5, None)])
+    def test_a_speed_older_than_3s_is_not_reported(self, age_s, reported):
+        state = self._state(gga(), vtg(18.5))
+        state.last_speed_time = time.monotonic() - age_s
+        assert state.get_dict()['speed_kmh'] == reported
+
+    @pytest.mark.parametrize('age_s, valid', [(9.0, True), (11.0, False)])
+    def test_a_fix_older_than_10s_is_no_fix_and_carries_no_speed(self, age_s, valid):
+        state = self._state(gga(), rmc(10.0))
+        state.last_fix_time = time.monotonic() - age_s
+        state.last_speed_time = time.monotonic()      # speed alone still arriving
         snap = state.get_dict()
-        assert snap['fix_valid'] is True
-        assert snap['speed_kmh'] == pytest.approx(10.0, abs=0.3)
-
-    @pytest.mark.parametrize('speed_kmh', [1.0, 5.0, 15.0])
-    def test_speed_reaches_gps_state(self, speed_kmh):
-        """Full chain: make NMEA -> parse -> GPSState -> get_dict speed."""
-        state = GPSState()
-        gga = parse_sentence(make_gpgga())
-        state.update_from_gga(gga)
-        rmc = parse_sentence(make_gprmc(kmh_to_knots(speed_kmh)))
-        state.update_from_rmc(rmc)
-        snap = state.get_dict()
-        assert snap['fix_valid'] is True
-        assert snap['speed_kmh'] == pytest.approx(speed_kmh, abs=0.5)
+        assert snap['fix_valid'] is valid
+        assert snap['speed_kmh'] == (10.0 if valid else None)
 
 
 # ---------------------------------------------------------------------------
-# Test 3: ActuationCalculator -- exhaustive speed/distance matrix
+# The timing maths: one table, worked by hand
 # ---------------------------------------------------------------------------
 
-@pytest.mark.unit
-class TestActuationMath:
-    """Verify actuation duration & delay across the full range of spray
-    distances (1-50cm) and field speeds (2-25 km/h), including where
-    safety clamps activate."""
+# speed km/h, spray length cm, nozzle offset cm -> duration s, delay s
+#   duration = length / speed, delay = offset / speed, both clamped to
+#   0.01 .. 5 s (delay 0 .. 5 s). 10 km/h = 2.778 m/s; 7.2 km/h = 2 m/s;
+#   18 km/h = 5 m/s; 36 km/h = 10 m/s.
+WORKED = [
+    (10.0, 10, 30, 0.036, 0.108),    # the default geometry at a typical speed
+    (2.0, 10, 30, 0.18, 0.54),       # the slowest speed that counts as moving
+    (7.2, 50, 100, 0.25, 0.5),
+    (20.0, 20, 40, 0.036, 0.072),
+    (18.0, 10, 0, 0.02, 0.0),        # nozzle under the camera: no delay
+    (36.0, 5, 200, 0.01, 0.2),       # 5 ms needed: held at the 10 ms a solenoid needs
+    (18.0, 2, 150, 0.01, 0.3),       # 4 ms needed: same floor
+]
 
-    # From ActuationCalculator.MIN_SPEED up: below it the rig counts as
-    # stationary and the configured timing applies (TestStationary in
-    # test_actuation.py, and tests/owl/test_gps_spray_latency.py end to end)
-    SPEEDS = [2.0, 3.0, 5.0, 8.0, 10.0, 12.0, 15.0, 20.0, 25.0]  # km/h
-    DISTANCES = [1, 2, 3, 5, 10, 15, 20, 30, 50]  # cm (API range: 2-50)
 
-    def _expected_duration(self, length_cm, speed_kmh):
-        speed_m_s = speed_kmh / 3.6
-        return (length_cm / 100.0) / speed_m_s
+@pytest.mark.parametrize('speed, length_cm, offset_cm, duration, delay', WORKED)
+def test_timing_for_a_speed_and_geometry(speed, length_cm, offset_cm, duration, delay):
+    from utils.actuation import ActuationCalculator
+    calc = ActuationCalculator(actuation_length_cm=length_cm, offset_cm=offset_cm, sustain_s=0)
+    result = calc.compute(speed)
+    assert result['source'] == 'gps'
+    assert result['actuation_duration'] == pytest.approx(duration, abs=0.0005)
+    assert result['delay'] == pytest.approx(delay, abs=0.0005)
+    assert result['speed_used'] == speed
 
-    def _expected_delay(self, offset_cm, speed_kmh):
-        speed_m_s = speed_kmh / 3.6
-        return (offset_cm / 100.0) / speed_m_s
 
-    @pytest.mark.parametrize('speed_kmh', SPEEDS)
-    def test_1cm_spray_distance(self, speed_kmh):
-        """1cm spray distance: verify duration changes with speed."""
-        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=1.0, offset_cm=0.0)
-        result = calc.compute(speed_kmh)
-
-        expected = self._expected_duration(1.0, speed_kmh)
-        expected = max(0.01, min(5.0, expected))
-
-        assert result['source'] == 'gps'
-        assert result['actuation_duration'] == pytest.approx(expected, abs=0.0001)
-
-    @pytest.mark.parametrize('speed_kmh', SPEEDS)
-    def test_2cm_spray_distance(self, speed_kmh):
-        """2cm spray distance: verify duration changes with speed."""
-        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=2.0, offset_cm=0.0)
-        result = calc.compute(speed_kmh)
-
-        expected = self._expected_duration(2.0, speed_kmh)
-        expected = max(0.01, min(5.0, expected))
-
-        assert result['source'] == 'gps'
-        assert result['actuation_duration'] == pytest.approx(expected, abs=0.0001)
-
-    @pytest.mark.parametrize('distance_cm', DISTANCES)
-    @pytest.mark.parametrize('speed_kmh', SPEEDS)
-    def test_full_distance_speed_matrix(self, distance_cm, speed_kmh):
-        """Every distance x speed combination produces correct clamped result."""
-        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=distance_cm, offset_cm=0.0)
-        result = calc.compute(speed_kmh)
-
-        raw = self._expected_duration(distance_cm, speed_kmh)
-        expected = max(0.01, min(5.0, raw))
-
-        assert result['source'] == 'gps'
-        assert result['actuation_duration'] == pytest.approx(expected, abs=0.0001)
-
-    @pytest.mark.parametrize('speed_kmh', SPEEDS)
-    def test_with_30cm_offset(self, speed_kmh):
-        """10cm spray + 30cm nozzle offset: verify both duration and delay."""
-        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=10.0, offset_cm=30.0)
-        result = calc.compute(speed_kmh)
-
-        exp_dur = max(0.01, min(5.0, self._expected_duration(10.0, speed_kmh)))
-        exp_del = max(0.0, min(5.0, self._expected_delay(30.0, speed_kmh)))
-
-        assert result['actuation_duration'] == pytest.approx(exp_dur, abs=0.0001)
-        assert result['delay'] == pytest.approx(exp_del, abs=0.0001)
-
-    def test_duration_decreases_with_speed(self):
-        """Core property: faster speed -> shorter duration.
-
-        Uses 50cm distance so no speed in range hits the 10ms clamp.
-        Max safe speed for 50cm = 50*3.6 = 180 km/h.
-        """
-        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=50.0, offset_cm=0.0)
-        durations = [calc.compute(s)['actuation_duration'] for s in self.SPEEDS]
-        for i in range(1, len(durations)):
-            assert durations[i] < durations[i - 1], (
-                f"Duration should decrease: {self.SPEEDS[i-1]}km/h={durations[i-1]:.4f}s "
-                f"> {self.SPEEDS[i]}km/h={durations[i]:.4f}s"
-            )
-
-    def test_delay_decreases_with_speed(self):
-        """Core property: faster speed -> shorter delay (fixed offset)."""
-        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=50.0, offset_cm=50.0)
-        delays = [calc.compute(s)['delay'] for s in self.SPEEDS]
-        for i in range(1, len(delays)):
-            assert delays[i] < delays[i - 1]
-
-    def test_double_distance_doubles_duration(self):
-        """2x distance = 2x duration at same speed (when not clamped)."""
-        for speed in [2.0, 3.0, 4.0]:
-            # Use distances and speeds where neither is clamped
-            calc_5 = ActuationCalculator(sustain_s=0, actuation_length_cm=5.0, offset_cm=0.0)
-            calc_10 = ActuationCalculator(sustain_s=0, actuation_length_cm=10.0, offset_cm=0.0)
-            d5 = calc_5.compute(speed)['actuation_duration']
-            d10 = calc_10.compute(speed)['actuation_duration']
-            assert d10 == pytest.approx(d5 * 2, abs=0.0001), (
-                f'At {speed} km/h: 10cm={d10:.4f}s should be 2x 5cm={d5:.4f}s'
-            )
+def test_duration_and_delay_never_exceed_5s_however_slow():
+    """Only reachable with the moving threshold lowered: 0.18 km/h = 0.05 m/s
+    would be a 10 s spray, 20 s late."""
+    from utils.actuation import ActuationCalculator
+    calc = ActuationCalculator(actuation_length_cm=50, offset_cm=100, min_speed_kmh=0.1, sustain_s=0)
+    result = calc.compute(0.18)
+    assert (result['actuation_duration'], result['delay'], result['source']) == (5.0, 5.0, 'gps')
 
 
 # ---------------------------------------------------------------------------
-# Test 3b: Boundary analysis -- where do clamps activate?
+# The pipeline, through a real controller
 # ---------------------------------------------------------------------------
 
-@pytest.mark.unit
-class TestActuationBoundaries:
-    """Find exactly where the MIN_DURATION (0.01s / 10ms) and MAX_DURATION
-    (5.0s) safety clamps kick in for each spray distance."""
-
-    ALL_DISTANCES = [1, 2, 3, 5, 10, 15, 20, 30, 40, 50]  # cm
-    ALL_SPEEDS = [0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 10.0, 12.0,
-                  15.0, 20.0, 25.0, 30.0]  # km/h
-
-    def test_min_duration_clamp_locations(self):
-        """Identify speed/distance combos where 10ms floor is hit.
-
-        These are the cases where the relay literally can't fire fast
-        enough -- the solenoid needs at least 10ms to physically open.
-        Any combo that hits this clamp means you're driving too fast
-        for that spray distance.
-        """
-        clamped = []
-
-        for dist in self.ALL_DISTANCES:
-            calc = ActuationCalculator(sustain_s=0, actuation_length_cm=dist, offset_cm=0.0)
-            for speed in self.ALL_SPEEDS:
-                if speed < 0.5:
-                    continue
-                result = calc.compute(speed)
-                raw = (dist / 100.0) / (speed / 3.6)
-                if raw < 0.01:  # Would be clamped
-                    clamped.append((dist, speed, raw * 1000, result['actuation_duration'] * 1000))
-
-        print('\n  === MIN_DURATION (10ms) clamp analysis ===')
-        print('  These combos hit the 10ms floor -- spray too small for the speed.')
-        print(f'  {"Dist (cm)":>10}  {"Speed (km/h)":>13}  {"Raw (ms)":>10}  {"Clamped (ms)":>13}')
-        print(f'  {"-"*10}  {"-"*13}  {"-"*10}  {"-"*13}')
-        for dist, speed, raw_ms, clamped_ms in clamped:
-            print(f'  {dist:10d}  {speed:13.1f}  {raw_ms:10.2f}  {clamped_ms:13.1f}')
-
-        if not clamped:
-            print('  (none -- all combos within safe range)')
-
-        # Verify all clamped values are exactly 10ms
-        for dist, speed, raw_ms, clamped_ms in clamped:
-            assert clamped_ms == pytest.approx(10.0, abs=0.01)
-
-    def test_max_duration_clamp_locations(self):
-        """Identify speed/distance combos where 5s ceiling is hit.
-
-        These are extremely slow speeds where relay would stay open
-        too long, wasting spray and potentially causing damage.
-        """
-        clamped = []
-
-        for dist in self.ALL_DISTANCES:
-            calc = ActuationCalculator(sustain_s=0, actuation_length_cm=dist, offset_cm=0.0)
-            for speed in self.ALL_SPEEDS:
-                if speed < 0.5:
-                    continue
-                result = calc.compute(speed)
-                raw = (dist / 100.0) / (speed / 3.6)
-                if raw > 5.0:  # Would be clamped
-                    clamped.append((dist, speed, raw * 1000, result['actuation_duration'] * 1000))
-
-        print('\n  === MAX_DURATION (5000ms) clamp analysis ===')
-        print('  These combos hit the 5s ceiling -- too slow for this spray distance.')
-        print(f'  {"Dist (cm)":>10}  {"Speed (km/h)":>13}  {"Raw (ms)":>10}  {"Clamped (ms)":>13}')
-        print(f'  {"-"*10}  {"-"*13}  {"-"*10}  {"-"*13}')
-        for dist, speed, raw_ms, clamped_ms in clamped:
-            print(f'  {dist:10d}  {speed:13.1f}  {raw_ms:10.1f}  {clamped_ms:13.1f}')
-
-        if not clamped:
-            print('  (none -- all combos within safe range)')
-
-        for dist, speed, raw_ms, clamped_ms in clamped:
-            assert clamped_ms == pytest.approx(5000.0, abs=0.1)
-
-    def test_safe_operating_envelope(self):
-        """For each distance, find the max safe speed (before 10ms clamp).
-
-        This is the critical output for field testing: tells the farmer
-        the maximum speed they can drive for each spray distance setting.
-        """
-        print('\n  === Safe operating envelope ===')
-        print("  Maximum speed before 10ms clamp (relay can't switch faster)")
-        print(f'  {"Dist (cm)":>10}  {"Max speed (km/h)":>17}  {"Duration at max (ms)":>21}')
-        print(f'  {"-"*10}  {"-"*17}  {"-"*21}')
-
-        for dist in self.ALL_DISTANCES:
-            # Solve: (dist/100) / (speed/3.6) = 0.01
-            # speed = (dist/100) / 0.01 * 3.6 = dist * 3.6
-            max_safe_speed = dist * 3.6  # km/h
-
-            calc = ActuationCalculator(sustain_s=0, actuation_length_cm=dist, offset_cm=0.0)
-            result = calc.compute(max_safe_speed)
-
-            print(f'  {dist:10d}  {max_safe_speed:17.1f}  '
-                  f'{result["actuation_duration"]*1000:21.1f}')
-
-            # At max_safe_speed, duration should be exactly 10ms
-            assert result['actuation_duration'] == pytest.approx(0.01, abs=0.0001)
-
-            # Just below max speed: should be > 10ms (not clamped)
-            result_below = calc.compute(max_safe_speed * 0.9)
-            assert result_below['actuation_duration'] > 0.01
-
-    def test_typical_field_scenarios(self):
-        """Real-world scenarios: typical tractor speeds + spray widths.
-
-        Common setups:
-        - Broadacre: 10-20cm at 10-20 km/h
-        - Horticultural: 2-5cm at 3-8 km/h
-        - Fallow: 5-15cm at 8-15 km/h
-        """
-        scenarios = [
-            # (name, distance_cm, offset_cm, speed_range)
-            ('Broadacre low', 10, 30, [8, 10, 12, 15, 18, 20]),
-            ('Broadacre high', 20, 30, [10, 15, 20, 25]),
-            ('Horticultural', 3, 15, [2, 3, 5, 8]),
-            ('Fallow spray', 10, 20, [8, 10, 12, 15]),
-            ('Precision micro (1cm)', 1, 10, [2, 3, 3.6]),  # 3.6 = exact clamp point
-            ('Precision micro (2cm)', 2, 10, [2, 3, 5, 7.2]),  # 7.2 = exact clamp point
-        ]
-
-        print('\n  === Typical field scenarios ===')
-
-        for name, dist, offset, speeds in scenarios:
-            calc = ActuationCalculator(sustain_s=0, actuation_length_cm=dist, offset_cm=offset)
-            print(f'\n  --- {name}: {dist}cm spray, {offset}cm offset ---')
-            print(f'  {"Speed":>8}  {"Duration":>10}  {"Delay":>10}  {"Status":>12}')
-            print(f'  {"-"*8}  {"-"*10}  {"-"*10}  {"-"*12}')
-
-            for speed in speeds:
-                r = calc.compute(speed)
-                raw_dur = (dist / 100.0) / (speed / 3.6)
-                if raw_dur < 0.01:
-                    status = 'CLAMPED-MIN'
-                elif raw_dur > 5.0:
-                    status = 'CLAMPED-MAX'
-                else:
-                    status = 'OK'
-
-                print(f'  {speed:7.1f}h  {r["actuation_duration"]*1000:9.1f}ms  '
-                      f'{r["delay"]*1000:9.1f}ms  {status:>12}')
-
-                # Verify source is GPS (not config fallback)
-                assert r['source'] == 'gps'
-
-    def test_min_duration_is_physically_reasonable(self):
-        """10ms minimum is reasonable for solenoid response time.
-
-        Typical agricultural solenoid valves have 5-15ms response times.
-        The 10ms floor ensures the valve has time to fully open.
-        """
-        assert ActuationCalculator.MIN_DURATION == 0.01  # 10ms
-        assert ActuationCalculator.MAX_DURATION == 5.0    # 5s
-        assert ActuationCalculator.MIN_SPEED == 2.0       # above a parked receiver's noise
+def free_port():
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        return probe.getsockname()[1]
 
 
-# ---------------------------------------------------------------------------
-# Test 4: SpeedAverager -> ActuationCalculator end-to-end
-# ---------------------------------------------------------------------------
+@pytest.fixture
+def clock(monkeypatch):
+    """Monotonic time stepped by hand: GPS staleness, the speed window and the
+    2 s moving gate all read it."""
+    now = [9000.0]
+    monkeypatch.setattr(time, 'monotonic', lambda: now[0])
+    return now
 
-@pytest.mark.unit
-class TestSpeedToActuationPipeline:
-    """Simulate the _actuation_broadcast_loop data flow without threads."""
 
-    def test_gps_speed_feeds_actuation(self):
-        """GPS speed sample -> SpeedAverager -> ActuationCalculator -> params."""
-        sa = SpeedAverager(window_seconds=5.0)
-        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=10.0, offset_cm=30.0)
+@pytest.fixture
+def ctrl(make_controller, tmp_path, clock):
+    """A controller with its own TCP GPS (not listening until a test starts
+    it) and two OWLs, one of them offline."""
+    ctrl = make_controller(
+        f'[GPS]\nsource = tcp\nnmea_port = {free_port()}\n'
+        f'track_save_directory = {tmp_path / "tracks"}\n', owls=('owl-1', 'owl-2'))
+    ctrl.owls_state['owl-2']['connected'] = False
+    assert ctrl.gps_manager is not None
+    yield ctrl
+    ctrl.gps_manager.stop()
 
-        # Simulate 3 GPS samples at ~10 km/h
-        for speed in [9.8, 10.0, 10.2]:
-            avg = sa.add_sample(speed)
 
-        assert avg is not None
-        result = calc.compute(avg)
-        assert result['source'] == 'gps'
-        assert result['actuation_duration'] > 0
-        assert result['delay'] > 0
+def broadcast(ctrl):
+    """One pass of the broadcast loop. Returns what owl-1 was sent."""
+    ctrl.mqtt_client.publish.reset_mock()
+    ctrl._actuation_broadcast_once()
+    sent = [json.loads(c.args[1]) for c in ctrl.mqtt_client.publish.call_args_list
+            if c.args[0] == 'owl/owl-1/commands']
+    assert len(sent) == 1
+    assert not [c for c in ctrl.mqtt_client.publish.call_args_list
+                if c.args[0].startswith('owl/owl-2/')], 'an offline OWL is sent nothing'
+    return sent[0]
 
-    def test_speed_change_updates_actuation(self):
-        """Increasing speed should decrease actuation duration.
 
-        Uses 50cm distance to stay well above the 10ms clamp.
-        """
-        sa = SpeedAverager(window_seconds=60.0)  # Long window so all samples count
-        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=50.0, offset_cm=0.0)
+def receiver_says(ctrl, clock, *sentences):
+    """A second passes and the receiver delivers these lines."""
+    clock[0] += 1.0
+    for sentence in sentences:
+        ctrl.gps_manager._on_line(sentence.strip())
 
-        results = []
-        for speed in [2.0, 5.0, 10.0, 15.0, 20.0, 25.0]:
-            avg = sa.add_sample(speed)
-            result = calc.compute(avg)
-            results.append((speed, avg, result['actuation_duration']))
 
-        # Each successive result should have lower duration (avg speed increases)
-        for i in range(1, len(results)):
-            assert results[i][2] < results[i - 1][2], (
-                f"Duration should decrease as avg speed increases: "
-                f"sample={results[i][0]}, avg={results[i][1]:.1f}, "
-                f"dur={results[i][2]:.4f}"
-            )
+CONFIGURED = {'actuation_duration': 0.15, 'delay': 0.0, 'source': 'config'}
 
-    def test_gps_dropout_uses_fallback(self):
-        """When GPS drops out, SpeedAverager provides fallback speed."""
-        sa = SpeedAverager(window_seconds=0.1)
-        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=10.0, offset_cm=0.0,
-            fallback_duration=0.15, fallback_delay=0.0
-        )
 
-        # Feed some samples then let window expire
-        sa.add_sample(10.0)
-        sa.add_sample(10.0)
-        time.sleep(0.15)
+def timing(message):
+    return {k: message[k] for k in ('actuation_duration', 'delay', 'source')}
 
-        # Window is empty
-        assert sa.get_average() is None
 
-        # Fallback should still be available
-        fallback = sa.get_fallback_speed()
-        assert fallback is not None
-        assert fallback == pytest.approx(10.0)
+def test_driving_at_10kmh_sends_the_travel_time_once_it_is_sustained(ctrl, clock):
+    receiver_says(ctrl, clock, gga(), rmc(10.0))
+    assert timing(broadcast(ctrl)) == CONFIGURED, 'first reading: not yet trusted as travel'
+    receiver_says(ctrl, clock, gga(), rmc(10.0))
+    assert timing(broadcast(ctrl)) == CONFIGURED
+    receiver_says(ctrl, clock, gga(), rmc(10.0))
 
-        # Using fallback should give GPS-derived duration (not config fallback)
-        result = calc.compute(fallback)
-        assert result['source'] == 'gps'
-        assert result['actuation_duration'] < 0.15  # Less than config fallback
+    message = broadcast(ctrl)
+    assert message == {
+        'action': 'set_actuation_params',
+        'actuation_duration': 0.036,        # 10 cm at 10 km/h
+        'delay': 0.108,                     # 30 cm at 10 km/h
+        'source': 'gps',
+        'actuation_length_cm': 10.0, 'offset_cm': 30.0, 'offset_configured': False,
+        'speed_kmh': 10.0}
+    assert ctrl._actuation_state['gps_status'] == 'active'
 
-    def test_no_gps_uses_config_fallback(self):
-        """Without any GPS data, falls back to config values."""
-        sa = SpeedAverager()
-        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=10.0, offset_cm=0.0,
-            fallback_duration=0.20, fallback_delay=0.05
-        )
 
-        # No samples added
-        avg = sa.get_average()
-        fallback = sa.get_fallback_speed()
-        assert avg is None
-        assert fallback is None
+def test_speed_is_averaged_over_the_window_not_taken_from_the_last_reading(ctrl, clock):
+    for _ in range(3):
+        receiver_says(ctrl, clock, gga(), rmc(10.0))
+        broadcast(ctrl)
+    receiver_says(ctrl, clock, gga(), rmc(16.0))
+    message = broadcast(ctrl)
+    # 2 s window holds the readings at t, t-1 and t-2: (10 + 10 + 16) / 3 = 12
+    assert message['speed_kmh'] == 12.0
+    assert message['delay'] == pytest.approx(0.09, abs=0.0005)     # 30 cm at 12 km/h
 
-        result = calc.compute(None)
-        assert result['source'] == 'config'
-        assert result['actuation_duration'] == 0.20
-        assert result['delay'] == 0.05
+
+def test_a_parked_receiver_wandering_below_2kmh_sends_the_configured_timing(ctrl, clock):
+    for speed in [0.5, 0.9, 1.4, 0.6, 1.9, 0.8]:
+        receiver_says(ctrl, clock, gga(), rmc(speed))
+        message = broadcast(ctrl)
+        assert timing(message) == CONFIGURED, f'at {speed} km/h'
+
+
+def test_speed_on_a_void_fix_never_times_the_boom(ctrl, clock):
+    """Antenna unplugged: the receiver keeps repeating its last speed in void
+    RMC sentences and reports no fix."""
+    for _ in range(5):
+        receiver_says(ctrl, clock, gga(fix_quality=0), rmc(10.0, status='V'))
+        message = broadcast(ctrl)
+        assert timing(message) == CONFIGURED
+        assert message['speed_kmh'] is None
+    assert ctrl._actuation_state['gps_status'] == 'no_gps'
+
+
+def test_receiver_gone_quiet_while_driving_reverts_to_configured_timing(ctrl, clock):
+    from utils.actuation import GPS_STALE_AFTER_S
+    for _ in range(3):
+        receiver_says(ctrl, clock, gga(), rmc(10.0))
+        broadcast(ctrl)
+
+    clock[0] += 4.0                                   # nothing for 4 s: the speed is stale
+    assert ctrl.gps_manager.get_state()['fix']['speed_kmh'] is None
+    message = broadcast(ctrl)
+    assert (message['delay'], message['source']) == (0.108, 'gps'), 'last good average, briefly'
+    assert ctrl._actuation_state['gps_status'] == 'stale'
+
+    clock[0] += GPS_STALE_AFTER_S - 5.0               # 29 s since the last reading
+    assert broadcast(ctrl)['delay'] == 0.108
+
+    clock[0] += 2.0                                   # 31 s
+    message = broadcast(ctrl)
+    assert timing(message) == CONFIGURED
+    assert message['speed_kmh'] is None
+    assert ctrl._actuation_state['gps_status'] == 'no_gps'
+
+
+def test_stopping_hands_timing_back_to_the_configured_values(ctrl, clock):
+    for _ in range(3):
+        receiver_says(ctrl, clock, gga(), rmc(10.0))
+        message = broadcast(ctrl)
+    assert message['source'] == 'gps'
+    for speed in [0.4, 0.3, 0.6, 0.2]:
+        receiver_says(ctrl, clock, gga(), rmc(speed))
+        message = broadcast(ctrl)
+    assert timing(message) == CONFIGURED
+
+
+def test_loop_time_reported_by_the_owls_stretches_the_spray(ctrl, clock, hears):
+    """10 km/h with a 50 ms detection loop covers 13.9 cm between frames: a
+    10 cm patch would leave strips unsprayed, so the spray is 50 ms long."""
+    hears(ctrl, 'owl-1', {'avg_loop_time_ms': 50.0})
+    for _ in range(3):
+        receiver_says(ctrl, clock, gga(), rmc(10.0))
+        broadcast(ctrl)
+    message = broadcast(ctrl)
+    assert message['actuation_duration'] == pytest.approx(0.05, abs=0.0005)
+    assert message['delay'] == 0.108
+
+
+def test_actuation_section_of_the_ini_sets_the_window_and_fallbacks(make_controller, clock):
+    ctrl = make_controller(
+        '[Actuation]\nspeed_avg_window = 6\nactuation_duration = 0.3\ndelay = 0.05\n'
+        'min_speed_kmh = 4\noffset_cm = 60\nactuation_length_cm = 20\n')
+    assert ctrl.speed_averager.window_seconds == 6.0
+    ctrl.mqtt_client.publish.reset_mock()
+    ctrl._actuation_broadcast_once()
+    message = json.loads(ctrl.mqtt_client.publish.call_args_list[0].args[1])
+    assert message == {'action': 'set_actuation_params', 'actuation_duration': 0.3, 'delay': 0.05,
+                       'source': 'config', 'actuation_length_cm': 20.0, 'offset_cm': 60.0,
+                       'offset_configured': True, 'speed_kmh': None}
+    assert make_controller('').speed_averager.window_seconds == 2.0
+
+
+def test_broker_down_computes_but_publishes_nothing(ctrl, clock):
+    ctrl.mqtt_connected = False
+    receiver_says(ctrl, clock, gga(), rmc(10.0))
+    ctrl._actuation_broadcast_once()
+    assert ctrl.mqtt_client.publish.call_args_list == []
+    assert ctrl._actuation_state['speed_kmh'] == 10.0
+
+
+def test_the_loop_survives_a_gps_error_and_keeps_broadcasting(ctrl, monkeypatch):
+    """_actuation_broadcast_loop: a failing pass backs off 2 s and the next
+    pass still reaches the OWLs."""
+    import controller.networked.networked as net_mod
+
+    class Done(BaseException):
+        pass
+
+    sleeps = []
+
+    class Clock:
+        def __getattr__(self, name):
+            return getattr(time, name)
+
+        def sleep(self, seconds):
+            sleeps.append(seconds)
+            if len(sleeps) == 2:
+                raise Done
+
+    real = ctrl.gps_manager.get_state
+    calls = []
+
+    def fails_once():
+        calls.append(1)
+        if len(calls) == 1:
+            raise OSError('serial port vanished')
+        return real()
+
+    monkeypatch.setattr(ctrl.gps_manager, 'get_state', fails_once)
+    monkeypatch.setattr(net_mod, 'time', Clock())
+    with pytest.raises(Done):
+        ctrl._actuation_broadcast_loop()
+
+    assert sleeps == [2.0, 1.0]
+    sent = [json.loads(c.args[1]) for c in ctrl.mqtt_client.publish.call_args_list
+            if c.args[0] == 'owl/owl-1/commands']
+    assert [timing(m) for m in sent] == [CONFIGURED]
 
 
 # ---------------------------------------------------------------------------
-# Test 5: Full TCP -> GPSManager -> SpeedAverager -> ActuationCalculator
+# The same, with the NMEA arriving over TCP as the Teltonika sends it
 # ---------------------------------------------------------------------------
 
-@pytest.mark.unit
-class TestGPSTCPToActuation:
-    """Spoof NMEA over TCP to GPSManager, verify speed reaches actuation.
+def test_nmea_over_tcp_reaches_the_owls_as_spray_timing(ctrl, clock):
+    gps = ctrl.gps_manager
+    gps.start()
 
-    These are genuine integration tests: real TCP sockets, real NMEA parsing,
-    real GPSState updates, real SpeedAverager averaging, real ActuationCalculator
-    math. Only MQTT publish is mocked (tested separately in TestOWLActuationHandler).
-    """
-
-    def _send_nmea_to_port(self, port, sentences, pause=0.05):
-        """Connect to GPSManager's TCP port and send NMEA sentences."""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2.0)
-        sock.connect(('127.0.0.1', port))
-        for sentence in sentences:
-            sock.sendall(sentence.encode('ascii'))
-            time.sleep(pause)
-        sock.close()
-
-    def test_spoofed_gps_updates_speed(self):
-        """Send NMEA at known speed over TCP -> GPSManager -> verify speed."""
-        port = 18501
-        gps = GPSManager(port=port, boom_width=12.0)
-        gps.start()
-        time.sleep(0.3)
-
+    deadline = time.time() + 5
+    while True:
         try:
-            speed_kmh = 12.0
-            knots = kmh_to_knots(speed_kmh)
+            feed = socket.create_connection(('127.0.0.1', gps.port), timeout=1)
+            break
+        except OSError:
+            assert time.time() < deadline, 'the GPS TCP server never started listening'
+            time.sleep(0.02)
 
-            sentences = [
-                make_gpgga(),
-                make_gprmc(knots),
-                make_gprmc(knots),
-            ]
+    def router_sends(speed_kmh):
+        clock[0] += 1.0
+        feed.sendall((gga() + rmc(speed_kmh)).encode('ascii'))
+        deadline = time.time() + 5
+        while gps.state.last_speed_time != clock[0]:
+            assert time.time() < deadline, 'the sentence never reached GPSState'
+            time.sleep(0.005)
 
-            self._send_nmea_to_port(port, sentences, pause=0.1)
-            time.sleep(0.3)
+    try:
+        router_sends(10.0)
+        assert gps.get_state()['connection'] == {
+            'gps_connected': True, 'gps_enabled': True, 'source': 'tcp'}
+        assert timing(broadcast(ctrl)) == CONFIGURED
+        router_sends(10.0)
+        broadcast(ctrl)
+        router_sends(10.0)
+        message = broadcast(ctrl)
+        assert (message['actuation_duration'], message['delay'], message['source'],
+                message['speed_kmh']) == (0.036, 0.108, 'gps', 10.0)
 
-            state = gps.state.get_dict()
-            assert state['speed_kmh'] is not None, 'Speed not updated from NMEA'
-            assert state['speed_kmh'] == pytest.approx(speed_kmh, abs=0.5)
-            assert state['fix_valid'] is True
+        # the position goes out too, for image EXIF
+        [position] = [json.loads(c.args[1]) for c in ctrl.mqtt_client.publish.call_args_list
+                      if c.args[0] == 'owl/owl-1/gps']
+        assert position['latitude'] == pytest.approx(-33.8648, abs=0.0001)
+        assert position['speed_kmh'] == 10.0
 
-        finally:
-            gps.stop()
-
-    def test_speed_change_reflected_in_gps_state(self):
-        """Send NMEA at two different speeds, verify GPSState updates."""
-        port = 18502
-        gps = GPSManager(port=port, boom_width=12.0)
-        gps.start()
-        time.sleep(0.3)
-
-        try:
-            # First batch: 8 km/h
-            sentences = [
-                make_gpgga(),
-                make_gprmc(kmh_to_knots(8.0)),
-            ]
-            self._send_nmea_to_port(port, sentences, pause=0.1)
-            time.sleep(0.3)
-
-            state1 = gps.state.get_dict()
-            assert state1['speed_kmh'] == pytest.approx(8.0, abs=0.5)
-
-            # Second batch: 20 km/h
-            sentences = [
-                make_gprmc(kmh_to_knots(20.0)),
-            ]
-            self._send_nmea_to_port(port, sentences, pause=0.1)
-            time.sleep(0.3)
-
-            state2 = gps.state.get_dict()
-            assert state2['speed_kmh'] == pytest.approx(20.0, abs=0.5)
-            assert state2['speed_kmh'] > state1['speed_kmh']
-
-        finally:
-            gps.stop()
-
-    def test_full_pipeline_gps_to_actuation_params(self):
-        """Full integration: TCP NMEA -> GPSManager -> SpeedAverager
-        -> ActuationCalculator -> verify actuation timing changes with speed.
-
-        Uses 20cm distance to stay well above the 10ms clamp at all test speeds.
-        This is THE test for the field test requirement.
-        """
-        port = 18503
-        gps = GPSManager(port=port, boom_width=12.0)
-        gps.start()
-        time.sleep(0.3)
-
-        sa = SpeedAverager(window_seconds=5.0)
-        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=20.0, offset_cm=30.0)
-
-        try:
-            test_speeds = [2.0, 5.0, 10.0, 15.0, 20.0]
-            results = []
-
-            for speed_kmh in test_speeds:
-                knots = kmh_to_knots(speed_kmh)
-                sentences = [
-                    make_gpgga(),
-                    make_gprmc(knots),
-                ]
-                self._send_nmea_to_port(port, sentences, pause=0.05)
-                time.sleep(0.2)
-
-                # Read speed from GPS manager (mirrors _actuation_broadcast_loop)
-                gps_state = gps.get_state()
-                fix = gps_state.get('fix', {})
-                raw_speed = fix.get('speed_kmh')
-                assert raw_speed is not None, f'No speed from GPS at {speed_kmh} km/h'
-
-                avg = sa.add_sample(raw_speed)
-                r = calc.compute(avg)
-                results.append(r)
-
-                print(f'\n  GPS feed {speed_kmh:5.1f} km/h -> parsed {raw_speed:.1f} km/h, '
-                      f'avg {avg:.1f} km/h -> '
-                      f'duration={r["actuation_duration"]*1000:.1f}ms, '
-                      f'delay={r["delay"]*1000:.1f}ms')
-
-            # Verify all results are GPS-sourced
-            for r in results:
-                assert r['source'] == 'gps'
-
-            # Verify durations decrease as speed increases
-            for i in range(1, len(results)):
-                assert results[i]['actuation_duration'] < results[i - 1]['actuation_duration'], (
-                    f'Duration should decrease at higher speed. '
-                    f'Got {results[i-1]["actuation_duration"]:.4f}s -> '
-                    f'{results[i]["actuation_duration"]:.4f}s'
-                )
-
-            # Verify delays also decrease
-            for i in range(1, len(results)):
-                assert results[i]['delay'] < results[i - 1]['delay']
-
-        finally:
-            gps.stop()
-
-    @pytest.mark.parametrize('speed_kmh', [1.0, 5.0, 10.0, 15.0, 20.0])
-    def test_tcp_speed_matches_direct_calculation(self, speed_kmh):
-        """TCP-parsed speed produces same actuation as direct calculation.
-
-        Verifies no data corruption through the TCP -> parse -> state chain.
-        At low speeds (1 km/h = 0.54 knots), NMEA's 1-decimal-place rounding
-        introduces ~10% quantization error. This is a real Teltonika limitation,
-        not a code bug. Tolerance is set to 15% to accommodate.
-        """
-        port = 18504 + int(speed_kmh)  # Unique port per parametrize
-        gps = GPSManager(port=port, boom_width=12.0)
-        gps.start()
-        time.sleep(0.3)
-
-        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=10.0, offset_cm=20.0)
-
-        try:
-            sentences = [
-                make_gpgga(),
-                make_gprmc(kmh_to_knots(speed_kmh)),
-            ]
-            self._send_nmea_to_port(port, sentences, pause=0.05)
-            time.sleep(0.3)
-
-            # Get speed from GPS pipeline
-            gps_speed = gps.state.get_dict()['speed_kmh']
-            assert gps_speed is not None
-            tcp_result = calc.compute(gps_speed)
-
-            # Direct calculation at same speed
-            direct_result = calc.compute(speed_kmh)
-
-            # Use 15% relative tolerance to accommodate NMEA rounding
-            # (0.54 knots rounds to 0.5 -> ~7% speed error at 1 km/h)
-            assert tcp_result['actuation_duration'] == pytest.approx(
-                direct_result['actuation_duration'], rel=0.15)
-            assert tcp_result['delay'] == pytest.approx(
-                direct_result['delay'], rel=0.15)
-
-        finally:
-            gps.stop()
-
-
-# ---------------------------------------------------------------------------
-# Test 6: MQTT handler on OWL side receives and applies params
-# ---------------------------------------------------------------------------
-
-@pytest.mark.unit
-class TestOWLActuationHandler:
-    """Verify the OWL-side MQTT handler correctly applies actuation params.
-
-    This tests the final link: ActuationCalculator output -> MQTT command
-    -> OWL mqtt_manager._handle_set_actuation_params -> owl.actuation_duration.
-    """
-
-    def test_handler_updates_owl_attrs(self, mqtt_publisher, mock_owl):
-        """set_actuation_params command updates owl instance attributes."""
-        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=10.0, offset_cm=30.0)
-        result = calc.compute(10.0)
-
-        mqtt_publisher._handle_command({
-            'action': 'set_actuation_params',
-            'actuation_duration': result['actuation_duration'],
-            'delay': result['delay'],
-            'source': result['source']
-        })
-
-        assert mock_owl.actuation_duration == pytest.approx(result['actuation_duration'])
-        assert mock_owl.delay == pytest.approx(result['delay'])
-
-    def test_handler_state_reflects_source(self, mqtt_publisher, mock_owl):
-        """State dict says the controller owns the timing after its update."""
-        mqtt_publisher._handle_command({
-            'action': 'set_actuation_params',
-            'actuation_duration': 0.05,
-            'delay': 0.1,
-            'source': 'gps'
-        })
-        assert mqtt_publisher.state['actuation_source'] == 'controller'
-        assert mqtt_publisher.state['actuation_duration'] == pytest.approx(0.05)
-        assert mqtt_publisher.state['delay'] == pytest.approx(0.1)
-
-    def test_changing_speed_changes_owl_params(self, mqtt_publisher, mock_owl):
-        """Simulate speed change: 5 km/h -> 10 km/h at 20cm, verify OWL updates.
-
-        Uses 20cm so neither speed hits the 10ms clamp (max safe = 72 km/h).
-        """
-        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=20.0, offset_cm=0.0)
-
-        r1 = calc.compute(5.0)
-        mqtt_publisher._handle_command({
-            'action': 'set_actuation_params',
-            'actuation_duration': r1['actuation_duration'],
-            'delay': r1['delay'],
-            'source': 'gps'
-        })
-        dur_at_5 = mock_owl.actuation_duration
-
-        r2 = calc.compute(10.0)
-        mqtt_publisher._handle_command({
-            'action': 'set_actuation_params',
-            'actuation_duration': r2['actuation_duration'],
-            'delay': r2['delay'],
-            'source': 'gps'
-        })
-        dur_at_10 = mock_owl.actuation_duration
-
-        assert dur_at_10 < dur_at_5, (
-            f'Duration should decrease at higher speed: '
-            f'5km/h={dur_at_5:.4f}s, 10km/h={dur_at_10:.4f}s'
-        )
-
-    @pytest.mark.parametrize('distance_cm', [5, 10, 20, 50])
-    def test_full_chain_per_distance(self, mqtt_publisher, mock_owl, distance_cm):
-        """For each spray distance: GPS speed -> calculator -> MQTT handler
-        -> verify owl.actuation_duration is set correctly.
-
-        Tests 3 speeds per distance, all below the clamp point.
-        """
-        calc = ActuationCalculator(sustain_s=0, actuation_length_cm=distance_cm, offset_cm=20.0)
-
-        # Use speeds well below the clamp point for this distance
-        max_safe = distance_cm * 3.6
-        test_speeds = [max_safe * 0.2, max_safe * 0.5, max_safe * 0.8]
-
-        prev_duration = None
-        for speed in test_speeds:
-            result = calc.compute(speed)
-            mqtt_publisher._handle_command({
-                'action': 'set_actuation_params',
-                'actuation_duration': result['actuation_duration'],
-                'delay': result['delay'],
-                'source': 'gps'
-            })
-
-            # Verify OWL instance was updated
-            assert mock_owl.actuation_duration == pytest.approx(result['actuation_duration'])
-            assert mock_owl.delay == pytest.approx(result['delay'])
-
-            # Verify duration decreases with speed
-            if prev_duration is not None:
-                assert mock_owl.actuation_duration < prev_duration
-            prev_duration = mock_owl.actuation_duration
-
-
-# ---------------------------------------------------------------------------
-# Test 7: Summary table -- print the field reference card
-# ---------------------------------------------------------------------------
-
-@pytest.mark.unit
-class TestFieldReferenceTable:
-    """Print reference tables for field testing."""
-
-    def test_print_reference_table(self):
-        """Generate the reference card the farmer can take to the field."""
-        speeds = [1.0, 2.0, 3.0, 5.0, 8.0, 10.0, 12.0, 15.0, 20.0, 25.0]
-
-        for length_cm in [1.0, 2.0, 5.0, 10.0, 20.0, 50.0]:
-            calc = ActuationCalculator(sustain_s=0, actuation_length_cm=length_cm,
-                offset_cm=30.0,
-                fallback_duration=0.15,
-                fallback_delay=0.0
-            )
-
-            max_safe = length_cm * 3.6
-            print(f'\n  === {length_cm}cm spray, 30cm offset (max safe: {max_safe:.0f} km/h) ===')
-            print(f'  {"Speed (km/h)":>14}  {"Duration (ms)":>14}  {"Delay (ms)":>12}  {"Status":>10}')
-            print(f'  {"-"*14}  {"-"*14}  {"-"*12}  {"-"*10}')
-
-            for speed in speeds:
-                r = calc.compute(speed)
-                raw = (length_cm / 100.0) / (speed / 3.6)
-                if raw < 0.01:
-                    status = 'CLAMPED'
-                else:
-                    status = 'OK'
-
-                print(f'  {speed:14.1f}  {r["actuation_duration"]*1000:14.1f}  '
-                      f'{r["delay"]*1000:12.1f}  {status:>10}')
-
-            # Also show fallback
-            r = calc.compute(None)
-            print(f'  {"(no GPS)":>14}  {r["actuation_duration"]*1000:14.1f}  '
-                  f'{r["delay"]*1000:12.1f}  {"FALLBACK":>10}')
-
-        assert True
+        router_sends(20.0)
+        router_sends(20.0)
+        router_sends(20.0)
+        message = broadcast(ctrl)
+        assert (message['delay'], message['speed_kmh']) == (0.054, 20.0)   # 30 cm at 20 km/h
+    finally:
+        feed.close()

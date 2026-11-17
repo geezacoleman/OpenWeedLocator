@@ -342,11 +342,10 @@ class TestPathTraversal:
         resp = client.post('/api/models/upload', data={
             'file': (io.BytesIO(b'x'), '../../../etc/passwd.pt')
         }, content_type='multipart/form-data')
-        # secure_filename strips ../ so this becomes etc_passwd.pt
-        # which should still succeed but be sanitized
-        if resp.status_code == 200:
-            result = resp.get_json()
-            assert '..' not in result.get('filename', '')
+        # secure_filename strips ../ : the file lands inside the library
+        # under a flattened name, never outside it
+        assert resp.status_code == 200, resp.get_json()
+        assert resp.get_json()['filename'] == 'etc_passwd.pt'
 
     def test_download_path_traversal(self, model_test_client):
         client, _, _ = model_test_client
@@ -391,7 +390,7 @@ class TestOWLDownloadHandler:
         finally:
             pass
 
-        assert mqtt_publisher.state['model_download']['status'] in ('complete', 'error')
+        assert mqtt_publisher.state['model_download']['status'] == 'complete'
         # Verify file was written to tmp_path, not project models/
         assert os.path.exists(os.path.join(str(tmp_path), 'models', 'test.pt'))
 

@@ -126,14 +126,6 @@ class TestActuationCalculator:
         result = calc.compute(0.3)
         assert result['source'] == 'config'
 
-    def test_safety_cap_slow_speed(self):
-        """Very slow speed shouldn't produce duration > MAX_DURATION."""
-        calc = self._make(actuation_length_cm=50, offset_cm=100, min_speed_kmh=0.1)
-        result = calc.compute(0.2)
-        assert result['source'] == 'gps'
-        assert result['actuation_duration'] <= 5.0
-        assert result['delay'] <= 5.0
-
     def test_high_speed_short_duration(self):
         calc = self._make(actuation_length_cm=10, offset_cm=0)
         result = calc.compute(30.0)
@@ -167,40 +159,13 @@ class TestActuationCalculator:
 
 
 # ---------------------------------------------------------------------------
-# MQTT set_actuation_params handler tests
+# MQTT set_actuation_params: what the OWL reports back. What its relay does
+# with the timing (and the clamping) is on a real Owl in
+# tests/owl/test_relay_matrix.py and tests/owl/test_controller_to_owl_relay.py
 # ---------------------------------------------------------------------------
 
 @pytest.mark.unit
 class TestSetActuationParams:
-
-    def test_updates_owl_instance(self, mqtt_publisher, mock_owl):
-        mqtt_publisher._handle_command({
-            'action': 'set_actuation_params',
-            'actuation_duration': 0.036,
-            'delay': 0.108,
-            'source': 'gps'
-        })
-        assert mock_owl.actuation_duration == pytest.approx(0.036)
-        assert mock_owl.delay == pytest.approx(0.108)
-
-    def test_clamps_negative_duration(self, mqtt_publisher, mock_owl):
-        mqtt_publisher._handle_command({
-            'action': 'set_actuation_params',
-            'actuation_duration': -1.0,
-            'delay': 0.0,
-            'source': 'test'
-        })
-        # Should be clamped to MIN_DURATION (0.01)
-        assert mock_owl.actuation_duration >= 0.01
-
-    def test_clamps_excessive_duration(self, mqtt_publisher, mock_owl):
-        mqtt_publisher._handle_command({
-            'action': 'set_actuation_params',
-            'actuation_duration': 99.0,
-            'delay': 0.0,
-            'source': 'test'
-        })
-        assert mock_owl.actuation_duration <= 5.0
 
     def test_state_includes_actuation_source(self, mqtt_publisher, mock_owl):
         mqtt_publisher._handle_command({
@@ -550,6 +515,19 @@ class TestControllerBroadcast:
             sent = self._pass(ctrl, 10.0, fix_valid=False)
             assert (sent['delay'], sent['source'], sent['speed_kmh']) == (0.0, 'config', None)
 
+    def test_the_screen_is_told_what_the_last_pass_worked_out(self, ctrl, monkeypatch):
+        import controller.networked.networked as net_mod
+        for _ in range(4):
+            self._pass(ctrl, 10.0)
+        monkeypatch.setattr(net_mod, 'controller', ctrl)
+        net_mod.app.config['TESTING'] = True
+        data = net_mod.app.test_client().get('/api/actuation').get_json()
+        assert data == {
+            'speed_kmh': 10.0, 'actuation_duration': 0.036, 'delay': 0.108, 'source': 'gps',
+            'gps_status': 'active', 'coverage_ok': True, 'min_gap_cm': 8.3, 'coverage_message': '',
+            'actuation_length_cm': 10.0, 'offset_cm': 30.0, 'offset_configured': False,
+            'gps_enabled': True, 'avg_loop_time_ms': 30.0}
+
     def test_no_gps_manager_broadcasts_configured_timing(self, ctrl):
         ctrl.gps_manager = None
         import json
@@ -661,36 +639,3 @@ class TestNozzleDistanceOnTheController:
         assert ctrl.actuation_calculator.offset_cm == 30.0
         assert ctrl.offset_configured is False
         assert ini.read_text() == ''
-
-
-# ---------------------------------------------------------------------------
-# Networked API endpoint tests
-# ---------------------------------------------------------------------------
-
-@pytest.mark.unit
-class TestActuationAPI:
-
-    def test_get_actuation(self, networked_test_client):
-        client, mock_ctrl = networked_test_client
-        # The _actuation_state is on the real controller, but we have a mock.
-        # We need to set it on the module-level controller.
-        import controller.networked.networked as net_mod
-        net_mod.controller._actuation_state = {
-            'speed_kmh': 12.5,
-            'actuation_duration': 0.036,
-            'delay': 0.108,
-            'source': 'gps',
-            'gps_status': 'active',
-            'coverage_ok': True,
-            'min_gap_cm': 8.3,
-            'coverage_message': '',
-            'actuation_length_cm': 10,
-            'offset_cm': 30,
-            'avg_loop_time_ms': 35.0,
-        }
-
-        resp = client.get('/api/actuation')
-        assert resp.status_code == 200
-        data = resp.get_json()
-        assert data['speed_kmh'] == 12.5
-        assert data['source'] == 'gps'
