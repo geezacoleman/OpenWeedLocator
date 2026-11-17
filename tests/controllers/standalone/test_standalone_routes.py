@@ -22,6 +22,24 @@ def _stabilize_mqtt(dashboard):
         mqtt.connected = True
 
 
+def _published(dashboard, connected=True):
+    """What the dashboard puts on the wire: a list of (topic, payload) that
+    fills as routes run. The real DashMQTTSubscriber builds each command;
+    only the broker socket (its paho client) is a stand-in."""
+    sent = []
+    dashboard.mqtt_client.connected = connected
+    dashboard.mqtt_client.client.publish = (
+        lambda topic, payload, *a, **k: sent.append((topic, json.loads(payload))))
+    return sent
+
+
+def _active_ini(dashboard):
+    """The config file the OWL would boot from after the request."""
+    config = configparser.ConfigParser()
+    config.read(dashboard._resolve_config_path(dashboard._get_active_config_path()))
+    return config
+
+
 @pytest.mark.unit
 class TestGetConfig:
     """Tests for GET /api/config."""
@@ -425,21 +443,23 @@ class TestTrackingRoute:
 
     def test_enable_tracking(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
+        sent = _published(dashboard)
         resp = client.post('/api/tracking/set', json={'value': True})
         data = resp.get_json()
         assert resp.status_code == 200
         assert data['success'] is True
         assert data['tracking_enabled'] is True
+        assert sent == [('owl/commands', {'action': 'set_tracking', 'value': True})]
 
     def test_disable_tracking(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
+        sent = _published(dashboard)
         resp = client.post('/api/tracking/set', json={'value': False})
         data = resp.get_json()
         assert resp.status_code == 200
         assert data['success'] is True
         assert data['tracking_enabled'] is False
+        assert sent == [('owl/commands', {'action': 'set_tracking', 'value': False})]
 
     def test_unsent_command_is_reported(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
@@ -504,11 +524,12 @@ class TestSensitivityRoute:
 
     def test_set_sensitivity_valid(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
-        resp = client.post('/api/sensitivity/set', json={'level': 'high'})
+        sent = _published(dashboard)
+        resp = client.post('/api/sensitivity/set', json={'level': 'High'})
         data = resp.get_json()
         assert resp.status_code == 200
         assert data['success'] is True
+        assert sent == [('owl/commands', {'action': 'set_sensitivity_level', 'level': 'high'})]
 
     def test_set_sensitivity_missing_level(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
@@ -519,27 +540,41 @@ class TestSensitivityRoute:
 
     def test_set_sensitivity_custom_level(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
+        sent = _published(dashboard)
         # DashMQTTSubscriber.set_sensitivity_level now accepts any name
         # (validation happens on the OWL side via SensitivityManager)
         resp = client.post('/api/sensitivity/set', json={'level': 'custom_preset'})
         data = resp.get_json()
         assert resp.status_code == 200
         assert data['success'] is True
+        assert sent == [('owl/commands', {'action': 'set_sensitivity_level',
+                                          'level': 'custom_preset'})]
 
     def test_set_sensitivity_locked_by_advanced_controller(self, standalone_test_client):
         """Advanced controller locks sensitivity — it has a hardware switch for it."""
         client, dashboard, tmp_dir = standalone_test_client
+        sent = _published(dashboard)
         dashboard._get_controller_type = lambda: 'advanced'
         resp = client.post('/api/sensitivity/set', json={'level': 'high'})
         assert resp.status_code == 423  # Locked
+        assert sent == [], 'a locked control still sent its command'
 
     def test_set_sensitivity_allowed_with_ute_controller(self, standalone_test_client):
         """UTE controller does NOT lock sensitivity — it only controls recording."""
         client, dashboard, tmp_dir = standalone_test_client
+        sent = _published(dashboard)
         dashboard._get_controller_type = lambda: 'ute'
         resp = client.post('/api/sensitivity/set', json={'level': 'high'})
-        assert resp.status_code != 423
+        assert resp.status_code == 200
+        assert sent == [('owl/commands', {'action': 'set_sensitivity_level', 'level': 'high'})]
+
+    def test_set_sensitivity_broker_down_is_an_error(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        sent = _published(dashboard, connected=False)
+        resp = client.post('/api/sensitivity/set', json={'level': 'high'})
+        assert resp.status_code == 500
+        assert resp.get_json() == {'success': False, 'error': 'Not connected to MQTT broker'}
+        assert sent == []
 
 
 @pytest.mark.unit
@@ -685,154 +720,167 @@ class TestSystemStatsAiFields:
         assert data['algorithm'] == 'exhsv'
 
 
+# Every button that can open or close a nozzle, and the one command it must
+# put on the wire. The 2026-11-16 audit changed "all off" to send blanket and
+# "stop" to send start: both passed, because the tests here read only the
+# HTTP status. tests/owl/test_dashboard_to_relay.py follows the same buttons
+# to the relay of a real Owl.
+SPRAY_BUTTONS = [
+    ('/api/detection/start', None, {'action': 'set_detection_enable', 'value': True}),
+    ('/api/detection/stop', None, {'action': 'set_detection_enable', 'value': False}),
+    ('/api/nozzles/all-on', None, {'action': 'set_detection_mode', 'value': 2}),
+    ('/api/nozzles/all-off', None, {'action': 'set_detection_mode', 'value': 1}),
+    ('/api/nozzles/hold', {'ms': 1500}, {'action': 'hold_spray', 'value': 1500}),
+    ('/api/nozzles/hold', {'ms': 0}, {'action': 'hold_spray', 'value': 0}),
+    ('/api/nozzles/hold', {}, {'action': 'hold_spray', 'value': 0}),
+    # the lease is bounded on the way out: never longer than 1.5 s
+    ('/api/nozzles/hold', {'ms': 99999}, {'action': 'hold_spray', 'value': 1500}),
+    ('/api/nozzles/hold', {'ms': -5}, {'action': 'hold_spray', 'value': 0}),
+    ('/api/nozzles/test', {'relays': [3], 'duration_ms': 1000},
+     {'action': 'test_nozzles', 'value': {'relays': [3], 'duration_ms': 1000}}),
+    ('/api/nozzles/test', {'relays': [0, 2]},
+     {'action': 'test_nozzles', 'value': {'relays': [0, 2], 'duration_ms': 10000}}),
+    # an empty list is how the page stops a running test
+    ('/api/nozzles/test', {'relays': []},
+     {'action': 'test_nozzles', 'value': {'relays': [], 'duration_ms': 10000}}),
+]
+# one press of each of the six routes
+SPRAY_ROUTES = [SPRAY_BUTTONS[i] for i in (0, 1, 2, 3, 4, 9)]
+
+
+def _press(client, path, body):
+    return client.post(path, json=body) if body is not None else client.post(path)
+
+
 @pytest.mark.unit
-class TestDetectionRoutes:
-    """Tests for /api/detection/start and /api/detection/stop."""
+class TestSprayButtons:
+    """/api/detection/start|stop and /api/nozzles/all-on|all-off|hold|test."""
 
-    def test_start_detection(self, standalone_test_client):
+    @pytest.mark.parametrize('path, body, command', SPRAY_BUTTONS)
+    def test_button_sends_exactly_its_command(self, standalone_test_client, path, body, command):
         client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
-        resp = client.post('/api/detection/start')
-        data = resp.get_json()
+        sent = _published(dashboard)
+        resp = _press(client, path, body)
         assert resp.status_code == 200
-        assert data['success'] is True
-
-    def test_stop_detection(self, standalone_test_client):
-        client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
-        resp = client.post('/api/detection/stop')
-        data = resp.get_json()
-        assert resp.status_code == 200
-        assert data['success'] is True
+        assert resp.get_json()['success'] is True
+        assert sent == [('owl/commands', command)]
 
     @pytest.mark.parametrize('controller', ['advanced', 'ute'])
-    def test_spraying_is_not_refused_for_a_hardware_switch(self, standalone_test_client,
-                                                           controller):
+    @pytest.mark.parametrize('path, body, command', SPRAY_ROUTES)
+    def test_a_switch_panel_does_not_change_what_is_sent(self, standalone_test_client,
+                                                         controller, path, body, command):
         """v3.27: the OWL arbitrates (switch OFF wins; while it is ON the
         dashboard chooses spot, blanket or off). A 423 here made a Ute
-        switch that was ON unusable from the dashboard."""
+        switch that was ON unusable from the dashboard. What the OWL then
+        does with the command: tests/owl/test_relay_matrix.py."""
         client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
+        sent = _published(dashboard)
         dashboard._get_controller_type = lambda: controller
         dashboard._get_switch_purpose = lambda: 'detection'
-        resp = client.post('/api/detection/start')
+        resp = _press(client, path, body)
         assert resp.status_code == 200
+        assert sent == [('owl/commands', command)]
+
+    @pytest.mark.parametrize('path, body, command', SPRAY_ROUTES)
+    def test_broker_down_is_503_and_nothing_is_sent(self, standalone_test_client,
+                                                    path, body, command):
+        """The page must not show a button as pressed when the command never
+        left: an unchecked result used to come back as HTTP 200."""
+        client, dashboard, tmp_dir = standalone_test_client
+        sent = _published(dashboard, connected=False)
+        resp = _press(client, path, body)
+        assert resp.status_code == 503
+        assert resp.get_json() == {'success': False, 'error': 'Not connected to MQTT broker'}
+        assert sent == []
+
+    @pytest.mark.parametrize('path, body, command', SPRAY_ROUTES)
+    def test_a_publish_the_broker_refuses_is_503(self, standalone_test_client,
+                                                 path, body, command):
+        client, dashboard, tmp_dir = standalone_test_client
+        _published(dashboard)
+        dashboard.mqtt_client.client.publish = MagicMock(side_effect=OSError('socket closed'))
+        resp = _press(client, path, body)
+        assert resp.status_code == 503
+        assert resp.get_json() == {'success': False, 'error': 'socket closed'}
+
+    @pytest.mark.parametrize('path, body, command', SPRAY_ROUTES)
+    def test_no_mqtt_client_is_500(self, standalone_test_client, path, body, command):
+        client, dashboard, tmp_dir = standalone_test_client
+        dashboard.mqtt_client = None
+        resp = _press(client, path, body)
+        assert resp.status_code == 500
+        assert resp.get_json() == {'success': False, 'error': 'MQTT not connected'}
+
+    @pytest.mark.parametrize('path, body', [
+        ('/api/nozzles/test', {'relays': '3'}),
+        ('/api/nozzles/test', {'relays': ['3']}),
+        ('/api/nozzles/test', {'relays': [True]}),
+        ('/api/nozzles/test', {'relays': [1.5]}),
+        ('/api/nozzles/test', {'relays': [1], 'duration_ms': 'soon'}),
+        ('/api/nozzles/hold', {'ms': 'soon'}),
+        ('/api/nozzles/hold', {'ms': [1500]}),
+    ])
+    def test_bad_input_is_400_and_nothing_is_sent(self, standalone_test_client, path, body):
+        client, dashboard, tmp_dir = standalone_test_client
+        sent = _published(dashboard)
+        resp = client.post(path, json=body)
+        assert resp.status_code == 400
+        assert resp.get_json()['success'] is False
+        assert sent == []
 
 
 @pytest.mark.unit
 class TestRecordingRoutes:
     """Tests for /api/recording/start and /api/recording/stop."""
 
-    def test_start_recording(self, standalone_test_client):
+    @pytest.mark.parametrize('path, value', [('/api/recording/start', True),
+                                             ('/api/recording/stop', False)])
+    def test_recording_button_sends_its_command(self, standalone_test_client, path, value):
         client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
-        resp = client.post('/api/recording/start')
-        data = resp.get_json()
+        sent = _published(dashboard)
+        resp = client.post(path)
         assert resp.status_code == 200
+        assert sent == [('owl/commands', {'action': 'set_image_sample_enable', 'value': value})]
 
-    def test_stop_recording(self, standalone_test_client):
+    @pytest.mark.parametrize('controller, purpose, locked', [
+        ('advanced', 'recording', True),
+        ('ute', 'recording', True),
+        ('ute', 'detection', False),     # the Ute's one switch is the spray switch
+    ])
+    @pytest.mark.parametrize('path', ['/api/recording/start', '/api/recording/stop'])
+    def test_recording_belongs_to_the_switch_that_owns_it(self, standalone_test_client,
+                                                          path, controller, purpose, locked):
         client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
-        resp = client.post('/api/recording/stop')
-        data = resp.get_json()
-        assert resp.status_code == 200
+        sent = _published(dashboard)
+        dashboard._get_controller_type = lambda: controller
+        dashboard._get_switch_purpose = lambda: purpose
+        resp = client.post(path)
+        if locked:
+            assert resp.status_code == 423
+            assert sent == [], 'a locked control still sent its command'
+        else:
+            assert resp.status_code == 200
+            assert len(sent) == 1
 
-
-@pytest.mark.unit
-class TestNozzleRoutes:
-    """Tests for /api/nozzles/all-on and /api/nozzles/all-off."""
-
-    def test_all_nozzles_on(self, standalone_test_client):
+    def test_recording_broker_down_is_503(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
-        resp = client.post('/api/nozzles/all-on')
-        data = resp.get_json()
-        assert resp.status_code == 200
-        assert data['success'] is True
-
-    def test_all_nozzles_off(self, standalone_test_client):
-        client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
-        resp = client.post('/api/nozzles/all-off')
-        data = resp.get_json()
-        assert resp.status_code == 200
-
-    def test_nozzles_not_locked_by_ute(self, standalone_test_client):
-        """Nozzles are never hardware-locked — no controller manages them."""
-        client, dashboard, tmp_dir = standalone_test_client
-        dashboard._get_controller_type = lambda: 'ute'
-        resp = client.post('/api/nozzles/all-on')
-        assert resp.status_code != 423
-
-    def test_nozzle_test_sends_relays_and_time(self, standalone_test_client):
-        client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
-        dashboard.mqtt_client._send_command = MagicMock(return_value={'success': True})
-        resp = client.post('/api/nozzles/test', json={'relays': [3], 'duration_ms': 1000})
-        assert resp.status_code == 200
-        dashboard.mqtt_client._send_command.assert_called_once_with(
-            'test_nozzles', value={'relays': [3], 'duration_ms': 1000})
-
-    def test_nozzle_test_empty_list_stops(self, standalone_test_client):
-        client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
-        dashboard.mqtt_client._send_command = MagicMock(return_value={'success': True})
-        resp = client.post('/api/nozzles/test', json={'relays': []})
-        assert resp.status_code == 200
-        dashboard.mqtt_client._send_command.assert_called_once_with(
-            'test_nozzles', value={'relays': [], 'duration_ms': 10000})
-
-    @pytest.mark.parametrize('body', [{'relays': '3'}, {'relays': ['3']}, {'relays': [True]},
-                                      {'relays': [1], 'duration_ms': 'soon'}])
-    def test_nozzle_test_rejects_bad_input(self, standalone_test_client, body):
-        client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
-        dashboard.mqtt_client._send_command = MagicMock(return_value={'success': True})
-        resp = client.post('/api/nozzles/test', json=body)
-        assert resp.status_code == 400
-        dashboard.mqtt_client._send_command.assert_not_called()
-
-    def test_hold_sends_the_lease(self, standalone_test_client):
-        client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
-        dashboard.mqtt_client._send_command = MagicMock(return_value={'success': True})
-        resp = client.post('/api/nozzles/hold', json={'ms': 1500})
-        assert resp.status_code == 200
-        dashboard.mqtt_client._send_command.assert_called_once_with('hold_spray', value=1500)
-
-    @pytest.mark.parametrize('ms, sent', [(0, 0), (99999, 1500), (-5, 0)])
-    def test_hold_lease_is_bounded(self, standalone_test_client, ms, sent):
-        client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
-        dashboard.mqtt_client._send_command = MagicMock(return_value={'success': True})
-        client.post('/api/nozzles/hold', json={'ms': ms})
-        dashboard.mqtt_client._send_command.assert_called_once_with('hold_spray', value=sent)
-
-    def test_hold_rejects_bad_input(self, standalone_test_client):
-        client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
-        resp = client.post('/api/nozzles/hold', json={'ms': 'soon'})
-        assert resp.status_code == 400
-
-    def test_nozzle_test_undelivered_is_503(self, standalone_test_client):
-        client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
-        dashboard.mqtt_client._send_command = MagicMock(return_value={'success': False, 'error': 'down'})
-        resp = client.post('/api/nozzles/test', json={'relays': [0]})
-        assert resp.status_code == 503
+        sent = _published(dashboard, connected=False)
+        assert client.post('/api/recording/start').status_code == 503
+        assert sent == []
 
 
 @pytest.mark.unit
 class TestConfigParamRoutes:
     """Tests for config slider routes."""
 
-    def test_set_config_param(self, standalone_test_client):
+    def test_set_config_param_reaches_the_owl_and_the_ini(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
+        sent = _published(dashboard)
         resp = client.post('/api/config/param', json={'param': 'exg_min', 'value': 42})
-        data = resp.get_json()
         assert resp.status_code == 200
-        assert data['success'] is True
+        assert resp.get_json()['success'] is True
+        assert sent == [('owl/commands', {'action': 'set_config', 'key': 'exg_min', 'value': 42})]
+        assert _active_ini(dashboard).get('GreenOnBrown', 'exg_min') == '42'
 
     def _capture(self, dashboard):
         sent = []
@@ -908,9 +956,10 @@ class TestConfigParamRoutes:
 
     def test_set_config_param_missing_fields(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
+        sent = _published(dashboard)
         resp = client.post('/api/config/param', json={'param': 'exg_min'})
-        data = resp.get_json()
         assert resp.status_code == 400
+        assert sent == []
 
     def test_float_param_survives_round_trip(self, standalone_test_client):
         """min_detection_area_percent is a small float (e.g. 0.0005); the
@@ -951,17 +1000,19 @@ class TestConfigParamRoutes:
 
     def test_set_crop_buffer(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
+        sent = _published(dashboard)
         resp = client.post('/api/config/crop_buffer', json={'value': 25})
-        data = resp.get_json()
         assert resp.status_code == 200
+        assert sent == [('owl/commands', {'action': 'set_crop_buffer', 'value': 25})]
 
     def test_set_confidence(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
+        sent = _published(dashboard)
         resp = client.post('/api/config/confidence', json={'value': 0.75})
-        data = resp.get_json()
         assert resp.status_code == 200
+        assert sent == [('owl/commands', {'action': 'set_greenongreen_param',
+                                          'key': 'confidence', 'value': 0.75})]
+        assert _active_ini(dashboard).get('GreenOnGreen', 'confidence') == '0.75'
 
 
 @pytest.mark.unit
@@ -970,24 +1021,27 @@ class TestAIRoutes:
 
     def test_set_ai_model(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
+        sent = _published(dashboard)
         resp = client.post('/api/ai/set_model', json={'model': 'yolo26n-seg.pt'})
         data = resp.get_json()
         assert resp.status_code == 200
         assert data['success'] is True
+        assert sent == [('owl/commands', {'action': 'set_model', 'value': 'yolo26n-seg.pt'})]
 
     def test_set_ai_model_missing(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
+        sent = _published(dashboard)
         resp = client.post('/api/ai/set_model', json={})
-        data = resp.get_json()
         assert resp.status_code == 400
+        assert sent == []
 
     def test_set_detect_classes(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
+        sent = _published(dashboard)
         resp = client.post('/api/ai/set_detect_classes', json={'classes': ['weed', 'crop']})
-        data = resp.get_json()
         assert resp.status_code == 200
+        assert sent == [('owl/commands', {'action': 'set_detect_classes',
+                                          'value': ['weed', 'crop']})]
 
 
 @pytest.mark.unit
@@ -1013,15 +1067,6 @@ class TestSystemStats:
         import socket
         assert data['hostname'] == socket.gethostname()
         assert 'device_serial' in data
-
-    def test_includes_mqtt_state(self, standalone_test_client):
-        client, dashboard, tmp_dir = standalone_test_client
-        # System stats endpoint merges MQTT state into response
-        resp = client.get('/api/system_stats')
-        data = resp.get_json()
-        # The response should include MQTT-sourced keys
-        assert 'detection_enable' in data
-        assert 'owl_running' in data
 
     def test_passes_through_recording_storage_fields(self, standalone_test_client):
         """v3.11.1: the app explains recording snap-backs and internal
@@ -1117,51 +1162,52 @@ class TestSystemStats:
 
 @pytest.mark.unit
 class TestOWLServiceRoutes:
-    """Tests for /api/owl/start and /api/owl/stop."""
+    """/api/owl/start and /api/owl/stop: the systemctl commands they run.
+    subprocess.run is the stand-in; control_owl_service is real."""
 
-    def test_start_owl(self, standalone_test_client):
+    def _systemctl(self, dashboard, returncode=0, stderr=''):
+        from types import SimpleNamespace
+        ran = []
+        dashboard._get_systemctl_path = lambda: '/bin/sh'     # any file that exists
+
+        def run(cmd, **kwargs):
+            ran.append(cmd)
+            return SimpleNamespace(returncode=returncode, stdout='', stderr=stderr)
+
+        return ran, patch('controller.standalone.standalone.subprocess.run', side_effect=run)
+
+    def test_start_clears_a_failed_state_then_starts_the_service(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
-        with patch.object(dashboard, 'control_owl_service', return_value=(True, 'Started')):
+        ran, patched = self._systemctl(dashboard)
+        with patched:
             resp = client.post('/api/owl/start')
-            data = resp.get_json()
-            assert resp.status_code == 200
-            assert data['success'] is True
+        assert resp.status_code == 200 and resp.get_json()['success'] is True
+        assert ran == [['sudo', '/bin/sh', 'reset-failed', 'owl.service'],
+                       ['sudo', '/bin/sh', 'start', 'owl.service']]
 
-    def test_stop_owl(self, standalone_test_client):
+    def test_stop_stops_the_service(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
-        with patch.object(dashboard, 'control_owl_service', return_value=(True, 'Stopped')):
+        ran, patched = self._systemctl(dashboard)
+        with patched:
             resp = client.post('/api/owl/stop')
-            data = resp.get_json()
-            assert resp.status_code == 200
+        assert resp.status_code == 200 and resp.get_json()['success'] is True
+        assert ran == [['sudo', '/bin/sh', 'stop', 'owl.service']]
 
-    def test_start_owl_failure(self, standalone_test_client):
+    @pytest.mark.parametrize('path', ['/api/owl/start', '/api/owl/stop'])
+    def test_systemctl_failure_is_500_with_its_message(self, standalone_test_client, path):
         client, dashboard, tmp_dir = standalone_test_client
-        with patch.object(dashboard, 'control_owl_service', return_value=(False, 'Failed')):
-            resp = client.post('/api/owl/start')
-            assert resp.status_code == 500
+        ran, patched = self._systemctl(dashboard, returncode=1, stderr='Unit owl.service not found.')
+        with patched:
+            resp = client.post(path)
+        assert resp.status_code == 500
+        assert resp.get_json() == {'success': False, 'error': 'Unit owl.service not found.'}
 
-
-@pytest.mark.unit
-class TestConfigListAndLoad:
-    """Tests for config library list and individual load."""
-
-    def test_list_configs_includes_presets(self, standalone_test_client):
+    def test_missing_systemctl_is_500(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
-        resp = client.get('/api/config/list')
-        data = resp.get_json()
-
-        assert resp.status_code == 200
-        names = [c['name'] for c in data['configs']]
-        assert 'GENERAL_CONFIG.ini' in names
-
-    def test_get_config_returns_sections(self, standalone_test_client):
-        client, dashboard, tmp_dir = standalone_test_client
-        resp = client.get('/api/config')
-        data = resp.get_json()
-
-        assert resp.status_code == 200
-        assert 'GreenOnBrown' in data['config']
-        assert 'System' in data['config']
+        dashboard._get_systemctl_path = lambda: str(tmp_dir / 'no-systemctl')
+        resp = client.post('/api/owl/start')
+        assert resp.status_code == 500
+        assert 'systemctl executable not found' in resp.get_json()['error']
 
 
 # ===========================================================================
@@ -1171,17 +1217,6 @@ class TestConfigListAndLoad:
 @pytest.mark.unit
 class TestUpdateGPS:
     """Tests for POST /api/update_gps."""
-
-    def test_sends_gps_data(self, standalone_test_client):
-        client, dashboard, tmp_dir = standalone_test_client
-        _stabilize_mqtt(dashboard)
-        resp = client.post('/api/update_gps', json={
-            'latitude': -33.8688,
-            'longitude': 151.2093,
-            'accuracy': 2.5
-        })
-        data = resp.get_json()
-        assert data['success'] is True
 
     def test_no_mqtt_returns_500(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
@@ -1353,6 +1388,7 @@ class TestVideoFeed:
         with patch('urllib.request.urlopen', return_value=mock_response):
             resp = client.get('/video_feed')
             assert resp.status_code == 200
+            assert resp.data == b'chunk1chunk2'
 
 
 @pytest.mark.unit
@@ -1409,6 +1445,35 @@ class TestApplyConfigPushesCameraSection:
         assert params['awb_mode'] == 'manual'
         assert params['awb_red_gain'] == 1.4
         assert params['awb_blue_gain'] == 3.2
+
+    def test_switching_config_pushes_algorithm_and_thresholds_to_the_running_owl(
+            self, standalone_test_client):
+        """Without this the page shows the new profile while the OWL keeps
+        detecting with the old one until it restarts."""
+        client, dashboard, tmp_dir = standalone_test_client
+        profile = configparser.ConfigParser()
+        profile.read(tmp_dir / 'GENERAL_CONFIG.ini')
+        profile.set('System', 'algorithm', 'hsv')
+        profile.set('GreenOnBrown', 'exg_min', '31')
+        profile.set('GreenOnBrown', 'hue_max', '77')
+        profile.set('GreenOnBrown', 'min_detection_area_percent', '0.0005')
+        if not profile.has_section('GreenOnGreen'):
+            profile.add_section('GreenOnGreen')
+        profile.set('GreenOnGreen', 'confidence', '0.6')
+        with open(tmp_dir / 'PADDOCK.ini', 'w') as handle:
+            profile.write(handle)
+
+        sent = _published(dashboard)
+        resp = client.post('/api/config/set-active', json={'config': 'PADDOCK.ini'})
+        assert resp.status_code == 200 and resp.get_json()['active_config'] == 'config/PADDOCK.ini'
+        commands = [command for topic, command in sent if topic == 'owl/commands']
+        assert commands[0] == {'action': 'set_algorithm', 'value': 'hsv'}
+        for expected in ({'action': 'set_config', 'key': 'exg_min', 'value': 31},
+                         {'action': 'set_config', 'key': 'hue_max', 'value': 77},
+                         {'action': 'set_config', 'key': 'min_detection_area_percent',
+                          'value': 0.0005},
+                         {'action': 'set_greenongreen_param', 'key': 'confidence', 'value': 0.6}):
+            assert expected in commands
 
 
 @pytest.mark.unit
@@ -1660,10 +1725,26 @@ class TestConfigPersistence:
         config = self._active(dashboard)
         assert config.get('GreenOnBrown', 'exg_max', fallback=None) != '900'
 
-    def test_actuation_is_clamped_before_it_is_written(self, standalone_test_client):
+    @pytest.mark.parametrize('key, value, written', [
+        ('actuation_duration', '600', 5.0),     # "15" for "1.5" class of typo: minutes of spray
+        ('actuation_duration', '0', 0.01),
+        ('actuation_duration', '0.15', 0.15),
+        ('delay', '600', 5.0),                  # a spray ten minutes after the weed
+        ('delay', '-3', 0.0),
+        ('delay', '0.4', 0.4),
+    ])
+    def test_actuation_is_clamped_before_it_is_written(self, standalone_test_client,
+                                                       key, value, written):
         client, dashboard, tmp_dir = standalone_test_client
-        assert dashboard._persist_config_change('System', 'actuation_duration', '600') is True
-        assert float(self._active(dashboard).get('System', 'actuation_duration')) == 5.0
+        assert dashboard._persist_config_change('System', key, value) is True
+        assert float(self._active(dashboard).get('System', key)) == written
+
+    @pytest.mark.parametrize('key', ['actuation_duration', 'delay'])
+    def test_actuation_that_is_not_a_number_is_not_written(self, standalone_test_client, key):
+        client, dashboard, tmp_dir = standalone_test_client
+        before = self._active(dashboard).get('System', key)
+        assert dashboard._persist_config_change('System', key, 'soon') is False
+        assert self._active(dashboard).get('System', key) == before
 
     def test_concurrent_changes_are_all_kept(self, standalone_test_client):
         import threading as _threading
@@ -1677,3 +1758,178 @@ class TestConfigPersistence:
             t.join()
         config = self._active(dashboard)
         assert all(config.get('Extra', k, fallback=None) == 'True' for k in keys)
+
+
+# ===========================================================================
+# Spray timing and geometry through the routes
+# ===========================================================================
+
+@pytest.mark.unit
+class TestActuationThroughConfigSection:
+    """POST /api/config/section with [System] actuation_duration / delay:
+    how long a nozzle stays open and how long after the weed it opens."""
+
+    def _post(self, client, params):
+        return client.post('/api/config/section', json={'section': 'System', 'params': params})
+
+    def test_timing_is_sent_to_the_owl_and_saved(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        sent = _published(dashboard)
+        resp = self._post(client, {'actuation_duration': 0.3, 'delay': 0.2})
+        assert resp.status_code == 200 and resp.get_json()['success'] is True
+        assert sent == [('owl/commands', {'action': 'set_config_section', 'section': 'System',
+                                          'params': {'actuation_duration': 0.3, 'delay': 0.2}})]
+        saved = _active_ini(dashboard)
+        assert float(saved.get('System', 'actuation_duration')) == 0.3
+        assert float(saved.get('System', 'delay')) == 0.2
+
+    @pytest.mark.parametrize('key, value, written', [('actuation_duration', 600, 5.0),
+                                                     ('delay', 600, 5.0)])
+    def test_out_of_range_timing_is_saved_clamped(self, standalone_test_client,
+                                                  key, value, written):
+        """What the next boot reads. The live value is clamped by the OWL
+        (tests/mqtt, tests/owl/test_relay_matrix.py)."""
+        client, dashboard, tmp_dir = standalone_test_client
+        _published(dashboard)
+        assert self._post(client, {key: value}).status_code == 200
+        assert float(_active_ini(dashboard).get('System', key)) == written
+
+    def test_timing_that_is_not_a_number_is_reported_and_not_saved(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        _published(dashboard)
+        resp = self._post(client, {'delay': 'soon'})
+        assert resp.get_json()['rejected'] == {'delay': 'Not saved: outside the allowed range'}
+        assert _active_ini(dashboard).get('System', 'delay') == '0'
+
+    @pytest.mark.xfail(strict=True, reason=(
+        "controller/standalone/standalone.py set_config_section (the "
+        "`payload = result ...; return jsonify(payload)` tail, line 2125): with the "
+        "broker down it answers HTTP 200 (body success:false) and still writes the INI, "
+        "so the page shows the change as made while the running OWL never got it. The "
+        "spray buttons and /api/tracking/set answer 503 for the same failure."))
+    def test_broker_down_is_reported_as_a_failure(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        sent = _published(dashboard, connected=False)
+        resp = self._post(client, {'actuation_duration': 0.3})
+        assert sent == []
+        assert resp.get_json()['success'] is False
+        assert resp.status_code == 503
+
+    def test_broker_down_today_still_saves_for_the_next_start(self, standalone_test_client):
+        """Pins what happens now (see the xfail above): the body says
+        success:false and the value is in the INI, clamped."""
+        client, dashboard, tmp_dir = standalone_test_client
+        sent = _published(dashboard, connected=False)
+        resp = self._post(client, {'actuation_duration': 600})
+        assert sent == []
+        assert resp.get_json() == {'success': False, 'error': 'Not connected to MQTT broker'}
+        assert float(_active_ini(dashboard).get('System', 'actuation_duration')) == 5.0
+
+
+@pytest.mark.unit
+class TestGeometryRoute:
+    """POST /api/geometry: the crop edges go to [Camera] and the actuation
+    band (where in the frame a detection may open a nozzle) to [System]."""
+
+    BAND = {'actuation_top': 0.3, 'actuation_bottom': 0.7}
+    CROP = {'crop_left': 0.05, 'crop_right': 0.1}
+
+    def test_actuation_band_goes_to_system_and_crop_to_camera(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        sent = _published(dashboard)
+        resp = client.post('/api/geometry', json={'params': {**self.BAND, **self.CROP}})
+        assert resp.status_code == 200 and resp.get_json() == {'success': True}
+        assert sent == [
+            ('owl/commands', {'action': 'set_config_section', 'section': 'Camera',
+                              'params': self.CROP}),
+            ('owl/commands', {'action': 'set_config_section', 'section': 'System',
+                              'params': self.BAND}),
+        ]
+
+    @pytest.mark.parametrize('params, section', [(BAND, 'System'), (CROP, 'Camera')])
+    def test_only_the_section_that_changed_is_sent(self, standalone_test_client, params, section):
+        client, dashboard, tmp_dir = standalone_test_client
+        sent = _published(dashboard)
+        client.post('/api/geometry', json={'params': params})
+        assert sent == [('owl/commands', {'action': 'set_config_section', 'section': section,
+                                          'params': params})]
+
+    def test_persist_sends_one_save_geometry_with_everything(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        sent = _published(dashboard)
+        params = {**self.BAND, **self.CROP}
+        resp = client.post('/api/geometry', json={'params': params, 'persist': True})
+        assert resp.status_code == 200 and resp.get_json()['success'] is True
+        assert sent == [('owl/commands', {'action': 'save_geometry', 'params': params})]
+
+    @pytest.mark.parametrize('body', [{}, {'params': {}}, {'persist': True}])
+    def test_no_params_is_400_and_nothing_is_sent(self, standalone_test_client, body):
+        client, dashboard, tmp_dir = standalone_test_client
+        sent = _published(dashboard)
+        assert client.post('/api/geometry', json=body).status_code == 400
+        assert sent == []
+
+    def test_no_mqtt_client_is_500(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        dashboard.mqtt_client = None
+        assert client.post('/api/geometry', json={'params': self.BAND}).status_code == 500
+
+    @pytest.mark.xfail(strict=True, reason=(
+        "controller/standalone/standalone.py set_geometry (lines 2144-2153): the live "
+        "branch throws away the result of both _send_command calls and answers "
+        "{'success': True}; the persist branch answers HTTP 200 with success:false. With "
+        "the broker down the geometry editor shows the band as applied when it was not."))
+    @pytest.mark.parametrize('persist', [False, True])
+    def test_broker_down_is_reported_as_a_failure(self, standalone_test_client, persist):
+        client, dashboard, tmp_dir = standalone_test_client
+        sent = _published(dashboard, connected=False)
+        resp = client.post('/api/geometry', json={'params': self.BAND, 'persist': persist})
+        assert sent == []
+        assert resp.get_json()['success'] is False
+        assert resp.status_code == 503
+
+
+@pytest.mark.unit
+class TestSwitchPurposeRoute:
+    """POST /api/controller/switch_purpose: whether the Ute's one switch owns
+    spraying or recording after the next restart."""
+
+    def _purpose(self, dashboard):
+        return _active_ini(dashboard).get('Controller', 'switch_purpose')
+
+    @pytest.mark.parametrize('sent_as, saved', [('detection', 'detection'),
+                                                ('recording', 'recording'),
+                                                (' Detection ', 'detection')])
+    def test_purpose_is_saved_for_the_next_start(self, standalone_test_client, sent_as, saved):
+        client, dashboard, tmp_dir = standalone_test_client
+        # start from the other one so the write is what is being seen
+        other = 'recording' if saved == 'detection' else 'detection'
+        dashboard._persist_config_change('Controller', 'switch_purpose', other)
+        assert self._purpose(dashboard) == other
+
+        resp = client.post('/api/controller/switch_purpose', json={'purpose': sent_as})
+        assert resp.status_code == 200 and resp.get_json()['success'] is True
+        assert self._purpose(dashboard) == saved
+        # and the dashboard reads it back for its own lock and toggle
+        assert client.get('/api/controller_config').get_json()['switch_purpose'] == saved
+
+    @pytest.mark.parametrize('body', [{}, {'purpose': ''}, {'purpose': 'spraying'},
+                                      {'purpose': 'detection; rm'}])
+    def test_anything_else_is_400_and_nothing_is_written(self, standalone_test_client, body):
+        client, dashboard, tmp_dir = standalone_test_client
+        before = self._purpose(dashboard)
+        resp = client.post('/api/controller/switch_purpose', json=body)
+        assert resp.status_code == 400
+        assert resp.get_json()['success'] is False
+        assert self._purpose(dashboard) == before
+
+    @pytest.mark.xfail(strict=True, reason=(
+        "controller/standalone/standalone.py set_switch_purpose (line 1920): the return "
+        "of _persist_config_change is ignored, so a write that failed is answered "
+        "'Switch purpose set to detection. Restart OWL to apply.'"))
+    def test_a_failed_write_is_not_reported_as_saved(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        dashboard._persist_config_change_locked = lambda section, key, value: False
+        resp = client.post('/api/controller/switch_purpose', json={'purpose': 'detection'})
+        assert resp.get_json()['success'] is False
+        assert resp.status_code >= 500

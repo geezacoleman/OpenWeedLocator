@@ -222,9 +222,26 @@ class TestPainterProfiles:
         config.read(str(cfg_file))
         assert config.getint('GreenOnBrown', 'lut_sensitivity') == 85
 
-    def test_sensitivity_clamped(self, standalone_test_client):
+    @pytest.mark.parametrize('asked, used', [(400, 100), (-20, 0), (85, 85)])
+    def test_sensitivity_clamped(self, standalone_test_client, asked, used):
+        """Clamped to 0-100 both in what the OWL is sent and in the INI."""
         client, dashboard, tmp_dir = standalone_test_client
-        resp = client.post('/api/painter/sensitivity', json={'value': 400})
+        sent = []
+        dashboard.mqtt_client._send_command = (
+            lambda action, **kw: sent.append(dict(kw, action=action)) or {'success': True})
+        resp = client.post('/api/painter/sensitivity', json={'value': asked})
         assert resp.get_json()['success']
+        assert sent == [{'action': 'set_lut_sensitivity', 'value': used}]
+        active = (tmp_dir / 'active_config.txt').read_text().strip()
+        config = configparser.ConfigParser()
+        config.read(str(tmp_dir / active.split('/')[-1]))
+        assert config.getint('GreenOnBrown', 'lut_sensitivity') == used
+
+    def test_sensitivity_that_is_not_a_number_is_refused(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        sent = []
+        dashboard.mqtt_client._send_command = (
+            lambda action, **kw: sent.append(action) or {'success': True})
         resp = client.post('/api/painter/sensitivity', json={'value': 'abc'})
         assert resp.status_code == 400
+        assert sent == []
