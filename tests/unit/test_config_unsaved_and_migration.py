@@ -7,7 +7,8 @@
 - min_detection_area migration: min_detection_area_percent is the canonical
   min weed size key; the legacy px key is accepted on read, converted at load/
   apply, and stripped from files on save.
-- Wiring pins for the JS/route changes (no JS unit harness — source-level).
+- Source pins for the JS/route changes (no JS unit harness): they read the
+  files, they do not run them, and are labelled where they stand.
 """
 
 import os
@@ -166,40 +167,67 @@ class TestStripLegacyMinArea:
 
 
 @pytest.mark.unit
-class TestMinAreaMigrationWiring:
-    """Source-level pins for the migration paths."""
+class TestSavedFilesDropTheLegacyPxKey:
+    """What the OWL writes when it saves a profile. (The px-to-percent
+    conversion at boot and on a live change is tested at the relay:
+    tests/owl/test_min_weed_size_and_resolution_at_the_relay.py)"""
 
-    def test_owl_boot_migration(self):
-        src = (PROJECT_ROOT / 'owl.py').read_text(encoding='utf-8')
-        block = src[src.index("min_detection_area_percent <= 0"):]
-        assert 'resolution_width' in block[:600], (
-            "owl.py must derive min_detection_area_percent from the legacy px "
-            "value and the camera resolution when the percent key is unset"
-        )
-        # px read must not crash on percent-only configs
-        assert re.search(
-            r"getint\(\s*'GreenOnBrown',\s*'min_detection_area',\s*fallback=", src), (
-            "owl.py must read min_detection_area with a fallback — percent-only "
-            "configs carry no px key"
-        )
+    def saved(self, mqtt_publisher, text):
+        import configparser
+        import io
+        config = configparser.ConfigParser()
+        config.read_string(text)
+        out = io.StringIO()
+        mqtt_publisher._write_config_without_geometry(config, out)
+        written = configparser.ConfigParser()
+        written.read_string(out.getvalue())
+        return {section: dict(written[section]) for section in written.sections()}
 
-    def test_owl_write_path_strips_legacy_px(self):
-        src = (PROJECT_ROOT / 'utils' / 'mqtt_manager.py').read_text(encoding='utf-8')
-        fn = src[src.index('def _write_config_without_geometry'):]
-        fn = fn[:fn.index('\n    def ')]
-        assert 'min_detection_area' in fn, (
-            "_write_config_without_geometry must drop the legacy px key when "
-            "the section carries a real percent value"
-        )
+    def test_px_is_dropped_only_where_a_real_percent_replaces_it(self, mqtt_publisher):
+        saved = self.saved(mqtt_publisher, """
+[GreenOnBrown]
+exg_min = 25
+min_detection_area = 10
+min_detection_area_percent = 0.0075
+[Sensitivity_Low]
+min_detection_area = 20
+min_detection_area_percent = 0.015
+[Sensitivity_Old]
+min_detection_area = 5
+[Sensitivity_Zero]
+min_detection_area = 7
+min_detection_area_percent = 0
+[Sensitivity_Broken]
+min_detection_area = 9
+min_detection_area_percent = lots
+""")
+        assert saved == {
+            'GreenOnBrown': {'exg_min': '25', 'min_detection_area_percent': '0.0075'},
+            'Sensitivity_Low': {'min_detection_area_percent': '0.015'},
+            # nothing to replace it with: dropping it would lose the minimum
+            'Sensitivity_Old': {'min_detection_area': '5'},
+            'Sensitivity_Zero': {'min_detection_area': '7', 'min_detection_area_percent': '0'},
+            'Sensitivity_Broken': {'min_detection_area': '9',
+                                   'min_detection_area_percent': 'lots'},
+        }
 
-    def test_live_px_set_converts_to_percent(self):
-        src = (PROJECT_ROOT / 'utils' / 'mqtt_manager.py').read_text(encoding='utf-8')
-        fn = src[src.index('def _update_greenonbrown_param'):]
-        fn = fn[:fn.index('\n    def _update_greenongreen_param')]
-        assert '_convert_px_min_area_to_percent' in fn, (
-            "a live min_detection_area (px) set must convert to the canonical "
-            "percent key or the change is shadowed in the detection loop"
-        )
+    def test_mount_geometry_never_goes_into_a_saved_profile(self, mqtt_publisher):
+        """Geometry is per unit (GEOMETRY.ini): a profile loaded on another
+        OWL must not carry the first one's camera height or crop."""
+        from utils.mqtt_manager import GEOMETRY_SECTION_KEYS
+        lines = []
+        for section, keys in GEOMETRY_SECTION_KEYS.items():
+            lines.append(f'[{section}]')
+            lines.append('kept_key = 1')
+            lines.extend(f'{key} = 0.5' for key in sorted(keys))
+        saved = self.saved(mqtt_publisher, '\n'.join(lines))
+        assert GEOMETRY_SECTION_KEYS, 'no geometry keys defined'
+        assert saved == {section: {'kept_key': '1'} for section in GEOMETRY_SECTION_KEYS}
+
+
+@pytest.mark.unit
+class TestNetworkedParamRoute:
+    """SOURCE PIN, not behaviour."""
 
     def test_networked_param_route_persists(self):
         """/api/config/param used to dispatch single-key 'set_config', which
@@ -215,16 +243,11 @@ class TestMinAreaMigrationWiring:
             "set_config action"
         )
 
-    def test_shipped_default_config_is_percent_only(self):
-        text = (PROJECT_ROOT / 'config' / 'GENERAL_CONFIG.ini').read_text(encoding='utf-8')
-        assert 'min_detection_area_percent' in text
-        assert not re.search(r'^min_detection_area\s*=', text, re.MULTILINE), (
-            "GENERAL_CONFIG.ini must not ship the legacy px key"
-        )
-
 
 # ---------------------------------------------------------------------------
-# Save dialog + overlay + keyboard wiring pins
+# Save dialog + overlay + keyboard: SOURCE PINS on JavaScript and CSS.
+# The dashboards have no JS test harness; these prove the code is written,
+# not that it works. Keyboard sizes are read from the stylesheet itself.
 # ---------------------------------------------------------------------------
 
 NETWORKED_TAB = PROJECT_ROOT / 'controller' / 'networked' / 'static' / 'js' / 'modules' / '_config_tab.js'

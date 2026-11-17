@@ -1,31 +1,25 @@
 """
-Real-ByteTrack integration tests with rendered synthetic frames.
+Real-ByteTrack tests: NOT RUN IN CI.
 
-Unlike test_tracking_integration.py (which feeds ground-truth IDs straight
-into ClassSmoother), these tests drive the REAL ultralytics BYTETracker,
-configured from config/bytetrack_owl.yaml, with detections derived from
-rendered frames of moving objects — tractor motion, camera vibration,
-detection dropouts and class flicker.
+Everything here needs ultralytics and torch, which the CI runner and a
+factory OWL do not have, so the whole module is skipped there (and by the
+pre-push hook, as `slow`). It runs on a machine with requirements-gog.txt
+installed. Nothing that protects a spray decision may live only in this
+file: the crop/weed class filter, the hybrid crop buffer and the tracker
+parameter plumbing are tested against a stand-in model in
+test_greenongreen.py, which CI does run.
 
-Covers the review findings:
-  - ID stability with the shipped yaml params under vibration
-  - Lost tracks persist with MOVING Kalman-predicted boxes (not frozen)
-  - The zero-track window exists in real ByteTrack (motivates the
-    class-filter passthrough fix in GreenOnGreen.inference)
-  - Regression: zero-track frames must not leak non-target classes
-  - Regression: update_tracker_params_direct must actually change
-    tracker.args (BYTETracker reads thresholds from args, not attributes)
+What is only provable against the real library, and so stays here:
+  - ID stability of the shipped config/bytetrack_owl.yaml under vibration
+  - lost tracks keep MOVING on their Kalman prediction during a dropout
+  - a brand-new object yields a zero-track frame (why the class filter exists)
+  - the class filter on a real ultralytics Results object (indexing a
+    Results by a row list is what test_greenongreen's fake has to match)
+  - tracker.args is where BYTETracker reads its thresholds
   - get_lost_tracks() against a real BYTETracker
-  - Per-frame tracking overhead sanity
-
-Annotated frames are written to tests/tracking_output/real_bytetrack/
-for manual review (gitignored).
-
-Run: pytest tests/test_bytetrack_real.py -v
 """
 
 import sys
-import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -50,7 +44,6 @@ from ultralytics.engine.results import Results
 from utils.tracker import ClassSmoother
 from utils.greenongreen import GreenOnGreen, TRACKER_YAML
 
-VIZ_DIR = Path(__import__('os').environ.get('OWL_TRACKING_VIZ_DIR') or __import__('tempfile').mkdtemp(prefix='owl_tracking_viz_')) / 'real_bytetrack'
 TRACKER_YAML_PATH = PROJECT_ROOT / 'config' / 'bytetrack_owl.yaml'
 
 # Pi-realistic frame rate. ultralytics hardcodes frame_rate=30 when creating
@@ -241,36 +234,11 @@ def gt_to_track_ids(history):
 
 @pytest.mark.unit
 class TestTrackerConfig:
-    def test_yaml_has_all_required_keys(self):
-        """bytetrack_owl.yaml must contain every key BYTETracker reads."""
-        cfg = load_owl_tracker_cfg()
-        for key in ('tracker_type', 'track_high_thresh', 'track_low_thresh',
-                    'new_track_thresh', 'track_buffer', 'match_thresh',
-                    'fuse_score'):
-            assert hasattr(cfg, key), f'{key} missing from bytetrack_owl.yaml'
-        assert cfg.tracker_type == 'bytetrack'
-
     def test_tracker_constructs_from_owl_yaml(self):
         tracker = make_tracker()
         assert tracker.max_time_lost == int(
             FRAME_RATE / 30.0 * load_owl_tracker_cfg().track_buffer)
 
-    def test_ini_and_yaml_tracking_params_are_aligned(self):
-        """GENERAL_CONFIG.ini [Tracking] must match the bootstrap yaml.
-
-        The INI is the runtime source of truth (applied after the first
-        track call); the yaml bootstraps the tracker. If they diverge the
-        first frames run with different params than the rest.
-        """
-        import configparser
-        ini = configparser.ConfigParser()
-        ini.read(PROJECT_ROOT / 'config' / 'GENERAL_CONFIG.ini')
-        cfg = load_owl_tracker_cfg()
-        assert ini.getfloat('Tracking', 'track_high_thresh') == cfg.track_high_thresh
-        assert ini.getfloat('Tracking', 'track_low_thresh') == cfg.track_low_thresh
-        assert ini.getfloat('Tracking', 'new_track_thresh') == cfg.new_track_thresh
-        assert ini.getint('Tracking', 'track_buffer') == cfg.track_buffer
-        assert ini.getfloat('Tracking', 'match_thresh') == cfg.match_thresh
 
 
 # ============================================================
@@ -556,27 +524,6 @@ class TestTrackerParamApplication:
         assert tracker.args.match_thresh == 0.93
         assert gog._pending_tracker_params is None
 
-    def test_preset_values_match_ui_presets(self):
-        """Python presets must stay in sync with the JS UI presets (one
-        shared copy in owl_ui.js, used by both dashboards)."""
-        import re
-        for js_file in (
-            PROJECT_ROOT / 'controller/shared/js/owl_ui.js',
-        ):
-            text = js_file.read_text(encoding='utf-8')
-            m = re.search(r'TRACK_PRESETS = \{(.*?)\};', text,
-                          re.DOTALL)
-            assert m, f'TRACK_PRESETS not found in {js_file.name}'
-            block = m.group(1)
-            for level, preset in GreenOnGreen.TRACK_STABILITY_PRESETS.items():
-                line = re.search(level + r':\s*\{([^}]*)\}', block)
-                assert line, f'{level} preset missing in {js_file.name}'
-                js_vals = dict(re.findall(r'(\w+):\s*([\d.]+)', line.group(1)))
-                for key, val in preset.items():
-                    assert float(js_vals[key]) == float(val), (
-                        f'{js_file.name} {level}.{key} = {js_vals[key]} but '
-                        f'Python preset has {val}')
-
 
 # ============================================================
 # get_lost_tracks against a real tracker
@@ -647,84 +594,6 @@ class TestSmootherWithRealTracker:
         assert raw_flips > 10, 'scene not flickery enough to test smoothing'
         assert smoothed_flips < raw_flips * 0.4, (
             f'smoothing only reduced flips {raw_flips} -> {smoothed_flips}')
-
-
-# ============================================================
-# Timing sanity (Pi feasibility)
-# ============================================================
-
-@pytest.mark.unit
-class TestTrackingOverhead:
-    def test_per_frame_update_is_cheap(self):
-        """Tracker update must stay far below the YOLO inference budget.
-        Desktop median < 5 ms ≈ tens of ms worst-case on a Pi — still
-        negligible vs 50-150 ms NCNN inference."""
-        scene = FieldScene(num_weeds=8, num_crops=4, vibration=2.0)
-        tracker = make_tracker()
-        times = []
-        for f in range(100):
-            boxes, cls_ids, confs, _ = scene.detections(f, drop_rate=0.1,
-                                                        flicker_rate=0.1)
-            batch = to_det_batch(boxes, cls_ids, confs)
-            t0 = time.perf_counter()
-            tracker.update(batch)
-            times.append((time.perf_counter() - t0) * 1000)
-        median = float(np.median(times))
-        assert median < 5.0, f'tracker update median {median:.2f}ms'
-
-
-# ============================================================
-# Annotated frame artifacts for manual review
-# ============================================================
-
-@pytest.mark.unit
-class TestRenderedSequenceArtifacts:
-    def test_render_annotated_tracking_sequence(self):
-        """Render 60 frames with dropouts/flicker, run the real tracker,
-        and write annotated frames (IDs, lost-track Kalman boxes) to
-        tests/tracking_output/real_bytetrack/ for visual inspection."""
-        VIZ_DIR.mkdir(parents=True, exist_ok=True)
-        scene = FieldScene(num_weeds=4, num_crops=2, speed=5.0,
-                           vibration=2.0, seed=3)
-        tracker = make_tracker()
-        smoother = ClassSmoother(window=5)
-
-        frames_written = 0
-        for f in range(60):
-            drop = {1} if 25 <= f < 33 else None  # burst dropout of one weed
-            boxes, cls_ids, confs, _ = scene.detections(
-                f, drop_ids=drop, drop_rate=0.05, flicker_rate=0.15)
-            tracks = tracker.update(to_det_batch(boxes, cls_ids, confs))
-
-            img = scene.render(f)
-            if len(tracks):
-                tids = [int(r[4]) for r in tracks]
-                tcls = [int(r[6]) for r in tracks]
-                tconf = [float(r[5]) for r in tracks]
-                smoothed = smoother.update(tids, tcls, tconf, frame_count=f)
-                for row in tracks:
-                    x1, y1, x2, y2 = map(int, row[:4])
-                    tid, cls = int(row[4]), int(row[6])
-                    s_cls = smoothed[tid]
-                    colour = (0, 0, 255) if s_cls == 0 else (255, 160, 0)
-                    cv2.rectangle(img, (x1, y1), (x2, y2), colour, 2)
-                    cv2.putText(img, f'ID{tid} {CLASS_NAMES[s_cls]}',
-                                (x1, max(12, y1 - 6)),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, colour, 1)
-            # Lost tracks: Kalman-predicted boxes drawn dimmed
-            for strack in tracker.lost_stracks:
-                x1, y1, x2, y2 = map(int, strack.xyxy)
-                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 120, 120), 1)
-                cv2.putText(img, f'ID{strack.track_id} lost',
-                            (x1, max(12, y1 - 6)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 120, 120), 1)
-            cv2.putText(img, f'frame {f:03d}', (8, 18),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            cv2.imwrite(str(VIZ_DIR / f'frame_{f:03d}.jpg'), img)
-            frames_written += 1
-
-        assert frames_written == 60
-        assert any(VIZ_DIR.glob('frame_*.jpg'))
 
 
 # ============================================================

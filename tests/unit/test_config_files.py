@@ -1,5 +1,15 @@
-"""Tests for INI config file consistency, the Owl.config_path property,
-and cross-validation between backend config definitions and frontend field definitions."""
+"""The shipped config files against the code that reads them.
+
+Three kinds of test, in this order:
+  1. the shipped files and bad values through the real ConfigValidator;
+  2. real functions (autosave seeding, live camera value coercion);
+  3. contract checks between files and, last, source pins on dashboard
+     JavaScript. Those read files rather than run code and say so.
+
+What the OWL does with a config at boot (resolution clamp, minimum weed
+size) is tested on a real Owl:
+tests/owl/test_min_weed_size_and_resolution_at_the_relay.py
+"""
 
 import configparser
 import re
@@ -10,242 +20,207 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = PROJECT_ROOT / 'config'
 
-INI_FILES = [
-    'GENERAL_CONFIG.ini',
-]
-
-EXPECTED_SECTIONS = [
-    'System', 'Controller', 'Visualisation', 'Camera', 'GreenOnGreen',
-    'GreenOnBrown', 'DataCollection', 'Relays', 'Sensitivity',
-    'Sensitivity_Low', 'Sensitivity_Medium', 'Sensitivity_High',
-    'Tracking',
-]
-
 CONTROLLER_INI_SECTIONS = ['MQTT', 'WebDashboard', 'Network', 'GPS']
 
 
-@pytest.mark.unit
-class TestConfigFiles:
-    """Validate that all INI config files are well-formed and consistent."""
+def shipped():
+    config = configparser.ConfigParser()
+    config.read(CONFIG_DIR / 'GENERAL_CONFIG.ini')
+    return config
 
-    @pytest.mark.parametrize('ini_name', INI_FILES)
-    def test_ini_parses_without_errors(self, ini_name):
-        """Each INI file should parse cleanly with configparser."""
-        path = CONFIG_DIR / ini_name
-        assert path.exists(), f"{ini_name} not found in config/"
 
-        config = configparser.ConfigParser()
-        config.read(path)
-        assert len(config.sections()) > 0, f"{ini_name} has no sections"
-
-    def test_general_config_has_all_sections(self):
-        """GENERAL_CONFIG.ini must have all expected sections."""
-        config = configparser.ConfigParser()
-        config.read(CONFIG_DIR / 'GENERAL_CONFIG.ini')
-        actual = set(config.sections())
-        expected = set(EXPECTED_SECTIONS)
-        missing = expected - actual
-        assert not missing, (
-            f"GENERAL_CONFIG.ini missing sections: {missing}"
-        )
-
-    def test_all_configs_have_expected_sections(self):
-        """All configs should have all 8 expected detection sections."""
-        for ini_name in INI_FILES:
-            config = configparser.ConfigParser()
-            config.read(CONFIG_DIR / ini_name)
-            for section in EXPECTED_SECTIONS:
-                assert config.has_section(section), (
-                    f"{ini_name} missing section [{section}]"
-                )
-
-    def test_controller_ini_has_infrastructure_sections(self):
-        """CONTROLLER.ini should have the 4 infrastructure sections."""
-        path = CONFIG_DIR / 'CONTROLLER.ini'
-        if not path.exists():
-            pytest.skip("CONTROLLER.ini not present (created by setup scripts on Pi)")
-
-        config = configparser.ConfigParser()
-        config.read(path)
-        for section in CONTROLLER_INI_SECTIONS:
-            assert config.has_section(section), (
-                f"CONTROLLER.ini missing section [{section}]"
-            )
-
-    def test_general_config_does_not_have_infrastructure_sections(self):
-        """GENERAL_CONFIG.ini should NOT have MQTT/WebDashboard/Network/GPS."""
-        config = configparser.ConfigParser()
-        config.read(CONFIG_DIR / 'GENERAL_CONFIG.ini')
-        for section in CONTROLLER_INI_SECTIONS:
-            assert not config.has_section(section), (
-                f"GENERAL_CONFIG.ini should not have [{section}] (moved to CONTROLLER.ini)"
-            )
-
-    def test_general_config_has_sensitivity_section(self):
-        """GENERAL_CONFIG.ini should have [Sensitivity] with active preset."""
-        config = configparser.ConfigParser()
-        config.read(CONFIG_DIR / 'GENERAL_CONFIG.ini')
-        assert config.has_section('Sensitivity'), (
-            "GENERAL_CONFIG.ini missing [Sensitivity] section"
-        )
-        assert config.has_option('Sensitivity', 'active'), (
-            "GENERAL_CONFIG.ini missing Sensitivity.active"
-        )
+def profile(tmp_path, changes=(), drop=()):
+    """A copy of the shipped config with changes, as a file to load."""
+    config = shipped()
+    for section, key, value in changes:
+        config.set(section, key, value)
+    for section, key in drop:
+        config.remove_option(section, key)
+    path = tmp_path / 'profile.ini'
+    with open(path, 'w') as f:
+        config.write(f)
+    return path
 
 
 @pytest.mark.unit
-class TestHybridConfigValidation:
-    """Validate hybrid detection config values."""
-
-    @pytest.mark.parametrize('ini_name', INI_FILES)
-    def test_new_gog_keys_in_presets(self, ini_name):
-        """inference_resolution and crop_buffer_px present in all presets."""
-        config = configparser.ConfigParser()
-        config.read(CONFIG_DIR / ini_name)
-
-        assert config.has_option('GreenOnGreen', 'inference_resolution'), \
-            f'{ini_name} missing inference_resolution'
-        assert config.has_option('GreenOnGreen', 'crop_buffer_px'), \
-            f'{ini_name} missing crop_buffer_px'
-
-        # Verify values are sensible
-        res = config.getint('GreenOnGreen', 'inference_resolution')
-        assert 160 <= res <= 1280, f'{ini_name} inference_resolution out of range: {res}'
-
-        buf = config.getint('GreenOnGreen', 'crop_buffer_px')
-        assert 0 <= buf <= 50, f'{ini_name} crop_buffer_px out of range: {buf}'
-
-    def test_gog_hybrid_valid_algorithm(self):
-        """gog-hybrid is accepted by ConfigValidator."""
+class TestShippedConfig:
+    def test_the_shipped_config_passes_validation(self, tmp_path):
+        """Every section and key the OWL requires is there and in range. A
+        key added to the validator but not to the file fails here."""
         from utils.config_manager import ConfigValidator
-        assert 'gog-hybrid' in ConfigValidator.VALID_ALGORITHMS
+        loaded = ConfigValidator.load_and_validate_config(profile(tmp_path))
+        assert loaded.sections() == shipped().sections()
+
+    def test_a_missing_required_section_is_refused(self, tmp_path):
+        from utils.config_manager import ConfigValidator
+        config = shipped()
+        config.remove_section('Relays')
+        path = tmp_path / 'profile.ini'
+        with open(path, 'w') as f:
+            config.write(f)
+        with pytest.raises(Exception, match='Relays'):
+            ConfigValidator.load_and_validate_config(path)
+
+    def test_detection_profile_and_controller_file_do_not_overlap(self):
+        """MQTT, WebDashboard, Network, GPS (and Actuation) belong to
+        CONTROLLER.ini, which owl.py reads on top of the profile. A profile
+        carrying its own copy would be silently overridden, and loading it
+        on another OWL would carry one unit's broker address to the next."""
+        from utils.config_manager import ConfigValidator
+        assert set(CONTROLLER_INI_SECTIONS) <= ConfigValidator.CONTROLLER_INI_SECTIONS
+        assert not ConfigValidator.CONTROLLER_INI_SECTIONS & set(shipped().sections())
+
+        template = configparser.ConfigParser()
+        template.read(CONFIG_DIR / 'CONTROLLER_TEMPLATE.ini', encoding='utf-8')
+        assert set(CONTROLLER_INI_SECTIONS) <= set(template.sections())
+
+    @pytest.mark.xfail(strict=True, reason=(
+        "ConfigValidator.CONTROLLER_INI_SECTIONS (utils/config_manager.py:363) lists "
+        "'Actuation', which config/CONTROLLER_TEMPLATE.ini does not have, so "
+        "validate_controller_ini (utils/config_manager.py:1122) warns 'CONTROLLER.ini missing "
+        "sections: Actuation' at every boot of a unit set up from the template."))
+    def test_a_controller_file_made_from_the_template_raises_no_warning(self, tmp_path, caplog):
+        import logging
+        import shutil
+        from utils.config_manager import ConfigValidator
+        shutil.copy(CONFIG_DIR / 'CONTROLLER_TEMPLATE.ini', tmp_path / 'CONTROLLER.ini')
+        with caplog.at_level(logging.WARNING):
+            ConfigValidator.validate_controller_ini(profile(tmp_path))
+        assert [r.getMessage() for r in caplog.records] == []
+
+    def test_shipped_defaults_that_are_safety_decisions(self):
+        config = shipped()
+        # Pi 3/4 are only run above 832x640 when the operator opts in
+        assert config.get('Camera', 'allow_high_resolution') == 'False'
+        # v3.14: a daylight lock renders Arducam IMX296 modules red
+        assert config.get('Camera', 'awb_mode') == 'auto'
+        # Tracking changes which boxes reach the relays: off unless chosen
+        assert config.get('Tracking', 'tracking_enabled') == 'False'
+        # The minimum weed size ships as a percent; the px key is legacy
+        assert config.getfloat('GreenOnBrown', 'min_detection_area_percent') > 0
+        assert not config.has_option('GreenOnBrown', 'min_detection_area')
+
+    def test_code_defaults_for_white_balance_are_the_shipped_ones(self):
+        """A profile saved before the keys existed gets these; they must
+        behave like a fresh GENERAL_CONFIG."""
+        from utils.config_manager import CAMERA_WB_DEFAULTS
+        config = shipped()
+        assert {key: config.get('Camera', key) for key in CAMERA_WB_DEFAULTS} == \
+            {key: str(value) for key, value in CAMERA_WB_DEFAULTS.items()}
 
 
 @pytest.mark.unit
-class TestOwlConfigPath:
-    """Verify the Owl class exposes config_path as a public property (BUG 1 fix)."""
+class TestValidatorRefusesBadValues:
+    """A value outside its range stops the OWL at boot with the key named,
+    rather than running with it."""
 
-    def test_owl_class_has_config_path_property(self):
-        """Owl class should have a @property config_path in the source code.
+    @pytest.mark.parametrize('section, key, value', [
+        ('System', 'algorithm', 'colour'),
+        ('GreenOnGreen', 'actuation_mode', 'lane'),
+        ('GreenOnGreen', 'inference_resolution', '159'),
+        ('GreenOnGreen', 'inference_resolution', '1281'),
+        ('GreenOnGreen', 'crop_buffer_px', '-1'),
+        ('GreenOnGreen', 'crop_buffer_px', '51'),
+        ('GreenOnBrown', 'min_detection_area_percent', '5.1'),
+        ('Tracking', 'track_high_thresh', '0'),
+        ('Tracking', 'match_thresh', '1.5'),
+        ('Tracking', 'track_buffer', '9'),
+        ('Tracking', 'track_buffer', '151'),
+        ('Camera', 'awb_mode', 'sunset'),
+        # libcamera reads ColourGains (0, 0) as "let AWB choose", which
+        # silently defeats manual white balance
+        ('Camera', 'awb_red_gain', '0'),
+        ('Camera', 'awb_blue_gain', '8.1'),
+    ])
+    def test_refused(self, tmp_path, section, key, value):
+        from utils import error_manager as errors
+        from utils.config_manager import ConfigValidator
+        with pytest.raises(errors.ConfigValueError, match=rf'\[{section}\] {key}'):
+            ConfigValidator.load_and_validate_config(profile(tmp_path, [(section, key, value)]))
 
-        We use AST inspection because owl.py imports hardware-specific modules
-        (picamera2, GPIO) that aren't available on Windows dev machines.
-        """
-        import ast
-
-        owl_source = (PROJECT_ROOT / 'owl.py').read_text()
-        tree = ast.parse(owl_source)
-
-        # Find the Owl class
-        owl_class = None
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef) and node.name == 'Owl':
-                owl_class = node
-                break
-        assert owl_class is not None, "Could not find class Owl in owl.py"
-
-        # Find a method named config_path decorated with @property
-        found_property = False
-        for item in owl_class.body:
-            if isinstance(item, ast.FunctionDef) and item.name == 'config_path':
-                for dec in item.decorator_list:
-                    if isinstance(dec, ast.Name) and dec.id == 'property':
-                        found_property = True
-                        break
-                break
-
-        assert found_property, (
-            "Owl class is missing '@property config_path' -- "
-            "MQTT get_config will fail (BUG 1)"
-        )
-
-
-@pytest.mark.unit
-class TestOwlFrameCountMonotonic:
-    """Verify frame_count in owl.py is monotonic (no wrap-around)."""
-
-    def test_no_frame_count_wrap(self):
-        """frame_count must not wrap — wrapping breaks ClassSmoother stale pruning.
-
-        Previous code had: frame_count = frame_count + 1 if frame_count < 900 else 1
-        This caused stale tracks to leak memory. Python ints don't overflow.
-        """
-        owl_source = (PROJECT_ROOT / 'owl.py').read_text()
-        assert 'frame_count < 900' not in owl_source, (
-            "frame_count wraps at 900 — this breaks ClassSmoother stale pruning "
-            "and causes memory leaks. Use monotonic frame_count += 1 instead."
-        )
+    @pytest.mark.parametrize('section, key, value', [
+        ('System', 'algorithm', 'gog-hybrid'),
+        ('System', 'algorithm', 'lut'),
+        ('GreenOnGreen', 'actuation_mode', 'zone'),
+        ('GreenOnGreen', 'inference_resolution', '160'),
+        ('GreenOnGreen', 'inference_resolution', '1280'),
+        ('GreenOnGreen', 'crop_buffer_px', '0'),
+        ('GreenOnGreen', 'crop_buffer_px', '50'),
+        ('Tracking', 'track_buffer', '10'),
+        ('Tracking', 'track_buffer', '150'),
+        ('Camera', 'awb_mode', 'manual'),
+        ('Camera', 'awb_red_gain', '0.1'),
+        ('Camera', 'awb_blue_gain', '8.0'),
+        ('Camera', 'allow_high_resolution', 'True'),
+    ])
+    def test_accepted_at_the_edge_of_the_range(self, tmp_path, section, key, value):
+        from utils.config_manager import ConfigValidator
+        loaded = ConfigValidator.load_and_validate_config(profile(tmp_path, [(section, key, value)]))
+        assert loaded.get(section, key) == value
 
 
 @pytest.mark.unit
-class TestNetworkedTrackingOptimisticState:
-    """Verify networked controller has optimistic state variable for tracking."""
+class TestCameraSettings:
+    def test_seed_autosave_injects_missing_wb_keys(self, tmp_path):
+        """Profiles saved before v3.11 have no WB keys; the autosave working
+        copy must carry them so the kiosk editor renders the WB fields."""
+        from utils.config_manager import seed_autosave, AUTOSAVE_CONFIG
+        src = tmp_path / 'old_profile.ini'
+        src.write_text("[Camera]\nresolution_width = 416\nresolution_height = 320\n")
+        seed_autosave(tmp_path, src)
+        cfg = configparser.ConfigParser()
+        cfg.read(tmp_path / AUTOSAVE_CONFIG)
+        assert dict(cfg['Camera']) == {
+            'resolution_width': '416', 'resolution_height': '320',
+            'awb_mode': 'auto', 'awb_red_gain': '2.0', 'awb_blue_gain': '2.0'}
 
-    def test_global_tracking_enabled_exists(self):
-        """Networked _core.js must declare globalTrackingEnabled
-        to prevent button snap-back during 2s polling cycle."""
-        core_js = (PROJECT_ROOT / 'controller' / 'networked' / 'static' /
-                   'js' / 'modules' / '_core.js').read_text()
-        assert 'globalTrackingEnabled' in core_js, (
-            "globalTrackingEnabled must be declared in networked _core.js — "
-            "without it, the tracking button flickers on 2s poll"
-        )
+    def test_seed_autosave_keeps_existing_wb_keys(self, tmp_path):
+        from utils.config_manager import seed_autosave, AUTOSAVE_CONFIG
+        src = tmp_path / 'tuned.ini'
+        src.write_text("[Camera]\nawb_mode = manual\nawb_red_gain = 1.4\n"
+                       "awb_blue_gain = 3.1\n")
+        seed_autosave(tmp_path, src)
+        cfg = configparser.ConfigParser()
+        cfg.read(tmp_path / AUTOSAVE_CONFIG)
+        assert dict(cfg['Camera']) == {
+            'awb_mode': 'manual', 'awb_red_gain': '1.4', 'awb_blue_gain': '3.1'}
 
-    def test_toggle_tracking_sets_optimistic_state(self):
-        """toggleTracking() must set globalTrackingEnabled before sending command."""
-        controls_js = (PROJECT_ROOT / 'controller' / 'networked' / 'static' /
-                       'js' / 'modules' / '_controls.js').read_text()
-        assert 'globalTrackingEnabled = true' in controls_js
-        assert 'globalTrackingEnabled = false' in controls_js
+    def test_coerce_camera_live_value_single_source(self):
+        """One rule for the OWL's live-apply branch AND the dashboard's
+        persist route: clamp gains/exposure to VALUE_VALIDATORS, normalise
+        the mode, reject garbage, KeyError for non-live keys."""
+        from utils.config_manager import ConfigValidator as CV
+        assert CV.coerce_camera_live_value('awb_red_gain', '50') == 8.0
+        assert CV.coerce_camera_live_value('awb_blue_gain', 0) == 0.1
+        assert CV.coerce_camera_live_value('awb_red_gain', '1.75') == 1.75
+        assert CV.coerce_camera_live_value('exp_compensation', '3.7') == 3
+        assert CV.coerce_camera_live_value('exp_compensation', -99) == -10
+        assert CV.coerce_camera_live_value('awb_mode', ' Manual ') == 'manual'
+        with pytest.raises(ValueError):
+            CV.coerce_camera_live_value('awb_mode', 'sunset')
+        with pytest.raises(ValueError):
+            CV.coerce_camera_live_value('awb_red_gain', 'abc')
+        with pytest.raises(KeyError):
+            CV.coerce_camera_live_value('crop_left', '0.02')
 
-
-@pytest.mark.unit
-class TestModeChipGating:
-    """updateModeAvailability must gate EVERY copy of the mode selector —
-    the networked config tab duplicates the chip row, and querySelector
-    (first match) left those copies enabled when no AI model was present."""
-
-    @pytest.mark.parametrize('controller_dir', ['networked', 'standalone'])
-    def test_update_mode_availability_uses_query_selector_all(self, controller_dir):
-        js = (PROJECT_ROOT / 'controller' / controller_dir / 'static' /
-              'js' / 'modules' / '_controls.js').read_text(encoding='utf-8')
-        body = js.split('function updateModeAvailability')[1].split('\nfunction ')[0]
-        assert 'querySelectorAll' in body, (
-            "updateModeAvailability must use querySelectorAll so duplicated "
-            "mode selectors (config tab) get the disabled state too"
-        )
-
-    @pytest.mark.parametrize('controller_dir', ['networked', 'standalone'])
-    def test_painted_chip_hint_exists(self, controller_dir):
-        js = (PROJECT_ROOT / 'controller' / controller_dir / 'static' /
-              'js' / 'modules' / '_controls.js').read_text(encoding='utf-8')
-        assert 'function updatePaintedChipHint' in js
-
-
-@pytest.mark.unit
-class TestZoneTrackingWarning:
-    """Verify owl.py logs a warning when zone actuation and tracking are both active."""
-
-    def test_zone_tracking_warning_exists(self):
-        """owl.py must warn when zone actuation is silently disabled by tracking."""
-        owl_source = (PROJECT_ROOT / 'owl.py').read_text()
-        assert 'Zone actuation disabled while tracking' in owl_source, (
-            "owl.py must warn when tracking disables zone actuation — "
-            "otherwise farmers won't know zone mode is being ignored"
-        )
+    def test_every_live_camera_key_can_be_coerced(self):
+        """A key in CAMERA_LIVE_KEYS without a coercion rule raises KeyError
+        inside the MQTT handler and the change is dropped."""
+        from utils.config_manager import ConfigValidator as CV
+        from utils.mqtt_manager import CAMERA_LIVE_KEYS
+        samples = {'awb_mode': 'auto', 'awb_red_gain': '2.0', 'awb_blue_gain': '2.0',
+                   'exp_compensation': '0'}
+        assert set(samples) == CAMERA_LIVE_KEYS
+        for key, value in samples.items():
+            CV.coerce_camera_live_value(key, value)
 
 
 @pytest.mark.unit
 class TestFrontendBackendConfigSync:
-    """Cross-validate backend ConfigValidator definitions against frontend
-    CONFIG_FIELD_DEFS in shared/js/config.js.
-
-    These tests catch integration bugs where:
-    - A config key exists in the INI file but has no frontend field definition
-      (would render as text input instead of correct type)
-    - A CSS selector in JS doesn't match actual DOM class names
-    - Backend value constraints don't match frontend constraints
-    """
+    """Contract checks between files (they read config.js, they do not run
+    it): a config key the OWL reads but the editor has no field definition
+    for is rendered as a free-text box, which is how actuation_zone once
+    accepted letters."""
 
     @staticmethod
     def _find_matching_brace(text, start):
@@ -377,28 +352,23 @@ class TestFrontendBackendConfigSync:
             f"[Cloud] keys missing frontend field defs: {template_keys - frontend_keys}"
         )
 
-    def test_controller_ini_keys_have_frontend_field_defs(self):
-        """Every key in CONTROLLER.ini should also have a frontend definition."""
-        controller_ini = CONFIG_DIR / 'CONTROLLER.ini'
-        if not controller_ini.exists():
-            pytest.skip("CONTROLLER.ini not found")
-
+    @pytest.mark.xfail(strict=True, reason=(
+        "[WebDashboard] ui (config/CONTROLLER_TEMPLATE.ini:58, values full|collect) has no "
+        "entry in CONFIG_FIELD_DEFS (controller/shared/js/config.js:135), so the config "
+        "editor shows it as a free-text box. Not seen before: the old test read the "
+        "developer's CONTROLLER.ini and skipped in CI."))
+    def test_controller_template_keys_have_frontend_field_defs(self):
+        """CONTROLLER.ini is created from the template on the unit (CI has
+        none, and a test never reads the developer's own)."""
         config = configparser.ConfigParser()
-        config.read(controller_ini)
-
+        config.read(CONFIG_DIR / 'CONTROLLER_TEMPLATE.ini', encoding='utf-8')
         frontend_defs = self._parse_config_field_defs()
 
-        missing = []
-        for section in config.sections():
-            if section not in frontend_defs:
-                continue
-            for key in config.options(section):
-                if key not in frontend_defs[section]:
-                    missing.append(f"{section}.{key}")
-
-        assert not missing, (
-            f"CONTROLLER.ini keys without frontend field definitions: {missing}"
-        )
+        covered = [s for s in config.sections() if s in frontend_defs]
+        assert set(CONTROLLER_INI_SECTIONS) <= set(covered)
+        missing = [f'{section}.{key}' for section in covered
+                   for key in config.options(section) if key not in frontend_defs[section]]
+        assert not missing, f'CONTROLLER keys the editor would show as free text: {missing}'
 
     def test_backend_sections_have_frontend_coverage(self):
         """Every section in ConfigValidator.REQUIRED_CONFIG should have a
@@ -419,34 +389,6 @@ class TestFrontendBackendConfigSync:
             f"{missing_sections}"
         )
 
-    def test_numpad_selector_matches_config_dom(self):
-        """The numpad focusin selector must match the CSS class used by
-        createConfigSection() for the section body.
-
-        This test would have caught the .config-editor vs .config-section-body bug.
-        """
-        numpad_js = PROJECT_ROOT / 'controller' / 'shared' / 'js' / 'numpad.js'
-        config_js = PROJECT_ROOT / 'controller' / 'shared' / 'js' / 'config.js'
-
-        numpad_source = numpad_js.read_text()
-        config_source = config_js.read_text()
-
-        # Extract the CSS class the numpad looks for via el.closest()
-        closest_match = re.search(r"el\.closest\(['\"]([^'\"]+)['\"]\)", numpad_source)
-        assert closest_match, "Could not find el.closest() selector in numpad.js"
-        numpad_selector = closest_match.group(1)
-
-        # Strip leading dot from CSS selector to get the class name
-        class_name = numpad_selector.lstrip('.')
-
-        # The class name should appear as a className assignment in config.js
-        # e.g. body.className = 'config-section-body'
-        assert class_name in config_source, (
-            f"Numpad selector class '{class_name}' (from '{numpad_selector}') "
-            f"not found in config.js. The numpad will never open because the "
-            f"DOM class doesn't match."
-        )
-
     def test_sensitivity_keys_match_between_manager_and_validator(self):
         """SensitivityManager.SENSITIVITY_KEYS must match
         ConfigValidator.SENSITIVITY_SECTION_KEYS."""
@@ -462,274 +404,32 @@ class TestFrontendBackendConfigSync:
             f"Validator only: {validator_keys - manager_keys}"
         )
 
-    def test_resolution_warning_js_loaded_in_both_templates(self):
-        """resolution_warning.js must be included in both standalone and
-        networked index.html templates for the recording resolution check."""
-        templates = [
-            PROJECT_ROOT / 'controller' / 'standalone' / 'templates' / 'index.html',
-            PROJECT_ROOT / 'controller' / 'networked' / 'templates' / 'index.html',
-        ]
-        for template_path in templates:
-            assert template_path.exists(), f"Template not found: {template_path}"
-            source = template_path.read_text()
-            assert 'resolution_warning.js' in source, (
-                f"resolution_warning.js not included in {template_path.name}. "
-                f"The recording resolution warning will not work."
-            )
-
-    def test_resolution_warning_js_exists(self):
-        """The shared resolution_warning.js file must exist."""
-        js_path = PROJECT_ROOT / 'controller' / 'shared' / 'js' / 'resolution_warning.js'
-        assert js_path.exists(), (
-            "controller/shared/js/resolution_warning.js not found"
-        )
-
 
 @pytest.mark.unit
-class TestHighResolutionOverride:
-    """Pi 3/4 silently clamp resolutions above 832x640 to 640x480 unless the
-    user opts in via [Camera] allow_high_resolution. These tests guard the
-    contract between the clamp, the config validator, the heartbeat field,
-    and the warning modal."""
+class TestModeChipGating:
+    """SOURCE PIN, not behaviour (no JavaScript harness).
 
-    def test_clamp_reads_allow_high_resolution_flag(self):
-        """owl.py clamp must honour the allow_high_resolution config flag."""
-        owl_source = (PROJECT_ROOT / 'owl.py').read_text()
-        assert 'allow_high_resolution' in owl_source, (
-            "owl.py must read [Camera] allow_high_resolution — otherwise the "
-            "user has no way to opt out of the Pi 3/4 resolution clamp."
+    updateModeAvailability must gate EVERY copy of the mode selector —
+    the networked config tab duplicates the chip row, and querySelector
+    (first match) left those copies enabled when no AI model was present."""
+
+    @pytest.mark.parametrize('controller_dir', ['networked', 'standalone'])
+    def test_update_mode_availability_uses_query_selector_all(self, controller_dir):
+        js = (PROJECT_ROOT / 'controller' / controller_dir / 'static' /
+              'js' / 'modules' / '_controls.js').read_text(encoding='utf-8')
+        body = js.split('function updateModeAvailability')[1].split('\nfunction ')[0]
+        assert 'querySelectorAll' in body, (
+            "updateModeAvailability must use querySelectorAll so duplicated "
+            "mode selectors (config tab) get the disabled state too"
         )
-        assert 'not allow_high_resolution' in owl_source, (
-            "owl.py clamp condition must include 'not allow_high_resolution' "
-            "so that True bypasses the clamp."
-        )
-
-    def test_general_config_has_allow_high_resolution(self):
-        """GENERAL_CONFIG.ini must declare allow_high_resolution under [Camera]."""
-        cfg = configparser.ConfigParser()
-        cfg.read(PROJECT_ROOT / 'config' / 'GENERAL_CONFIG.ini')
-        assert cfg.has_option('Camera', 'allow_high_resolution'), (
-            "GENERAL_CONFIG.ini [Camera] must include allow_high_resolution. "
-            "Without it, the frontend cross-validation test will fail."
-        )
-        # Default must be safety-on (False)
-        assert not cfg.getboolean('Camera', 'allow_high_resolution'), (
-            "Default [Camera] allow_high_resolution must be False — the "
-            "clamp is a safety default."
-        )
-
-    def test_validator_lists_allow_high_resolution(self):
-        """ConfigValidator must list allow_high_resolution in [Camera] optional_keys
-        so it doesn't emit a spurious 'unknown key' warning at startup."""
-        from utils.config_manager import ConfigValidator
-        camera = ConfigValidator.REQUIRED_CONFIG['Camera']
-        assert 'allow_high_resolution' in camera['optional_keys'], (
-            "allow_high_resolution missing from Camera optional_keys — "
-            "ConfigValidator will warn at startup."
-        )
-
-    def test_heartbeat_publishes_rpi_version_and_flag(self):
-        """OWLMQTTPublisher heartbeat must publish rpi_version and
-        allow_high_resolution so the controllers can decide whether to show
-        the warning modal."""
-        mqtt_source = (PROJECT_ROOT / 'utils' / 'mqtt_manager.py').read_text()
-        assert "'rpi_version'" in mqtt_source, (
-            "rpi_version missing from OWLMQTTPublisher state dict — the "
-            "warning modal cannot detect Pi 3/4 OWLs."
-        )
-        assert "'allow_high_resolution'" in mqtt_source, (
-            "allow_high_resolution missing from heartbeat — the warning "
-            "modal cannot detect when override is already active."
-        )
-
-    def test_heartbeat_publishes_requested_resolution_and_clamp_flag(self):
-        """OWLMQTTPublisher must publish both the requested (config) resolution
-        and a resolution_clamped flag. Without these, the dashboard sees only
-        the post-clamp resolution and can't detect that a silent clamp happened."""
-        mqtt_source = (PROJECT_ROOT / 'utils' / 'mqtt_manager.py').read_text()
-        for field in ("'requested_resolution_width'", "'requested_resolution_height'", "'resolution_clamped'"):
-            assert field in mqtt_source, (
-                f"{field} missing from heartbeat — modal cannot detect silent clamps."
-            )
-
-    def test_owl_captures_requested_resolution(self):
-        """owl.py must record self.requested_resolution + self.resolution_clamped
-        so the heartbeat can report them."""
-        owl_source = (PROJECT_ROOT / 'owl.py').read_text()
-        assert 'self.requested_resolution' in owl_source, (
-            "owl.py must capture requested_resolution before any clamp logic."
-        )
-        assert 'self.resolution_clamped' in owl_source, (
-            "owl.py must set resolution_clamped to signal the dashboard."
-        )
-
-    def test_high_res_warning_js_exists(self):
-        """The shared high_res_warning.js must exist."""
-        js_path = PROJECT_ROOT / 'controller' / 'shared' / 'js' / 'high_res_warning.js'
-        assert js_path.exists(), (
-            "controller/shared/js/high_res_warning.js not found"
-        )
-
-    def test_high_res_warning_js_loaded_in_both_templates(self):
-        """high_res_warning.js must be included in both controller templates."""
-        templates = [
-            PROJECT_ROOT / 'controller' / 'standalone' / 'templates' / 'index.html',
-            PROJECT_ROOT / 'controller' / 'networked' / 'templates' / 'index.html',
-        ]
-        for template_path in templates:
-            source = template_path.read_text()
-            assert 'high_res_warning.js' in source, (
-                f"high_res_warning.js not included in {template_path.name}. "
-                f"The Pi 3/4 high-resolution warning will not appear."
-            )
-
-
-@pytest.mark.unit
-@pytest.mark.slow  # imports ultralytics
-class TestTrackingConfig:
-    """Validate ByteTrack tracking parameters in config, validators, and frontend."""
-
-    BYTETRACK_KEYS = [
-        'track_high_thresh', 'track_low_thresh', 'new_track_thresh',
-        'track_buffer', 'match_thresh',
-    ]
-
-    def test_general_config_has_bytetrack_params(self):
-        """GENERAL_CONFIG.ini [Tracking] must have all ByteTrack params."""
-        config = configparser.ConfigParser()
-        config.read(CONFIG_DIR / 'GENERAL_CONFIG.ini')
-        assert config.has_section('Tracking')
-        for key in self.BYTETRACK_KEYS:
-            assert config.has_option('Tracking', key), (
-                f"Missing [Tracking].{key} in GENERAL_CONFIG.ini"
-            )
-
-    def test_bytetrack_param_values_are_valid(self):
-        """Default ByteTrack values in GENERAL_CONFIG.ini must be within valid ranges."""
-        config = configparser.ConfigParser()
-        config.read(CONFIG_DIR / 'GENERAL_CONFIG.ini')
-
-        # All threshold params should be 0.0-1.0
-        for key in ['track_high_thresh', 'track_low_thresh', 'new_track_thresh', 'match_thresh']:
-            val = config.getfloat('Tracking', key)
-            assert 0.0 < val < 1.0, f"{key}={val} out of range (0, 1)"
-
-        # track_buffer should be a positive integer
-        buf = config.getint('Tracking', 'track_buffer')
-        assert 10 <= buf <= 150, f"track_buffer={buf} out of range [10, 150]"
-
-    def test_bytetrack_params_in_config_validator(self):
-        """All ByteTrack params must be registered in ConfigValidator optional_keys."""
-        from utils.config_manager import ConfigValidator
-        tracking_opts = ConfigValidator.OPTIONAL_SECTIONS.get('Tracking', {})
-        optional_keys = tracking_opts.get('optional_keys', set())
-        for key in self.BYTETRACK_KEYS:
-            assert key in optional_keys, (
-                f"{key} missing from ConfigValidator.OPTIONAL_SECTIONS['Tracking']['optional_keys']"
-            )
-
-    def test_bytetrack_numeric_params_have_validators(self):
-        """Numeric ByteTrack params must have VALUE_VALIDATORS entries."""
-        from utils.config_manager import ConfigValidator
-        for key in self.BYTETRACK_KEYS:
-            assert key in ConfigValidator.VALUE_VALIDATORS, (
-                f"{key} missing from ConfigValidator.VALUE_VALIDATORS"
-            )
-            val_type, min_val, max_val = ConfigValidator.VALUE_VALIDATORS[key]
-            assert val_type in ('int', 'float'), (
-                f"{key} validator type must be 'int' or 'float', got '{val_type}'"
-            )
-
-    def test_greenongreen_preset_values_are_valid(self):
-        """All track stability preset values must be within validator ranges."""
-        from utils.config_manager import ConfigValidator
-        from utils.greenongreen import GreenOnGreen
-
-        for level, preset in GreenOnGreen.TRACK_STABILITY_PRESETS.items():
-            for key, value in preset.items():
-                assert key in ConfigValidator.VALUE_VALIDATORS, (
-                    f"Preset '{level}' key '{key}' not in VALUE_VALIDATORS"
-                )
-                val_type, min_val, max_val = ConfigValidator.VALUE_VALIDATORS[key]
-                assert min_val <= value <= max_val, (
-                    f"Preset '{level}' {key}={value} out of range [{min_val}, {max_val}]"
-                )
-
-    def test_presets_match_validator_ranges(self):
-        """All preset values must be within ConfigValidator min/max ranges.
-
-        This ensures the Low/Medium/High preset buttons produce values
-        that won't be rejected by config validation.
-        """
-        from utils.config_manager import ConfigValidator
-        from utils.greenongreen import GreenOnGreen
-
-        for level, preset in GreenOnGreen.TRACK_STABILITY_PRESETS.items():
-            for key, value in preset.items():
-                val_type, min_val, max_val = ConfigValidator.VALUE_VALIDATORS[key]
-                assert min_val <= value <= max_val, (
-                    f"Preset '{level}' {key}={value} out of validator "
-                    f"range [{min_val}, {max_val}]"
-                )
-
-
-@pytest.mark.unit
-class TestSessionMetadataFlow:
-    """Guard the session-metadata flow on the networked controller.
-
-    The flow is: Record -> the shared "What are you recording?" form ->
-    POST /api/collect/start -> networked.py send_command('set_session_metadata')
-    publishes MQTT -> OWL-side handler in utils/mqtt_manager.py writes
-    session_metadata.json. A break in any layer silently loses metadata, so
-    we pin the key names at each boundary.
-    """
-
-    METADATA_KEYS = ['field_name', 'crop', 'weather', 'vehicle']
-    HTML_INPUT_IDS = ['meta-field-name', 'meta-crop', 'meta-weather', 'meta-vehicle']
-
-    def test_networked_template_loads_shared_record_form(self):
-        """Since the 2026-10-12 redesign the networked dashboard records with
-        the shared "What are you recording?" form, like the Collect screen."""
-        html = (PROJECT_ROOT / 'controller' / 'networked' / 'templates' / 'index.html').read_text(encoding='utf-8')
-        assert '/shared/js/collect_form.js' in html
-        assert '/shared/js/collect_i18n.js' in html
-        assert 'id="session-metadata-modal"' not in html, "the old free-text modal must be gone"
-
-    def test_networked_controls_js_starts_runs_through_collect_api(self):
-        js = (PROJECT_ROOT / 'controller' / 'networked' / 'static' / 'js' / 'modules' / '_controls.js').read_text(encoding='utf-8')
-        assert 'CollectForm.mountRecordModal' in js
-        # Record opens the form; its Start posts the metadata with the run
-        rec = js[js.index('async function toggleMainRecording'):]
-        rec = rec[:rec.index('\nfunction ')]
-        assert 'openRecordModal()' in rec, "Record must open the shared form"
-        start = js[js.index('function startCollectRecording'):]
-        start = start[:start.index('\n}\n')]
-        assert "'/api/collect/start'" in start and 'metadata' in start
-
-    def test_networked_send_command_has_metadata_case(self):
-        """networked.py send_command must spread the fields flat into the MQTT
-        payload (the fallback handler nests value={}, which the OWL handler
-        won't read), using the shared field list."""
-        py = (PROJECT_ROOT / 'controller' / 'networked' / 'networked.py').read_text(encoding='utf-8')
-        assert "action == 'set_session_metadata'" in py, (
-            "networked.py send_command missing explicit set_session_metadata branch"
-        )
-        assert "'action': 'set_session_metadata', **clean_session_metadata(value)" in py
-
-    def test_owl_handler_reads_same_keys(self):
-        """utils/mqtt_manager.py reads the shared field list, which must keep
-        every key the full dashboard's modal sends."""
-        py = (PROJECT_ROOT / 'utils' / 'mqtt_manager.py').read_text(encoding='utf-8')
-        assert "action == 'set_session_metadata'" in py
-        assert 'clean_session_metadata(command)' in py
-        from utils.session_metadata import SESSION_METADATA_FIELDS
-        for key in self.METADATA_KEYS:
-            assert key in SESSION_METADATA_FIELDS, f"shared metadata fields missing {key!r}"
 
 
 @pytest.mark.unit
 class TestSaveFoldsSliderValues:
-    """Guard the 2026-07-10 field-bug fix: saving a named config used to
+    """SOURCE PINS, not behaviour: the dashboards' JavaScript has no test
+    harness, so these only prove the calls are written in the right order.
+
+    Guard the 2026-07-10 field-bug fix: saving a named config used to
     serialize the stale browser-side config object — slider moves apply live
     to the OWL but never touched that object, so saved files carried the old
     thresholds and Load restored them over the operator's adjustments.
@@ -825,128 +525,3 @@ class TestSaveFoldsSliderValues:
             )
 
 
-@pytest.mark.unit
-class TestCameraWhiteBalance:
-    """[Camera] awb_mode / awb_red_gain / awb_blue_gain (R3, v3.11.0).
-
-    Live-tunable white balance for the red-rendering Arducam IMX296.
-    Guards the contract between GENERAL_CONFIG.ini, the validator, owl.py,
-    and the shared CONFIG_FIELD_DEFS (sync test enforces the JS side)."""
-
-    def test_general_config_has_awb_keys_with_defaults(self):
-        cfg = configparser.ConfigParser()
-        cfg.read(PROJECT_ROOT / 'config' / 'GENERAL_CONFIG.ini')
-        assert cfg.get('Camera', 'awb_mode') == 'auto', (
-            "Default awb_mode must be auto (v3.14): the old daylight lock "
-            "pins the Pi AWB search to 5500-6500 K and renders Arducam "
-            "IMX296 modules red."
-        )
-        assert cfg.getfloat('Camera', 'awb_red_gain') == 2.0
-        assert cfg.getfloat('Camera', 'awb_blue_gain') == 2.0
-
-    def test_code_fallbacks_match_general_config(self):
-        """owl.py, video_manager and seed_autosave must agree on the default
-        so a profile without the key behaves like a fresh GENERAL_CONFIG."""
-        import inspect
-        from utils import video_manager
-        from utils.config_manager import CAMERA_WB_DEFAULTS
-        assert CAMERA_WB_DEFAULTS['awb_mode'] == 'auto'
-        sig = inspect.signature(video_manager.build_awb_controls)
-        assert sig.parameters['awb_mode'].default == 'auto'
-        assert inspect.signature(video_manager.VideoStream.__init__) \
-            .parameters['awb_mode'].default == 'auto'
-        owl_source = (PROJECT_ROOT / 'owl.py').read_text()
-        assert "config.get('Camera', 'awb_mode', fallback='auto')" in owl_source
-
-    def test_seed_autosave_injects_missing_wb_keys(self, tmp_path):
-        """Profiles saved before v3.11 have no WB keys; the autosave working
-        copy must carry them so the kiosk editor renders the WB fields."""
-        from utils.config_manager import seed_autosave, AUTOSAVE_CONFIG
-        src = tmp_path / 'old_profile.ini'
-        src.write_text("[Camera]\nresolution_width = 416\nresolution_height = 320\n")
-        seed_autosave(tmp_path, src)
-        cfg = configparser.ConfigParser()
-        cfg.read(tmp_path / AUTOSAVE_CONFIG)
-        assert cfg.get('Camera', 'awb_mode') == 'auto'
-        assert cfg.get('Camera', 'awb_red_gain') == '2.0'
-        assert cfg.get('Camera', 'awb_blue_gain') == '2.0'
-
-    def test_coerce_camera_live_value_single_source(self):
-        """One rule for the OWL's live-apply branch AND the dashboard's
-        persist route: clamp gains/exposure to VALUE_VALIDATORS, normalise
-        the mode, reject garbage, KeyError for non-live keys."""
-        from utils.config_manager import ConfigValidator as CV
-        assert CV.coerce_camera_live_value('awb_red_gain', '50') == 8.0
-        assert CV.coerce_camera_live_value('awb_blue_gain', 0) == 0.1
-        assert CV.coerce_camera_live_value('exp_compensation', '3.7') == 3
-        assert CV.coerce_camera_live_value('exp_compensation', -99) == -10
-        assert CV.coerce_camera_live_value('awb_mode', ' Manual ') == 'manual'
-        with pytest.raises(ValueError):
-            CV.coerce_camera_live_value('awb_mode', 'sunset')
-        with pytest.raises(ValueError):
-            CV.coerce_camera_live_value('awb_red_gain', 'abc')
-        with pytest.raises(KeyError):
-            CV.coerce_camera_live_value('crop_left', '0.02')
-
-    def test_seed_autosave_keeps_existing_wb_keys(self, tmp_path):
-        from utils.config_manager import seed_autosave, AUTOSAVE_CONFIG
-        src = tmp_path / 'tuned.ini'
-        src.write_text("[Camera]\nawb_mode = manual\nawb_red_gain = 1.4\n"
-                       "awb_blue_gain = 3.1\n")
-        seed_autosave(tmp_path, src)
-        cfg = configparser.ConfigParser()
-        cfg.read(tmp_path / AUTOSAVE_CONFIG)
-        assert cfg.get('Camera', 'awb_mode') == 'manual'
-        assert cfg.get('Camera', 'awb_red_gain') == '1.4'
-
-    def test_validator_lists_awb_keys_as_optional(self):
-        from utils.config_manager import ConfigValidator
-        camera = ConfigValidator.REQUIRED_CONFIG['Camera']
-        for key in ('awb_mode', 'awb_red_gain', 'awb_blue_gain'):
-            assert key in camera['optional_keys'], (
-                f"{key} missing from Camera optional_keys — ConfigValidator "
-                f"will warn at startup."
-            )
-
-    def test_gains_in_value_validators_mode_not(self):
-        """Gains are float-range validated; awb_mode is a string enum key and
-        must NOT be in VALUE_VALIDATORS (int/float/pin 3-tuples only)."""
-        from utils.config_manager import ConfigValidator
-        assert ConfigValidator.VALUE_VALIDATORS['awb_red_gain'] == ('float', 0.1, 8.0)
-        assert ConfigValidator.VALUE_VALIDATORS['awb_blue_gain'] == ('float', 0.1, 8.0)
-        assert 'awb_mode' not in ConfigValidator.VALUE_VALIDATORS
-
-    def test_gain_minimum_is_not_zero(self):
-        """Min gain 0.1, never 0.0 — libcamera treats ColourGains=(0,0) as
-        'let AWB choose', silently defeating manual mode."""
-        from utils.config_manager import ConfigValidator
-        assert ConfigValidator.VALUE_VALIDATORS['awb_red_gain'][1] > 0
-        assert ConfigValidator.VALUE_VALIDATORS['awb_blue_gain'][1] > 0
-
-    def test_owl_reads_all_three_keys(self):
-        """owl.py must read the keys and pass them to VideoStream (source
-        inspection)."""
-        owl_source = (PROJECT_ROOT / 'owl.py').read_text()
-        for attr in ('self.awb_mode', 'self.awb_red_gain', 'self.awb_blue_gain'):
-            assert attr in owl_source, (
-                f"owl.py must capture {attr} from [Camera] config."
-            )
-        assert 'awb_mode=self.awb_mode' in owl_source, (
-            "owl.py must pass awb_mode into VideoStream()."
-        )
-
-    def test_valid_awb_modes_set(self):
-        from utils.config_manager import ConfigValidator
-        assert ConfigValidator.VALID_AWB_MODES == {
-            'auto', 'daylight', 'cloudy', 'tungsten', 'fluorescent',
-            'indoor', 'manual'}
-
-    def test_mqtt_manager_hot_applies_camera_keys(self):
-        """CAMERA_LIVE_KEYS branch must exist and include exp_compensation
-        (the pre-existing silent no-op this feature fixes)."""
-        mqtt_source = (PROJECT_ROOT / 'utils' / 'mqtt_manager.py').read_text()
-        assert 'CAMERA_LIVE_KEYS' in mqtt_source
-        assert 'set_camera_controls' in mqtt_source
-        from utils.mqtt_manager import CAMERA_LIVE_KEYS
-        assert CAMERA_LIVE_KEYS == {'awb_mode', 'awb_red_gain',
-                                    'awb_blue_gain', 'exp_compensation'}

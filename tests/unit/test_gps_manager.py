@@ -2,11 +2,12 @@
 
 import json
 import os
+import socket
 import threading
 import time
-from unittest.mock import MagicMock, patch
 
 import pytest
+import utils.gps_manager as gps_module
 from utils.gps_manager import (
     haversine,
     GPSState,
@@ -17,6 +18,47 @@ from utils.gps_manager import (
     SerialNMEASource,
     GpsdNMEASource,
 )
+
+
+def nmea(body):
+    """A sentence with its checksum, as a receiver sends it."""
+    checksum = 0
+    for ch in body:
+        checksum ^= ord(ch)
+    return f'${body}*{checksum:02X}'
+
+
+def rmc(status='A', knots=5.0, lat='3347.2000', lon='15112.0000'):
+    return nmea(f'GPRMC,123519,{status},{lat},S,{lon},E,{knots:.3f},180.0,230394,,')
+
+
+def gga(quality=1, lat='3347.2000', lon='15112.0000'):
+    return nmea(f'GPGGA,123519,{lat},S,{lon},E,{quality},08,0.9,45.3,M,0.0,M,,')
+
+
+def vtg(kmh):
+    return nmea(f'GPVTG,90.0,T,,M,{kmh / 1.852:.3f},N,{kmh:.2f},K,A')
+
+
+class Clock:
+    """Stands in for the `time` module inside utils.gps_manager: monotonic()
+    is whatever the test says it is, everything else is the real thing."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def monotonic(self):
+        return self.now
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    fake = Clock()
+    monkeypatch.setattr(gps_module, 'time', fake)
+    return fake
 
 
 # ---------------------------------------------------------------------------
@@ -38,9 +80,8 @@ class TestHaversine:
         assert 110 < dist < 112
 
     def test_across_prime_meridian(self):
-        dist = haversine(51.5, -0.1, 51.5, 0.1)
-        assert dist > 0
-        assert dist < 15  # < 15 km
+        # 0.2 degrees of longitude at 51.5 N
+        assert haversine(51.5, -0.1, 51.5, 0.1) == pytest.approx(13.84, abs=0.05)
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +177,106 @@ class TestGPSState:
 
 
 # ---------------------------------------------------------------------------
+# GPSState speed: the number the controller times every nozzle from
+# ---------------------------------------------------------------------------
+
+class TestReportedSpeed:
+    """A speed is reported only while it is fresh and the fix is good."""
+
+    def test_void_rmc_carrying_a_speed_reports_none(self, clock):
+        """Antenna unplugged: status V, but the receiver repeats its last speed."""
+        state = GPSState()
+        assert state.update_from_line(rmc(status='V', knots=10.0)) == 'RMC'
+        d = state.get_dict()
+        assert d['speed_kmh'] is None
+        assert d['fix_valid'] is False
+
+    def test_void_rmc_does_not_refresh_or_change_a_good_speed(self, clock):
+        state = GPSState()
+        state.update_from_line(rmc(knots=8.0 / 1.852))
+        assert state.get_dict()['speed_kmh'] == 8.0
+        # the fix drops to void, still claiming 20 knots; GGA keeps the position fix
+        for _ in range(4):
+            clock.now += 1.0
+            state.update_from_line(rmc(status='V', knots=20.0))
+            state.update_from_line(gga())
+        d = state.get_dict()
+        assert d['fix_valid'] is True
+        assert d['speed_kmh'] is None, 'a void RMC must not keep the old speed alive'
+        assert state.speed_kmh == pytest.approx(8.0, abs=0.01), 'nor replace it with its own'
+
+    def test_speed_is_reported_for_three_seconds_and_no_longer(self, clock):
+        state = GPSState()
+        state.update_from_line(rmc(knots=8.0 / 1.852))
+        clock.now += 2.9
+        state.update_from_line(gga())                 # the fix itself stays fresh
+        assert state.get_dict()['speed_kmh'] == 8.0
+        clock.now += 0.2                              # 3.1 s since the speed
+        d = state.get_dict()
+        assert d['fix_valid'] is True
+        assert d['speed_kmh'] is None, 'a frozen speed looks exactly like a live one'
+
+    def test_a_new_speed_restarts_the_three_seconds(self, clock):
+        state = GPSState()
+        state.update_from_line(rmc(knots=8.0 / 1.852))
+        clock.now += 2.5
+        state.update_from_line(rmc(knots=9.0 / 1.852))
+        clock.now += 2.5
+        assert state.get_dict()['speed_kmh'] == 9.0
+
+    def test_no_fix_means_no_speed(self, clock):
+        """VTG has no validity of its own: without a position fix its speed
+        is not reported."""
+        state = GPSState()
+        assert state.update_from_line(vtg(12.0)) == 'VTG'
+        assert state.get_dict() == dict(state.get_dict(), fix_valid=False, speed_kmh=None)
+        state.update_from_line(gga(quality=0))
+        assert state.get_dict()['speed_kmh'] is None
+
+    def test_speed_is_dropped_when_the_fix_goes_stale(self, clock):
+        state = GPSState()
+        state.update_from_line(gga())
+        clock.now += 10.5                             # fix is now older than 10 s
+        state.update_from_line(vtg(12.0))             # speed itself is brand new
+        d = state.get_dict()
+        assert d['fix_valid'] is False
+        assert d['speed_kmh'] is None
+
+    def test_vtg_updates_speed_and_heading(self, clock):
+        state = GPSState()
+        state.update_from_line(rmc(knots=5.0))
+        assert state.get_dict()['speed_kmh'] == 9.3   # 5 kn
+        clock.now += 0.2
+        state.update_from_line(vtg(12.5))
+        d = state.get_dict()
+        assert d['speed_kmh'] == 12.5
+        assert d['heading'] == 90.0
+
+    @pytest.mark.parametrize('kmh, reported', [
+        (0.0, 0.0),       # stopped is a speed, not "no speed"
+        (0.5, 0.5),
+        (0.04, 0.0),      # reported to one decimal
+        (0.26, 0.3),
+        (7.96, 8.0),
+    ])
+    def test_low_speeds_pass_through_to_one_decimal(self, clock, kmh, reported):
+        for line in (rmc(knots=kmh / 1.852), vtg(kmh)):
+            state = GPSState()
+            state.update_from_line(gga())
+            state.update_from_line(line)
+            got = state.get_dict()['speed_kmh']
+            assert got == reported and got is not None, line
+
+    def test_unrecognised_and_corrupt_lines_change_nothing(self, clock):
+        state = GPSState()
+        before = state.get_dict()
+        good = rmc(knots=5.0)
+        assert state.update_from_line(good[:-2] + '00') is None      # bad checksum
+        assert state.update_from_line('garbage') is None
+        assert state.get_dict() == before
+
+
+# ---------------------------------------------------------------------------
 # SessionStats
 # ---------------------------------------------------------------------------
 
@@ -145,20 +286,26 @@ class TestSessionStats:
         assert s.active is False
         assert s.distance_km == 0.0
 
-    def test_start_stop(self):
-        s = SessionStats()
-        s.start()
-        assert s.active is True
-        s.stop()
-        assert s.active is False
-
     def test_distance_accumulation(self):
         s = SessionStats(boom_width_m=12.0)
         s.start()
+        assert s.active is True
         # Move ~111 m north (0.001 degree latitude at equator)
         s.update(0.0, 0.0)
         s.update(0.001, 0.0)
-        assert s.distance_km > 0.1  # Should be ~0.111 km
+        assert s.distance_km == pytest.approx(0.1112, abs=0.0005)
+        s.stop()
+        assert s.active is False
+        s.update(0.002, 0.0)
+        assert s.distance_km == pytest.approx(0.1112, abs=0.0005), 'a stopped session must not grow'
+
+    def test_jitter_under_a_metre_adds_no_distance(self):
+        s = SessionStats()
+        s.start()
+        s.update(0.0, 0.0)
+        for _ in range(50):
+            s.update(0.000005, 0.0)   # ~0.55 m: a parked receiver wandering
+        assert s.distance_km == 0.0
 
     def test_no_accumulation_when_inactive(self):
         s = SessionStats()
@@ -175,11 +322,14 @@ class TestSessionStats:
 
     def test_to_dict(self):
         s = SessionStats(boom_width_m=12.0)
+        s.start()
+        s.update(0.0, 0.0)
+        s.update(0.01, 0.0)      # 1.112 km
         d = s.to_dict()
-        assert 'active' in d
-        assert 'distance_km' in d
-        assert 'area_hectares' in d
-        assert 'boom_width_m' in d
+        assert d['time_active_s'] == pytest.approx(0, abs=1)
+        del d['time_active_s']
+        assert d == {'active': True, 'distance_km': 1.112,
+                     'area_hectares': 1.33, 'boom_width_m': 12.0}
 
 
 # ---------------------------------------------------------------------------
@@ -310,27 +460,6 @@ class TestTrackRecorder:
 # ---------------------------------------------------------------------------
 
 class TestNMEASources:
-    def test_tcp_source_defaults(self):
-        src = TCPNMEASource(on_line=lambda l: None, on_connect_change=lambda b: None, port=8500)
-        assert src.name == 'tcp'
-        assert src.port == 8500
-        assert src._running is False
-
-    def test_serial_source_defaults(self):
-        src = SerialNMEASource(
-            on_line=lambda l: None, on_connect_change=lambda b: None,
-            device='/dev/ttyACM0', baudrate=9600,
-        )
-        assert src.name == 'serial'
-        assert src.device == '/dev/ttyACM0'
-        assert src.baudrate == 9600
-
-    def test_gpsd_source_defaults(self):
-        src = GpsdNMEASource(on_line=lambda l: None, on_connect_change=lambda b: None)
-        assert src.name == 'gpsd'
-        assert src.host == 'localhost'
-        assert src.port == 2947
-
     def test_serial_source_without_pyserial(self, monkeypatch):
         """If pyserial is missing, the source should log and exit cleanly, not crash."""
         import utils.gps_manager as gm
@@ -343,10 +472,9 @@ class TestNMEASources:
             device='/dev/nonexistent', baudrate=9600,
         )
         src.start()
-        # Give the background thread a moment; it should exit immediately.
-        time.sleep(0.1)
-        # Never produced a line or a connected event
-        assert called['line'] is False
+        src._thread.join(timeout=2)
+        assert not src._thread.is_alive(), 'the reader must give up, not spin'
+        assert called == {'line': False, 'connect': False}
 
 
 # ---------------------------------------------------------------------------
@@ -356,49 +484,121 @@ class TestNMEASources:
 class TestGPSManagerSourceSelection:
     def test_default_is_tcp(self):
         mgr = GPSManager(source='tcp', port=18500)
-        assert mgr.source_name == 'tcp'
-        assert isinstance(mgr._source, TCPNMEASource)
+        assert isinstance(mgr._source, TCPNMEASource) and mgr._source.port == 18500
         state = mgr.get_state()
-        assert state['connection']['source'] == 'tcp'
-        assert 'gps_connected' in state['connection']
-        assert 'tcp_connected' not in state['connection']
+        assert state['connection'] == {'gps_connected': False, 'gps_enabled': True,
+                                       'source': 'tcp'}
 
-    def test_serial_source(self):
-        mgr = GPSManager(source='serial', serial_device='/dev/ttyACM0', baudrate=9600)
+    def test_serial_source_gets_the_configured_port(self):
+        mgr = GPSManager(source='SERIAL', serial_device='/dev/ttyUSB3', baudrate=115200)
         assert mgr.source_name == 'serial'
         assert isinstance(mgr._source, SerialNMEASource)
-        assert mgr._source.device == '/dev/ttyACM0'
+        assert (mgr._source.device, mgr._source.baudrate) == ('/dev/ttyUSB3', 115200)
 
     def test_gpsd_source(self):
         mgr = GPSManager(source='gpsd')
-        assert mgr.source_name == 'gpsd'
         assert isinstance(mgr._source, GpsdNMEASource)
-
-    def test_case_insensitive(self):
-        mgr = GPSManager(source='SERIAL')
-        assert mgr.source_name == 'serial'
+        assert (mgr._source.host, mgr._source.port) == ('localhost', 2947)
 
     def test_invalid_source_raises(self):
         with pytest.raises(ValueError):
             GPSManager(source='bogus')
 
-    def test_process_sentence_updates_state(self, tmp_path):
-        """GPSManager routes parsed sentences through its state, regardless of source."""
-        mgr = GPSManager(source='tcp', port=18501, track_dir=str(tmp_path))
-
-        # Feed a valid NMEA sentence via the internal callback
-        mgr._on_line('$GPRMC,123519,A,3347.2000,S,15112.0000,E,5.0,180.0,230394,,,A*4C')
-        snap = mgr.state.get_dict()
-        # We don't care about the exact coord — just that a fix was derived.
-        assert snap['latitude'] is not None or snap['longitude'] is not None or snap['fix_valid'] is False
-
     def test_on_connect_change_updates_state(self):
         mgr = GPSManager(source='tcp')
-        assert mgr.state.connected is False
-        mgr._on_connect_change(True)
-        assert mgr.state.connected is True
-        mgr._on_connect_change(False)
-        assert mgr.state.connected is False
+        assert mgr.get_state()['connection']['gps_connected'] is False
+        mgr._source._on_connect_change(True)
+        assert mgr.get_state()['connection']['gps_connected'] is True
+        mgr._source._on_connect_change(False)
+        assert mgr.get_state()['connection']['gps_connected'] is False
+
+
+# ---------------------------------------------------------------------------
+# GPSManager: a line from the source reaches state, session and track
+# ---------------------------------------------------------------------------
+
+def _wait(condition, what, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return
+        time.sleep(0.02)
+    pytest.fail(f'timed out waiting for {what}')
+
+
+class TestLinesReachTheManager:
+    @pytest.mark.parametrize('source', ['tcp', 'serial', 'gpsd'])
+    def test_a_line_from_the_source_updates_the_fix(self, source, tmp_path):
+        """Whatever the transport, the callback it was built with must end in
+        the manager's state."""
+        mgr = GPSManager(source=source, track_dir=str(tmp_path))
+        mgr._source._on_line(rmc(knots=5.0))
+        fix = mgr.get_state()['fix']
+        assert fix['fix_valid'] is True
+        assert fix['latitude'] == pytest.approx(-33.78667, abs=1e-4)
+        assert fix['longitude'] == pytest.approx(151.2, abs=1e-4)
+        assert fix['speed_kmh'] == 9.3
+        assert fix['heading'] == 180.0
+
+    def test_lines_feed_the_session_and_the_track(self, tmp_path):
+        mgr = GPSManager(source='tcp', track_dir=str(tmp_path), boom_width=10.0)
+        mgr.start_session()
+        mgr._source._on_line(rmc(lat='3347.2000'))
+        mgr.recorder._last_record_time = 0            # skip the 1 s point spacing
+        mgr._source._on_line(rmc(lat='3347.3000'))    # 0.1 minute south = 185 m
+
+        session = mgr.get_state()['session']
+        assert session['active'] is True
+        assert session['distance_km'] == pytest.approx(0.185, abs=0.002)
+        assert session['area_hectares'] == pytest.approx(0.19, abs=0.01)
+
+        mgr.stop_session()
+        (track,) = tmp_path.glob('track_*.geojson')
+        props = json.loads(track.read_text())['features'][0]
+        assert props['properties']['point_count'] == 2
+        assert props['properties']['speeds_kmh'] == [9.3, 9.3]
+        assert props['geometry']['coordinates'][0] == [151.2, pytest.approx(-33.7866667)]
+
+    def test_no_fix_adds_nothing_to_the_session_or_track(self, tmp_path):
+        mgr = GPSManager(source='tcp', track_dir=str(tmp_path))
+        mgr.start_session()
+        mgr._source._on_line(rmc(status='V'))
+        mgr._source._on_line(gga(quality=0))
+        assert mgr.session.last_point is None
+        assert mgr.recorder.coordinates == []
+
+    def test_nmea_over_a_real_tcp_connection(self, tmp_path):
+        """The Teltonika router pushes NMEA to the OWL over TCP: lines split
+        across packets, with its IMEI prefix, end up as a fix."""
+        with socket.socket() as probe:
+            probe.bind(('127.0.0.1', 0))
+            port = probe.getsockname()[1]
+        mgr = GPSManager(source='tcp', port=port, track_dir=str(tmp_path))
+        mgr.start()
+        try:
+            _wait(lambda: mgr._source._server_socket is not None, 'the GPS TCP server')
+            client = None
+            deadline = time.monotonic() + 5
+            while client is None:
+                try:
+                    client = socket.create_connection(('127.0.0.1', port), timeout=1)
+                except OSError:
+                    assert time.monotonic() < deadline, 'GPS TCP server never listened'
+                    time.sleep(0.05)
+            with client:
+                _wait(lambda: mgr.get_state()['connection']['gps_connected'], 'gps_connected')
+                line = '6003197898_' + rmc(knots=4.0 / 1.852) + '\r\n'
+                client.sendall(line[:20].encode())
+                time.sleep(0.05)
+                client.sendall(line[20:].encode() + gga().encode() + b'\r\n')
+                _wait(lambda: mgr.get_state()['fix']['fix_valid'], 'a fix from the TCP stream')
+                fix = mgr.get_state()['fix']
+                assert fix['speed_kmh'] == 4.0
+                assert fix['satellites'] == 8
+            _wait(lambda: not mgr.get_state()['connection']['gps_connected'],
+                  'the disconnect to be noticed')
+        finally:
+            mgr.stop()
 
 
 class TestTrackFileSafety:
