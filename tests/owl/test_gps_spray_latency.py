@@ -284,3 +284,117 @@ def test_controller_timing_counts_as_travel_timing_while_it_is_live(rig, mqtt_pu
     assert stats['offset_configured'] is False
     r.owl._controller_timing_at -= r.owl._CONTROLLER_TIMING_TIMEOUT_S + 1    # controller went quiet
     assert r.owl.get_system_stats()['travel_timing'] is False
+
+
+# --------------------------------------------------------------------------
+# Who times the sprays: this OWL's GPS, the controller, a phone, nobody
+# --------------------------------------------------------------------------
+
+def _controller_keeps_sending(r, duration, delay, stop):
+    """The networked controller's once-a-second timing broadcast."""
+    def send():
+        while not stop.is_set():
+            r.owl.dash._handle_command({'action': 'set_actuation_params', 'source': 'gps',
+                                        'actuation_duration': duration, 'delay': delay,
+                                        'speed_kmh': 7.0})
+            stop.wait(1.0)
+    threading.Thread(target=send, daemon=True).start()
+
+
+def test_fix_lost_while_moving_hands_timing_to_a_live_controller(rig):
+    """Own GPS at 6 km/h (0.18 s), controller sending 0.5 s. Antenna pulled:
+    the controller's timing takes over, not the configured zero."""
+    r = rig(dash='networked', gps=True, speed_kmh=6.0)
+    stop = threading.Event()
+    _controller_keeps_sending(r, 0.2, 0.5, stop)
+    try:
+        r.wait_for_moving(6.0)
+        showing = r.show_card(seconds=0.3)
+        assert 0.14 <= showing.on <= 0.18 + PROMPT_S, 'own GPS should win while it has a fix'
+
+        r.gps.fix = False
+        r.wait_for(lambda: r.owl.actuation_source == 'controller', 'the controller to take over')
+        assert r.owl.speed_kmh == 7.0
+        showing = r.show_card(seconds=0.3)
+        assert 0.46 <= showing.on <= 0.5 + PROMPT_S
+    finally:
+        stop.set()
+
+
+@pytest.mark.parametrize('source, reported', [('phone', 'phone'), ('browser', 'browser'),
+                                              (None, 'dashboard')])
+def test_phone_or_browser_gps_never_times_sprays(rig, source, reported):
+    """A phone in the cab reports 12 km/h. It is used for positions on the
+    map and in image EXIF, never for the camera-to-nozzle delay."""
+    r = rig(dash='standalone')
+    push = {'latitude': -33.8, 'longitude': 151.0, 'speed_kmh': 12.0}
+    if source:
+        push['source'] = source
+    stop = threading.Event()
+
+    def keep_pushing():                      # as the app does, twice a second
+        while not stop.is_set():
+            r.owl.dash._handle_gps_update(dict(push))
+            stop.wait(0.5)
+    threading.Thread(target=keep_pushing, daemon=True).start()
+    time.sleep(4.5)                          # longer than it takes real travel to engage
+    try:
+        _phone_gps_is_position_only(r, reported)
+    finally:
+        stop.set()
+
+
+def _phone_gps_is_position_only(r, reported):
+    assert r.owl.gps_data is not None and r.owl.gps_data['speed_kmh'] == 12.0
+    assert r.owl.gps_data['source'] == reported
+    assert r.owl.actuation_source == 'config'
+    assert r.owl.get_system_stats()['travel_timing'] is False
+    assert (r.owl.delay, r.owl.actuation_duration) == (0.0, CONFIG_DURATION_S)
+    showing = r.show_card()
+    assert showing.on < PROMPT_S
+
+
+def test_pushed_gps_goes_stale_when_the_phone_stops_sending(rig):
+    r = rig(dash='standalone')
+    r.owl.dash._handle_gps_update({'latitude': -33.8, 'longitude': 151.0, 'speed_kmh': 9.0,
+                                   'source': 'phone'})
+    r.wait_for(lambda: r.owl.gps_data is not None, 'the pushed position')
+    r.wait_for(lambda: r.owl.gps_data is None, 'the stale position to be dropped',
+               timeout=r.owl._GPS_STALE_THRESHOLD + 2.0)
+
+
+def test_sprays_landing_late_raise_the_slow_down_warning(rig):
+    """10 km/h, nozzle 30 cm back: 0.108 s of travel. Frames that arrive
+    0.2 s after exposure cannot make it; the farmer is told to slow down."""
+    r = rig(gps=True, speed_kmh=10.0, lag_s=0.2)
+    r.wait_for_moving(10.0)
+    for _ in range(3):
+        r.show_card(seconds=0.4)
+    r.wait_for(lambda: 'late' in r.owl.speed_warning, 'the late-spray warning')
+    assert 'Slow to' in r.owl.speed_warning
+    assert r.owl.get_system_stats()['speed_warning'] == r.owl.speed_warning
+
+
+def test_no_warning_when_sprays_are_on_time(rig):
+    r = rig(gps=True, speed_kmh=10.0)
+    r.wait_for_moving(10.0)
+    for _ in range(3):
+        r.show_card(seconds=0.4)
+    time.sleep(1.2)
+    assert r.owl.speed_warning == ''
+
+
+def test_a_slow_dashboard_indicator_never_delays_the_relay(rig):
+    """Indicators and annotation run after the relays are scheduled. A weed
+    indicator that takes 0.3 s (a stalled MQTT publish) must not make the
+    nozzle 0.3 s late."""
+    r = rig(dash='standalone')
+    real = r.owl.dash.weed_detect_indicator
+
+    def slow():
+        time.sleep(0.3)
+        return real()
+    r.owl.dash.weed_detect_indicator = slow
+    for _ in range(3):
+        showing = r.show_card(seconds=0.2)
+        assert showing.on < PROMPT_S, f'relay switched {showing.on:.2f} s after the weed'

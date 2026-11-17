@@ -164,7 +164,7 @@ class CardCamera:
 
     card_x / card_y place the card (fractions of the frame). lag_s makes
     every frame arrive that long after it was exposed, with a picamera2-style
-    SensorTimestamp, as a real sensor and ISP do.
+    SensorTimestamp, as a real sensor and ISP do (the frame rate is unchanged).
     """
 
     def __init__(self, width=416, height=320, fps=30, lag_s=0.0):
@@ -182,11 +182,10 @@ class CardCamera:
         if not self.running:
             return None, None
         time.sleep(1 / self.fps)
-        exposed = time.monotonic()
-        metadata = None
-        if self.lag_s:
-            time.sleep(self.lag_s)
-            metadata = {'SensorTimestamp': int(exposed * 1e9)}
+        # The sensor and ISP hold each frame for lag_s without slowing the
+        # frame rate: what arrives now was exposed lag_s ago
+        exposed = time.monotonic() - self.lag_s
+        metadata = {'SensorTimestamp': int(exposed * 1e9)} if self.lag_s else None
         self.frames += 1
         if self.card:
             if self.card_first_seen is None:
@@ -357,7 +356,7 @@ class Rig:
         self.cam.card = True
         time.sleep(seconds)
         self.cam.card = False
-        time.sleep(2 / self.cam.fps + self.cam.lag_s)       # the last card frame is out
+        time.sleep(2 / self.cam.fps)       # the last card frame is out
         gone = self.cam.card_last_seen
 
         deadline = time.monotonic() + settle
