@@ -975,6 +975,15 @@ class Owl:
         Returns True when storage was found and the ImageRecorder is ready.
         """
         self._storage_resolved_for = self._storage_choice()
+        # The recorder being replaced has a writer of its own. It was left
+        # running on every re-scan (one more each time Save to changed).
+        previous = getattr(self, 'image_recorder', None)
+        if previous is not None:
+            self.image_recorder = None
+            try:
+                previous.stop(wait=False)   # never hold up the detection loop
+            except Exception as e:
+                self.logger.warning(f"Could not stop the previous image recorder: {e}")
         try:
             self.directory_manager = DirectorySetup(
                 save_directory=self.config.get('DataCollection', 'save_directory'),

@@ -16,7 +16,7 @@ import pytest
 
 from agent.tool_registry import PROTECTED_SECTIONS, ToolRegistry, owl_tool
 from agent.widget_manager import WidgetManager
-from agent_fakes import central, commands, dash_subscriber, forget, published
+from agent_fakes import central, commands, dash_subscriber, forget, published, as_the_cab_sends
 from utils.config_manager import GREENONBROWN_PARAMS
 
 TOOLS = {
@@ -220,6 +220,8 @@ class TestSetDetection:
     def test_each_form_publishes_exactly_one_command_with_this_meaning(
             self, registry, mqtt_client, arguments, payload):
         result = registry.call('set_detection', arguments, ctx(mqtt_client))
+        if hasattr(mqtt_client, 'owls_state'):          # the in-cab controller
+            payload = as_the_cab_sends(payload)
         assert commands(mqtt_client) == [payload]
         assert result['success'] is True
 
@@ -271,7 +273,7 @@ class TestSetDetection:
         cab = central(tmp_path, owls=('owl-1', 'owl-2', 'owl-3'))
         cab.owls_state['owl-2']['connected'] = False
         registry.call('set_detection', {'state': 'off'}, ctx(cab))
-        assert published(cab) == [('owl/owl-1/commands', mode(1)), ('owl/owl-3/commands', mode(1))]
+        assert published(cab) == [('owl/owl-1/commands', OFF), ('owl/owl-3/commands', OFF)]
 
 
 class TestSprayOnTheCabController:
@@ -294,22 +296,12 @@ class TestSprayOnTheCabController:
         cab._push_desired_state('owl-1')                                  # owl-1 reconnects
         assert commands(cab) == [SPOT if stored == 'spot' else OFF]
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "set_detection(state=...) goes _send_command('set_detection_mode') -> the generic branch "
-        "of CentralController.send_command (controller/networked/networked.py, "
-        "`else: payload = {'action': action, 'value': value}`), which never calls _store_spray. "
-        "desired_state keeps the operator's earlier choice, so _push_desired_state (reconnect) and "
-        "_reconcile_spray (every 4 s) switch spraying back on after the agent turned it off."))
     @pytest.mark.parametrize('state', ['off', 'spot', 'blanket'])
     def test_the_state_form_is_recorded_too(self, registry, cab, state):
         cab.send_command('all', 'toggle_detection', state != 'spot')      # the opposite, first
         registry.call('set_detection', {'state': state}, ctx(cab))
         assert cab.desired_state['all']['spray'] == state
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "Same cause (networked.py send_command generic branch skips _store_spray): after the "
-        "agent's set_detection(state='off') the controller re-sends set_detection_enable true "
-        "to an OWL that reports off, because desired_state still says spot."))
     def test_an_agent_off_is_not_undone_by_the_controller(self, registry, cab):
         cab.send_command('all', 'toggle_detection', True)                 # operator: spot
         registry.call('set_detection', {'state': 'off'}, ctx(cab))        # agent: off
@@ -322,7 +314,9 @@ class TestSprayOnTheCabController:
         cab._reconcile_spray()
         cab._push_desired_state('owl-1')                                  # and a reconnect
 
-        assert commands(cab) == [], 'the controller switched spraying back on by itself'
+        # The reconnect push re-asserts what is recorded, which is now off
+        assert cab.desired_state['all']['spray'] == 'off'
+        assert commands(cab) in ([], [OFF]), 'the controller switched spraying back on by itself'
 
 
 # --------------------------------------------------------------------------

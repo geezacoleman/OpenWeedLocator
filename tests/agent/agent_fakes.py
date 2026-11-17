@@ -163,3 +163,12 @@ def sse_events(response):
     """The events of a text/event-stream Flask response, as dicts."""
     return [json.loads(line[len('data: '):])
             for line in response.get_data(as_text=True).split('\n\n') if line.startswith('data: ')]
+
+
+def as_the_cab_sends(payload):
+    """A spray command as the in-cab controller publishes it: the one form
+    that means the same on every OWL version (and the one it records, so
+    reconciliation does not undo it). Blanket stays set_detection_mode 2."""
+    if payload and payload.get('action') == 'set_detection_mode' and payload.get('value') in (0, 1):
+        return {'action': 'set_detection_enable', 'value': payload['value'] == 0}
+    return payload

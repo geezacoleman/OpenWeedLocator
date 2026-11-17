@@ -131,6 +131,10 @@ class TestChat:
 
         events = agent_app.ask('change spraying')
 
+        if agent_app.kind == 'networked' and payload['action'] == 'set_detection_mode' and payload['value'] != 2:
+            # the cab controller sends (and records) the one command that
+            # means the same on every OWL version
+            payload = {'action': 'set_detection_enable', 'value': payload['value'] == 0}
         assert agent_app.published() == [(TOPIC[agent_app.kind], payload)]
         [result] = of_type(events, 'tool_result')
         assert (result['tool_name'], result['tool_id']) == ('set_detection', 'tc_1')

@@ -68,9 +68,11 @@ class TestSendCommand:
     """The tool-facing _send_command(action, **kwargs)."""
 
     @pytest.mark.parametrize('action, kwargs, payload', [
-        # the generic branch passes value through untouched (audit M3: dropped, unnoticed)
+        # spray: the one command that means the same on every OWL version
         ('set_detection_mode', {'value': 2}, {'action': 'set_detection_mode', 'value': 2}),
-        ('set_detection_mode', {'value': 0}, {'action': 'set_detection_mode', 'value': 0}),
+        ('set_detection_mode', {'value': 0}, {'action': 'set_detection_enable', 'value': True}),
+        ('set_detection_mode', {'value': 1}, {'action': 'set_detection_enable', 'value': False}),
+        # the generic branch passes value through untouched (audit M3: dropped, unnoticed)
         ('set_algorithm', {'value': 'exhsv'}, {'action': 'set_algorithm', 'value': 'exhsv'}),
         ('set_crop_buffer', {'value': 20}, {'action': 'set_crop_buffer', 'value': 20}),
         ('get_config', {}, {'action': 'get_config', 'value': None}),
@@ -120,9 +122,18 @@ class TestSendCommand:
     def test_arguments_the_generic_branch_would_drop_are_logged(self, cab, caplog):
         """Only `value` survives the generic branch: say so, do not guess."""
         with caplog.at_level(logging.WARNING, logger='controller.networked.networked'):
-            cab._send_command('set_detection_mode', mode=2)
-        assert commands(cab) == [{'action': 'set_detection_mode', 'value': None}]
-        assert "action 'set_detection_mode' has kwargs ['mode'] that may be dropped" in caplog.text
+            cab._send_command('set_crop_buffer', px=20)
+        assert commands(cab) == [{'action': 'set_crop_buffer', 'value': None}]
+        assert "action 'set_crop_buffer' has kwargs ['px'] that may be dropped" in caplog.text
+
+    @pytest.mark.parametrize('value', [None, 3, -1, 'blanket', 2.9, True])
+    def test_a_spray_mode_that_is_not_0_1_or_2_is_refused(self, cab, value):
+        """Including the misspelt keyword above (mode=2 arrives as value None):
+        refused, nothing sent, nothing recorded."""
+        result = cab._send_command('set_detection_mode', value=value)
+        assert result['success'] is False and result['refused'] is True
+        assert commands(cab) == []
+        assert cab.desired_state == {}
 
     def test_an_algorithm_one_owl_cannot_run_is_refused_for_the_whole_boom(self, tmp_path):
         """owl-2 has no colour table loaded: nobody is switched to lut."""

@@ -1384,6 +1384,22 @@ class CentralController:
             payload = spray_command(spray)
             self._store_spray(device_id, spray)
 
+        elif action == 'set_detection_mode':
+            # 0 spot, 1 off, 2 blanket (the AI assistant's set_detection
+            # tool). It used to fall through to the generic branch, which
+            # sent it but never recorded it: reconciliation then put the OWLs
+            # back to what the screen last asked for, undoing an "off".
+            try:
+                spray = {0: 'spot', 1: 'off', 2: 'blanket'}[int(value)]
+            except (KeyError, TypeError, ValueError):
+                return {'success': False, 'refused': True,
+                        'error': f'set_detection_mode: {value!r} is not 0, 1 or 2'}
+            if isinstance(value, bool) or (isinstance(value, float) and value != int(value)):
+                return {'success': False, 'refused': True,
+                        'error': f'set_detection_mode: {value!r} is not 0, 1 or 2'}
+            payload = spray_command(spray)
+            self._store_spray(device_id, spray)
+
         elif action == 'hold_spray':
             # Hold to spray: a lease the OWL ends by itself <= 1.5 s after the
             # last renew. Not stored: nothing to restore on reconnect.

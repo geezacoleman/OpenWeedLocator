@@ -19,7 +19,7 @@ import re
 
 import pytest
 
-from agent_fakes import calls, says
+from agent_fakes import calls, says, as_the_cab_sends
 
 TOPIC = {'standalone': 'owl/commands', 'networked': 'owl/owl-1/commands'}
 
@@ -59,6 +59,8 @@ def test_an_agent_made_button_sends_its_command_as_written(agent_app, llm, comma
     assert response.get_json()['success'] is True
     if sent is None:
         sent = {'action': 'shutdown'}
+    if agent_app.kind == 'networked':
+        sent = as_the_cab_sends(sent)
     assert agent_app.published() == [(TOPIC[agent_app.kind], sent)]
 
 
