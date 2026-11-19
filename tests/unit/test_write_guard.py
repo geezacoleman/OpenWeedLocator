@@ -188,3 +188,96 @@ class TestNoRealGpio:
         monkeypatch.delenv('OWL_FAKE_GPIO')
         monkeypatch.setattr(platform, 'platform', lambda *a, **k: 'linux-6.6-rpi-v8-aarch64')
         assert input_manager.is_raspberry_pi() is True
+
+
+# --------------------------------------------------------------------------
+# One way to find the OWL's own folders
+# --------------------------------------------------------------------------
+
+class TestOneWayToFindOwlFolders:
+    """config/, logs/, models/, downloads/, uploads/ and the assistant's
+    folders are found through utils/paths.home_dir, nowhere else. In November
+    2026 half the code used home_dir and half still built the path from its
+    own file location, so the same folder was reached two ways (the
+    active-config pointer was written one way and read the other).
+
+    Code, templates, static files and scripts are found relative to the code:
+    that is not this rule."""
+
+    HOME_FOLDERS = ('config', 'logs', 'models', 'downloads', 'uploads', 'lut_profiles',
+                    'sessions', 'widgets', 'active_config', 'controller.ini', 'geometry.ini',
+                    'fleet.json', '.update_status', '.update_journal', '.update_backup')
+
+    def production_files(self):
+        roots = [REPO_ROOT / 'owl.py', REPO_ROOT / 'version.py']
+        for folder in ('utils', 'controller', 'agent', 'tools', 'desktop'):
+            roots += sorted((REPO_ROOT / folder).rglob('*.py'))
+        return [p for p in roots if p.is_file() and p.name != 'paths.py']
+
+    def test_no_production_code_builds_one_from_its_own_location(self):
+        import re
+        own_location = re.compile(r'__file__')
+        offenders = []
+        for path in self.production_files():
+            lines = path.read_text(encoding='utf-8').splitlines()
+            for number, line in enumerate(lines):
+                code = line.split('#', 1)[0]
+                if not own_location.search(code):
+                    continue
+                # the whole statement: on to the following lines only while
+                # a bracket is still open
+                expression, depth = '', 0
+                window = lines[number:number + 6]
+                for offset, following in enumerate(window):
+                    part = following.split('#', 1)[0]
+                    expression += ' ' + part.lower()
+                    depth += sum(part.count(c) for c in '([{') - sum(part.count(c) for c in ')]}')
+                    carries_on = (offset + 1 < len(window)
+                                  and window[offset + 1].strip().startswith(('/', '+', '.')))
+                    if depth <= 0 and not carries_on:
+                        break
+                named = [f for f in self.HOME_FOLDERS
+                         if re.search(rf"['\"/]{re.escape(f)}", expression)]
+                if named:
+                    offenders.append(f'{path.relative_to(REPO_ROOT)}:{number + 1} ({", ".join(named)}): '
+                                     f'{line.strip()}')
+        assert not offenders, ('use utils.paths.home_dir(...) for these folders:\n  '
+                               + '\n  '.join(offenders))
+
+    def test_the_check_would_catch_the_old_forms(self, tmp_path, monkeypatch):
+        """The scan above, pointed at the three shapes that were in the code."""
+        bad = tmp_path / 'utils'
+        bad.mkdir()
+        (bad / 'a.py').write_text(
+            "from pathlib import Path\nimport os\n"
+            "A = Path(__file__).resolve().parents[1] / 'config' / 'CONTROLLER.ini'\n"
+            "B = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')\n"
+            "C = Path(controller_ini or\n         Path(__file__).resolve().parents[2]\n"
+            "         / 'config' / 'CONTROLLER.ini')\n"
+            "STATIC = os.path.join(os.path.dirname(__file__), 'static')   # code: allowed\n")
+        monkeypatch.setattr(self, 'production_files', lambda: [bad / 'a.py'])
+        import utils.paths as paths
+        monkeypatch.setattr(paths, 'REPO_ROOT', tmp_path)
+        globals_ = self.test_no_production_code_builds_one_from_its_own_location.__globals__
+        monkeypatch.setitem(globals_, 'REPO_ROOT', tmp_path)
+        with pytest.raises(AssertionError) as caught:
+            self.test_no_production_code_builds_one_from_its_own_location()
+        report = str(caught.value)
+        assert 'a.py:3' in report and 'a.py:4' in report and 'a.py:6' in report
+        assert 'a.py:8' not in report
+
+    def test_every_owl_folder_follows_owl_home(self, tmp_path, monkeypatch):
+        """Set OWL_HOME and each of them moves with it, on every call."""
+        monkeypatch.setenv('OWL_HOME', str(tmp_path))
+        for parts in (('config',), ('config', 'CONTROLLER.ini'), ('config', 'active_config.txt'),
+                      ('logs',), ('models',), ('downloads',), ('uploads',), ('agent', 'widgets')):
+            assert home_dir(*parts) == tmp_path.joinpath(*parts)
+
+    def test_the_owl_reads_its_config_and_pointer_from_the_same_home(self, tmp_path, monkeypatch):
+        """The pointer the dashboards write and the file owl.py starts from."""
+        import inspect
+
+        import owl as owl_module
+        source = inspect.getsource(owl_module)
+        assert "ACTIVE_CONFIG_POINTER = home_dir('config', 'active_config.txt')" in source
+        assert "self._config_path = home_dir() / config_file" in source

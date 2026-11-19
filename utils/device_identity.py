@@ -41,10 +41,12 @@ logger = logging.getLogger(__name__)
 _CPUINFO = '/proc/cpuinfo'
 _MACHINE_ID = '/etc/machine-id'
 
+from utils.paths import home_dir
+
 IDENTITY_DIR = Path(os.environ.get('OWL_IDENTITY_DIR', '/etc/owl-identity'))
 IDENTITY_TIERS = ('otp', 'disk', 'none')
 NOKTURA_SERIAL_RE = re.compile(r'^OWL-\d{4}-\d{6}$')
-CONTROLLER_INI = Path(__file__).resolve().parents[1] / 'config' / 'CONTROLLER.ini'
+CONTROLLER_INI = home_dir('config', 'CONTROLLER.ini')
 
 _cached = False
 _serial = None

@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from utils import cloud_provision
+from utils.paths import home_dir
 
 logger = logging.getLogger(__name__)
 
@@ -151,9 +152,7 @@ class FirstBootState:
                                                           DEFAULT_FLAG_PATH))
         self.state_file = Path(state_file or os.environ.get('OWL_FIRSTBOOT_STATE',
                                                             DEFAULT_STATE_FILE))
-        self.controller_ini = Path(controller_ini or
-                                   Path(__file__).resolve().parents[2]
-                                   / 'config' / 'CONTROLLER.ini')
+        self.controller_ini = Path(controller_ini or home_dir('config', 'CONTROLLER.ini'))
         self._timer_factory = timer_factory
         self._system_runner = system_runner or self._default_system_runner
         self._exit_fn = exit_fn or (lambda: os._exit(self._exit_code))

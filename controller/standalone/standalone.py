@@ -2760,15 +2760,9 @@ class OWLDashboard:
 
     def _get_active_config_path(self):
         """Get the active config path from pointer file, or default."""
-        # Try to find config directory relative to this file
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-
-        # Check for pointer file in possible locations
-        pointer_locations = [
-            os.path.join(base_dir, 'config/active_config.txt'),
-            os.path.join(base_dir, '../config/active_config.txt'),
-            os.path.join(base_dir, '../../config/active_config.txt'),
-        ]
+        # One place: the OWL home's config folder (utils/paths.py). It used
+        # to look in three folders relative to this file.
+        pointer_locations = [str(home_dir('config', 'active_config.txt'))]
 
         for pointer_path in pointer_locations:
             if os.path.exists(pointer_path):
@@ -2900,15 +2894,9 @@ class OWLDashboard:
 
     def _resolve_config_path(self, relative_path):
         """Resolve a relative config path to absolute."""
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-
-        # Try multiple possible locations
-        possible_paths = [
-            os.path.join(base_dir, relative_path),
-            os.path.join(base_dir, '..', relative_path),
-            os.path.join(base_dir, '..', '..', relative_path),
-            os.path.join(base_dir, relative_path.replace('config/', '../config/')),
-        ]
+        # 'config/NAME.ini' under the OWL home (utils/paths.py); an absolute
+        # path is used as given
+        possible_paths = [str(home_dir() / relative_path)]
 
         for path in possible_paths:
             normalized = os.path.normpath(path)
@@ -2920,13 +2908,7 @@ class OWLDashboard:
 
     def _get_config_dir(self):
         """Find the config directory."""
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-
-        possible_dirs = [
-            os.path.join(base_dir, 'config'),
-            os.path.join(base_dir, '..', 'config'),
-            os.path.join(base_dir, '..', '..', 'config'),
-        ]
+        possible_dirs = [str(home_dir('config'))]
 
         for config_dir in possible_dirs:
             normalized = os.path.normpath(config_dir)

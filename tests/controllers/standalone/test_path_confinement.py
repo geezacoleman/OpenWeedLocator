@@ -139,8 +139,8 @@ class TestConfigRoutes:
         config_dir.mkdir()
         (config_dir / 'CONTROLLER.ini').write_text('[Security]\ndevice_token = secret\n')
         (config_dir / 'active_config.txt').write_text('config/CONTROLLER.ini')
-        # _get_active_config_path finds the pointer next to the module file
-        monkeypatch.setattr(sa_mod, '__file__', str(tmp_path / 'standalone.py'))
+        # _get_active_config_path finds the pointer in the OWL home's config/
+        monkeypatch.setenv('OWL_HOME', str(tmp_path))
         dashboard._get_config_dir = lambda: str(config_dir)
         # The fixture swaps in its own reader; test the real one.
         read_pointer = sa_mod.OWLDashboard._get_active_config_path

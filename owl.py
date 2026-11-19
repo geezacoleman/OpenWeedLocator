@@ -179,7 +179,11 @@ class Owl:
         self._log_system_info()
 
         # read the config file
-        self._config_path = Path(__file__).parent / config_file
+        # Relative names ('config/GENERAL_CONFIG.ini', the active-config
+        # pointer's value, a relative --config) are under the OWL home, which
+        # on a unit is this folder. An absolute path is used as given.
+        from utils.paths import home_dir
+        self._config_path = home_dir() / config_file
         try:
             self.config = ConfigValidator.load_and_validate_config(self._config_path)
         except errors.OWLConfigError as e:
@@ -3290,7 +3294,8 @@ if __name__ == "__main__":
     # Determine which config file to use
     # Priority: 1) --config argument, 2) active_config.txt pointer, 3) default
     DEFAULT_CONFIG = 'config/GENERAL_CONFIG.ini'
-    ACTIVE_CONFIG_POINTER = Path(__file__).parent / 'config/active_config.txt'
+    from utils.paths import home_dir
+    ACTIVE_CONFIG_POINTER = home_dir('config', 'active_config.txt')
 
     config_file = DEFAULT_CONFIG
 
@@ -3306,7 +3311,7 @@ if __name__ == "__main__":
                 logger.warning(f"Active config {active_config!r} is not a detection profile, using default")
             elif active_config:
                 # Verify the config file exists
-                active_path = Path(__file__).parent / active_config
+                active_path = home_dir() / active_config
                 if active_path.exists():
                     config_file = active_config
                     logger.info(f"Using active config from dashboard: {config_file}")
