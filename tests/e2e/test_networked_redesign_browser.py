@@ -30,6 +30,10 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+# Nothing this script runs may write into the checkout (tests/sandbox_home.py)
+sys.path.insert(0, str(REPO / 'tests'))
+import sandbox_home  # noqa: E402
+sandbox_home.use()
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / 'controller' / 'networked'))
 sys.path.insert(0, str(REPO / 'tests' / 'e2e'))
@@ -44,6 +48,7 @@ SENT = []
 VIEWPORTS = ((1024, 600, '7in'), (1280, 720, 'td2'), (1280, 800, 'hmi'))
 PANELS = ('colour', 'ai', 'camera', 'collection', 'profiles', 'spraying', 'nozzles', 'noktura', 'maint', 'assistant')
 STATES = {}
+CTRL = {}
 
 
 def owl(device_id, **extra):
@@ -85,6 +90,10 @@ def build_app():
     }
     ctrl.owls_state = states
     STATES.update(states)
+    # Never the real CONTROLLER.ini: the nozzle distance check saves to it
+    import tempfile
+    ctrl.config_file = Path(tempfile.mkdtemp(prefix='owl_e2e_')) / 'CONTROLLER.ini'
+    CTRL['ctrl'] = ctrl
     ctrl.mqtt_connected = True
 
     def send(device_id, action, value=None):
@@ -270,6 +279,44 @@ def run_checks():
             if errors:
                 problems.append(f'{name}: JS errors {errors}')
             page.close()
+        # Nozzle distance never entered on a rig with controller GPS: asked
+        # in a pop-up, but never over OWLs that are spraying
+        ctrl = CTRL['ctrl']
+        from unittest.mock import MagicMock
+        ctrl.gps_manager = MagicMock()
+        ctrl.gps_manager.get_state.return_value = {
+            'fix': {'speed_kmh': 0.0, 'fix_valid': True, 'latitude': -33.8, 'longitude': 151.0},
+            'connection': {}}
+        ctrl.mqtt_client = MagicMock()
+        ctrl._actuation_broadcast_once()
+        page = browser.new_page(viewport={'width': 1024, 'height': 600})
+        page.goto(BASE_URL + '/')
+        page.wait_for_selector('#view-field [data-rail] [data-owl="owl-3"]', timeout=8000)
+        page.wait_for_timeout(2500)
+        if page.query_selector('#nozzleDistanceSheet'):
+            problems.append('nozzle distance pop-up shown while OWLs are spraying')
+        if 'Nozzle distance not set' not in page.inner_text('#fieldNotices'):
+            problems.append('Dashboard does not warn that the nozzle distance is unset')
+        for oid in ('owl-1', 'owl-2'):
+            STATES[oid]['detection_enable'] = False
+        try:
+            page.wait_for_selector('#nozzleDistanceSheet', timeout=8000)
+            shot(page, 'nozzle_distance_popup_7in')
+            check_screen(page, 'nozzle distance pop-up', problems)
+            for _ in range(12):
+                page.click('#nozzleDistanceSheet button[aria-label="More"]')
+            page.click('#nozzleDistanceSheet [data-a="yes"]')
+            page.wait_for_timeout(1500)
+            if ctrl.actuation_calculator.offset_cm != 42.0 or ctrl.offset_configured is not True:
+                problems.append(f'pop-up Save left offset at {ctrl.actuation_calculator.offset_cm}, '
+                                f'configured={ctrl.offset_configured}')
+            if 'offset_cm = 42' not in ctrl.config_file.read_text():
+                problems.append('pop-up Save did not write the nozzle distance to the controller config')
+            page.wait_for_timeout(2500)
+            if 'Nozzle distance not set' in page.inner_text('#fieldNotices'):
+                problems.append('Dashboard still warns after the nozzle distance was saved')
+        except Exception as e:
+            problems.append(f'nozzle distance pop-up: {e}')
         browser.close()
 
     if problems:

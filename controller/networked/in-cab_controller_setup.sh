@@ -202,7 +202,8 @@ _validate_ip() {
   # Octet range check 0..255
   IFS='.' read -r a b c d <<<"$ip"
   for o in "$a" "$b" "$c" "$d"; do
-    if (( o < 0 || o > 255 )); then
+    # 10#: a leading zero (192.168.008.1) would be read as octal and fail
+    if (( 10#$o < 0 || 10#$o > 255 )); then
       return 1
     fi
   done
@@ -1045,6 +1046,11 @@ configure_network() {
         nmcli con up "${CON_NAME}" || true
         check_status "Ethernet configuration" "WIFI_CONNECT"
     fi
+
+    # Wired Ethernet keeps a profile that connects by itself in Wi-Fi mode
+    # too: it is the way into the controller when Wi-Fi is not.
+    bash "${SCRIPT_DIR}/../../tools/ensure_wired.sh" || \
+        echo -e "${ORANGE}[WARNING] Wired Ethernet has no working profile (bash tools/ensure_wired.sh)${NC}"
 }
 
 # Step 11b: Configure sudoers for passwordless shutdown/reboot/apt

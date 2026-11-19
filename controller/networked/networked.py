@@ -42,7 +42,9 @@ from utils.config_manager import (
     write_ini_section,
 )
 # Shared with OWLs that time themselves from their own GPS
-from utils.actuation import GPS_STALE_AFTER_S, SpeedAverager, ActuationCalculator
+from utils.shared_types import parse_switch
+from utils.paths import home_dir
+from utils.actuation import GPS_STALE_AFTER_S, SpeedAverager, ActuationCalculator, clamp_geometry
 from utils.session_metadata import (clean_session_metadata, CAPTURE_PARAM_KEYS, COLLECT_CAPTURE_DEFAULTS,
                                     COLLECT_LANGUAGES, capture_settings_from, coerce_capture_value,
                                     ini_value, last_pick_values, load_last_pick, presets_from_config,
@@ -97,13 +99,13 @@ logger = logging.getLogger(__name__)
 SHARED_DIR = os.path.join(os.path.dirname(__file__), '..', 'shared')
 
 # Model management constants
-UPLOADS_DIR = Path(__file__).parent.parent.parent / 'uploads'
+UPLOADS_DIR = home_dir('uploads')
 ALLOWED_MODEL_EXTENSIONS = {'pt', 'zip'}
 PROTECTED_MODEL_FILES = set()  # .gitignore protected by secure_filename stripping dots
 MAX_ZIP_UNCOMPRESSED_SIZE = 500 * 1024 * 1024  # 500MB zip bomb guard
 
 # Downloads staging directory
-DOWNLOADS_DIR = Path(__file__).parent.parent.parent / 'downloads'
+DOWNLOADS_DIR = home_dir('downloads')
 DOWNLOADS_DIR.mkdir(exist_ok=True)
 MAX_DOWNLOADS_SIZE_MB = 2000  # 2GB default staging quota
 
@@ -213,7 +215,7 @@ class CentralController:
 
     def __init__(self, config_file=None):
         if config_file is None:
-            config_file = Path(__file__).parent.parent.parent / 'config' / 'CONTROLLER.ini'
+            config_file = home_dir('config', 'CONTROLLER.ini')
         self.config_file = Path(config_file)
         self.config = self._load_config(config_file)
 
@@ -282,8 +284,15 @@ class CentralController:
             offset_cm=self.config.getfloat('Actuation', 'offset_cm', fallback=30.0),
             fallback_duration=self.config.getfloat('Actuation', 'actuation_duration', fallback=0.15),
             fallback_delay=self.config.getfloat('Actuation', 'delay', fallback=0.0),
+            min_speed_kmh=self.config.getfloat('Actuation', 'min_speed_kmh',
+                                               fallback=ActuationCalculator.MIN_SPEED),
         )
+        # False while the nozzle distance is still the 30 cm default nobody
+        # entered; the Spraying panel and the Dashboard say so
+        self.offset_configured = self.config.has_option('Actuation', 'offset_cm')
         self._actuation_state = {
+            'offset_configured': self.offset_configured,
+            'gps_enabled': self.gps_manager is not None,
             'speed_kmh': 0.0,
             'actuation_duration': self.actuation_calculator.fallback_duration,
             'delay': self.actuation_calculator.fallback_delay,
@@ -571,6 +580,16 @@ class CentralController:
                 else:
                     was_connected = self.owls_state[device_id].get('connected', False)
                     if not was_connected:
+                        # A heartbeat within 5 s of this OWL's last will was
+                        # already in flight when it died. It is dropped: it
+                        # used to mark the OWL connected and use up the
+                        # rejoin, so an OWL back within the 15 s offline
+                        # timeout never had recording, model or tracking
+                        # pushed to it again.
+                        if (topic_type != 'status'
+                                and current_time - self.lwt_timestamps.get(device_id, 0) <= 5):
+                            logger.debug(f"Ignored stale heartbeat from {device_id} (just went offline)")
+                            return
                         is_reconnect = True
 
                 # Merge payload into state
@@ -617,19 +636,14 @@ class CentralController:
             except Exception as e:
                 logger.error(f"Fleet roster update failed: {e}")
 
-            # Push desired state on reconnect (outside lock to avoid deadlock)
-            # Skip if device was marked offline by LWT within 5s — that's a
-            # stale in-flight heartbeat, not a real reconnect (Pi boot takes 10-30s)
+            # Push desired state on reconnect (outside lock to avoid deadlock).
+            # Stale heartbeats just after a last will never get this far.
             if is_reconnect:
                 # Back after a restart: camera changes made before it now apply
                 collect = getattr(self, 'collect', None)
                 if collect is not None:
                     collect.camera_restart.discard(device_id)
-                lwt_time = self.lwt_timestamps.get(device_id, 0)
-                if current_time - lwt_time > 5:
-                    self._push_desired_state(device_id)
-                else:
-                    logger.debug(f"Suppressed reconnect push for {device_id}: LWT grace period")
+                self._push_desired_state(device_id)
 
             logger.debug(f"Updated {device_id} ({topic_type})")
 
@@ -912,97 +926,105 @@ class CentralController:
         """Broadcast computed actuation params to all connected OWLs every 1s."""
         while True:
             try:
-                # Read speed from GPS manager
-                speed_kmh = None
-                gps_status = 'no_gps'
-                fix = None
-
-                if self.gps_manager:
-                    gps_state = self.gps_manager.get_state()
-                    fix = gps_state.get('fix', {})
-                    conn = gps_state.get('connection', {})
-
-                    # GPSState drops a speed older than 3 s or without a valid
-                    # fix; fix_valid is checked here too so a source that
-                    # reports speed on its own can't time the boom from a void fix
-                    if fix.get('speed_kmh') is not None and fix.get('fix_valid'):
-                        raw_speed = fix['speed_kmh']
-                        avg = self.speed_averager.add_sample(raw_speed)
-                        speed_kmh = avg
-                        gps_status = 'active'
-                    else:
-                        # GPS connected but no valid fix. The last good average
-                        # is trustworthy only briefly; past the window the speed
-                        # is genuinely unknown and speed_kmh stays None so
-                        # compute() reverts to the configured duration/delay.
-                        # (Both branches here used to do the same thing, so the
-                        # last speed ever seen was reused indefinitely.)
-                        ssu = self.speed_averager.seconds_since_update()
-                        if ssu is not None and ssu < GPS_STALE_AFTER_S:
-                            speed_kmh = self.speed_averager.get_fallback_speed()
-                            gps_status = 'stale'
-
-                # Compute avg loop time across all OWLs
-                loop_times = []
-                with self.mqtt_lock:
-                    for state in self.owls_state.values():
-                        lt = state.get('avg_loop_time_ms', 0)
-                        if lt > 0:
-                            loop_times.append(lt)
-                avg_loop_time = sum(loop_times) / len(loop_times) if loop_times else 0.0
-
-                # Compute actuation params (duration stretches to cover the
-                # ground travelled between frames)
-                result = self.actuation_calculator.compute(speed_kmh, avg_loop_time)
-
-                # Check coverage
-                coverage = self.actuation_calculator.check_coverage(
-                    speed_kmh, avg_loop_time
-                )
-
-                # Update state
-                self._actuation_state = {
-                    'speed_kmh': round(speed_kmh or 0.0, 2),
-                    'actuation_duration': result['actuation_duration'],
-                    'delay': result['delay'],
-                    'source': result['source'],
-                    'gps_status': gps_status,
-                    'coverage_ok': coverage['coverage_ok'],
-                    'min_gap_cm': coverage['min_gap_cm'],
-                    'coverage_message': coverage['message'],
-                    'actuation_length_cm': self.actuation_calculator.actuation_length_cm,
-                    'offset_cm': self.actuation_calculator.offset_cm,
-                    'avg_loop_time_ms': round(avg_loop_time, 1),
-                }
-
-                # Broadcast to all connected OWLs
-                if self.mqtt_client and self.mqtt_connected:
-                    # Geometry and speed are additive: an OWL timing itself from
-                    # its own GPS keeps its duration/delay but adopts the
-                    # geometry set here, and uses the speed for its warning.
-                    payload = json.dumps({
-                        'action': 'set_actuation_params',
-                        'actuation_duration': result['actuation_duration'],
-                        'delay': result['delay'],
-                        'source': result['source'],
-                        'actuation_length_cm': self.actuation_calculator.actuation_length_cm,
-                        'offset_cm': self.actuation_calculator.offset_cm,
-                        'speed_kmh': round(speed_kmh, 2) if speed_kmh is not None else None,
-                    })
-                    with self.mqtt_lock:
-                        for owl_id, state in self.owls_state.items():
-                            if state.get('connected', False):
-                                topic = f"owl/{owl_id}/commands"
-                                self.mqtt_client.publish(topic, payload)
-
-                # Broadcast GPS position so OWLs can embed it in image EXIF
-                self._broadcast_gps_to_owls(fix)
-
+                self._actuation_broadcast_once()
                 time.sleep(1.0)
-
             except Exception as e:
                 logger.error(f"Error in actuation broadcast loop: {e}")
                 time.sleep(2.0)
+
+    def _actuation_broadcast_once(self):
+        """One pass of the loop: controller GPS speed -> spray timing ->
+        every connected OWL."""
+        # Read speed from GPS manager
+        speed_kmh = None
+        raw_speed = None
+        gps_status = 'no_gps'
+        fix = None
+
+        if self.gps_manager:
+            gps_state = self.gps_manager.get_state()
+            fix = gps_state.get('fix', {})
+            conn = gps_state.get('connection', {})
+
+            # GPSState drops a speed older than 3 s or without a valid
+            # fix; fix_valid is checked here too so a source that
+            # reports speed on its own can't time the boom from a void fix
+            if fix.get('speed_kmh') is not None and fix.get('fix_valid'):
+                raw_speed = fix['speed_kmh']
+                avg = self.speed_averager.add_sample(raw_speed)
+                speed_kmh = avg
+                gps_status = 'active'
+            else:
+                # GPS connected but no valid fix. The last good average
+                # is trustworthy only briefly; past the window the speed
+                # is genuinely unknown and speed_kmh stays None so
+                # compute() reverts to the configured duration/delay.
+                # (Both branches here used to do the same thing, so the
+                # last speed ever seen was reused indefinitely.)
+                ssu = self.speed_averager.seconds_since_update()
+                if ssu is not None and ssu < GPS_STALE_AFTER_S:
+                    speed_kmh = self.speed_averager.get_fallback_speed()
+                    gps_status = 'stale'
+
+        # Compute avg loop time across all OWLs
+        loop_times = []
+        with self.mqtt_lock:
+            for state in self.owls_state.values():
+                lt = state.get('avg_loop_time_ms', 0)
+                if lt > 0:
+                    loop_times.append(lt)
+        avg_loop_time = sum(loop_times) / len(loop_times) if loop_times else 0.0
+
+        # Compute actuation params (duration stretches to cover the
+        # ground travelled between frames)
+        result = self.actuation_calculator.compute(speed_kmh, avg_loop_time,
+                                                   sample_kmh=raw_speed)
+
+        # Check coverage
+        coverage = self.actuation_calculator.check_coverage(
+            speed_kmh, avg_loop_time
+        )
+
+        # Update state
+        self._actuation_state = {
+            'speed_kmh': round(speed_kmh or 0.0, 2),
+            'actuation_duration': result['actuation_duration'],
+            'delay': result['delay'],
+            'source': result['source'],
+            'gps_status': gps_status,
+            'coverage_ok': coverage['coverage_ok'],
+            'min_gap_cm': coverage['min_gap_cm'],
+            'coverage_message': coverage['message'],
+            'actuation_length_cm': self.actuation_calculator.actuation_length_cm,
+            'offset_cm': self.actuation_calculator.offset_cm,
+            'offset_configured': self.offset_configured,
+            'gps_enabled': self.gps_manager is not None,
+            'avg_loop_time_ms': round(avg_loop_time, 1),
+        }
+
+        # Broadcast to all connected OWLs
+        if self.mqtt_client and self.mqtt_connected:
+            # Geometry and speed are additive: an OWL timing itself from
+            # its own GPS keeps its duration/delay but adopts the
+            # geometry set here, and uses the speed for its warning.
+            payload = json.dumps({
+                'action': 'set_actuation_params',
+                'actuation_duration': result['actuation_duration'],
+                'delay': result['delay'],
+                'source': result['source'],
+                'actuation_length_cm': self.actuation_calculator.actuation_length_cm,
+                'offset_cm': self.actuation_calculator.offset_cm,
+                'offset_configured': self.offset_configured,
+                'speed_kmh': round(speed_kmh, 2) if speed_kmh is not None else None,
+            })
+            with self.mqtt_lock:
+                for owl_id, state in self.owls_state.items():
+                    if state.get('connected', False):
+                        topic = f"owl/{owl_id}/commands"
+                        self.mqtt_client.publish(topic, payload)
+
+        # Broadcast GPS position so OWLs can embed it in image EXIF
+        self._broadcast_gps_to_owls(fix)
 
     def _broadcast_gps_to_owls(self, fix):
         """Publish the current GPS fix to owl/{id}/gps for all connected OWLs.
@@ -1137,7 +1159,7 @@ class CentralController:
 
     def list_local_presets(self):
         """List INI config files in the config/ directory"""
-        config_dir = Path(__file__).parent.parent.parent / 'config'
+        config_dir = home_dir('config')
         presets = []
         if config_dir.exists():
             for ini_file in sorted(config_dir.glob('*.ini')):
@@ -1154,7 +1176,7 @@ class CentralController:
 
     def read_preset(self, filename):
         """Read a preset INI file and return as dict"""
-        config_dir = Path(__file__).parent.parent.parent / 'config'
+        config_dir = home_dir('config')
         config_path = config_dir / filename
 
         if not config_path.exists():
@@ -1244,8 +1266,13 @@ class CentralController:
         return {'success': True, 'message': f'Sent to {len(sent_to)} OWLs'}
 
     def set_detection_enable(self, value):
-        """Tool-compatible detection toggle."""
-        return self.send_command('all', 'toggle_detection', bool(value))
+        """Tool-compatible detection toggle. True/False only: None here
+        would toggle, which no tool call means."""
+        try:
+            value = parse_switch(value)
+        except ValueError as e:
+            return {'success': False, 'error': f'set_detection_enable: {e}', 'refused': True}
+        return self.send_command('all', 'toggle_detection', value)
 
     def set_sensitivity_level(self, level):
         """Tool-compatible sensitivity setter."""
@@ -1323,6 +1350,17 @@ class CentralController:
             if reason:
                 return {'success': False, 'error': reason, 'refused': True}
 
+        # On/off commands: a value that is not clearly on or off is refused
+        # (the string "false" used to count as on and started spraying).
+        # None still means "toggle" where the action supports it.
+        if action in ('toggle_detection', 'toggle_recording', 'set_recording_paused') and value is not None:
+            try:
+                value = parse_switch(value)
+            except ValueError as e:
+                return {'success': False, 'error': f'{action}: {e}', 'refused': True}
+        if action == 'set_recording_paused' and value is None:
+            return {'success': False, 'error': 'set_recording_paused needs true or false', 'refused': True}
+
         # Build payload
         payload = {'action': action}
 
@@ -1348,6 +1386,22 @@ class CentralController:
         elif action == 'toggle_all_nozzles':
             # Blanket on/off, for the OWL asked (it used to set the fleet)
             spray = 'blanket' if value else 'off'
+            payload = spray_command(spray)
+            self._store_spray(device_id, spray)
+
+        elif action == 'set_detection_mode':
+            # 0 spot, 1 off, 2 blanket (the AI assistant's set_detection
+            # tool). It used to fall through to the generic branch, which
+            # sent it but never recorded it: reconciliation then put the OWLs
+            # back to what the screen last asked for, undoing an "off".
+            try:
+                spray = {0: 'spot', 1: 'off', 2: 'blanket'}[int(value)]
+            except (KeyError, TypeError, ValueError):
+                return {'success': False, 'refused': True,
+                        'error': f'set_detection_mode: {value!r} is not 0, 1 or 2'}
+            if isinstance(value, bool) or (isinstance(value, float) and value != int(value)):
+                return {'success': False, 'refused': True,
+                        'error': f'set_detection_mode: {value!r} is not 0, 1 or 2'}
             payload = spray_command(spray)
             self._store_spray(device_id, spray)
 
@@ -1691,7 +1745,7 @@ app.register_blueprint(support_bundle.create_support_blueprint(
 widget_manager = None
 try:
     from agent.widget_manager import WidgetManager
-    widget_manager = WidgetManager(str(Path(__file__).parent.parent.parent / 'agent' / 'widgets'))
+    widget_manager = WidgetManager(str(home_dir('agent', 'widgets')))
 except Exception as e:
     logger.warning(f"Widget system unavailable: {e}")
 
@@ -1701,7 +1755,7 @@ try:
     from agent import ToolRegistry, AgentEngine
     _registry = ToolRegistry(developer_mode=False)
     _registry.discover()
-    _sessions_dir = str(Path(__file__).parent.parent.parent / 'agent' / 'sessions')
+    _sessions_dir = str(home_dir('agent', 'sessions'))
     agent_engine = AgentEngine(
         tool_registry=_registry,
         context={'mqtt_client': controller, 'config': controller.config, 'widget_manager': widget_manager},
@@ -2730,7 +2784,7 @@ def get_sensitivity_presets():
 def list_config_library():
     """List all config files (presets + custom saved) — mirrors standalone /api/config/list"""
     try:
-        config_dir = Path(__file__).parent.parent.parent / 'config'
+        config_dir = home_dir('config')
         configs = []
         protected = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini']
 
@@ -2785,7 +2839,7 @@ def save_to_config_library():
         else:
             safe_name = build_config_filename(display_name, data.get('filename'), timestamp)
 
-        config_dir = Path(__file__).parent.parent.parent / 'config'
+        config_dir = home_dir('config')
         new_config_path = config_dir / safe_name
 
         # Don't allow overwriting protected/infrastructure configs
@@ -2841,7 +2895,7 @@ def delete_from_config_library(name):
         if name in protected or name.endswith('_TEMPLATE.ini'):
             return jsonify({'success': False, 'error': 'Cannot delete default configs'}), 400
 
-        config_dir = Path(__file__).parent.parent.parent / 'config'
+        config_dir = home_dir('config')
         config_path = config_dir / name
 
         # Security: only allow files in config directory
@@ -3019,28 +3073,44 @@ def api_actuation():
 
 @app.route('/api/actuation/config', methods=['POST'])
 def api_actuation_config():
-    """Update actuation geometry (length_cm, offset_cm) at runtime."""
+    """Set the ground geometry for travel timing: spray length and the
+    nozzle distance behind the camera. Applied at once, broadcast to the
+    OWLs on the next pass, and saved to [Actuation] so a restart keeps it
+    (until 3.27.2 a restart put both back to their defaults)."""
     data = request.json or {}
     calc = controller.actuation_calculator
 
-    if 'actuation_length_cm' in data:
-        try:
-            val = float(data['actuation_length_cm'])
-            calc.actuation_length_cm = max(2.0, min(50.0, val))
-        except (ValueError, TypeError):
-            return jsonify({'success': False, 'error': 'Invalid actuation_length_cm'}), 400
+    changed = {}
+    for key in ('actuation_length_cm', 'offset_cm'):
+        if key in data:
+            try:
+                changed[key] = clamp_geometry(key, data[key])
+            except (ValueError, TypeError):
+                return jsonify({'success': False, 'error': f'Invalid {key}'}), 400
 
-    if 'offset_cm' in data:
+    for key, value in changed.items():
+        setattr(calc, key, value)
+    if 'offset_cm' in changed:
+        controller.offset_configured = True
+    controller._actuation_state.update(
+        actuation_length_cm=calc.actuation_length_cm, offset_cm=calc.offset_cm,
+        offset_configured=controller.offset_configured)
+
+    saved = True
+    if changed:
         try:
-            val = float(data['offset_cm'])
-            calc.offset_cm = max(0.0, min(100.0, val))
-        except (ValueError, TypeError):
-            return jsonify({'success': False, 'error': 'Invalid offset_cm'}), 400
+            write_ini_section(controller.config_file, 'Actuation',
+                              {k: f'{v:g}' for k, v in changed.items()})
+        except OSError as e:
+            saved = False
+            logger.error(f"Could not save [Actuation] to {controller.config_file}: {e}")
 
     return jsonify({
         'success': True,
+        'saved': saved,
         'actuation_length_cm': calc.actuation_length_cm,
-        'offset_cm': calc.offset_cm
+        'offset_cm': calc.offset_cm,
+        'offset_configured': controller.offset_configured,
     })
 
 

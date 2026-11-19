@@ -114,6 +114,8 @@ def test_recording_saves_images(owl_factory, config_factory, input_dir, tmp_path
     # nothing can turn detection on (decided behaviour, see below).
     if (controller, dash) != ('ute', 'none'):
         assert fired, 'detection on: the green blob must fire a relay'
+    else:
+        assert fired == [], 'a recording-switch Ute with no dashboard sprayed'
     images = saved_images(tmp_path)
     assert images, f'{controller} + {dash}: recording on but no image was saved'
     if instance.dash:

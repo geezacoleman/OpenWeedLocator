@@ -342,11 +342,10 @@ class TestPathTraversal:
         resp = client.post('/api/models/upload', data={
             'file': (io.BytesIO(b'x'), '../../../etc/passwd.pt')
         }, content_type='multipart/form-data')
-        # secure_filename strips ../ so this becomes etc_passwd.pt
-        # which should still succeed but be sanitized
-        if resp.status_code == 200:
-            result = resp.get_json()
-            assert '..' not in result.get('filename', '')
+        # secure_filename strips ../ : the file lands inside the library
+        # under a flattened name, never outside it
+        assert resp.status_code == 200, resp.get_json()
+        assert resp.get_json()['filename'] == 'etc_passwd.pt'
 
     def test_download_path_traversal(self, model_test_client):
         client, _, _ = model_test_client
@@ -367,17 +366,12 @@ class TestPathTraversal:
 @pytest.mark.unit
 class TestOWLDownloadHandler:
 
-    def test_download_handler_saves_file(self, mqtt_publisher, tmp_path):
+    def test_download_handler_saves_file(self, mqtt_publisher, tmp_path, monkeypatch):
         """Test that _download_model saves a file correctly."""
         test_data = b'fake model data for testing'
         expected_sha = hashlib.sha256(test_data).hexdigest()
 
-        # Redirect models_dir by temporarily changing the module's __file__
-        import utils.mqtt_manager as mm_mod
-        original_file = mm_mod.__file__
-        fake_utils = os.path.join(str(tmp_path), 'utils')
-        os.makedirs(fake_utils, exist_ok=True)
-        mm_mod.__file__ = os.path.join(fake_utils, 'mqtt_manager.py')
+        monkeypatch.setenv('OWL_HOME', str(tmp_path))
 
         try:
             with patch('urllib.request.urlopen') as mock_urlopen, \
@@ -394,39 +388,31 @@ class TestOWLDownloadHandler:
                     is_archive=False
                 )
         finally:
-            mm_mod.__file__ = original_file
+            pass
 
-        assert mqtt_publisher.state['model_download']['status'] in ('complete', 'error')
+        assert mqtt_publisher.state['model_download']['status'] == 'complete'
         # Verify file was written to tmp_path, not project models/
         assert os.path.exists(os.path.join(str(tmp_path), 'models', 'test.pt'))
 
-    def test_download_handler_checksum_fail(self, mqtt_publisher, tmp_path):
-        """Test that bad SHA256 results in error state."""
+    def test_download_handler_checksum_fail(self, mqtt_publisher, owl_home):
+        """A bad SHA256 ends in the error state and leaves no model behind."""
         test_data = b'fake model data'
 
-        import utils.mqtt_manager as mm_mod
-        original_file = mm_mod.__file__
-        fake_utils = os.path.join(str(tmp_path), 'utils')
-        os.makedirs(fake_utils, exist_ok=True)
-        mm_mod.__file__ = os.path.join(fake_utils, 'mqtt_manager.py')
+        with patch('urllib.request.urlopen') as mock_urlopen, \
+             patch.object(mqtt_publisher, '_list_available_models', return_value=[]):
+            mock_resp = MagicMock()
+            mock_resp.read.side_effect = [test_data, b'']
+            mock_resp.headers = {'Content-Length': str(len(test_data))}
+            mock_urlopen.return_value = mock_resp
 
-        try:
-            with patch('urllib.request.urlopen') as mock_urlopen, \
-                 patch.object(mqtt_publisher, '_list_available_models', return_value=[]):
-                mock_resp = MagicMock()
-                mock_resp.read.side_effect = [test_data, b'']
-                mock_resp.headers = {'Content-Length': str(len(test_data))}
-                mock_urlopen.return_value = mock_resp
+            mqtt_publisher._download_model(
+                url='https://controller/api/models/download/test.pt',
+                filename='test.pt',
+                expected_sha256='wrong_hash_value',
+                is_archive=False
+            )
 
-                mqtt_publisher._download_model(
-                    url='https://controller/api/models/download/test.pt',
-                    filename='test.pt',
-                    expected_sha256='wrong_hash_value',
-                    is_archive=False
-                )
-        finally:
-            mm_mod.__file__ = original_file
-
+        assert not (owl_home / 'models' / 'test.pt').exists(), 'a model that failed its hash was kept'
         assert mqtt_publisher.state['model_download']['status'] == 'error'
         assert 'mismatch' in mqtt_publisher.state['model_download']['error'].lower()
 

@@ -120,11 +120,24 @@ class SensitivityManager:
         # min-area component still takes effect (owl.py uses the percent key)
         if self.PERCENT_KEY not in values and self.LEGACY_PX_KEY in values:
             try:
-                res = getattr(owl_instance, 'resolution', None) or (416, 320)
-                area = res[0] * res[1]
+                # Of the frame the detector sees. At boot that is not known
+                # yet (owl.py converts again once it is, from _legacy_min_px);
+                # the 416x320 fallback alone made 2000 px into 7400 px at 832x640.
+                area = (getattr(owl_instance, 'cropped_width', 0) or 0) * (
+                    getattr(owl_instance, 'cropped_height', 0) or 0)
+                if not isinstance(area, (int, float)) or area <= 0:
+                    res = getattr(owl_instance, 'resolution', None) or (416, 320)
+                    area = res[0] * res[1]
                 values[self.PERCENT_KEY] = max(0.0005, min(
                     5.0, values[self.LEGACY_PX_KEY] / area * 100))
+                owl_instance._legacy_min_px = values[self.LEGACY_PX_KEY]
             except (TypeError, IndexError, ZeroDivisionError):
+                pass
+        elif self.PERCENT_KEY in values:
+            # a preset with the percent key replaces any px minimum
+            try:
+                owl_instance._legacy_min_px = None
+            except AttributeError:
                 pass
 
         for key, val in values.items():

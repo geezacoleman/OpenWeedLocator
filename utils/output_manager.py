@@ -21,6 +21,14 @@ def get_platform_config() -> tuple[bool, Optional[Exception]]:
     system_platform = platform.platform().lower()
     is_raspberry_pi = 'rpi' in system_platform or 'aarch' in system_platform
 
+    # OWL_FAKE_GPIO=1: never touch a pin, whatever the board. The test suite
+    # sets it (tests/conftest.py): on a real Pi the tests used to drive the
+    # real relay pins, and the first Owl built kept BOARD7 so every later one
+    # failed with GPIOPinInUse (104 of 105 failed on a CM5, 2026-11-19).
+    if os.environ.get('OWL_FAKE_GPIO', '').strip() == '1':
+        logger.warning("OWL_FAKE_GPIO=1: GPIO disabled. Test mode active.")
+        return True, None
+
     if is_raspberry_pi:
         from gpiozero import Buzzer, OutputDevice, LED
         import lgpio
@@ -1045,6 +1053,14 @@ class RelayController:
                 switch(False)
 
     def stop(self):
+        # Every nozzle off first. A blanket, a hold or a nozzle test was left
+        # energised here (the consumers only close what they opened); Owl.stop()
+        # happened to cover it with its own all-off.
+        try:
+            self.stop_test(notify=False)
+            self.set_mode(MODE_OFF)
+        except Exception as e:
+            self.logger.error(f"Could not switch the nozzles off on stop: {e}")
         self.running = False
         if self._test_timer:
             self._test_timer.cancel()

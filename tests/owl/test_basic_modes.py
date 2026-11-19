@@ -140,7 +140,8 @@ def test_show_display_falls_back_without_gui(owl_factory, config_factory, input_
                            input_file_or_directory=str(input_dir))
 
     assert instance.show_display is False
-    assert run_hoot(instance) is not None
+    run_hoot(instance)
+    assert instance.cam.remaining == 0, 'the loop did not run to the end of the footage'
 
 
 def test_headless_loop_never_calls_waitkey(owl_factory, config_factory, input_dir,
@@ -202,7 +203,9 @@ def test_hardware_controller_without_dashboard(owl_factory, config_factory, inpu
     # No switch closed off-Pi: detection and recording both start off, and
     # the state thread mirrors the shared Values rather than a dashboard.
     assert bool(instance.detection_enable.value) is False
-    assert run_hoot(instance) is not None
+    # ... so the loop runs every frame and nothing sprays
+    assert run_hoot(instance) == []
+    assert instance.cam.remaining == 0
 
 
 def test_advanced_controller_update_state_without_gpio():
@@ -428,53 +431,9 @@ def test_two_weeds_fire_exactly_their_two_relays(owl_factory, config_factory, in
     assert fired == {0, last}, f'expected only the outer lanes, got {fired}'
 
 
-def test_delay_is_reduced_by_processing_time(owl_factory, config_factory, input_dir):
-    """The camera-to-nozzle delay counts from frame capture, so the relays get
-    what is left of it after processing; duration is never shortened."""
-    config = config_factory(overrides=[('DataCollection', 'detection_enable', 'True'),
-                                       ('System', 'actuation_duration', '0.15'),
-                                       ('System', 'delay', '0.2')])
-    instance = owl_factory(config, input_file_or_directory=str(input_dir))
-
-    fired = run_hoot(instance)
-    assert fired, 'a green blob should actuate a relay'
-    for call in fired:
-        assert 0.0 <= call['delay'] < 0.2
-        assert call['duration'] == pytest.approx(0.15, abs=1e-6)
-    assert instance._latency_s, 'capture-to-relay latency was not measured'
-
-
-def test_spray_window_delivers_the_full_configured_duration(owl_factory, config_factory,
-                                                            input_dir):
-    """delay and duration reach the relay controller unchanged, and the window
-    the scheduler commits to is the full configured duration.
-
-    NOTE: this cannot by itself catch an actuation timestamp anchored too far
-    back. The margin it measures is one loop time, which on a development
-    machine with small test frames is a couple of milliseconds - well inside any
-    sane tolerance. The decisive tests for that are
-    TestStaleAnchorCost in tests/test_output_manager.py, which drive receive()
-    with a known lag and are independent of how fast the machine is.
-    """
-    config = config_factory(overrides=[('DataCollection', 'detection_enable', 'True'),
-                                       ('System', 'actuation_duration', '0.15'),
-                                       ('System', 'delay', '0')])
-    instance = owl_factory(config, input_file_or_directory=str(input_dir))
-
-    fired = run_hoot(instance)
-    assert fired, 'a green blob should actuate a relay'
-
-    for call in fired:
-        assert call['delay'] == 0
-        assert call['duration'] == pytest.approx(0.15, abs=1e-6)
-        # The window the scheduler will commit to, measured from the moment
-        # receive() was called. Must be the whole duration, not duration minus
-        # however long detection took.
-        window_ms = (call['time_stamp'] + call['delay'] + call['duration']
-                     - call['called_at']) * 1000
-        assert window_ms == pytest.approx(150, abs=5), (
-            f'spray window is {window_ms:.1f} ms, expected ~150 ms - the '
-            f'actuation timestamp is lagging the receive() call')
+# Configured delay and duration, and the delay counting from frame capture,
+# are measured at the relay in test_relay_matrix.py
+# (test_configured_*, test_delay_counts_from_when_the_frame_was_taken...).
 
 
 # --------------------------------------------------------------------------

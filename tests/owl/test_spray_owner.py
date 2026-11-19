@@ -371,9 +371,17 @@ def test_stop_turns_the_nozzles_off_before_anything_slow(owl_factory, config_fac
         def stop(self):
             order.append(('recorder', None))
 
+    # The real recorder still has to be stopped: its writer outlived the
+    # test and kept the pytest worker process alive after the run (an
+    # orphan holding stdout, so `pytest tests/owl | tail` never returned)
+    real_recorder = instance.image_recorder
     instance.image_recorder = SlowRecorder()
-    with pytest.raises(SystemExit):
-        instance.stop()
+    try:
+        with pytest.raises(SystemExit):
+            instance.stop()
+    finally:
+        if real_recorder is not None:
+            real_recorder.stop()
     assert order[0] == ('mode', 'off'), f'nozzles went off after: {order}'
 
 

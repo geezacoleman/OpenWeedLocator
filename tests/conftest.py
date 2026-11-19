@@ -35,8 +35,66 @@ if str(PROJECT_ROOT) not in sys.path:
 # had closed the streams it was writing to. Set before any test imports it.
 os.environ.setdefault('OWL_SKIP_INIT', '1')
 
+# No test ever touches a GPIO pin, on any board: utils/output_manager.py and
+# utils/input_manager.py use their stand-ins when this is set. Forced, not
+# setdefault: a unit's own environment must not switch real relays on.
+os.environ['OWL_FAKE_GPIO'] = '1'
+
+# Tests never write to anything real.
+# 1. OWL_HOME: the folders the OWL writes at run time (config/, logs/,
+#    models/, downloads/, uploads/, agent/widgets|sessions) move to a temp
+#    directory, one per test process, seeded with the shipped config/ and
+#    models/ files (tests/sandbox_home.py). Set before anything imports production code,
+#    because some of those paths are fixed at import.
+# 2. tests/_write_guard.py fails any test that still changes a file outside
+#    the temp directory, whatever code path does it.
+sys.path.insert(0, str(Path(__file__).parent))
+import sandbox_home  # noqa: E402
+
+_OWL_HOME = sandbox_home.use()
+
+import _write_guard  # noqa: E402
+
+_write_guard.install()
+
 
 _POWER_COMMANDS = {'reboot', 'shutdown', 'poweroff', 'halt'}
+
+
+@pytest.fixture
+def owl_home(tmp_path, monkeypatch):
+    """A private OWL home for one test (config/ and models/ exist, empty):
+    for tests that check what lands in those folders."""
+    home = tmp_path / 'owl_home'
+    for folder in ('config', 'models'):
+        (home / folder).mkdir(parents=True)
+    monkeypatch.setenv('OWL_HOME', str(home))
+    return home
+
+
+@pytest.fixture(autouse=True)
+def _no_real_writes():
+    """Fail a test that tried to change a real file, even when the code
+    under test caught the refusal (tests/_write_guard.py)."""
+    _write_guard.violations.clear()
+    yield
+    if _write_guard.violations:
+        refused = sorted(set(_write_guard.violations))
+        _write_guard.violations.clear()
+        pytest.fail('test tried to change real files (refused):\n  ' + '\n  '.join(refused))
+
+
+@pytest.fixture(autouse=True)
+def _system_files_in_tmp(tmp_path_factory, monkeypatch):
+    """System files production code edits by absolute path (/etc/hosts, the
+    avahi service file) point into a temp directory. As root, the first-boot tests
+    used to add their test hostname to the machine's real /etc/hosts."""
+    etc = tmp_path_factory.mktemp('etc')
+    for module_name, attr, name in (
+            ('utils.network_manager', 'ETC_HOSTS', 'hosts'),
+            ('controller.setup.firstboot_state', 'AVAHI_SERVICE_FILE', 'owl-setup.service')):
+        module = sys.modules.get(module_name) or importlib.import_module(module_name)
+        monkeypatch.setattr(module, attr, str(etc / name))
 
 
 @pytest.fixture(autouse=True)

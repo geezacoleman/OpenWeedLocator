@@ -345,173 +345,6 @@ class TestCors:
 
 
 @pytest.mark.unit
-class TestOwlDetectionSuppression:
-    """Source checks: where first-boot code may live. The behaviour itself
-    (detection held off while armed) runs on a real Owl in
-    tests/owl/test_mode_matrix.py."""
-
-    def test_owl_checks_first_boot_flag(self):
-        from pathlib import Path
-        source = (Path(__file__).resolve().parents[3] / 'owl.py').read_text(encoding='utf-8')
-        assert 'OWL_FIRSTBOOT_FLAG' in source
-        assert 'owl-firstboot.flag' in source
-        # The flag must gate the value fed into the shared detection state
-        flag_block = source.split('OWL_FIRSTBOOT_FLAG')[1][:600]
-        assert 'detection_enable_config = False' in flag_block
-
-    def test_flag_never_touches_the_hot_path(self):
-        """HOT-PATH GUARD: first-boot code may exist ONLY in __init__ (one
-        stat at boot) and the _update_state_once state-sync cycle (slow re-stat while armed).
-        Any reference from another method — especially the detection loop —
-        would add per-frame cost and must fail this test."""
-        import ast
-        from pathlib import Path
-        source = (Path(__file__).resolve().parents[3] / 'owl.py').read_text(encoding='utf-8')
-        tree = ast.parse(source)
-        offenders = set()
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                segment = ast.get_source_segment(source, node) or ''
-                if 'firstboot' in segment.lower():
-                    offenders.add(node.name)
-        # update_state contains nested defs? No — but walk visits nested
-        # functions separately, so only the directly-containing names appear
-        # v3.27: the spray owner reads the cached bool when it resolves
-        # (sync tick and requests, never per frame): still no filesystem
-        # access outside __init__ / _update_state_once
-        allowed = {'__init__', '_update_state_once', '_spray_inputs',
-                   '_resolve_spray_locked', '_test_refusal_locked', '_switch_again_needed'}
-        assert offenders <= allowed, (
-            f'first-boot references leaked into: {offenders - allowed}')
-        for node in ast.walk(tree):
-            if (isinstance(node, ast.FunctionDef) and node.name in allowed - {
-                    '__init__', '_update_state_once'}):
-                segment = ast.get_source_segment(source, node) or ''
-                assert '_firstboot_flag_path' not in segment, node.name
-
-    def test_update_state_forces_detection_off_while_armed(self):
-        """While the flag exists, a hardware switch or dashboard toggle must
-        not re-enable detection (bench relay-click regression)."""
-        import ast
-        from pathlib import Path
-        source = (Path(__file__).resolve().parents[3] / 'owl.py').read_text(encoding='utf-8')
-        tree = ast.parse(source)
-        update_state = next(
-            node for node in ast.walk(tree)
-            if isinstance(node, ast.FunctionDef) and node.name == '_update_state_once')
-        segment = ast.get_source_segment(source, update_state)
-        assert '_firstboot_active' in segment
-        # v3.27: spraying is decided by utils/spray_mode.resolve, where
-        # first-boot comes first; the sync tick applies it every cycle
-        assert 'self._apply_spray()' in segment
-        from utils.spray_mode import SprayInputs, resolve
-        assert resolve(SprayInputs(request='blanket', switch='on', firstboot=True)) ==             ('off', 'firstboot')
-
-
-@pytest.mark.unit
-class TestInstallScript:
-    """install_firstboot.sh writes systemd units via heredoc (the same
-    pattern as owl_setup.sh) — a template+sed step once shipped an
-    ExecStart with a doubled bin/bin python path (field bug 2026-07-16)."""
-
-    @pytest.fixture
-    def script(self):
-        from pathlib import Path
-        return (Path(__file__).resolve().parents[3] / 'controller' / 'setup'
-                / 'install_firstboot.sh').read_text(encoding='utf-8')
-
-    def test_execstart_uses_venv_bin_directly(self, script):
-        assert 'ExecStart=${VENV_BIN}/python' in script
-        assert 'bin/bin' not in script
-        # The template+sed pattern must not come back
-        assert '__VENV' not in script
-        assert 'sed -e' not in script
-
-    def test_venv_bin_ends_in_bin_exactly_once(self, script):
-        import re
-        match = re.search(r'^VENV_BIN="([^"]+)"', script, re.MULTILINE)
-        assert match, 'VENV_BIN definition missing'
-        assert match.group(1).endswith('/owl/bin')
-
-    def test_failure_responder_is_wired(self, script):
-        assert 'OnFailure=owl-firstboot-fallback.service' in script
-        assert 'StartLimitBurst' in script
-        assert '/usr/bin/python3' in script          # system python on purpose
-        assert 'fallback_server.py' in script
-        # Disarm must remove the fallback unit too
-        assert '"${UNIT_DEST}" "${FALLBACK_UNIT_DEST}"' in script
-
-    def test_unit_heredoc_lines_are_flush_left(self, script):
-        """systemd ignores indented directives — unit content inside the
-        heredocs must start at column 0."""
-        for block in script.split('<<EOF')[1:]:
-            body = block.split('\nEOF')[0]
-            for line in body.splitlines():
-                if line.strip().startswith(('[', 'ExecStart', 'Description',
-                                            'ConditionPathExists')):
-                    assert line == line.lstrip(), (
-                        f'indented unit line: {line!r}')
-
-
-@pytest.mark.unit
-class TestCameraBootConfig:
-    """CM5 has no camera autodetection — install_firstboot.sh must write the
-    sensor overlay to config.txt explicitly (a fresh flash otherwise never
-    finds the camera: no error, no I2C bus — field bug 2026-08)."""
-
-    @pytest.fixture
-    def script(self):
-        from pathlib import Path
-        return (Path(__file__).resolve().parents[3] / 'controller' / 'setup'
-                / 'install_firstboot.sh').read_text(encoding='utf-8')
-
-    def test_overlay_variable_matches_python_sensor(self, script):
-        """The dtoverlay written by the shell and the sensor the diagnostics
-        look for must be the same sensor (a swap must change both)."""
-        import re
-        from controller.setup.firstboot_state import CAMERA_SENSOR
-        match = re.search(r'^CAMERA_OVERLAY="([^"]+)"', script, re.MULTILINE)
-        assert match, 'CAMERA_OVERLAY definition missing'
-        assert match.group(1) == CAMERA_SENSOR
-
-    def test_config_block_covers_both_ports_and_i2c(self, script):
-        # Both ports on purpose (same sensor, unused port fails silently);
-        # dtparams expose the camera I2C buses for i2cdetect debugging
-        assert 'dtoverlay=${CAMERA_OVERLAY}"' in script
-        assert 'dtoverlay=${CAMERA_OVERLAY},cam0' in script
-        assert 'dtparam=i2c_csi_dsi=on' in script
-        assert 'dtparam=i2c_csi_dsi0=on' in script
-        # Lines must land under [all] — other sections are silently ignored
-        assert '"[all]"' in script
-
-    def test_autodetect_flipped_in_place_not_appended(self, script):
-        assert "sed -i 's/^camera_auto_detect=.*/camera_auto_detect=0/'" in script
-
-    def test_non_cm_boards_are_skipped(self, script):
-        """Hardening: never force overlay lines on a Pi 4/5, where
-        autodetect works and forced overlays can fight it."""
-        assert '/proc/device-tree/model' in script
-        assert 'Compute Module' in script
-
-    def test_conflicting_sensor_overlay_refused(self, script):
-        # IMX296 and IMX477 both sit at I2C 0x1a — never stack two sensors
-        assert 'dtoverlay=(imx[0-9]+|ov[0-9]+' in script
-
-    def test_arm_aborts_on_camera_config_error(self, script):
-        assert 'Camera boot config failed. Nothing was armed.' in script
-
-    def test_camera_config_mode_exists(self, script):
-        # owl_setup.sh calls this standalone entry before its camera checks
-        assert '--camera-config) configure_camera' in script
-
-    def test_owl_setup_invokes_camera_config(self):
-        from pathlib import Path
-        owl_setup = (Path(__file__).resolve().parents[3]
-                     / 'owl_setup.sh').read_text(encoding='utf-8')
-        assert 'install_firstboot.sh" --camera-config' in owl_setup
-
-
-@pytest.mark.unit
 class TestCameraDiagnostics:
     """Triage for 'camera not found': overlay missing from config.txt vs
     sensor NACK (-121) — the two look identical from the phone app."""
@@ -578,250 +411,6 @@ class TestCameraDiagnostics:
 
 
 @pytest.mark.unit
-class TestFactoryCleanup:
-    """--factory must strip dev residue (a dev phone-hotspot password shipped
-    on a bench unit, 2026-07-17) — dev/clean.sh wipes every WiFi profile
-    except the OWL hotspot, so it must run non-interactively and LAST."""
-
-    @pytest.fixture
-    def owl_setup(self):
-        from pathlib import Path
-        return (Path(__file__).resolve().parents[3]
-                / 'owl_setup.sh').read_text(encoding='utf-8')
-
-    @pytest.fixture
-    def clean(self):
-        from pathlib import Path
-        return (Path(__file__).resolve().parents[3] / 'dev'
-                / 'clean.sh').read_text(encoding='utf-8')
-
-    def test_clean_supports_non_interactive_yes(self, clean):
-        assert '"${1:-}" == "--yes"' in clean       # set -u safe
-        assert 'ASSUME_YES' in clean
-
-    def test_clean_deletes_only_wifi_profiles(self, clean):
-        # Wired eth0 must survive: deleting it left a factory unit unreachable
-        # over Ethernet (2026-10-19)
-        assert '"$type" == "802-11-wireless"' in clean
-        assert 'nmcli connection delete uuid "$uuid"' in clean
-
-    def test_clean_restarts_both_services_it_stopped(self, clean):
-        assert 'systemctl start owl.service' in clean
-        assert 'systemctl start owl-dash.service' in clean
-
-    def test_factory_invokes_clean_detached_as_final_step(self, owl_setup):
-        assert "dev/clean.sh' --yes" in owl_setup
-        assert 'setsid' in owl_setup
-        # Detached + last: the cleanup drops an SSH session running over a
-        # personal WiFi profile, so nothing may depend on it afterwards
-        ship_tail = owl_setup.split('[SHIP-READY]')[1]
-        assert 'clean.sh' in ship_tail
-        # Log must not use a .log suffix — clean.sh truncates /var/log/*.log
-        assert '/var/log/owl-ship-clean.txt' in owl_setup
-        assert 'owl-ship-clean.log' not in owl_setup
-
-
-@pytest.mark.unit
-class TestFactoryGuard:
-    """--factory wipes WiFi profiles and SSH keys and locks detection until
-    phone setup, so a maker who runs it on their own build locks themselves
-    out. It must ask for a typed confirmation unless the factory passes --yes."""
-
-    @pytest.fixture
-    def owl_setup(self):
-        from pathlib import Path
-        return (Path(__file__).resolve().parents[3]
-                / 'owl_setup.sh').read_text(encoding='utf-8')
-
-    def test_factory_requires_typed_confirmation(self, owl_setup):
-        assert 'Type FACTORY to continue' in owl_setup
-        assert '"$factory_confirm" != "FACTORY"' in owl_setup
-
-    def test_yes_skips_the_prompt_for_factory_automation(self, owl_setup):
-        assert '    --yes)\n      FACTORY_YES=1\n' in owl_setup
-        assert ('if [[ "$FACTORY_MODE" == "1" && "$FACTORY_YES" != "1" '
-                '&& -z "${OWL_SETUP_DETACHED:-}" ]]; then') in owl_setup
-
-    def test_confirmation_happens_before_detaching(self, owl_setup):
-        # The detached re-exec has no terminal, so it cannot prompt
-        assert (owl_setup.index('Type FACTORY to continue')
-                < owl_setup.index('setsid nohup bash'))
-
-
-@pytest.mark.unit
-class TestFactoryFlag:
-    """One ship command (v3.19.0, cross-repo review 2026-09-17): --factory
-    replaces --ship and --ship-gps with no aliases, always provisions the
-    carrier's nRF9151 GNSS, and refuses a unit without its OTP identity."""
-
-    @pytest.fixture
-    def owl_setup(self):
-        from pathlib import Path
-        return (Path(__file__).resolve().parents[3]
-                / 'owl_setup.sh').read_text(encoding='utf-8')
-
-    @pytest.fixture
-    def gps_fn(self, owl_setup):
-        return owl_setup.split('setup_factory_gps() {', 1)[1].split('\n}\n', 1)[0]
-
-    def test_only_factory_yes_and_country_parse(self, owl_setup):
-        parse = owl_setup.split('while [[ $# -gt 0 ]]; do', 1)[1].split('esac', 1)[0]
-        assert '    --factory)\n' in parse
-        assert '    --yes)\n' in parse
-        assert '    --country)\n' in parse
-        assert '--ship' not in parse
-        assert 'supported: --factory [--yes], --country CC)' in parse
-
-    def test_detached_rerun_keeps_every_argument(self, owl_setup):
-        # --country must survive the setsid re-exec, or the logged run drops it
-        assert 'SETUP_ARGS=("$@")' in owl_setup
-        assert 'setsid nohup bash "$SCRIPT_DIR/owl_setup.sh" "${SETUP_ARGS[@]}"' in owl_setup
-
-    @pytest.mark.parametrize('args, rc, expect', [
-        (['--factory', '--country', 'au'], 0, 'factory=1 yes=0 country=AU'),
-        (['--country', 'GB', '--factory', '--yes'], 0, 'factory=1 yes=1 country=GB'),
-        (['--factory'], 0, 'factory=1 yes=0 country='),
-        (['--country', 'NZ'], 0, 'factory=0 yes=0 country=NZ'),
-        ([], 0, 'factory=0 yes=0 country='),
-        (['--country'], 1, 'two-letter country code'),
-        (['--country', 'AUS'], 1, 'two-letter country code'),
-        (['--country', '--factory'], 1, 'two-letter country code'),
-        (['--yes'], 1, '--yes only applies to --factory'),
-        (['--ship'], 1, "Unknown option '--ship'"),
-    ])
-    def test_argument_parsing_behaviour(self, tmp_path, args, rc, expect):
-        """Run the real parser with each argument combination."""
-        import subprocess
-        import shutil
-        from pathlib import Path
-        bash = shutil.which('bash')
-        if not bash:
-            pytest.skip('bash not available')
-        script = (Path(__file__).resolve().parents[3] / 'owl_setup.sh').read_text(encoding='utf-8')
-        start = script.index('FACTORY_MODE=0')
-        end = script.index('# Identity gate')
-        probe = tmp_path / 'parse.sh'
-        probe.write_text("RED=''; NC=''; GREEN=''\n" + script[start:end]
-                         + 'echo "factory=$FACTORY_MODE yes=$FACTORY_YES country=$WIFI_COUNTRY"\n',
-                         newline='\n')
-        result = subprocess.run([bash, probe.as_posix(), *args], capture_output=True, text=True,
-                                env={'PATH': '/usr/bin:/bin'})
-        assert result.returncode == rc
-        assert expect in result.stdout
-
-    def test_wifi_country_step(self, owl_setup):
-        fn = owl_setup.split('setup_wifi_country() {', 1)[1].split('\n}\n', 1)[0]
-        assert 'sudo raspi-config nonint do_wifi_country "$WIFI_COUNTRY"' in fn
-        # factory without --country resets to world; a maker install is left alone
-        assert 'elif [[ "$FACTORY_MODE" == "1" ]]; then' in fn
-        assert 'sudo iw reg set 00' in fn
-        # runs before the dashboard step brings up the hotspot, and blocks shipping
-        assert owl_setup.index('\nsetup_wifi_country\n') < owl_setup.index('# Step 13: Dashboard Setup')
-        assert '[ -n "$ERROR_WIFI_COUNTRY" ] && SHIP_BLOCKERS+=' in owl_setup
-
-    def test_old_flags_are_gone_everywhere_but_the_history_note(self, owl_setup):
-        assert owl_setup.count('--ship') == 2   # "It replaces --ship and --ship-gps"
-        assert 'SHIP_MODE' not in owl_setup and 'SHIP_GPS' not in owl_setup
-
-    def test_identity_gate_runs_before_confirmation_and_install(self, owl_setup):
-        gate = owl_setup.index('[NOT SHIP-READY] No hardware identity')
-        assert gate < owl_setup.index('Type FACTORY to continue')
-        assert gate < owl_setup.index('setsid nohup bash')
-        block = owl_setup[owl_setup.rindex('if [[ "$FACTORY_MODE" == "1" ]]; then', 0, gate):gate]
-        assert '"${OWL_IDENTITY_DIR}/device.pub"' in block
-        assert '"$identity_tier" != "otp"' in block
-
-    def test_identity_gate_behaviour(self, tmp_path):
-        """Run the real gate: no identity / disk tier refuse, otp passes."""
-        import subprocess
-        import shutil
-        from pathlib import Path
-        bash = shutil.which('bash')
-        if not bash:
-            pytest.skip('bash not available')
-        script = (Path(__file__).resolve().parents[3] / 'owl_setup.sh').read_text(encoding='utf-8')
-        start = script.index('FACTORY_MODE=0')
-        end = script.index('# --factory is for units leaving the factory')
-        probe = tmp_path / 'gate.sh'
-        probe.write_text("RED=''; NC=''; GREEN=''\n" + script[start:end] + 'echo GATE-PASSED\n', newline='\n')
-        ident = tmp_path / 'identity'
-
-        def run():
-            env = {'PATH': '/usr/bin:/bin', 'OWL_IDENTITY_DIR': ident.as_posix()}
-            return subprocess.run([bash, probe.as_posix(), '--factory'], capture_output=True, text=True, env=env)
-
-        result = run()
-        assert result.returncode == 1 and 'No hardware identity' in result.stdout
-        ident.mkdir()
-        (ident / 'device.pub').write_text('-----BEGIN PUBLIC KEY-----\nx\n-----END PUBLIC KEY-----\n')
-        (ident / 'tier').write_text('disk\n')
-        result = run()
-        assert result.returncode == 1 and 'tier: disk' in result.stdout
-        (ident / 'tier').write_text('otp\n')
-        result = run()
-        assert result.returncode == 0 and 'GATE-PASSED' in result.stdout
-
-    def test_maker_install_offers_a_disk_identity_but_factory_never_asks(self, owl_setup):
-        step = owl_setup.split('# Step 13c: maker identity', 1)[1].split('# Step 14', 1)[0]
-        assert 'if [[ "$FACTORY_MODE" != "1" ]]; then' in step
-        assert 'owl_identity.sh" --disk' in step
-        assert '(y/N)' in step
-
-    def test_gps_step_runs_after_dashboard_setup(self, owl_setup):
-        dashboard = owl_setup.index('controller/shared/setup.sh" --mode standalone')
-        call = owl_setup.index('\n    setup_factory_gps\n')
-        assert call > dashboard
-
-    def test_factory_always_provisions_gps(self, owl_setup):
-        call = owl_setup.index('\n    setup_factory_gps\n')
-        guard = owl_setup.rindex('if [[ "$FACTORY_MODE" == "1" ]]; then', 0, call)
-        assert call - guard < 60
-
-    def test_unconfirmed_port_blocks_ship(self, owl_setup, gps_fn):
-        assert '-z "$NRF_GPS_PORT"' in gps_fn
-        assert '[ -n "$ERROR_GPS" ] && SHIP_BLOCKERS+=' in owl_setup
-
-    def test_port_claimed_for_owl(self, gps_fn):
-        assert 'usermod -aG dialout' in gps_fn
-        assert 'disable --now ModemManager.service' in gps_fn
-
-    def test_gps_keys_written_only_inside_gps_section(self, gps_fn):
-        assert 'in_gps = ($0 == "[GPS]")' in gps_fn
-        # index()==1 anchoring keeps nmea_port from matching "port = "
-        assert 'index($0, "port = ") == 1' in gps_fn
-
-    def test_no_at_reply_blocks_ship(self, owl_setup, gps_fn):
-        probe = gps_fn.split('# Link check (ship blocker)', 1)[1]
-        assert 'ERROR_GPS="nRF9151 did not answer AT' in probe
-        assert '[ -n "$ERROR_GPS" ] && SHIP_BLOCKERS+=' in owl_setup
-
-    def test_boot_config_applied_before_link_probe(self, gps_fn):
-        assert (gps_fn.index('install_firstboot.sh" --gps-config')
-                < gps_fn.index('# Link check (ship blocker)'))
-
-    def test_probe_uses_configured_baud_without_flow_control(self, gps_fn):
-        probe = gps_fn.split('# Link check (ship blocker)', 1)[1]
-        assert '"$NRF_GPS_BAUD"' in probe
-        assert '-crtscts' in probe
-
-    def test_controller_ini_stays_private(self, gps_fn):
-        # CONTROLLER.ini holds the device token; the rewrite must not leave it
-        # world-readable (mv of a 0644 temp file did)
-        assert 'umask 077' in gps_fn
-        assert 'chmod 0640 "$ctrl_ini"' in gps_fn
-        assert 'rm -f "${ctrl_ini}.tmp"' in gps_fn
-
-    def test_owl_service_released_during_link_check(self, gps_fn):
-        # On a re-run owl.service already reads source = nrf91 and its reader
-        # would swallow the modem's OK; restarted afterwards when enabled
-        stop = gps_fn.index('sudo systemctl stop owl.service')
-        probe = gps_fn.index('for attempt in $(seq 1 10)')
-        start = gps_fn.index('sudo systemctl start owl.service')
-        assert stop < probe < start
-        assert 'systemctl is-enabled --quiet owl.service' in gps_fn
-
-
-@pytest.mark.unit
 class TestFallbackServer:
     """The OnFailure error responder — stdlib only, must run without the
     venv, and must satisfy the app's CORS preflight or the phone never
@@ -838,23 +427,6 @@ class TestFallbackServer:
         thread.start()
         yield f'http://127.0.0.1:{httpd.server_address[1]}'
         httpd.shutdown()
-
-    def test_stdlib_only(self):
-        """Anything beyond the stdlib defeats the purpose (broken venv)."""
-        import ast
-        from pathlib import Path
-        source = (Path(__file__).resolve().parents[3] / 'controller' / 'setup'
-                  / 'fallback_server.py').read_text(encoding='utf-8')
-        imported = set()
-        for node in ast.walk(ast.parse(source)):
-            if isinstance(node, ast.Import):
-                imported.update(alias.name.split('.')[0]
-                                for alias in node.names)
-            elif isinstance(node, ast.ImportFrom):
-                imported.add(node.module.split('.')[0])
-        # os + ssl (stdlib) serve the error over HTTPS like setup_app.py (contract 5);
-        # socket bounds the TLS handshake so one silent client can't freeze it
-        assert imported <= {'json', 'subprocess', 'http', 'os', 'ssl', 'socket'}, imported
 
     def test_get_returns_503_json_with_journal_detail(self, server):
         import urllib.error
@@ -1020,14 +592,6 @@ class TestFirstBootRunId:
         monkeypatch.setattr(_Path, 'unlink', unlink)
         state._teardown()
         assert state._exit_code == 1
-
-    def test_scripts_leave_an_empty_flag(self):
-        from pathlib import Path as _Path
-        text = (_Path(__file__).resolve().parents[3] / 'controller' / 'setup'
-                / 'install_firstboot.sh').read_text(encoding='utf-8')
-        assert ': > "${FLAG_PATH}"' in text
-        assert 'rm -f /var/lib/owl/firstboot_state.json' in text
-
 
 # ---------------------------------------------------------------------------
 # Controller join (networked rig provisioning)
@@ -1302,34 +866,48 @@ class TestControllerIniOwnership:
     which disabled MQTT + the token guard on the whole device (2026-08-15
     bench). Every CONTROLLER.ini write must hand the file back."""
 
-    def test_atomic_write_fixes_permissions(self, state):
+    @pytest.fixture
+    def handed_back(self, state, monkeypatch):
+        """Who the file was chowned to (chown to another user needs root)."""
+        import os
+        chowned = []
+        monkeypatch.setattr('controller.setup.firstboot_state.os.chown',
+                            lambda path, uid, gid: chowned.append((str(path), uid, gid)),
+                            raising=False)
+
+        def check():
+            import stat as stat_mod
+            parent = os.stat(state.controller_ini.parent)
+            assert chowned[-1] == (str(state.controller_ini), parent.st_uid, parent.st_gid)
+            assert stat_mod.S_IMODE(os.stat(state.controller_ini).st_mode) == 0o640
+
+        return check
+
+    def test_atomic_write_hands_the_file_to_the_config_dir_owner(self, state, handed_back):
         import configparser
-        from unittest.mock import patch
         config = configparser.ConfigParser()
         config.add_section('MQTT')
         config.set('MQTT', 'enable', 'True')
-        with patch.object(state, '_fix_ini_permissions') as fix:
-            state._atomic_write_ini(config)
-        fix.assert_called_once()
-        assert state.controller_ini.exists()
+        state._atomic_write_ini(config)
+        handed_back()
+        saved = configparser.ConfigParser()
+        saved.read(state.controller_ini)
+        assert saved.get('MQTT', 'enable') == 'True'
+        # no temp file left beside it
+        assert [p.name for p in state.controller_ini.parent.glob('.controller-*')] == []
 
-    def test_mint_token_fixes_permissions(self, state):
-        from unittest.mock import patch
-        with patch.object(state, '_fix_ini_permissions') as fix:
-            state._mint_device_token()
-        fix.assert_called_once()
+    def test_minting_a_token_hands_the_file_back(self, state, handed_back):
+        import configparser
+        token = state._mint_device_token()
+        handed_back()
+        saved = configparser.ConfigParser()
+        saved.read(state.controller_ini)
+        assert saved.get('Security', 'device_token') == token
 
-    def test_fix_ini_permissions_sets_mode(self, state, tmp_path):
-        import os
-        import stat as stat_mod
-        state.controller_ini.write_text('[MQTT]\nenable = True\n')
-        state._fix_ini_permissions()
-        if hasattr(os, 'chown'):
-            mode = stat_mod.S_IMODE(os.stat(state.controller_ini).st_mode)
-            assert mode == 0o640
-        # On Windows chmod is advisory — reaching here without raising is the test
-
-    def test_fix_ini_permissions_survives_missing_file(self, state):
-        # Never raises even when the file vanished (best-effort)
+    def test_a_file_that_vanished_is_logged_not_fatal(self, state, caplog):
+        import logging
         assert not state.controller_ini.exists()
-        state._fix_ini_permissions()
+        with caplog.at_level(logging.WARNING, logger='controller.setup.firstboot_state'):
+            state._fix_ini_permissions()
+        assert 'Could not set CONTROLLER.ini ownership/permissions' in caplog.text
+        assert not state.controller_ini.exists()

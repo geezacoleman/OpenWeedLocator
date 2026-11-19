@@ -31,6 +31,9 @@ from utils.session_metadata import (clean_session_metadata, COLLECT_CAPTURE_DEFA
                                     ini_value, last_pick_values, load_last_pick, merge_session_file,
                                     presets_from_config, read_session_file,
                                     add_custom_crop, remove_custom_crop, CUSTOM_CROPS_KEY)
+from utils.actuation import GEOMETRY_LIMITS, clamp_geometry
+from utils.shared_types import parse_switch
+from utils.paths import home_dir
 from utils.input_manager import get_rpi_version
 from utils.device_identity import get_device_serial, read_identity
 from utils import support_bundle
@@ -160,7 +163,7 @@ class OWLDashboard:
         # Standalone runs on the same Pi as owl.py, so profiles are written
         # straight to the directory the detection loop reads from.
         self.painter_store = PainterSessionStore()
-        repo_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')
+        repo_root = str(home_dir())
         self.lut_profile_manager = LUTProfileManager(
             os.path.abspath(os.path.join(repo_root, 'config', 'lut_profiles')))
         self.lut_profile_manager.ensure_builtin_profiles()
@@ -171,7 +174,7 @@ class OWLDashboard:
         # headerless allow). nmcli runs through sudo -n, permitted by the
         # 95-owl-device-settings sudoers file from controller/shared/setup.sh.
         self.controller_ini_path = str(
-            Path(__file__).parent.parent.parent / 'config' / 'CONTROLLER.ini')
+            home_dir('config', 'CONTROLLER.ini'))
         self.token_reader = make_token_reader(self.controller_ini_path)
         nm = NetworkManager(runner=self._sudo_runner)
         self.network_settings = NetworkSettingsManager(nm)
@@ -194,7 +197,7 @@ class OWLDashboard:
         self.setup_routes()
 
         # Widget system (optional — does not block dashboard startup)
-        widgets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'agent', 'widgets')
+        widgets_dir = str(home_dir('agent', 'widgets'))
         try:
             from agent.widget_manager import WidgetManager
             self.widget_manager = WidgetManager(widgets_dir)
@@ -212,7 +215,7 @@ class OWLDashboard:
                 'config': self.config,
                 'widget_manager': self.widget_manager,
             }
-            sessions_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'agent', 'sessions')
+            sessions_dir = str(home_dir('agent', 'sessions'))
             self.agent_engine = AgentEngine(
                 tool_registry=registry,
                 context=agent_context,
@@ -266,7 +269,7 @@ class OWLDashboard:
         """BOARD pins this OWL's own GPS hardware uses, from CONTROLLER.ini as it
         is now (owl.py reads [GPS] from the same file, so both agree)."""
         cfg = configparser.ConfigParser()
-        cfg.read(Path(__file__).parent.parent.parent / 'config' / 'CONTROLLER.ini')
+        cfg.read(home_dir('config', 'CONTROLLER.ini'))
         return ConfigValidator.protected_pins(cfg)
 
     def load_config(self):
@@ -278,7 +281,7 @@ class OWLDashboard:
         """
         self.config = configparser.ConfigParser()
 
-        controller_ini = Path(__file__).parent.parent.parent / 'config' / 'CONTROLLER.ini'
+        controller_ini = home_dir('config', 'CONTROLLER.ini')
         if controller_ini.exists():
             # configparser silently skips unreadable files — a root-owned
             # CONTROLLER.ini (past provisioning bug) would quietly drop the
@@ -305,8 +308,10 @@ class OWLDashboard:
 
     def setup_logging(self):
         """Setup logging"""
-        log_dir = Path('../../logs')
-        log_dir.mkdir(exist_ok=True)
+        # Was Path('../../logs'): relative to wherever the dashboard was
+        # started from, so anything but controller/standalone/ wrote elsewhere
+        log_dir = home_dir('logs')
+        log_dir.mkdir(parents=True, exist_ok=True)
 
         log_file = log_dir / f"owl_dashboard_{datetime.now().strftime('%Y%m%d')}.log"
         logging.basicConfig(
@@ -709,7 +714,10 @@ class OWLDashboard:
                 return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
             try:
                 data = request.get_json() or {}
-                value = bool(data.get('value', False))
+                try:
+                    value = parse_switch(data.get('value'))
+                except ValueError as e:
+                    return jsonify({'success': False, 'error': str(e)}), 400
                 result = self.mqtt_client._send_command('set_tracking', value=value)
                 self._persist_config_change('Tracking', 'tracking_enabled', str(value))
                 self.logger.info(f"Tracking {'enabled' if value else 'disabled'} via dashboard")
@@ -1136,6 +1144,12 @@ class OWLDashboard:
                 'speed_kmh': mqtt_state.get('speed_kmh'),
                 'latency_ms': mqtt_state.get('latency_ms'),
                 'speed_warning': mqtt_state.get('speed_warning') or '',
+                # Nozzle distance / spray length for travel timing, and
+                # whether the distance was ever entered (None on older OWLs)
+                'offset_cm': mqtt_state.get('offset_cm'),
+                'actuation_length_cm': mqtt_state.get('actuation_length_cm'),
+                'offset_configured': mqtt_state.get('offset_configured'),
+                'travel_timing': mqtt_state.get('travel_timing'),
                 # Camera resolution
                 'resolution_width': mqtt_state.get('resolution_width', 0),
                 'resolution_height': mqtt_state.get('resolution_height', 0),
@@ -1232,7 +1246,10 @@ class OWLDashboard:
             """
             try:
                 data = request.get_json(silent=True) or {}
-                value = bool(data.get('value', True))
+                try:
+                    value = parse_switch(data.get('value', True))
+                except ValueError as e:
+                    return jsonify({'success': False, 'error': str(e)}), 400
                 self._persist_config_change('Camera', 'allow_high_resolution', 'True' if value else 'False')
                 return jsonify({
                     'success': True,
@@ -1900,7 +1917,9 @@ class OWLDashboard:
                         'error': f'Invalid switch_purpose: {purpose}. Must be "recording" or "detection".'
                     }), 400
 
-                self._persist_config_change('Controller', 'switch_purpose', purpose)
+                if self._persist_config_change('Controller', 'switch_purpose', purpose) is False:
+                    return jsonify({'success': False,
+                                    'error': 'Could not save the switch purpose'}), 500
                 return jsonify({
                     'success': True,
                     'message': f'Switch purpose set to {purpose}. Restart OWL to apply.'
@@ -2083,8 +2102,31 @@ class OWLDashboard:
                         return jsonify({'success': False,
                                         'error': '; '.join(rejected.values()),
                                         'rejected': rejected}), 400
+                if section == 'Actuation':
+                    # Nozzle distance, spray length, minimum speed: the same
+                    # range the OWL applies, so the INI holds what it runs
+                    clean = {}
+                    for key, value in params.items():
+                        if key not in GEOMETRY_LIMITS:
+                            clean[key] = value
+                            continue
+                        try:
+                            clean[key] = f'{clamp_geometry(key, value):g}'
+                        except (ValueError, TypeError):
+                            rejected[key] = 'Not a number'
+                    params = clean
+                    if not params:
+                        return jsonify({'success': False,
+                                        'error': '; '.join(rejected.values()),
+                                        'rejected': rejected}), 400
                 result = self.mqtt_client._send_command(
                     'set_config_section', section=section, params=params)
+                if isinstance(result, dict) and not result.get('success', True):
+                    # Not delivered: nothing is saved either, so the page
+                    # and the running OWL cannot disagree. (It used to
+                    # answer 200 and write the INI.)
+                    self.logger.error(f"[{section}] change not sent: {result.get('error', 'unknown')}")
+                    return jsonify(result), 503
                 for key, value in params.items():
                     if self._persist_config_change(section, key, str(value)) is False:
                         rejected[key] = 'Not saved: outside the allowed range'
@@ -2111,11 +2153,17 @@ class OWLDashboard:
                 else:
                     cam = {k: v for k, v in params.items() if k.startswith('crop_')}
                     sysp = {k: v for k, v in params.items() if k.startswith('actuation_')}
-                    if cam:
-                        self.mqtt_client._send_command('set_config_section', section='Camera', params=cam)
-                    if sysp:
-                        self.mqtt_client._send_command('set_config_section', section='System', params=sysp)
                     result = {'success': True}
+                    for section, part in (('Camera', cam), ('System', sysp)):
+                        if part:
+                            sent = self.mqtt_client._send_command(
+                                'set_config_section', section=section, params=part)
+                            if isinstance(sent, dict) and not sent.get('success', True):
+                                result = sent
+                # An undelivered command was answered as applied
+                if isinstance(result, dict) and not result.get('success', True):
+                    self.logger.error(f"Geometry not sent: {result.get('error', 'unknown')}")
+                    return jsonify(result), 503
                 return jsonify(result if isinstance(result, dict) else {'success': True})
             except Exception as e:
                 self.logger.error(f"Error setting geometry: {e}")
@@ -2712,15 +2760,9 @@ class OWLDashboard:
 
     def _get_active_config_path(self):
         """Get the active config path from pointer file, or default."""
-        # Try to find config directory relative to this file
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-
-        # Check for pointer file in possible locations
-        pointer_locations = [
-            os.path.join(base_dir, 'config/active_config.txt'),
-            os.path.join(base_dir, '../config/active_config.txt'),
-            os.path.join(base_dir, '../../config/active_config.txt'),
-        ]
+        # One place: the OWL home's config folder (utils/paths.py). It used
+        # to look in three folders relative to this file.
+        pointer_locations = [str(home_dir('config', 'active_config.txt'))]
 
         for pointer_path in pointer_locations:
             if os.path.exists(pointer_path):
@@ -2852,15 +2894,9 @@ class OWLDashboard:
 
     def _resolve_config_path(self, relative_path):
         """Resolve a relative config path to absolute."""
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-
-        # Try multiple possible locations
-        possible_paths = [
-            os.path.join(base_dir, relative_path),
-            os.path.join(base_dir, '..', relative_path),
-            os.path.join(base_dir, '..', '..', relative_path),
-            os.path.join(base_dir, relative_path.replace('config/', '../config/')),
-        ]
+        # 'config/NAME.ini' under the OWL home (utils/paths.py); an absolute
+        # path is used as given
+        possible_paths = [str(home_dir() / relative_path)]
 
         for path in possible_paths:
             normalized = os.path.normpath(path)
@@ -2872,13 +2908,7 @@ class OWLDashboard:
 
     def _get_config_dir(self):
         """Find the config directory."""
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-
-        possible_dirs = [
-            os.path.join(base_dir, 'config'),
-            os.path.join(base_dir, '..', 'config'),
-            os.path.join(base_dir, '..', '..', 'config'),
-        ]
+        possible_dirs = [str(home_dir('config'))]
 
         for config_dir in possible_dirs:
             normalized = os.path.normpath(config_dir)

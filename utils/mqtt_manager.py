@@ -27,6 +27,9 @@ from utils.config_manager import (
     AUTOSAVE_CONFIG, seed_autosave, parse_config_meta, config_unsaved_state,
     ConfigValidator, config_profile_path,
 )
+from utils.actuation import GEOMETRY_LIMITS, clamp_geometry
+from utils.shared_types import parse_switch
+from utils.paths import home_dir
 from utils.directory_manager import scan_sessions, collect_session_files, select_preview_images, is_session_id
 from utils import software_update
 from utils import ai_capability
@@ -289,7 +292,7 @@ def cloud_storage_host(controller_ini=None):
     while owl.py is already running, and a value cached at startup stayed empty
     until the next restart.
     """
-    path = controller_ini or (Path(__file__).resolve().parents[1] / 'config' / 'CONTROLLER.ini')
+    path = controller_ini or home_dir('config', 'CONTROLLER.ini')
     config = configparser.ConfigParser()
     try:
         config.read(str(path))
@@ -655,6 +658,13 @@ class OWLMQTTPublisher:
             'speed_kmh': None,
             'latency_ms': None,
             'speed_warning': '',
+            # Nozzle distance behind the camera and spray length used for
+            # travel timing; offset_configured is False while the distance
+            # is still the 30 cm default nobody entered.
+            'offset_cm': None,
+            'actuation_length_cm': None,
+            'offset_configured': None,
+            'travel_timing': None,
             # BOARD pins this OWL's own GPS hardware uses ({'37': reason});
             # dashboards refuse config changes that would drive them.
             'protected_pins': {},
@@ -731,7 +741,7 @@ class OWLMQTTPublisher:
         self._populate_version_info()
 
         # Remote update status file (written by owl_update.sh)
-        self._update_status_path = Path(__file__).resolve().parents[1] / '.update_status.json'
+        self._update_status_path = home_dir('.update_status.json')
         self._update_status_stamp = None  # (mtime, size) of last successful read
 
         # Thread safety
@@ -1216,13 +1226,24 @@ class OWLMQTTPublisher:
             if action == 'set_detection_enable':
                 # Spot spraying on/off. The OWL decides (switch, first-boot,
                 # faults) and publishes the result.
-                wanted = bool(command.get('value', False))
+                # A value that is not clearly on or off is refused: the
+                # string "false" used to count as on and started spraying
+                try:
+                    wanted = parse_switch(command.get('value'))
+                except ValueError as e:
+                    self.logger.warning(f"set_detection_enable refused: {e}")
+                    return
                 self.logger.info(f"Spot spraying requested: {wanted}")
                 self._request_spray('spot' if wanted else 'off')
 
             elif action == 'set_image_sample_enable':
+                try:
+                    recording = parse_switch(command.get('value'))
+                except ValueError as e:
+                    self.logger.warning(f"set_image_sample_enable refused: {e}")
+                    return
                 was_recording = self.state['image_sample_enable']
-                self.state['image_sample_enable'] = bool(command.get('value', False))
+                self.state['image_sample_enable'] = recording
                 if was_recording != self.state['image_sample_enable']:
                     self.state['recording_paused'] = False
                 self.logger.info(f"Image sample enable set to: {self.state['image_sample_enable']}")
@@ -1236,7 +1257,12 @@ class OWLMQTTPublisher:
 
             elif action == 'set_recording_paused':
                 # Only a running recording can be paused
-                paused = bool(command.get('value', False)) and self.state['image_sample_enable']
+                try:
+                    paused = parse_switch(command.get('value'))
+                except ValueError as e:
+                    self.logger.warning(f"set_recording_paused refused: {e}")
+                    return
+                paused = paused and self.state['image_sample_enable']
                 if paused != self.state['recording_paused']:
                     self.state['recording_paused'] = paused
                     self.logger.info(f"Recording {'paused' if paused else 'resumed'}")
@@ -1344,7 +1370,7 @@ class OWLMQTTPublisher:
 
             elif action == 'set_model':
                 model_name = command.get('value', '')
-                models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')
+                models_dir = str(home_dir('models'))
                 if model_name and model_path_in(models_dir, model_name) is None:
                     self.logger.error(f"set_model refused: not a model name: {model_name!r}")
                 elif model_name and self.owl_instance:
@@ -1657,7 +1683,7 @@ class OWLMQTTPublisher:
 
     def _geometry_ini_path(self):
         """Path of the device-resident GEOMETRY.ini (repo config/ dir)."""
-        config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
+        config_dir = str(home_dir('config'))
         return os.path.join(config_dir, GEOMETRY_FILE)
 
     def _handle_get_config(self):
@@ -1769,6 +1795,23 @@ class OWLMQTTPublisher:
                         continue
                     setattr(self.owl_instance, key, typed)
                     camera_live_params[key] = typed
+                elif section == 'Actuation' and key in GEOMETRY_LIMITS:
+                    # Nozzle distance, spray length, minimum speed: applied
+                    # to the running calculator (they are not Owl attributes,
+                    # so they used to be saved and ignored until a restart)
+                    calc = getattr(self.owl_instance, '_actuation_calc', None)
+                    try:
+                        typed = clamp_geometry(key, value)
+                    except (ValueError, TypeError) as e:
+                        self.logger.warning(f"Rejected {section}.{key}={value}: {e}")
+                        rejected_keys.add(key)
+                        continue
+                    if calc is not None:
+                        setattr(calc, key, typed)
+                    if key == 'offset_cm':
+                        self.owl_instance.offset_configured = True
+                    value = typed
+                    self.logger.info(f"Set {section}.{key} = {typed} on live instance")
                 elif isinstance(getattr(self.owl_instance, key, None), (bool, int, float, str)):
                     # Type-convert to match existing attribute type (INI values are
                     # strings). Only plain values: detection_enable and
@@ -1804,12 +1847,24 @@ class OWLMQTTPublisher:
 
             self.logger.info(f"Applied {len(params)} params to [{section}]")
 
-            # The configured timing is what the OWL falls back to when the
-            # controller's speed-adaptive values stop; keep it current
+            # The configured timing is what the OWL falls back to when
+            # speed-adaptive timing stops or the rig stands still; keep it
+            # current. Only the edited value: while GPS or the controller times the
+            # sprays, the other one on the OWL is a speed-derived number, and
+            # saving it as "configured" brought it back once the rig stopped.
             if ({'actuation_duration', 'delay'} & set(params)
                     and isinstance(getattr(self.owl_instance, 'actuation_duration', None), float)):
-                self.owl_instance._config_actuation = (self.owl_instance.actuation_duration,
-                                                       self.owl_instance.delay)
+                owl = self.owl_instance
+                saved = getattr(owl, '_config_actuation', None)
+                if (getattr(owl, 'actuation_source', 'config') == 'config'
+                        or not isinstance(saved, tuple)):
+                    saved = (owl.actuation_duration, owl.delay)
+                duration, delay = saved
+                if 'actuation_duration' in params:
+                    duration = owl.actuation_duration
+                if 'delay' in params:
+                    delay = owl.delay
+                owl._config_actuation = (duration, delay)
 
             # Push ByteTrack params to live tracker when Tracking section changes
             if section == 'Tracking':
@@ -1937,7 +1992,7 @@ class OWLMQTTPublisher:
 
             self._apply_meta(name, notes)
 
-            config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
+            config_dir = str(home_dir('config'))
             protected = ['GENERAL_CONFIG.ini', 'CONTROLLER.ini', GEOMETRY_FILE]
 
             if filename:
@@ -2119,7 +2174,7 @@ class OWLMQTTPublisher:
         (Word-doc model: the working copy always mirrors what was loaded;
         subsequent live changes diverge only in the working copy)."""
         try:
-            config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
+            config_dir = str(home_dir('config'))
             active_path = os.path.join(config_dir, 'active_config.txt')
             if config_profile_path(config_dir, config_path) is None:
                 self.logger.warning(f"set_active_config refused: {config_path!r} is not a detection profile")
@@ -2332,8 +2387,12 @@ class OWLMQTTPublisher:
         from utils.config_manager import ConfigValidator
 
         try:
-            duration = float(command.get('actuation_duration', 0))
-            delay = float(command.get('delay', 0))
+            # Both are required. A missing duration used to be read as 0 and
+            # clamped up to 10 ms, so every spray became a click.
+            if command.get('actuation_duration') is None or command.get('delay') is None:
+                raise ValueError('actuation_duration and delay are both required')
+            duration = float(command['actuation_duration'])
+            delay = float(command['delay'])
             speed = command.get('speed_kmh')
             speed = float(speed) if speed is not None else None
 
@@ -2348,9 +2407,12 @@ class OWLMQTTPublisher:
                 calc = getattr(owl, '_actuation_calc', None)
                 if calc is not None:
                     if command.get('actuation_length_cm') is not None:
-                        calc.actuation_length_cm = float(command['actuation_length_cm'])
+                        calc.actuation_length_cm = clamp_geometry(
+                            'actuation_length_cm', command['actuation_length_cm'])
                     if command.get('offset_cm') is not None:
-                        calc.offset_cm = float(command['offset_cm'])
+                        calc.offset_cm = clamp_geometry('offset_cm', command['offset_cm'])
+                    if command.get('offset_configured') is not None:
+                        owl.offset_configured = bool(command['offset_configured'])
                 if getattr(owl, '_device_timing', False) is True:
                     return
                 if getattr(owl, 'actuation_source', None) == 'config':
@@ -2449,7 +2511,7 @@ class OWLMQTTPublisher:
         import urllib.request
         import ssl
 
-        models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')
+        models_dir = str(home_dir('models'))
         os.makedirs(models_dir, exist_ok=True)
 
         tmp_path = None
@@ -2592,8 +2654,7 @@ class OWLMQTTPublisher:
         if lut_mgr is not None:
             profiles_dir = lut_mgr.profile_dir
         else:
-            profiles_dir = os.path.join(
-                os.path.dirname(os.path.dirname(__file__)), 'config', 'lut_profiles')
+            profiles_dir = str(home_dir('config', 'lut_profiles'))
         os.makedirs(profiles_dir, exist_ok=True)
 
         tmp_path = None
@@ -3247,7 +3308,7 @@ class OWLMQTTPublisher:
             return self.owl_instance.config_path
 
         # Fallback: try active_config.txt
-        config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
+        config_dir = str(home_dir('config'))
         active_path = os.path.join(config_dir, 'active_config.txt')
         if os.path.exists(active_path):
             with open(active_path, 'r') as f:
@@ -3408,7 +3469,7 @@ class OWLMQTTPublisher:
     def _check_model_available(self):
         """Check if any YOLO model is available in the models/ directory."""
         try:
-            models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')
+            models_dir = str(home_dir('models'))
             if not os.path.isdir(models_dir):
                 return False
             # Check for NCNN subdirs (have .param files) or .pt files.
@@ -3431,7 +3492,7 @@ class OWLMQTTPublisher:
         """List available YOLO models (.pt files and NCNN subdirs) in models/ directory."""
         models = []
         try:
-            models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')
+            models_dir = str(home_dir('models'))
             if not os.path.isdir(models_dir):
                 return models
             for item in sorted(os.listdir(models_dir)):
@@ -3967,7 +4028,9 @@ class OWLMQTTPublisher:
             self.state['actuation_duration'] = stats_dict.get('actuation_duration', self.state.get('actuation_duration', 0.15))
             self.state['delay'] = stats_dict.get('delay', self.state.get('delay', 0.0))
             for key in ('actuation_source', 'speed_kmh', 'latency_ms', 'speed_warning',
-                        'last_frame_age_s', 'loop_busy'):
+                        'last_frame_age_s', 'loop_busy',
+                        'offset_cm', 'actuation_length_cm', 'offset_configured',
+                        'travel_timing'):
                 if key in stats_dict:
                     self.state[key] = stats_dict[key]
             self.state['last_update'] = time.time()

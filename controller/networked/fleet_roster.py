@@ -46,10 +46,12 @@ TOUCH_THROTTLE_S = 60           # heartbeat last_confirmed refresh rate
 # A loaded record missing any of these is dropped (hand-edited/corrupt file)
 REQUIRED_RECORD_KEYS = ('device_id', 'number', 'assigned_ip', 'status')
 
+from utils.paths import home_dir
+
 NAME_RE = re.compile(r'^[\w ."\'()-]{1,40}$')
 HOSTNAME_RE = re.compile(r'^[a-z0-9][a-z0-9-]{0,62}$')
 
-DEFAULT_ROSTER_PATH = Path(__file__).parent.parent.parent / 'config' / 'fleet.json'
+DEFAULT_ROSTER_PATH = home_dir('config', 'fleet.json')
 
 
 def ping_probe(ip, timeout_s=1):

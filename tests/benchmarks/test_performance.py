@@ -29,8 +29,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from utils.greenonbrown import GreenOnBrown
 from utils.geometry import assign_lanes
 
-BENCHMARK_DIR = PROJECT_ROOT / 'benchmarks'
-BENCHMARK_DIR.mkdir(exist_ok=True)
+# Results go to OWL_BENCHMARK_DIR when set (run by hand: point it at
+# benchmarks/ to keep them), otherwise to a temp directory: a test run
+# never writes into the checkout.
+import os
+import tempfile
+BENCHMARK_DIR = Path(os.environ.get('OWL_BENCHMARK_DIR') or tempfile.mkdtemp(prefix='owl_bench_'))
+BENCHMARK_DIR.mkdir(parents=True, exist_ok=True)
 
 # Test parameters
 IMAGE_WIDTH = 640

@@ -26,13 +26,19 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 REPO = Path(__file__).resolve().parents[2]
+# Nothing this script runs may write into the checkout (tests/sandbox_home.py)
+sys.path.insert(0, str(REPO / 'tests'))
+import sandbox_home  # noqa: E402
+sandbox_home.use()
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / 'controller' / 'standalone'))
 
 HOST = '127.0.0.1'
 PORT = 8768
 BASE_URL = f'http://{HOST}:{PORT}'
-SCREENSHOT_DIR = REPO / 'tests' / 'e2e' / 'screenshots'
+# OWL_E2E_SHOTS=<dir> keeps the screenshots; otherwise a temp directory
+# (nothing is written into the checkout)
+SCREENSHOT_DIR = Path(__import__('os').environ.get('OWL_E2E_SHOTS') or __import__('tempfile').mkdtemp(prefix='owl_e2e_shots_'))
 
 STATE = {
     'detection_enable': False, 'image_sample_enable': False, 'owl_running': True,

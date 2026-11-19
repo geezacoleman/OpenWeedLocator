@@ -6,6 +6,10 @@ timing itself from its own GPS (owl.py).
                between frames (at most MAX_STRETCH patches)
     delay    = camera-to-nozzle offset / speed
 
+Both grow without limit as speed falls, and a parked GPS receiver never reads
+zero: on a poor fix it wanders around 0.5-1.5 km/h. Below min_speed_kmh the
+rig counts as stationary and the configured (fixed) timing applies.
+
 speed_warning() turns the same numbers into the farmer-facing message shown
 when forward speed is causing late or missed sprays.
 """
@@ -19,6 +23,25 @@ from collections import deque
 # values: a boom that keeps spraying for a speed the tractor left behind is
 # worse than one that reverts to a fixed duration.
 GPS_STALE_AFTER_S = 30
+
+
+# Ground geometry and the moving/parked threshold, with the range every
+# interface accepts (OWL config handler, networked controller API).
+GEOMETRY_LIMITS = {
+    'offset_cm': (0.0, 200.0),           # nozzle distance behind the camera view
+    'actuation_length_cm': (2.0, 50.0),  # ground sprayed per weed
+    'min_speed_kmh': (0.5, 10.0),
+}
+
+
+def clamp_geometry(key, value):
+    """value as a float inside GEOMETRY_LIMITS[key]. ValueError when it is
+    not a number (NaN and infinity included)."""
+    low, high = GEOMETRY_LIMITS[key]
+    number = float(value)
+    if number != number or number in (float('inf'), float('-inf')):
+        raise ValueError(f'{key} must be a number')
+    return max(low, min(high, number))
 
 
 class SpeedAverager:
@@ -77,9 +100,25 @@ class SpeedAverager:
 
 
 class ActuationCalculator:
-    """Pure math: converts speed + geometry into actuation timing."""
+    """Converts speed + geometry into actuation timing, and decides whether a
+    reported speed is real travel (the only state it keeps)."""
 
-    MIN_SPEED = 0.5   # km/h — below this, use fallback
+    # km/h. Speed-adaptive timing starts at or above this; below it the rig
+    # counts as stationary and the configured timing applies. It has to sit
+    # above the speed a parked receiver reports. At 0.5 km/h (the value until
+    # v3.27.1) a unit standing still on a poor fix read 0.5-0.9 km/h and held
+    # every spray back 1.3-2.2 s (30 cm / 0.5 km/h = 2.16 s).
+    MIN_SPEED = 2.0
+    # Once moving, timing stays speed-adaptive down to this fraction of the
+    # minimum, so a speed hovering at the threshold does not flip the delay
+    # between zero and its largest value from one second to the next.
+    RELEASE_RATIO = 0.75
+    # Seconds every reading must stay at or above the minimum before the rig
+    # counts as moving. A poor fix throws single readings of several km/h
+    # while parked; one of those used to be enough to delay sprays. Stopping
+    # is judged on the average instead, so one dropped reading at speed does
+    # not hand timing back to the fixed values.
+    ENGAGE_AFTER_S = 2.0
     MIN_DURATION = 0.01  # seconds floor
     MAX_DURATION = 5.0   # seconds cap
     # A patch shorter than the ground covered between frames leaves unsprayed
@@ -87,19 +126,53 @@ class ActuationCalculator:
     MAX_STRETCH = 3.0
 
     def __init__(self, actuation_length_cm=10.0, offset_cm=30.0,
-                 fallback_duration=0.15, fallback_delay=0.0):
+                 fallback_duration=0.15, fallback_delay=0.0, min_speed_kmh=None,
+                 sustain_s=None):
         self.actuation_length_cm = actuation_length_cm
         self.offset_cm = offset_cm
         self.fallback_duration = fallback_duration
         self.fallback_delay = fallback_delay
+        self.min_speed_kmh = self.MIN_SPEED if min_speed_kmh is None else max(0.0, float(min_speed_kmh))
+        self.sustain_s = self.ENGAGE_AFTER_S if sustain_s is None else max(0.0, float(sustain_s))
+        self._moving = False
+        self._above_since = None
 
-    def compute(self, speed_kmh, loop_time_ms=0.0):
+    def _is_moving(self, speed_kmh, sample_kmh=None):
+        """Whether the rig is really travelling. State is kept between calls.
+
+        Starts once every reading has been at or above min_speed_kmh for
+        sustain_s; stops when the average falls below RELEASE_RATIO of it.
+        """
+        latest = speed_kmh if sample_kmh is None else sample_kmh
+        if speed_kmh is None:
+            self._moving = False
+            self._above_since = None
+            return False
+        now = time.monotonic()
+        if latest >= self.min_speed_kmh:
+            if self._above_since is None:
+                self._above_since = now
+        else:
+            self._above_since = None
+        if self._moving:
+            self._moving = speed_kmh >= self.min_speed_kmh * self.RELEASE_RATIO
+        else:
+            self._moving = (self._above_since is not None
+                            and speed_kmh >= self.min_speed_kmh
+                            and now - self._above_since >= self.sustain_s)
+        return self._moving
+
+    def compute(self, speed_kmh, loop_time_ms=0.0, sample_kmh=None):
         """Compute actuation params from speed and the detection loop time.
+
+        speed_kmh: the averaged speed the timing is worked out from.
+        sample_kmh: the latest single reading, for the moving/parked decision
+        (speed_kmh when not given).
 
         Returns dict with actuation_duration, delay, source, speed_used,
         gap_cm (ground covered per frame), stretched and coverage_ok.
         """
-        if speed_kmh is None or speed_kmh < self.MIN_SPEED:
+        if not self._is_moving(speed_kmh, sample_kmh) or speed_kmh <= 0:
             return {
                 'actuation_duration': self.fallback_duration,
                 'delay': self.fallback_delay,
@@ -137,13 +210,14 @@ class ActuationCalculator:
 
         Returns dict with coverage_ok, min_gap_cm, message.
         """
-        if speed_kmh is None or speed_kmh < self.MIN_SPEED or avg_loop_time_ms <= 0:
+        if speed_kmh is None or speed_kmh < self.min_speed_kmh or avg_loop_time_ms <= 0:
             return {'coverage_ok': True, 'min_gap_cm': 0.0, 'message': ''}
 
         min_gap_cm = frame_gap_cm(speed_kmh, avg_loop_time_ms)
         coverage_ok = min_gap_cm <= self.MAX_STRETCH * self.actuation_length_cm
         message = '' if coverage_ok else speed_warning(
-            speed_kmh, self.actuation_length_cm, self.offset_cm, avg_loop_time_ms)
+            speed_kmh, self.actuation_length_cm, self.offset_cm, avg_loop_time_ms,
+            min_speed_kmh=self.min_speed_kmh)
 
         return {
             'coverage_ok': coverage_ok,
@@ -158,7 +232,7 @@ def frame_gap_cm(speed_kmh, loop_time_ms):
 
 
 def speed_warning(speed_kmh, actuation_length_cm, offset_cm,
-                  loop_time_ms=0.0, lag_s=0.0, late_s=0.0):
+                  loop_time_ms=0.0, lag_s=0.0, late_s=0.0, min_speed_kmh=None):
     """Farmer-facing warning when forward speed causes missed or late sprays.
 
     speed_kmh: speed the timing uses. loop_time_ms: average detection loop.
@@ -166,7 +240,9 @@ def speed_warning(speed_kmh, actuation_length_cm, offset_cm,
     started after the weed reached the nozzle (lag beyond the travel delay).
     Returns '' when speed is not a problem.
     """
-    if not speed_kmh or speed_kmh < ActuationCalculator.MIN_SPEED:
+    if min_speed_kmh is None:
+        min_speed_kmh = ActuationCalculator.MIN_SPEED
+    if not speed_kmh or speed_kmh < min_speed_kmh:
         return ''
     speed_m_s = speed_kmh / 3.6
 

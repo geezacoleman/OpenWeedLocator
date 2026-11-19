@@ -1,475 +1,254 @@
+"""GreenOnBrown.inference on frames with known plants in them.
+
+Every test builds a frame (bare soil plus drawn blobs), runs the production
+detector and checks what comes out: the boxes and centres owl.py turns into
+relay lanes. Nothing here re-implements the pipeline.
+
+hsv and lut threshold directly, so their boxes are the blob itself. exg and
+exhsv go through an adaptive threshold, which on a flat synthetic blob marks
+the ring of soil around it: the box is the blob plus up to HALO px a side and
+the centre is unchanged.
 """
-CCA vs findContours equivalence tests for GreenOnBrown blob extraction.
-
-Validates that cv2.connectedComponentsWithStats produces identical detection
-results (boxes, centres, relay assignments) to the current findContours pipeline,
-before any production code changes.
-
-Run: pytest tests/test_greenonbrown.py -v
-"""
-
-import sys
-from pathlib import Path
 
 import cv2
 import numpy as np
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from utils.greenonbrown import MAX_DETECTIONS
-
-# ---------------------------------------------------------------------------
-# Helper functions: two blob-extraction pipelines operating on binary images
-# ---------------------------------------------------------------------------
-
-def contour_inference_from_binary(threshold_out, min_detection_area=1, max_detections=MAX_DETECTIONS):
-    """Reference pipeline extracted verbatim from GreenOnBrown.inference() lines 68-84."""
-    contours, _ = cv2.findContours(threshold_out, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    valid = []
-    for c in contours:
-        area = cv2.contourArea(c)
-        if area > min_detection_area:
-            valid.append((area, c))
-
-    if len(valid) > max_detections:
-        valid.sort(key=lambda x: x[0], reverse=True)
-        valid = valid[:max_detections]
-
-    boxes = []
-    weed_centres = []
-    for area, c in valid:
-        x, y, w, h = cv2.boundingRect(c)
-        boxes.append([x, y, w, h])
-        weed_centres.append([x + w // 2, y + h // 2])
-
-    return boxes, weed_centres
-
-
-def cca_inference_from_binary(threshold_out, min_detection_area=1, max_detections=MAX_DETECTIONS,
-                              use_bbox_centre=True):
-    """CCA pipeline: connectedComponentsWithStats returns boxes, areas, centroids in one call."""
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
-        threshold_out, connectivity=8
-    )
-
-    # Skip label 0 (background), filter by area
-    valid = []
-    for i in range(1, num_labels):
-        area = stats[i, cv2.CC_STAT_AREA]
-        if area > min_detection_area:
-            valid.append((area, i))
-
-    # Sort by area descending, cap at max_detections
-    if len(valid) > max_detections:
-        valid.sort(key=lambda x: x[0], reverse=True)
-        valid = valid[:max_detections]
-
-    boxes = []
-    weed_centres = []
-    for area, i in valid:
-        x = stats[i, cv2.CC_STAT_LEFT]
-        y = stats[i, cv2.CC_STAT_TOP]
-        w = stats[i, cv2.CC_STAT_WIDTH]
-        h = stats[i, cv2.CC_STAT_HEIGHT]
-        boxes.append([x, y, w, h])
-
-        if use_bbox_centre:
-            weed_centres.append([x + w // 2, y + h // 2])
-        else:
-            # Centre-of-mass from CCA centroids
-            cx, cy = centroids[i]
-            weed_centres.append([int(round(cx)), int(round(cy))])
-
-    return boxes, weed_centres
-
-
-def _sort_by_xy(boxes, centres):
-    """Sort boxes and centres by (x, y) for order-independent comparison."""
-    if not boxes:
-        return [], []
-    paired = sorted(zip(boxes, centres), key=lambda p: (p[0][0], p[0][1]))
-    sorted_boxes = [p[0] for p in paired]
-    sorted_centres = [p[1] for p in paired]
-    return sorted_boxes, sorted_centres
-
-
-# ---------------------------------------------------------------------------
-# TestCCAEquivalence: 9 tests on hand-crafted binary images
-# ---------------------------------------------------------------------------
-
-class TestCCAEquivalence:
-    """Compare CCA vs findContours on synthetic binary images."""
-
-    def test_single_large_blob(self):
-        """One filled circle — exact match on box and centre."""
-        img = np.zeros((480, 640), dtype=np.uint8)
-        cv2.circle(img, (320, 240), 50, 255, -1)
-
-        cnt_boxes, cnt_centres = contour_inference_from_binary(img)
-        cca_boxes, cca_centres = cca_inference_from_binary(img)
-
-        assert len(cnt_boxes) == 1
-        assert len(cca_boxes) == 1
-        assert cnt_boxes == cca_boxes
-        assert cnt_centres == cca_centres
-
-    def test_many_small_blobs(self):
-        """20 non-overlapping circles — same count and boxes after sorting."""
-        img = np.zeros((480, 640), dtype=np.uint8)
-        rng = np.random.RandomState(42)
-        # Place circles on a grid to avoid overlap
-        positions = []
-        for row in range(4):
-            for col in range(5):
-                x = 50 + col * 120
-                y = 50 + row * 110
-                r = rng.randint(10, 25)
-                positions.append((x, y, r))
-                cv2.circle(img, (x, y), r, 255, -1)
-
-        cnt_boxes, cnt_centres = contour_inference_from_binary(img)
-        cca_boxes, cca_centres = cca_inference_from_binary(img)
-
-        assert len(cnt_boxes) == 20
-        assert len(cca_boxes) == 20
-
-        cnt_s, cnt_c = _sort_by_xy(cnt_boxes, cnt_centres)
-        cca_s, cca_c = _sort_by_xy(cca_boxes, cca_centres)
-
-        assert cnt_s == cca_s
-        assert cnt_c == cca_c
-
-    def test_no_blobs(self):
-        """All-black image — both return empty lists."""
-        img = np.zeros((480, 640), dtype=np.uint8)
-
-        cnt_boxes, cnt_centres = contour_inference_from_binary(img)
-        cca_boxes, cca_centres = cca_inference_from_binary(img)
-
-        assert cnt_boxes == []
-        assert cca_boxes == []
-        assert cnt_centres == []
-        assert cca_centres == []
-
-    def test_blobs_at_edges(self):
-        """Half-circles at 4 edges — all detected by both."""
-        img = np.zeros((480, 640), dtype=np.uint8)
-        # Top edge
-        cv2.circle(img, (320, 0), 30, 255, -1)
-        # Bottom edge
-        cv2.circle(img, (320, 479), 30, 255, -1)
-        # Left edge
-        cv2.circle(img, (0, 240), 30, 255, -1)
-        # Right edge
-        cv2.circle(img, (639, 240), 30, 255, -1)
-
-        cnt_boxes, _ = contour_inference_from_binary(img)
-        cca_boxes, _ = cca_inference_from_binary(img)
-
-        assert len(cnt_boxes) == 4
-        assert len(cca_boxes) == 4
-
-        cnt_s, _ = _sort_by_xy(cnt_boxes, [c for c in range(4)])
-        cca_s, _ = _sort_by_xy(cca_boxes, [c for c in range(4)])
-        assert cnt_s == cca_s
-
-    def test_blob_at_min_area_threshold(self):
-        """Blob near min_area threshold — each method internally consistent.
-
-        contourArea uses Green's theorem (boundary approximation) ~81 for 10x10 rect.
-        CCA CC_STAT_AREA counts actual pixels = 100 for 10x10 rect.
-        This is a known difference — CCA is more accurate (matches ground truth).
-        """
-        img = np.zeros((200, 200), dtype=np.uint8)
-        # 10x10 filled rectangle: 100 actual pixels
-        cv2.rectangle(img, (50, 50), (59, 59), 255, -1)
-
-        # CCA: area=100, so threshold=99 includes, threshold=100 excludes (strict >)
-        cca_boxes_100, _ = cca_inference_from_binary(img, min_detection_area=100)
-        cca_boxes_99, _ = cca_inference_from_binary(img, min_detection_area=99)
-        assert len(cca_boxes_100) == 0  # 100 > 100 is False
-        assert len(cca_boxes_99) == 1   # 100 > 99 is True
-
-        # Contours: area~=81, so threshold=80 includes, threshold=81 excludes
-        cnt_boxes_81, _ = contour_inference_from_binary(img, min_detection_area=81)
-        cnt_boxes_80, _ = contour_inference_from_binary(img, min_detection_area=80)
-        assert len(cnt_boxes_81) == 0  # 81 > 81 is False
-        assert len(cnt_boxes_80) == 1  # 81 > 80 is True
-
-        # Both detect the same box when threshold is low enough for both
-        cnt_boxes_low, _ = contour_inference_from_binary(img, min_detection_area=10)
-        cca_boxes_low, _ = cca_inference_from_binary(img, min_detection_area=10)
-        assert cnt_boxes_low == cca_boxes_low
-
-    def test_max_detections_cap(self):
-        """80 circles — both return only 50 largest."""
-        img = np.zeros((800, 1000), dtype=np.uint8)
-        rng = np.random.RandomState(99)
-        # Place 80 circles on a grid, varying radius
-        placed = 0
-        for row in range(8):
-            for col in range(10):
-                x = 40 + col * 95
-                y = 40 + row * 95
-                r = 5 + placed % 30  # Radius varies from 5 to 34
-                cv2.circle(img, (x, y), r, 255, -1)
-                placed += 1
-
-        cnt_boxes, _ = contour_inference_from_binary(img, min_detection_area=1, max_detections=50)
-        cca_boxes, _ = cca_inference_from_binary(img, min_detection_area=1, max_detections=50)
-
-        assert len(cnt_boxes) == 50
-        assert len(cca_boxes) == 50
-
-        # Both should have picked the 50 largest — sort and compare
-        cnt_s, _ = _sort_by_xy(cnt_boxes, cnt_boxes)
-        cca_s, _ = _sort_by_xy(cca_boxes, cca_boxes)
-        assert cnt_s == cca_s
-
-    def test_hsv_path_morphology(self):
-        """Binary image + MORPH_CLOSE iterations=5 (HSV path) — same results."""
-        img = np.zeros((480, 640), dtype=np.uint8)
-        # Draw several small blobs with gaps (morphology will close them)
-        cv2.circle(img, (200, 200), 20, 255, -1)
-        cv2.circle(img, (210, 200), 20, 255, -1)  # Overlapping
-        cv2.circle(img, (400, 300), 15, 255, -1)
-
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        morphed = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel, iterations=5)
-
-        cnt_boxes, cnt_centres = contour_inference_from_binary(morphed)
-        cca_boxes, cca_centres = cca_inference_from_binary(morphed)
-
-        cnt_s, cnt_c = _sort_by_xy(cnt_boxes, cnt_centres)
-        cca_s, cca_c = _sort_by_xy(cca_boxes, cca_centres)
-
-        assert cnt_s == cca_s
-        assert cnt_c == cca_c
-
-    def test_adjacent_touching_blobs(self):
-        """Two rectangles sharing an edge — merged by 8-connectivity in both."""
-        img = np.zeros((200, 200), dtype=np.uint8)
-        # Two adjacent rectangles sharing the column at x=100
-        cv2.rectangle(img, (50, 50), (99, 150), 255, -1)
-        cv2.rectangle(img, (100, 50), (150, 150), 255, -1)
-
-        cnt_boxes, _ = contour_inference_from_binary(img)
-        cca_boxes, _ = cca_inference_from_binary(img)
-
-        # findContours with RETR_EXTERNAL sees one contour for adjacent shapes
-        # CCA with 8-connectivity also sees one component
-        assert len(cnt_boxes) == len(cca_boxes)
-        assert cnt_boxes == cca_boxes
-
-    def test_asymmetric_blob_centre_tolerance(self):
-        """L-shaped blob: bbox centres match exactly; centre-of-mass differs."""
-        img = np.zeros((300, 300), dtype=np.uint8)
-        # L-shape: vertical bar + horizontal bar
-        cv2.rectangle(img, (50, 50), (80, 200), 255, -1)   # Vertical
-        cv2.rectangle(img, (50, 170), (180, 200), 255, -1)  # Horizontal
-
-        cnt_boxes, cnt_centres = contour_inference_from_binary(img)
-        cca_boxes_bbox, cca_centres_bbox = cca_inference_from_binary(img, use_bbox_centre=True)
-        _, cca_centres_com = cca_inference_from_binary(img, use_bbox_centre=False)
-
-        # Bbox centres match exactly
-        assert len(cnt_boxes) == 1
-        assert cnt_boxes == cca_boxes_bbox
-        assert cnt_centres == cca_centres_bbox
-
-        # Centre-of-mass differs from bbox centre for asymmetric shapes
-        bbox_cx, bbox_cy = cca_centres_bbox[0]
-        com_cx, com_cy = cca_centres_com[0]
-
-        # Quantify the difference — it should be meaningful for an L-shape
-        dx = abs(bbox_cx - com_cx)
-        dy = abs(bbox_cy - com_cy)
-
-        # The L-shape has more mass in the vertical bar, so COM should be
-        # shifted left and up from bbox centre. Difference should be noticeable.
-        assert dx > 0 or dy > 0, "Expected COM to differ from bbox centre for L-shape"
-
-        # But within relay-lane tolerance (~160px lane at 640px, 4 relays)
-        assert dx < 80, f"COM x-offset {dx}px exceeds relay-lane tolerance"
-        assert dy < 80, f"COM y-offset {dy}px exceeds relay-lane tolerance"
-
-
-# ---------------------------------------------------------------------------
-# TestCCAFullPipelineEquivalence: 3 tests on realistic algorithm output
-# ---------------------------------------------------------------------------
-
-class TestCCAFullPipelineEquivalence:
-    """Run real detection algorithms, then compare CCA vs findContours on the threshold output."""
-
-    @staticmethod
-    def _make_test_image(width=640, height=480):
-        """Synthetic image with green patches on brown background."""
-        image = np.full((height, width, 3), [60, 80, 120], dtype=np.uint8)
-        rng = np.random.RandomState(42)
-        for _ in range(8):
-            cx = rng.randint(50, width - 50)
-            cy = rng.randint(50, height - 50)
-            rw = rng.randint(15, 40)
-            rh = rng.randint(15, 40)
-            image[max(0, cy - rh):cy + rh, max(0, cx - rw):cx + rw] = [30, 160, 50]
-        return image
-
-    def _run_algorithm_to_threshold(self, image, algorithm='exhsv'):
-        """Run an algorithm and return the binary threshold_out (pre-contour step)."""
-        from utils.algorithms import exg, exg_standardised_hue, hsv as hsv_algo
-
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-
-        if algorithm == 'exhsv':
-            output = exg_standardised_hue(image, hue_min=39, hue_max=83,
-                                          saturation_min=50, saturation_max=220,
-                                          brightness_min=60, brightness_max=190)
-            np.clip(output, 25, 200, out=output)
-            output = output.astype(np.uint8)
-            threshold_out = cv2.adaptiveThreshold(output, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                                  cv2.THRESH_BINARY_INV, 31, 2)
-            threshold_out = cv2.morphologyEx(threshold_out, cv2.MORPH_CLOSE, kernel, iterations=1)
-        elif algorithm == 'hsv':
-            output, _ = hsv_algo(image, hue_min=39, hue_max=83,
-                                 saturation_min=50, saturation_max=220,
-                                 brightness_min=60, brightness_max=190)
-            threshold_out = cv2.morphologyEx(output, cv2.MORPH_CLOSE, kernel, iterations=5)
-        elif algorithm == 'exg':
-            output = exg(image)
-            np.clip(output, 25, 200, out=output)
-            output = output.astype(np.uint8)
-            threshold_out = cv2.adaptiveThreshold(output, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                                  cv2.THRESH_BINARY_INV, 31, 2)
-            threshold_out = cv2.morphologyEx(threshold_out, cv2.MORPH_CLOSE, kernel, iterations=1)
-        else:
-            raise ValueError(f"Unknown algorithm: {algorithm}")
-
-        return threshold_out
-
-    def test_exhsv_pipeline(self):
-        """ExHSV algorithm path: both extraction methods match."""
-        image = self._make_test_image()
-        threshold_out = self._run_algorithm_to_threshold(image, 'exhsv')
-
-        cnt_boxes, cnt_centres = contour_inference_from_binary(threshold_out, min_detection_area=10)
-        cca_boxes, cca_centres = cca_inference_from_binary(threshold_out, min_detection_area=10)
-
-        cnt_s, cnt_c = _sort_by_xy(cnt_boxes, cnt_centres)
-        cca_s, cca_c = _sort_by_xy(cca_boxes, cca_centres)
-
-        assert cnt_s == cca_s
-        np.testing.assert_allclose(cnt_c, cca_c, atol=1)
-
-    def test_hsv_pipeline(self):
-        """HSV path (threshed_already=True, 5 morphology iterations): both match."""
-        image = self._make_test_image()
-        threshold_out = self._run_algorithm_to_threshold(image, 'hsv')
-
-        cnt_boxes, cnt_centres = contour_inference_from_binary(threshold_out, min_detection_area=10)
-        cca_boxes, cca_centres = cca_inference_from_binary(threshold_out, min_detection_area=10)
-
-        cnt_s, cnt_c = _sort_by_xy(cnt_boxes, cnt_centres)
-        cca_s, cca_c = _sort_by_xy(cca_boxes, cca_centres)
-
-        assert cnt_s == cca_s
-        np.testing.assert_allclose(cnt_c, cca_c, atol=1)
-
-    def test_exg_pipeline(self):
-        """Plain ExG algorithm: both extraction methods match."""
-        image = self._make_test_image()
-        threshold_out = self._run_algorithm_to_threshold(image, 'exg')
-
-        cnt_boxes, cnt_centres = contour_inference_from_binary(threshold_out, min_detection_area=10)
-        cca_boxes, cca_centres = cca_inference_from_binary(threshold_out, min_detection_area=10)
-
-        cnt_s, cnt_c = _sort_by_xy(cnt_boxes, cnt_centres)
-        cca_s, cca_c = _sort_by_xy(cca_boxes, cca_centres)
-
-        assert cnt_s == cca_s
-        np.testing.assert_allclose(cnt_c, cca_c, atol=1)
-
-
-# ---------------------------------------------------------------------------
-# TestCCARelayAssignment: 2 tests verifying same relay outputs
-# ---------------------------------------------------------------------------
-
-class TestCCARelayAssignment:
-    """Verify that CCA and findContours produce the same relay firing pattern."""
-
-    IMAGE_WIDTH = 640
-    RELAY_NUM = 4
-
-    def setup_method(self):
-        lane_width = self.IMAGE_WIDTH / self.RELAY_NUM
-        self.lane_width = lane_width
-        self.lane_coords_int = {i: int(i * lane_width) for i in range(self.RELAY_NUM)}
-
-    @staticmethod
-    def _run_actuation_logic(weed_centres, lane_width, relay_num, actuation_y_thresh=0):
-        """Lane assignment as owl.py runs it.
-
-        Was a second hand-copied replica (see tests/test_performance.py) that
-        had drifted to a one-sided threshold; now delegates to the shared
-        implementation owl.py calls.
-        """
-        from utils.geometry import assign_lanes
-        if not weed_centres:
-            return []
-        return sorted(assign_lanes(weed_centres, lane_width, relay_num,
-                                   actuation_y_thresh, float('inf')))
-
-    def test_same_relays_fired(self):
-        """Both pipelines trigger the same relay set on a realistic scene."""
-        image = np.full((480, 640, 3), [60, 80, 120], dtype=np.uint8)
-        rng = np.random.RandomState(42)
-        for _ in range(12):
-            cx = rng.randint(30, 610)
-            cy = rng.randint(30, 450)
-            r = rng.randint(10, 30)
-            cv2.circle(image, (cx, cy), r, (30, 160, 50), -1)
-
-        from utils.algorithms import exg_standardised_hue
-        output = exg_standardised_hue(image, hue_min=39, hue_max=83,
-                                      saturation_min=50, saturation_max=220,
-                                      brightness_min=60, brightness_max=190)
-        np.clip(output, 25, 200, out=output)
-        output = output.astype(np.uint8)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        threshold_out = cv2.adaptiveThreshold(output, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                              cv2.THRESH_BINARY_INV, 31, 2)
-        threshold_out = cv2.morphologyEx(threshold_out, cv2.MORPH_CLOSE, kernel, iterations=1)
-
-        _, cnt_centres = contour_inference_from_binary(threshold_out, min_detection_area=10)
-        _, cca_centres = cca_inference_from_binary(threshold_out, min_detection_area=10)
-
-        cnt_relays = self._run_actuation_logic(cnt_centres, self.lane_width, self.RELAY_NUM)
-        cca_relays = self._run_actuation_logic(cca_centres, self.lane_width, self.RELAY_NUM)
-
-        assert cnt_relays == cca_relays
-
-    def test_actuation_zone_filtering(self):
-        """With Y-threshold filtering, same relays fire."""
-        img = np.zeros((480, 640), dtype=np.uint8)
-        # Blobs in bottom 25% (actuation zone: y >= 360)
-        cv2.circle(img, (100, 400), 20, 255, -1)
-        cv2.circle(img, (400, 420), 25, 255, -1)
-        # Blobs above zone (should be filtered)
-        cv2.circle(img, (300, 100), 20, 255, -1)
-
-        actuation_y_thresh = int(480 * 0.75)  # 360
-
-        _, cnt_centres = contour_inference_from_binary(img, min_detection_area=1)
-        _, cca_centres = cca_inference_from_binary(img, min_detection_area=1)
-
-        cnt_relays = self._run_actuation_logic(cnt_centres, self.lane_width, self.RELAY_NUM,
-                                               actuation_y_thresh)
-        cca_relays = self._run_actuation_logic(cca_centres, self.lane_width, self.RELAY_NUM,
-                                               actuation_y_thresh)
-
-        assert cnt_relays == cca_relays
-        # Verify the blob above zone was filtered out
-        assert len(cnt_relays) == 2
+from utils.greenonbrown import GreenOnBrown, MAX_DETECTIONS, draw_boxes
+from utils.lut_manager import LUT_SIZE
+
+SOIL = (40, 60, 90)       # BGR: hue 12, a brown the hue band rejects
+GREEN = (60, 180, 60)     # BGR: hue 60, ExG 240
+ORANGE = (0, 150, 200)    # BGR: hue 22, ExG 100 (green by ExG only)
+HALO = 13                 # adaptive threshold block is 31 px: 15 px reach, less the closing
+
+ALGORITHMS = ['exg', 'exhsv', 'hsv']
+
+
+def frame(*blobs, width=416, height=320):
+    """Bare soil with blobs (x, y, w, h[, colour]) drawn on it."""
+    image = np.full((height, width, 3), SOIL, dtype=np.uint8)
+    for x, y, w, h, *colour in blobs:
+        cv2.rectangle(image, (x, y), (x + w - 1, y + h - 1), colour[0] if colour else GREEN, -1)
+    return image
+
+
+def detect(image, algorithm='hsv', detector=None, **params):
+    _, boxes, centres, _ = (detector or GreenOnBrown()).inference(
+        image, algorithm=algorithm, **params)
+    return boxes, centres
+
+
+PLANT = (100, 80, 80, 60)     # x, y, w, h -> centre (140, 110)
+SPECK = (300, 200, 6, 6)      # centre (303, 203)
+
+
+# --------------------------------------------------------------------------
+# A plant is found, where it is
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize('algorithm', ALGORITHMS)
+def test_one_plant_gives_one_box_centred_on_it(algorithm):
+    boxes, centres = detect(frame(PLANT), algorithm)
+
+    assert len(boxes) == 1, boxes
+    assert centres == [[140, 110]]
+    x, y, w, h = boxes[0]
+    halo = 0 if algorithm == 'hsv' else HALO
+    assert 100 - halo <= x <= 100 and 80 - halo <= y <= 80
+    assert 180 <= x + w <= 180 + halo and 140 <= y + h <= 140 + halo
+
+
+def test_threshold_algorithms_box_the_plant_exactly():
+    assert detect(frame(PLANT), 'hsv') == ([[100, 80, 80, 60]], [[140, 110]])
+
+
+@pytest.mark.parametrize('algorithm', ALGORITHMS)
+def test_bare_soil_gives_nothing(algorithm):
+    assert detect(frame(), algorithm) == ([], [])
+
+
+@pytest.mark.parametrize('algorithm', ALGORITHMS)
+def test_two_plants_in_different_lanes_are_both_reported(algorithm):
+    _, centres = detect(frame(PLANT, (300, 200, 60, 60)), algorithm)
+    assert sorted(centres) == [[140, 110], [330, 230]]
+
+
+# --------------------------------------------------------------------------
+# Minimum weed size
+# --------------------------------------------------------------------------
+
+def test_min_area_drops_the_speck_and_keeps_the_plant():
+    image = frame(PLANT, SPECK)
+    assert sorted(detect(image, 'hsv', min_detection_area=1)[1]) == [[140, 110], [303, 203]]
+    assert detect(image, 'hsv', min_detection_area=100)[1] == [[140, 110]]
+
+
+@pytest.mark.parametrize('algorithm', ['exg', 'exhsv'])
+def test_min_area_applies_on_the_adaptive_threshold_path(algorithm):
+    image = frame(PLANT, SPECK)
+    assert len(detect(image, algorithm, min_detection_area=1)[0]) == 2
+    assert detect(image, algorithm, min_detection_area=2000)[1] == [[140, 110]]
+
+
+def test_min_area_is_a_strict_greater_than():
+    """cv2.contourArea of an 80x60 rectangle is 79*59: a plant exactly at the
+    limit is not sprayed, one px^2 over is."""
+    area = 79 * 59
+    assert detect(frame(PLANT), 'hsv', min_detection_area=area) == ([], [])
+    assert detect(frame(PLANT), 'hsv', min_detection_area=area - 1)[1] == [[140, 110]]
+
+
+# --------------------------------------------------------------------------
+# The detection cap
+# --------------------------------------------------------------------------
+
+def many_plants():
+    """70 squares on a grid, sides 7..26 px. Returns (frame, sides)."""
+    sides, blobs = [], []
+    for n in range(70):
+        row, col = divmod(n, 10)
+        side = 7 + n % 20
+        sides.append(side)
+        blobs.append((20 + col * 80, 20 + row * 85, side, side))
+    return frame(*blobs, width=832, height=640), sides
+
+
+def test_no_more_than_the_cap_and_the_largest_are_kept():
+    image, sides = many_plants()
+    boxes, centres = detect(image, 'hsv')
+
+    assert MAX_DETECTIONS == 50
+    assert len(boxes) == len(centres) == MAX_DETECTIONS
+    assert sorted(w for _, _, w, _ in boxes) == sorted(sides)[-MAX_DETECTIONS:]
+
+
+def test_under_the_cap_everything_is_reported():
+    image, sides = many_plants()
+    image[320:] = SOIL                     # keep the first four rows: 40 plants
+    assert len(detect(image, 'hsv')[0]) == 40
+
+
+# --------------------------------------------------------------------------
+# Thresholds
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize('algorithm', ['hsv', 'exhsv'])
+@pytest.mark.parametrize('limits', [
+    {'hue_min': 100, 'hue_max': 120},      # plant hue is 60
+    {'hue_min': 61},
+    {'hue_max': 59},
+    {'saturation_min': 171},               # plant saturation is 170
+    {'saturation_max': 169},
+    {'brightness_min': 181},               # plant brightness is 180
+    {'brightness_max': 179},
+], ids=lambda limits: ','.join(f'{k}={v}' for k, v in limits.items()))
+def test_a_plant_outside_a_limit_is_not_detected(algorithm, limits):
+    assert detect(frame(PLANT), algorithm, **limits) == ([], [])
+
+
+@pytest.mark.parametrize('algorithm', ['hsv', 'exhsv'])
+def test_a_plant_exactly_on_the_limits_is_detected(algorithm):
+    limits = dict(hue_min=60, hue_max=60, saturation_min=170, saturation_max=170,
+                  brightness_min=180, brightness_max=180)
+    assert detect(frame(PLANT), algorithm, **limits)[1] == [[140, 110]]
+
+
+def test_exg_min_above_the_plant_hides_it():
+    """ExG of the plant is 2*180-60-60 = 240. Clipping the whole frame to
+    [250, 255] leaves nothing standing out."""
+    assert detect(frame(PLANT), 'exg', exg_min=250, exg_max=255) == ([], [])
+    assert detect(frame(PLANT), 'exg', exg_min=30, exg_max=250)[1] == [[140, 110]]
+
+
+def test_exg_max_below_the_plant_hides_it():
+    assert detect(frame(PLANT), 'exg', exg_min=0, exg_max=0) == ([], [])
+
+
+@pytest.mark.parametrize('algorithm', ['hsv', 'exhsv'])
+def test_invert_hue_selects_what_is_outside_the_band(algorithm):
+    """brightness_min=100 takes the soil (brightness 90) out of the picture so
+    only the hue band decides."""
+    image = frame(PLANT)
+    bright = dict(brightness_min=100)
+    assert detect(image, algorithm, **bright)[1] == [[140, 110]]
+    assert detect(image, algorithm, invert_hue=True, **bright) == ([], [])
+    assert detect(image, algorithm, invert_hue=True, hue_min=100, hue_max=120,
+                  **bright)[1] == [[140, 110]]
+
+
+# --------------------------------------------------------------------------
+# Which algorithm runs
+# --------------------------------------------------------------------------
+
+def test_each_name_runs_its_own_algorithm():
+    """An orange blob is green by ExG but outside the hue band: only exg
+    finds it. hsv boxes the green plant exactly, exhsv with a halo."""
+    orange = frame((100, 80, 80, 60, ORANGE))
+    assert detect(orange, 'exg')[1] == [[140, 110]]
+    assert detect(orange, 'exhsv') == ([], [])
+    assert detect(orange, 'hsv') == ([], [])
+
+    green = frame(PLANT)
+    assert detect(green, 'hsv')[0] == [[100, 80, 80, 60]]
+    assert detect(green, 'exhsv')[0] != [[100, 80, 80, 60]]
+
+
+def test_unknown_algorithm_falls_back_to_exhsv():
+    orange, green = frame((100, 80, 80, 60, ORANGE)), frame(PLANT)
+    assert detect(orange, 'no-such-algorithm') == ([], [])          # not exg
+    assert detect(green, 'no-such-algorithm') == detect(green, 'exhsv')
+
+
+def lut_for(*colours):
+    table = np.zeros(LUT_SIZE, dtype=np.uint8)
+    for b, g, r in colours:
+        table[(r >> 3) << 10 | (g >> 3) << 5 | (b >> 3)] = 255
+    return table
+
+
+def test_lut_detects_the_painted_colour_only():
+    detector = GreenOnBrown(algorithm='lut', lut_table=lut_for(GREEN))
+    image = frame(PLANT, (300, 200, 60, 60, ORANGE))
+    assert detect(image, 'lut', detector) == ([[100, 80, 80, 60]], [[140, 110]])
+
+    detector.set_lut(lut_for(ORANGE))      # profile switch while running
+    assert detect(image, 'lut', detector) == ([[300, 200, 60, 60]], [[330, 230]])
+
+
+def test_lut_without_a_profile_refuses_rather_than_detecting_nothing():
+    with pytest.raises(RuntimeError, match='no profile is loaded'):
+        GreenOnBrown().inference(frame(PLANT), algorithm='lut')
+
+
+def test_lut_applies_min_area_and_survives_a_resolution_change():
+    detector = GreenOnBrown(algorithm='lut', lut_table=lut_for(GREEN))
+    assert detect(frame(PLANT, SPECK), 'lut', detector, min_detection_area=100)[1] == [[140, 110]]
+    big = frame(PLANT, width=832, height=640)
+    assert detect(big, 'lut', detector)[1] == [[140, 110]]
+
+
+# --------------------------------------------------------------------------
+# What comes back
+# --------------------------------------------------------------------------
+
+def test_the_frame_is_returned_untouched_unless_a_display_is_asked_for():
+    image = frame(PLANT)
+    before = image.copy()
+    detector = GreenOnBrown()
+
+    _, _, _, out = detector.inference(image, algorithm='hsv')
+    assert out is image
+    assert np.array_equal(image, before)
+
+    _, boxes, _, annotated = detector.inference(image, algorithm='hsv', show_display=True)
+    assert np.array_equal(image, before), 'the frame that gets recorded must not be drawn on'
+    assert annotated is not image
+    assert tuple(annotated[80, 100]) == (0, 0, 255), 'box outline drawn at the plant corner'
+
+
+def test_draw_boxes_draws_on_a_copy():
+    image = frame(PLANT)
+    out = draw_boxes(image, [[100, 80, 80, 60]])
+    assert tuple(image[80, 100]) == GREEN
+    assert tuple(out[80, 100]) == (0, 0, 255)

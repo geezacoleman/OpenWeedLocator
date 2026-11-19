@@ -30,8 +30,10 @@ from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 
+from utils.paths import home_dir
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
-LOG_DIR = REPO_ROOT / 'logs'
+LOG_DIR = home_dir('logs')
 
 DEFAULT_SUPPORT_EMAIL = 'support@noktura.tech'
 

@@ -145,3 +145,69 @@ class TestSudoAndLaunch:
         kwargs = popen.call_args[1]
         assert kwargs['stdout'] == swu.subprocess.DEVNULL
         assert kwargs['stderr'] == swu.subprocess.DEVNULL
+
+
+class TestUpdaterStashStep:
+    """owl_update.sh's stash step, run under bash in a throwaway git repo.
+
+    Field failure 2026-11-19: on a unit whose tracked files had only been
+    touched (same content, new timestamp), `git diff-index` said modified,
+    `git stash push` said "No local changes to save", and the script died on
+    `git rev-parse stash@{0}`: the update never started.
+    """
+
+    @staticmethod
+    def _step():
+        import re
+        from pathlib import Path
+        script = (Path(__file__).resolve().parents[2] / 'owl_update.sh').read_text()
+        block = re.search(r'    STASHED=0\n    # Refresh first:.*?\n    fi\n', script, re.S)
+        assert block, 'the stash step moved: update this test'
+        return block.group(0)
+
+    def _run(self, tmp_path, prepare):
+        import subprocess
+        repo = tmp_path / 'repo'
+        repo.mkdir()
+        harness = f'''set -Eeuo pipefail
+cd "{repo}"
+git init -q . && git config user.email t@t && git config user.name t
+mkdir config && echo "relay_num = 4" > config/GENERAL_CONFIG.ini
+git add . && git commit -qm init
+{prepare}
+TS=test; STASH_SHA=""
+log() {{ echo "LOG: $*"; }}
+write_journal() {{ echo "JOURNAL: $STASH_SHA"; }}
+step() {{
+{self._step()}
+}}
+step
+echo "STASHED=$STASHED SHA=$STASH_SHA"
+'''
+        return subprocess.run(['bash', '-c', harness], capture_output=True, text=True, timeout=60)
+
+    def test_a_file_that_was_only_touched_does_not_stop_the_update(self, tmp_path):
+        run = self._run(tmp_path, 'sleep 1; touch config/GENERAL_CONFIG.ini')
+        assert run.returncode == 0, run.stdout + run.stderr
+        assert 'STASHED=0 SHA=\n' in run.stdout
+        assert 'JOURNAL' not in run.stdout
+
+    def test_a_clean_checkout_stashes_nothing(self, tmp_path):
+        run = self._run(tmp_path, ':')
+        assert run.returncode == 0, run.stdout + run.stderr
+        assert 'STASHED=0 SHA=\n' in run.stdout
+
+    def test_a_real_field_change_is_stashed_and_recorded(self, tmp_path):
+        run = self._run(tmp_path, 'echo "relay_num = 8" > config/GENERAL_CONFIG.ini')
+        assert run.returncode == 0, run.stdout + run.stderr
+        import re
+        [sha] = re.findall(r'STASHED=1 SHA=([0-9a-f]{40})', run.stdout)
+        assert f'JOURNAL: {sha}' in run.stdout
+
+    def test_an_older_stash_is_not_mistaken_for_this_runs(self, tmp_path):
+        """A stash already on the unit, then a touched-only file: nothing is
+        stashed now, and the old stash must not be recorded (and later popped)."""
+        run = self._run(tmp_path, 'echo "x = 1" >> config/GENERAL_CONFIG.ini; git stash push -q -m old; '
+                                  'sleep 1; touch config/GENERAL_CONFIG.ini')
+        assert run.returncode == 0, run.stdout + run.stderr
+        assert 'STASHED=0 SHA=\n' in run.stdout

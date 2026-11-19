@@ -34,8 +34,9 @@ def setup_basic_logger():
     # Beside owl.py, not in the working directory: LogManager writes here
     # too, and `python /path/to/owl.py` from elsewhere (common on a laptop)
     # must not scatter half-written logs/ folders around the filesystem.
-    log_dir = Path(__file__).resolve().parent / 'logs'
-    log_dir.mkdir(exist_ok=True)
+    from utils.paths import home_dir
+    log_dir = home_dir('logs')
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     file_handler = logging.FileHandler(log_dir / 'owl.jsonl')
     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
@@ -169,7 +170,8 @@ class Owl:
                  input_file_or_directory=None,
                  config_file='config/GENERAL_CONFIG.ini'):
         # set up the logger
-        log_dir = Path(os.path.join(os.path.dirname(__file__), 'logs'))
+        from utils.paths import home_dir
+        log_dir = home_dir('logs')
         LogManager.setup(log_dir=log_dir, log_level='INFO')
         self.logger = LogManager.get_logger(__name__)
 
@@ -177,7 +179,11 @@ class Owl:
         self._log_system_info()
 
         # read the config file
-        self._config_path = Path(__file__).parent / config_file
+        # Relative names ('config/GENERAL_CONFIG.ini', the active-config
+        # pointer's value, a relative --config) are under the OWL home, which
+        # on a unit is this folder. An absolute path is used as given.
+        from utils.paths import home_dir
+        self._config_path = home_dir() / config_file
         try:
             self.config = ConfigValidator.load_and_validate_config(self._config_path)
         except errors.OWLConfigError as e:
@@ -189,7 +195,11 @@ class Owl:
         # [MQTT]/[Network]/[Security]; losing it (e.g. a root-owned file from
         # a provisioning bug) disables MQTT and the token guard with no error,
         # so an existing-but-unread file must be loud.
-        controller_ini = Path(__file__).parent / 'config' / 'CONTROLLER.ini'
+        # Through home_dir: the unit's own file on a unit, never in a test run
+        # (a unit's CONTROLLER.ini decided what the tests saw, then failed
+        # them with the 'could not be read' error below)
+        from utils.paths import home_dir
+        controller_ini = home_dir('config', 'CONTROLLER.ini')
         read_ok = self.config.read(controller_ini)
         if controller_ini.exists() and not read_ok:
             self.logger.error(
@@ -199,7 +209,7 @@ class Owl:
         # GEOMETRY.ini holds per-unit mount geometry (crop edges + actuation band)
         # and is read LAST so it always wins over legacy crop_*/actuation_* values
         # in the active detection config.
-        self.config.read(Path(__file__).parent / 'config' / 'GEOMETRY.ini')
+        self.config.read(home_dir('config', 'GEOMETRY.ini'))
         self.RPI_VERSION = get_rpi_version()
         self.logger.info(msg=f'Raspberry Pi version: {self.RPI_VERSION}')
 
@@ -225,7 +235,12 @@ class Owl:
             'GreenOnBrown', 'min_detection_area', fallback=10)
         self.min_detection_area_percent = self.config.getfloat(
             'GreenOnBrown', 'min_detection_area_percent', fallback=0.0)
+        # A legacy px minimum is converted again once the frame the detector
+        # really sees is known (_convert_legacy_min_area, after the geometry):
+        # the requested resolution is not it on a clamped Pi 3/4.
+        self._legacy_min_px = None
         if self.min_detection_area_percent <= 0:
+            self._legacy_min_px = self.min_detection_area
             frame_area = (self.config.getint('Camera', 'resolution_width', fallback=416)
                           * self.config.getint('Camera', 'resolution_height', fallback=320))
             migrated = max(0.0005, min(5.0, self.min_detection_area / frame_area * 100))
@@ -720,7 +735,13 @@ class Owl:
             actuation_length_cm=self.config.getfloat('Actuation', 'actuation_length_cm', fallback=10.0),
             offset_cm=self.config.getfloat('Actuation', 'offset_cm', fallback=30.0),
             fallback_duration=self.actuation_duration,
-            fallback_delay=self.delay)
+            fallback_delay=self.delay,
+            min_speed_kmh=self.config.getfloat('Actuation', 'min_speed_kmh',
+                                               fallback=ActuationCalculator.MIN_SPEED))
+        # False until someone has entered the nozzle distance (INI, dashboard
+        # or controller): until then travel timing runs on the 30 cm default,
+        # and the dashboards say so.
+        self.offset_configured = self.config.has_option('Actuation', 'offset_cm')
         # Per detection frame: capture-to-relay time, and how far that ran past
         # the camera-to-nozzle travel time (a spray that started late)
         self._latency_s = deque(maxlen=30)
@@ -850,6 +871,7 @@ class Owl:
 
         # Derive crop_slice, lane coords and actuation band pixel bounds.
         self.recompute_geometry()
+        self._convert_legacy_min_area()
 
         # The dashboard took its state snapshot early in __init__, before
         # controller_type, save_directory and the resolution clamp were set.
@@ -949,6 +971,22 @@ class Owl:
             return 'storage_full'
         return 'storage_error'
 
+    def _convert_legacy_min_area(self):
+        """A minimum weed size given in px (profiles from before the percent
+        key) as a percent of the frame the detector sees. Run once at boot,
+        after the geometry: the first conversion used the requested
+        resolution (wrong on a clamped Pi 3/4: 2000 px became 360 px), and a
+        preset's used 416x320 whatever the camera (2000 px became 7400 px)."""
+        px = getattr(self, '_legacy_min_px', None)
+        area = (getattr(self, 'cropped_width', 0) or 0) * (getattr(self, 'cropped_height', 0) or 0)
+        if px is None or area <= 0:
+            return
+        percent = max(0.0005, min(5.0, px / area * 100))
+        self.min_detection_area_percent = percent
+        self.config.set('GreenOnBrown', 'min_detection_area_percent', f'{percent:.4f}')
+        self.logger.info(f'[CONFIG] legacy min_detection_area {px}px = {percent:.4f}% '
+                         f'of the {self.cropped_width}x{self.cropped_height} detection frame')
+
     def _storage_choice(self):
         """The Settings choices storage was resolved from. Both are applied
         live by set_config_section, so a change shows up here."""
@@ -967,6 +1005,15 @@ class Owl:
         Returns True when storage was found and the ImageRecorder is ready.
         """
         self._storage_resolved_for = self._storage_choice()
+        # The recorder being replaced has a writer of its own. It was left
+        # running on every re-scan (one more each time Save to changed).
+        previous = getattr(self, 'image_recorder', None)
+        if previous is not None:
+            self.image_recorder = None
+            try:
+                previous.stop(wait=False)   # never hold up the detection loop
+            except Exception as e:
+                self.logger.warning(f"Could not stop the previous image recorder: {e}")
         try:
             self.directory_manager = DirectorySetup(
                 save_directory=self.config.get('DataCollection', 'save_directory'),
@@ -2772,6 +2819,15 @@ class Owl:
         stats['latency_ms'] = (round(sum(self._latency_s) / len(self._latency_s) * 1000, 1)
                                if self._latency_s else None)
         stats['speed_warning'] = self.speed_warning
+        stats['offset_cm'] = self._actuation_calc.offset_cm
+        stats['actuation_length_cm'] = self._actuation_calc.actuation_length_cm
+        stats['offset_configured'] = self.offset_configured
+        # Could sprays be timed from travel speed on this unit: it has its
+        # own GPS receiver, or a controller is sending timing. The dashboards
+        # ask for the nozzle distance up front when this is true.
+        stats['travel_timing'] = bool(
+            self._gps_state is not None
+            or time.monotonic() - self._controller_timing_at <= self._CONTROLLER_TIMING_TIMEOUT_S)
 
         return stats
 
@@ -2955,11 +3011,21 @@ class Owl:
                     self._config_actuation = (self.actuation_duration, self.delay)
                 self.logger.info("Spray timing now from this OWL's GPS")
             average = self._speed_averager.add_sample(speed)
-            result = self._actuation_calc.compute(average, self._avg_loop_time_ms)
-            self.actuation_duration, self.delay = ConfigValidator.clamp_actuation(
-                result['actuation_duration'], result['delay'])
+            result = self._actuation_calc.compute(average, self._avg_loop_time_ms,
+                                                  sample_kmh=speed)
             self._device_timing = True
-            self.actuation_source = 'device-gps'
+            if result['source'] == 'gps':
+                self.actuation_duration, self.delay = ConfigValidator.clamp_actuation(
+                    result['actuation_duration'], result['delay'])
+                self.actuation_source = 'device-gps'
+            else:
+                # Fix held but standing still (a parked receiver wanders
+                # around 0.5-1.5 km/h): the configured timing, as it is now,
+                # live edits included. The fix still owns timing, so a
+                # controller broadcast does not replace it.
+                if self.actuation_source != 'config':
+                    self.actuation_duration, self.delay = self._config_actuation
+                    self.actuation_source = 'config'
             self.speed_kmh = round(average, 1)
         else:
             if self._device_timing:
@@ -2978,8 +3044,11 @@ class Owl:
         lag_s = sum(self._latency_s) / len(self._latency_s) if self._latency_s else 0.0
         late_s = sum(self._late_s) / len(self._late_s) if self._late_s else 0.0
         self.speed_warning = speed_warning(
-            self.speed_kmh, self._actuation_calc.actuation_length_cm,
-            self._actuation_calc.offset_cm, self._avg_loop_time_ms, lag_s, late_s)
+            self.speed_kmh if self.actuation_source != 'config' else None,
+            self._actuation_calc.actuation_length_cm,
+            self._actuation_calc.offset_cm, self._avg_loop_time_ms, lag_s, late_s,
+            min_speed_kmh=(self._actuation_calc.min_speed_kmh
+                           * ActuationCalculator.RELEASE_RATIO))
 
     @staticmethod
     def _frame_capture_time(camera_metadata):
@@ -3064,8 +3133,10 @@ class Owl:
                         self.gps_status_led.set_state(GPSLEDState.ERROR)
                     return None
 
-        # No GPS source available
-        if self.gps_status_led:
+        # No GPS source available. On a unit with its own receiver the reader
+        # thread owns the LED here (searching, or no receiver): writing OFF
+        # ten times a second made it read "GPS disabled" instead.
+        if self.gps_status_led and self._gps_state is None:
             self.gps_status_led.set_state(GPSLEDState.OFF)
         return None
 
@@ -3223,7 +3294,8 @@ if __name__ == "__main__":
     # Determine which config file to use
     # Priority: 1) --config argument, 2) active_config.txt pointer, 3) default
     DEFAULT_CONFIG = 'config/GENERAL_CONFIG.ini'
-    ACTIVE_CONFIG_POINTER = Path(__file__).parent / 'config/active_config.txt'
+    from utils.paths import home_dir
+    ACTIVE_CONFIG_POINTER = home_dir('config', 'active_config.txt')
 
     config_file = DEFAULT_CONFIG
 
@@ -3239,7 +3311,7 @@ if __name__ == "__main__":
                 logger.warning(f"Active config {active_config!r} is not a detection profile, using default")
             elif active_config:
                 # Verify the config file exists
-                active_path = Path(__file__).parent / active_config
+                active_path = home_dir() / active_config
                 if active_path.exists():
                     config_file = active_config
                     logger.info(f"Using active config from dashboard: {config_file}")

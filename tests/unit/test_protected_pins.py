@@ -29,16 +29,6 @@ def _gps(source='none', port=''):
 
 NRF91 = ConfigValidator.protected_pins(_gps('nrf91'))
 
-DEFAULT_PINS = {
-    'Relays': {'0': '13', '1': '15', '2': '16', '3': '18'},
-    'Controller': {
-        'status_led_pin': '40', 'gps_led_pin': '38', 'switch_pin': '36',
-        'detection_mode_pin_up': '36', 'detection_mode_pin_down': '35',
-        'recording_pin': '33', 'sensitivity_pin': '32',
-    },
-}
-
-
 @pytest.mark.unit
 class TestProtectedPinRules:
 
@@ -74,8 +64,18 @@ class TestProtectedPinErrors:
         assert 'BOARD 37 is in use' in errs['Relays']['1']
         assert 'GPIO26' in ConfigValidator.format_protected_pin_errors(errs)
 
-    def test_default_pins_are_free_on_an_nrf91_unit(self):
-        assert ConfigValidator.protected_pin_errors(DEFAULT_PINS, NRF91) == {}
+    def test_the_shipped_config_is_free_of_claimed_pins_on_an_nrf91_unit(self):
+        """Every production CM5 runs GENERAL_CONFIG.ini with [GPS] source =
+        nrf91: a default on BOARD 37/21/24 would be disabled on first boot."""
+        shipped = configparser.ConfigParser()
+        assert shipped.read(REPO / 'config' / 'GENERAL_CONFIG.ini')
+        pins = {key: shipped.get('Controller', key) for key in ConfigValidator.CONTROLLER_PIN_KEYS
+                if shipped.has_option('Controller', key)}
+        assert len(pins) >= 6 and len(shipped['Relays']) >= 4, 'the shipped config lost its pins'
+        assert ConfigValidator.protected_pin_errors(shipped, NRF91) == {}
+        # and the check does bite on that same file
+        shipped.set('Relays', '0', '37')
+        assert list(ConfigValidator.protected_pin_errors(shipped, NRF91)) == ['Relays']
 
     def test_nothing_refused_when_nothing_protected(self):
         assert ConfigValidator.protected_pin_errors({'Relays': {'0': '37'}}, {}) == {}
@@ -86,45 +86,125 @@ class TestProtectedPinErrors:
         errs = ConfigValidator.protected_pin_errors(cfg, NRF91)
         assert list(errs['Controller']) == ['gps_led_pin']
 
-    def test_config_load_never_refuses_a_protected_pin(self):
-        src = (REPO / 'utils' / 'config_manager.py').read_text(encoding='utf-8')
-        body = src.split('def load_and_validate_config', 1)[1].split('\n    @classmethod', 1)[0]
-        assert 'protected_pin' not in body
+    def test_config_load_never_refuses_a_protected_pin(self, tmp_path):
+        """A unit whose saved config has a relay on a claimed pin must still
+        boot (the relay is disabled at startup): refusing the file would
+        leave it with no detection at all."""
+        config = configparser.ConfigParser()
+        assert config.read(REPO / 'config' / 'GENERAL_CONFIG.ini')
+        config.read_dict({'GPS': {'source': 'nrf91'}, 'Relays': {'1': '37'},
+                          'Controller': {'status_led_pin': '24'}})
+        path = tmp_path / 'claimed.ini'
+        with open(path, 'w') as f:
+            config.write(f)
+        loaded = ConfigValidator.load_and_validate_config(path)
+        assert loaded.get('Relays', '1') == '37'
+        assert set(ConfigValidator.protected_pin_errors(loaded, ConfigValidator.protected_pins(loaded))) \
+            == {'Relays', 'Controller'}
+
+
+class _Gpio:
+    """utils.output_manager as it is on a Pi: `testing` off and gpiozero's
+    OutputDevice / Buzzer replaced by recorders, so the branch that claims
+    real pins runs. Off a Pi every relay is a TestRelay whatever the code
+    does, which is how a disabled relay that still got a GPIO device passed."""
+
+    BCM = {13: 27, 15: 22, 16: 23, 18: 24, 37: 26, 7: 4}
+
+    def __init__(self, monkeypatch, tmp_path):
+        import utils.output_manager as om
+        self.claimed = []        # 'BOARDn' for every OutputDevice built
+        self.driven = []         # (board pin, on)
+        self.buzzers = []
+        self.pins_file = tmp_path / 'owl-relay-pins'
+        gpio = self
+
+        class OutputDevice:
+            def __init__(self, pin):
+                gpio.claimed.append(pin)
+                self.board = int(pin.replace('BOARD', ''))
+                self.pin = f'GPIO{gpio.BCM[self.board]}'
+
+            def on(self):
+                gpio.driven.append((self.board, True))
+
+            def off(self):
+                gpio.driven.append((self.board, False))
+
+        class Buzzer:
+            def __init__(self, pin):
+                gpio.buzzers.append(pin)
+
+            def beep(self, **kwargs):
+                pass
+
+        monkeypatch.setattr(om, 'testing', False)
+        monkeypatch.setattr(om, 'OutputDevice', OutputDevice, raising=False)
+        monkeypatch.setattr(om, 'Buzzer', Buzzer, raising=False)
+        monkeypatch.setenv('OWL_RELAY_PINS_FILE', str(self.pins_file))
+
+
+@pytest.fixture
+def gpio(monkeypatch, tmp_path):
+    return _Gpio(monkeypatch, tmp_path)
 
 
 @pytest.mark.unit
 class TestStartupDisablesClaimedDevices:
 
-    def test_relay_slot_kept_but_driving_nothing(self):
+    def test_a_relay_on_a_claimed_pin_keeps_its_slot_and_gets_no_gpio_device(self, gpio):
         from utils.output_manager import RelayControl
         rc = RelayControl({0: 13, 1: 37, 2: 16}, disabled_pins=NRF91)
+        assert gpio.claimed == ['BOARD13', 'BOARD16'], 'the modem power pin was claimed as a relay'
         assert list(rc.relay_dict) == [0, 1, 2]
         assert rc.disabled_relays == {1: 37}
-        rc.relay_on(1, verbose=False)
-        rc.relay_off(1, verbose=False)
+        rc.all_on()
+        rc.all_off()
+        assert gpio.driven == [(13, True), (16, True), (13, False), (16, False)]
 
-    def test_relay_controller_keeps_every_lane(self):
+    def test_without_gps_hardware_the_same_pin_is_an_ordinary_relay(self, gpio):
+        from utils.output_manager import RelayControl
+        rc = RelayControl({0: 13, 1: 37}, disabled_pins={})
+        assert gpio.claimed == ['BOARD13', 'BOARD37']
+        assert rc.disabled_relays == {}
+        rc.relay_on(1, verbose=False)
+        assert gpio.driven == [(37, True)]
+
+    def test_the_pins_file_for_relays_off_lists_only_pins_this_process_drives(self, gpio):
+        """tools/relays_off.py (owl.service ExecStopPost) drives every BCM
+        pin in this file low after any exit. The modem's power pin in it
+        would switch the GPS off on every restart."""
+        from utils.output_manager import RelayControl
+        RelayControl({0: 13, 1: 37, 2: 16, 3: 18}, disabled_pins=NRF91)
+        assert gpio.pins_file.read_text() == '23 24 27\n'      # BCM, sorted; no 26
+
+    def test_a_relay_on_the_buzzer_pin_takes_it_from_the_buzzer(self, gpio):
+        from utils.output_manager import RelayControl
+        RelayControl({0: 13}, disabled_pins={})
+        assert gpio.buzzers == ['BOARD7']
+        gpio.buzzers.clear()
+        rc = RelayControl({0: 7}, disabled_pins={})
+        assert gpio.buzzers == [], 'the buzzer and a relay both claimed BOARD7'
+        rc.beep(duration=0.01, repeats=1)                      # a stub: nothing to drive
+
+    def test_a_disabled_lane_takes_spray_windows_and_drives_nothing(self, gpio):
+        """The lane keeps its consumer thread (lane indexing depends on keys
+        0..n-1), so a weed in it must be a no-op, not an exception that
+        kills the thread, while the lane next to it sprays."""
         from utils.output_manager import RelayController
         rc = RelayController({0: 13, 1: 37}, disabled_pins=NRF91)
         try:
             assert set(rc.relay_schedule_dict) == {0, 1}
-            rc.receive(relay=1, time_stamp=time.monotonic(), delay=0, duration=0.05)
+            now = time.monotonic()
+            rc.receive(relay=1, time_stamp=now, delay=0, duration=0.1)
+            rc.receive(relay=0, time_stamp=now, delay=0, duration=0.1)
+            time.sleep(0.4)
+            assert gpio.driven == [(13, True), (13, False)]
+            rc.set_mode('blanket')
+            assert gpio.driven[2:] == [(13, True)]
         finally:
+            rc.set_mode('off')
             rc.stop()
-
-    def test_owl_builds_every_gpio_device_through_the_pin_check(self):
-        src = (REPO / 'owl.py').read_text(encoding='utf-8')
-        assert 'self.protected_pins = ConfigValidator.protected_pins(self.config)' in src
-        assert 'disabled_pins=self.protected_pins' in src
-        for key in ('status_led_pin', 'gps_led_pin', 'switch_pin', 'recording_pin',
-                    'sensitivity_pin', 'detection_mode_pin_up', 'detection_mode_pin_down'):
-            assert f"_allowed_board_pin('{key}'" in src, key
-
-    def test_switches_accept_a_missing_pin(self):
-        src = (REPO / 'utils' / 'input_manager.py').read_text(encoding='utf-8')
-        assert 'if not testing and switch_board_pin else None' in src
-        assert 'if not testing and pin else None' in src
-        assert "switch_board_pin='BOARD37'" not in src
 
 
 @pytest.mark.unit

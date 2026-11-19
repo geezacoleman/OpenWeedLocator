@@ -20,11 +20,13 @@ try:
 except ImportError:
     YOLO = None
 
+from utils.paths import home_dir
+
 logger = logging.getLogger(__name__)
 
-# Resolved relative to this file so tracking works regardless of cwd
+# Under the OWL home (utils/paths.py), so tracking works regardless of cwd
 # (systemd sets WorkingDirectory, but manual/script launches may not).
-TRACKER_YAML = str(Path(__file__).resolve().parent.parent / 'config' / 'bytetrack_owl.yaml')
+TRACKER_YAML = str(home_dir('config', 'bytetrack_owl.yaml'))
 
 
 class GreenOnGreen:

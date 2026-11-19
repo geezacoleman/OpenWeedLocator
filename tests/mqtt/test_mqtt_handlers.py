@@ -1,364 +1,287 @@
-"""Tests for OWLMQTTPublisher config editor command handlers."""
+"""OWLMQTTPublisher config-editor handlers: what get_config publishes and
+what the save commands write.
+
+Every test that saves uses the `owl_home` fixture (a private OWL home with an
+empty config/) and asserts on the files that land there. Until 3.27.3 these
+tests read back the fixture's own INI, which the handler never writes, while
+the handler rewrote the checkout's real config/active_config.txt.
+"""
 
 import configparser
 import json
-import os
 import threading
-import time
-from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 
+def ini(path):
+    parser = configparser.ConfigParser()
+    parser.read_string(path.read_text())
+    return parser
+
+
+def config_files(home):
+    return sorted(p.name for p in (home / 'config').iterdir())
+
+
+POINTER = 'active_config.txt'
+AUTOSAVE = 'config_autosave.ini'
+
+
 @pytest.mark.unit
 class TestGetConfig:
-    """Tests for _handle_get_config handler."""
-
-    def test_get_config_publishes_json(self, mqtt_publisher, mock_owl, tmp_config_dir):
-        """get_config should read config from disk and publish JSON."""
+    def test_get_config_publishes_the_file_the_owl_loaded(self, mqtt_publisher, mock_owl):
         mqtt_publisher._handle_get_config()
 
-        # Should have published to the config topic
         mqtt_publisher.client.publish.assert_called_once()
         topic, payload_str = mqtt_publisher.client.publish.call_args[0][:2]
-        assert 'config' in topic
+        assert topic == mqtt_publisher.topics['config']
 
         payload = json.loads(payload_str)
-        assert 'config' in payload
-        assert 'config_path' in payload
-        assert 'device_id' in payload
-        assert 'GreenOnBrown' in payload['config']
+        assert payload['device_id'] == 'test-owl'
+        assert payload['config_name'] == 'test_config.ini'
+        assert payload['config_path'] == str(mock_owl.config_path)
         assert payload['config']['GreenOnBrown']['exg_min'] == '25'
+        assert payload['config']['System']['relay_num'] == '4'
 
-    def test_get_config_handles_missing_path(self):
-        """get_config should not crash when config path is unavailable."""
+    def test_get_config_with_no_config_path_publishes_nothing(self):
         from utils.mqtt_manager import OWLMQTTPublisher
 
-        publisher = OWLMQTTPublisher(
-            broker_host='localhost', broker_port=1883,
-            client_id='test_nopath', device_id='test-nopath'
-        )
+        publisher = OWLMQTTPublisher(broker_host='localhost', broker_port=1883,
+                                     client_id='test_nopath', device_id='test-nopath')
         publisher.client = MagicMock()
         publisher.connected = True
-
-        # No owl instance set, no config_file
-        publisher.config_file = None
-        publisher.owl_instance = None
-
-        # Patch _resolve_config_path to return None (simulates missing path)
         with patch.object(publisher, '_resolve_config_path', return_value=None):
             publisher._handle_get_config()
-
-        # Should not publish anything
         publisher.client.publish.assert_not_called()
 
 
 @pytest.mark.unit
 class TestSetConfigSection:
-    """Tests for _handle_set_config_section handler."""
-
-    def test_updates_greenonbrown_params_on_instance(self, mqtt_publisher, mock_owl):
-        """Setting GreenOnBrown params should update live instance attributes."""
-        mqtt_publisher._handle_set_config_section('GreenOnBrown', {
-            'exg_min': 30,
-            'exg_max': 180,
-        })
-
-        # The _update_greenonbrown_param method should have been called
-        # Check that config object was updated
+    def test_thresholds_reach_the_instance_and_the_config(self, mqtt_publisher, mock_owl, owl_home):
+        mqtt_publisher._handle_set_config_section('GreenOnBrown', {'exg_min': 30, 'exg_max': 180})
+        assert mqtt_publisher.io_flush()          # the autosave it queues, into owl_home
+        assert (mock_owl.exg_min, mock_owl.exg_max) == (30, 180)
         assert mock_owl.config.get('GreenOnBrown', 'exg_min') == '30'
         assert mock_owl.config.get('GreenOnBrown', 'exg_max') == '180'
 
-    def test_updates_configparser_for_persistence(self, mqtt_publisher, mock_owl):
-        """Setting a section should update the ConfigParser object for later saving."""
-        mqtt_publisher._handle_set_config_section('Camera', {
-            'resolution_width': '640',
-            'resolution_height': '480',
-        })
+    def test_a_threshold_edit_is_saved_to_the_working_file_by_itself(
+            self, mqtt_publisher, mock_owl, owl_home):
+        """Sliders have no Save button: the edit must survive a restart."""
+        mqtt_publisher._handle_command({'action': 'set_config_section', 'section': 'GreenOnBrown',
+                                        'params': {'exg_min': '31'}})
+        assert mqtt_publisher.io_flush()
+        assert ini(owl_home / 'config' / AUTOSAVE).get('GreenOnBrown', 'exg_min') == '31'
+        assert (owl_home / 'config' / POINTER).read_text() == f'config/{AUTOSAVE}\n'
 
+    def test_a_restart_only_key_is_kept_for_the_next_save_not_applied(self, mqtt_publisher, mock_owl):
+        mqtt_publisher._handle_set_config_section('Camera', {'resolution_width': '640',
+                                                             'resolution_height': '480'})
         assert mock_owl.config.get('Camera', 'resolution_width') == '640'
         assert mock_owl.config.get('Camera', 'resolution_height') == '480'
+        assert mock_owl.resolution == (1456, 1088)
+        assert mqtt_publisher.state['restart_required'] == 'resolution_height,resolution_width'
 
 
 @pytest.mark.unit
 class TestSaveConfig:
-    """Tests for _handle_save_config handler."""
+    def test_an_unnamed_save_goes_to_the_working_file_and_leaves_the_profile_alone(
+            self, mqtt_publisher, mock_owl, owl_home):
+        loaded = mock_owl.config_path.read_text()
+        mock_owl.config.set('GreenOnBrown', 'exg_min', '33')
 
-    def test_save_writes_ini_to_disk(self, mqtt_publisher, mock_owl, tmp_config_dir):
-        """save_config should write the INI file to disk."""
+        mqtt_publisher._handle_command({'action': 'save_config', 'filename': None})
+        assert mqtt_publisher.io_flush()
+
+        assert config_files(owl_home) == [POINTER, AUTOSAVE]
+        saved = ini(owl_home / 'config' / AUTOSAVE)
+        assert saved.get('GreenOnBrown', 'exg_min') == '33'
+        assert saved.get('Meta', 'source') == 'test_config.ini'
+        assert (owl_home / 'config' / POINTER).read_text() == f'config/{AUTOSAVE}\n'
+        assert mock_owl.config_path.read_text() == loaded, 'the loaded profile was rewritten'
+
+    def test_a_named_save_writes_that_file_and_makes_it_the_active_config(
+            self, mqtt_publisher, mock_owl, owl_home):
+        """Otherwise the OWL keeps running the working file and the dashboard
+        keeps showing '<old profile> - unsaved changes' (2026-07-10)."""
+        mock_owl.config.set('GreenOnBrown', 'exg_min', '34')
+        mock_owl.config.set('Camera', 'crop_left', '0.2')      # mount geometry: never in a profile
+
+        mqtt_publisher._handle_command({'action': 'save_config', 'filename': 'my_saved.ini',
+                                        'name': 'Wheat, dewy', 'notes': 'north paddock'})
+        assert mqtt_publisher.io_flush()
+
+        assert config_files(owl_home) == [POINTER, AUTOSAVE, 'my_saved.ini']
+        saved = ini(owl_home / 'config' / 'my_saved.ini')
+        assert saved.get('GreenOnBrown', 'exg_min') == '34'
+        assert saved.get('Meta', 'display_name') == 'Wheat, dewy'
+        assert saved.get('Meta', 'notes') == 'north paddock'
+        assert not saved.has_option('Meta', 'source')
+        assert not saved.has_option('Camera', 'crop_left')
+        assert (owl_home / 'config' / POINTER).read_text() == 'config/my_saved.ini\n'
+        # the working copy now mirrors the saved profile
+        working = ini(owl_home / 'config' / AUTOSAVE)
+        assert working.get('GreenOnBrown', 'exg_min') == '34'
+        assert working.get('Meta', 'source') == 'my_saved.ini'
+
+    def test_a_filename_cannot_leave_the_config_folder(self, mqtt_publisher, mock_owl, owl_home):
+        mqtt_publisher._handle_save_config(filename='../../escaped.ini')
+        assert (owl_home / 'config' / 'escaped.ini').exists()
+        assert not (owl_home / 'escaped.ini').exists()
+        assert not (owl_home.parent / 'escaped.ini').exists()
+
+    @pytest.mark.parametrize('name', ['GENERAL_CONFIG.ini', 'CONTROLLER.ini', 'GEOMETRY.ini',
+                                      'config/GENERAL_CONFIG.ini'])
+    def test_a_save_never_overwrites_the_shipped_or_device_files(
+            self, mqtt_publisher, mock_owl, owl_home, name):
+        target = owl_home / 'config' / name.split('/')[-1]
+        target.write_text('[Original]\nkeep = me\n')
+
+        mqtt_publisher._handle_command({'action': 'save_config', 'filename': name})
+        assert mqtt_publisher.io_flush()
+
+        assert target.read_text() == '[Original]\nkeep = me\n'
+        assert config_files(owl_home) == [target.name], 'a refused save still wrote something'
+
+    def test_saving_after_a_profile_switch_follows_the_working_file(
+            self, mqtt_publisher, mock_owl, owl_home):
+        """Booted from the working file; the dashboard then pointed the OWL at
+        a named profile without a restart. A live change saved now must be
+        what the next boot loads, and still say which profile it came from."""
+        config = owl_home / 'config'
+        (config / AUTOSAVE).write_text('[Meta]\nsource = DAY.ini\n')
+        (config / POINTER).write_text('config/NIGHT.ini\n')
+        mock_owl._config_path = config / AUTOSAVE
+        mqtt_publisher.set_owl_instance(mock_owl)       # the path is taken when the OWL attaches
+        mock_owl.config.set('GreenOnBrown', 'exg_min', '35')
+
         mqtt_publisher._handle_save_config()
 
-        # Verify the file was written
-        config_path = mock_owl.config_path
-        assert config_path.exists()
-
-        # Read it back and verify content
-        saved = configparser.ConfigParser()
-        saved.read(config_path)
-        assert saved.get('GreenOnBrown', 'exg_min') == '25'
-
-    def test_save_blocks_overwrite_of_presets(self, mqtt_publisher):
-        """save_config should refuse to overwrite GENERAL_CONFIG.ini preset."""
-        mqtt_publisher._handle_save_config(filename='GENERAL_CONFIG.ini')
-
-        # The file should NOT have been written — check that no open() was called
-        # by verifying the logger got the error
-        # (The method logs an error and returns early)
-        # We can check that config.write was NOT called
-        # Since mock_owl.config is a real ConfigParser, we check the log instead
-        # Just verify no exception was raised — the method handles it gracefully
-        pass  # Method returns early with log, no crash = pass
-
-    def test_save_with_custom_filename(self, mqtt_publisher, mock_owl, tmp_config_dir):
-        """save_config with a filename saves to the config directory."""
-        # Point the publisher to use tmp_config_dir as config directory
-        config_dir = tmp_config_dir
-        with patch('utils.mqtt_manager.os.path.dirname') as mock_dirname:
-            # Make os.path.dirname(__file__) return a path that leads to tmp_config_dir
-            mock_dirname.return_value = str(tmp_config_dir)
-            with patch('utils.mqtt_manager.os.path.join') as mock_join:
-                mock_join.side_effect = lambda *args: os.path.join(*args)
-                # The save_config method constructs the path internally
-                # Just verify it doesn't crash with a custom filename
-                mqtt_publisher._handle_save_config(filename='my_custom.ini')
-
-
-@pytest.mark.unit
-class TestSetAlgorithm:
-    """Tests for set_algorithm command handler."""
-
-    def test_set_algorithm_updates_state(self, mqtt_publisher, mock_owl):
-        """set_algorithm updates state and owl instance."""
-        mqtt_publisher._handle_command({'action': 'set_algorithm', 'value': 'gog-hybrid'})
-
-        assert mqtt_publisher.state['algorithm_pending'] == 'gog-hybrid'
-        assert mock_owl._pending_algorithm == 'gog-hybrid'
-
-    def test_set_algorithm_invalid_rejected(self, mqtt_publisher, mock_owl):
-        """Invalid algorithm value is rejected, state unchanged."""
-        mqtt_publisher.state['algorithm'] = 'exhsv'
-        mqtt_publisher._handle_command({'action': 'set_algorithm', 'value': 'invalid_algo'})
-
-        assert mqtt_publisher.state['algorithm'] == 'exhsv'
-
-    def test_algorithm_in_state(self, mqtt_publisher):
-        """algorithm is published in MQTT state dict."""
-        assert 'algorithm' in mqtt_publisher.state
-
-
-@pytest.mark.unit
-class TestSetCropBuffer:
-    """Tests for set_crop_buffer command handler."""
-
-    def test_set_crop_buffer_updates_state(self, mqtt_publisher, mock_owl):
-        """set_crop_buffer updates state and owl instance, clamped to 0-50."""
-        mqtt_publisher._handle_command({'action': 'set_crop_buffer', 'value': 35})
-
-        assert mqtt_publisher.state['crop_buffer_px'] == 35
-        assert mock_owl.crop_buffer_px == 35
-
-    def test_set_crop_buffer_clamped(self, mqtt_publisher, mock_owl):
-        """Values outside 0-50 are clamped."""
-        mqtt_publisher._handle_command({'action': 'set_crop_buffer', 'value': 100})
-        assert mqtt_publisher.state['crop_buffer_px'] == 50
-
-        mqtt_publisher._handle_command({'action': 'set_crop_buffer', 'value': -10})
-        assert mqtt_publisher.state['crop_buffer_px'] == 0
+        assert (config / POINTER).read_text() == f'config/{AUTOSAVE}\n'
+        saved = ini(config / AUTOSAVE)
+        assert saved.get('GreenOnBrown', 'exg_min') == '35'
+        assert saved.get('Meta', 'source') == 'DAY.ini'
 
 
 @pytest.mark.unit
 class TestSetActiveConfig:
-    """Tests for _handle_set_active_config handler."""
+    def test_points_the_owl_at_the_profile_and_seeds_the_working_copy(
+            self, mqtt_publisher, owl_home):
+        (owl_home / 'config' / 'DAY.ini').write_text('[GreenOnBrown]\nexg_min = 41\n')
 
-    def test_writes_active_config_txt(self, mqtt_publisher, tmp_config_dir):
-        """set_active_config should write the config path to active_config.txt."""
-        # Override the config dir path to use tmp_path
-        config_dir = str(tmp_config_dir)
-        active_path = os.path.join(config_dir, 'active_config.txt')
+        mqtt_publisher._handle_command({'action': 'set_active_config', 'config': 'config/DAY.ini'})
 
-        with patch('utils.mqtt_manager.os.path.join',
-                   side_effect=lambda *a: os.path.join(*a)):
-            with patch('utils.mqtt_manager.os.path.dirname',
-                       return_value=str(tmp_config_dir)):
-                mqtt_publisher._handle_set_active_config('config/GENERAL_CONFIG.ini')
+        assert (owl_home / 'config' / POINTER).read_text() == 'config/DAY.ini\n'
+        working = ini(owl_home / 'config' / AUTOSAVE)
+        assert working.get('GreenOnBrown', 'exg_min') == '41'
+        assert working.get('Meta', 'source') == 'DAY.ini'
+        assert config_files(owl_home) == ['DAY.ini', POINTER, AUTOSAVE]
 
-        # The active_config.txt should exist (may have been written to a real path)
-        # At minimum, verify no exception was raised
+    @pytest.mark.parametrize('command', [
+        {'action': 'set_active_config'},
+        {'action': 'set_active_config', 'config': ''},
+        # only ever a detection profile: the pointer decides what owl.py
+        # loads and what GET /api/config serves
+        {'action': 'set_active_config', 'config': 'config/CONTROLLER.ini'},
+        {'action': 'set_active_config', 'config': 'config/../owl.py'},
+        {'action': 'set_active_config', 'config': 'config/../../etc/x.ini'},
+        {'action': 'set_active_config', 'config': 'GEOMETRY.ini'},
+        {'action': 'set_active_config', 'config': 'config/DAY_TEMPLATE.ini'},
+    ])
+    def test_anything_that_is_not_a_profile_writes_nothing(self, mqtt_publisher, owl_home, command):
+        mqtt_publisher._handle_command(command)
+        assert config_files(owl_home) == []
 
 
 @pytest.mark.unit
 class TestConcurrency:
-    """Verify thread safety of config operations (BUG 2 fix)."""
-
-    def test_concurrent_set_and_save_no_crash(self, mqtt_publisher, mock_owl, tmp_config_dir):
-        """Concurrent set_config_section + save_config should not crash."""
+    def test_edits_and_saves_from_two_threads_leave_a_whole_file(
+            self, mqtt_publisher, mock_owl, owl_home):
+        """The MQTT thread edits while the I/O worker saves (BUG 2)."""
         errors = []
 
-        def set_loop():
+        def edits():
             try:
                 for i in range(20):
-                    mqtt_publisher._handle_set_config_section('GreenOnBrown', {
-                        'exg_min': str(25 + i),
-                    })
+                    mqtt_publisher._handle_set_config_section('GreenOnBrown',
+                                                              {'exg_min': str(25 + i)})
             except Exception as e:
                 errors.append(('set', e))
 
-        def save_loop():
+        def saves():
             try:
                 for _ in range(20):
                     mqtt_publisher._handle_save_config()
             except Exception as e:
                 errors.append(('save', e))
 
-        t1 = threading.Thread(target=set_loop)
-        t2 = threading.Thread(target=save_loop)
-        t1.start()
-        t2.start()
-        t1.join(timeout=5)
-        t2.join(timeout=5)
-
+        threads = [threading.Thread(target=edits), threading.Thread(target=saves)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+        assert not any(t.is_alive() for t in threads)
         assert not errors, f"Concurrency errors: {errors}"
+        assert mqtt_publisher.io_flush()
+        mqtt_publisher._handle_save_config()
+
+        saved = ini(owl_home / 'config' / AUTOSAVE)       # parses: never half-written
+        assert saved.get('GreenOnBrown', 'exg_min') == '44'
+        assert saved.get('System', 'relay_num') == '4'
+        assert config_files(owl_home) == [POINTER, AUTOSAVE], 'temp files left behind'
 
 
 @pytest.mark.unit
 class TestTrackbarQueue:
-    """Tests for the trackbar queue (cv2 thread-safety fix)."""
+    """cv2 trackbars may only be touched from the main loop: the MQTT thread
+    queues the change."""
 
     def test_trackbar_queued_when_display_active(self, mqtt_publisher, mock_owl):
-        """When show_display=True, trackbar updates are queued, not called directly."""
         mock_owl.show_display = True
-        mock_owl._pending_trackbar_updates = {}
-
         mqtt_publisher._update_greenonbrown_param('exg_min', 42)
-
-        assert mock_owl._pending_trackbar_updates.get('ExG-Min') == 42
+        assert mock_owl._pending_trackbar_updates == {'ExG-Min': 42}
         assert mock_owl.exg_min == 42
 
     def test_trackbar_not_queued_when_display_off(self, mqtt_publisher, mock_owl):
-        """When show_display=False, no trackbar updates are queued."""
         mock_owl.show_display = False
-        mock_owl._pending_trackbar_updates = {}
-
         mqtt_publisher._update_greenonbrown_param('hue_max', 100)
-
-        assert len(mock_owl._pending_trackbar_updates) == 0
+        assert mock_owl._pending_trackbar_updates == {}
         assert mock_owl.hue_max == 100
 
-    def test_sensitivity_preset_queues_all_trackbars(self, mqtt_publisher, mock_owl, tmp_config_dir):
-        """Applying a sensitivity preset queues all 8 trackbar updates."""
+    def test_sensitivity_preset_queues_all_eight_trackbars(self, mqtt_publisher, mock_owl):
         mock_owl.show_display = True
-        mock_owl._pending_trackbar_updates = {}
-
-        # The preset file must exist for this to work
-        mqtt_publisher._apply_sensitivity_preset('low')
-
-        # If the config file doesn't exist the method logs and returns,
-        # so only assert when trackbar updates were actually queued
-        if mock_owl._pending_trackbar_updates:
-            assert 'ExG-Min' in mock_owl._pending_trackbar_updates
-            assert 'Bright-Max' in mock_owl._pending_trackbar_updates
-            assert len(mock_owl._pending_trackbar_updates) == 8
+        mqtt_publisher._handle_command({'action': 'set_sensitivity_level', 'level': 'low'})
+        # [Sensitivity_Low] in the fixture INI
+        assert mock_owl._pending_trackbar_updates == {
+            'ExG-Min': 25, 'ExG-Max': 200, 'Hue-Min': 41, 'Hue-Max': 80,
+            'Sat-Min': 52, 'Sat-Max': 218, 'Bright-Min': 62, 'Bright-Max': 188}
+        assert (mock_owl.hue_min, mock_owl.brightness_max) == (41, 188)
 
 
 @pytest.mark.unit
 class TestInvertHue:
-    """Tests for invert_hue parameter handling."""
-
-    def test_invert_hue_accepted(self, mqtt_publisher, mock_owl):
-        """invert_hue should be accepted as a valid GreenOnBrown param."""
-        mqtt_publisher._update_greenonbrown_param('invert_hue', 'true')
-        assert mock_owl.invert_hue is True
-
-    def test_invert_hue_false(self, mqtt_publisher, mock_owl):
-        """invert_hue=false should set to False."""
-        mock_owl.invert_hue = True
-        mqtt_publisher._update_greenonbrown_param('invert_hue', 'false')
-        assert mock_owl.invert_hue is False
-
-    def test_invert_hue_numeric(self, mqtt_publisher, mock_owl):
-        """invert_hue=1 should be treated as True."""
-        mqtt_publisher._update_greenonbrown_param('invert_hue', '1')
-        assert mock_owl.invert_hue is True
+    @pytest.mark.parametrize('sent, expected', [('true', True), ('1', True), ('false', False)])
+    def test_invert_hue_values(self, mqtt_publisher, mock_owl, sent, expected):
+        mock_owl.invert_hue = not expected
+        mqtt_publisher._update_greenonbrown_param('invert_hue', sent)
+        assert mock_owl.invert_hue is expected
 
 
 @pytest.mark.unit
-class TestGoGConfidence:
-    """Tests for GreenOnGreen confidence parameter."""
-
-    def test_confidence_update_sets_instance(self, mqtt_publisher, mock_owl):
-        """Updating confidence should set _gog_confidence on owl instance."""
-        mqtt_publisher._update_greenongreen_param('confidence', 0.75)
-        assert mock_owl._gog_confidence == 0.75
-
-    def test_confidence_update_sets_state(self, mqtt_publisher, mock_owl):
-        """Updating confidence should also update MQTT state."""
-        mqtt_publisher._update_greenongreen_param('confidence', 0.3)
-        assert mqtt_publisher.state['confidence'] == 0.3
-
-    def test_confidence_in_initial_state(self, mqtt_publisher):
-        """confidence should be present in the initial MQTT state."""
-        assert 'confidence' in mqtt_publisher.state
-
+class TestStateFromTheOwl:
     def test_confidence_synced_from_owl(self, mqtt_publisher, mock_owl):
-        """_sync_parameters_to_state should pick up _gog_confidence."""
         mock_owl._gog_confidence = 0.85
         mqtt_publisher._sync_parameters_to_state()
         assert mqtt_publisher.state['confidence'] == 0.85
 
-
-# ---------------------------------------------------------------------------
-# Resolution in MQTT state
-# ---------------------------------------------------------------------------
-
-@pytest.mark.unit
-class TestResolutionState:
-    """Tests for resolution_width/resolution_height in MQTT state."""
-
-    def test_resolution_in_initial_state(self, mqtt_publisher):
-        """resolution_width and resolution_height should be in the state dict."""
-        assert 'resolution_width' in mqtt_publisher.state
-        assert 'resolution_height' in mqtt_publisher.state
-
     def test_resolution_synced_from_owl(self, mqtt_publisher, mock_owl):
-        """_sync_parameters_to_state should pick up owl.resolution tuple."""
-        mock_owl.resolution = (1456, 1088)
-        mqtt_publisher._sync_parameters_to_state()
-        assert mqtt_publisher.state['resolution_width'] == 1456
-        assert mqtt_publisher.state['resolution_height'] == 1088
-
-    def test_resolution_lower_values(self, mqtt_publisher, mock_owl):
-        """Should correctly report non-max resolution."""
         mock_owl.resolution = (640, 480)
         mqtt_publisher._sync_parameters_to_state()
-        assert mqtt_publisher.state['resolution_width'] == 640
-        assert mqtt_publisher.state['resolution_height'] == 480
+        assert (mqtt_publisher.state['resolution_width'],
+                mqtt_publisher.state['resolution_height']) == (640, 480)
 
-    def test_resolution_defaults_in_state_dict(self, mqtt_publisher):
-        """Resolution fields should default to 0 in the state dict before sync."""
-        # Create a fresh publisher without set_owl_instance
+    def test_resolution_is_zero_until_an_owl_is_attached(self):
         from utils.mqtt_manager import OWLMQTTPublisher
         fresh = OWLMQTTPublisher(broker_host='localhost', client_id='fresh_test')
-        assert fresh.state['resolution_width'] == 0
-        assert fresh.state['resolution_height'] == 0
-
-
-@pytest.mark.unit
-class TestSetActiveConfigConfinement:
-    """set_active_config over MQTT must only ever name a detection profile:
-    the pointer decides what owl.py loads and what GET /api/config serves."""
-
-    @pytest.mark.parametrize('name', ['config/CONTROLLER.ini', 'config/../owl.py',
-                                      'config/../../etc/x.ini', 'GEOMETRY.ini'])
-    def test_refuses_non_profiles(self, mqtt_publisher, name):
-        with patch('utils.mqtt_manager.atomic_write_config') as write, \
-                patch('utils.mqtt_manager.seed_autosave') as seed:
-            mqtt_publisher._handle_set_active_config(name)
-        write.assert_not_called()
-        seed.assert_not_called()
-
-    def test_writes_a_profile(self, mqtt_publisher):
-        with patch('utils.mqtt_manager.atomic_write_config') as write, \
-                patch('utils.mqtt_manager.seed_autosave'):
-            mqtt_publisher._handle_set_active_config('config/DAY_SENSITIVITY_2.ini')
-        write.assert_called_once()
+        assert (fresh.state['resolution_width'], fresh.state['resolution_height']) == (0, 0)

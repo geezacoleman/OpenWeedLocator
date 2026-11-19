@@ -297,9 +297,11 @@ class WidgetManager:
         label = _esc(cfg.get('label', spec.get('name', '')))
         section = _esc(cfg.get('section', ''))
         param = _esc(cfg.get('param', ''))
-        mn = cfg.get('min', 0)
-        mx = cfg.get('max', 255)
-        step = cfg.get('step', 1)
+        # Numbers only: these go into the page unquoted-safe, and a spec
+        # with min = '0" onfocus="...' used to add an attribute to it
+        mn = _num(cfg.get('min', 0), 0)
+        mx = _num(cfg.get('max', 255), 255)
+        step = _num(cfg.get('step', 1), 1)
         unit = _esc(cfg.get('unit', ''))
         widget_id = _esc(spec.get('id', ''))
 
@@ -325,9 +327,11 @@ class WidgetManager:
         label = _esc(cfg.get('label', spec.get('name', '')))
         section = _esc(cfg.get('section', ''))
         param = cfg.get('param', '')
-        mn = cfg.get('min', 0)
-        mx = cfg.get('max', 255)
-        step = cfg.get('step', 1)
+        # Numbers only: these go into the page unquoted-safe, and a spec
+        # with min = '0" onfocus="...' used to add an attribute to it
+        mn = _num(cfg.get('min', 0), 0)
+        mx = _num(cfg.get('max', 255), 255)
+        step = _num(cfg.get('step', 1), 1)
         unit = _esc(cfg.get('unit', ''))
 
         # Derive min/max param names from action_params if param is empty
@@ -474,6 +478,22 @@ class WidgetManager:
 # ------------------------------------------------------------------
 # Module-level helpers
 # ------------------------------------------------------------------
+
+def _num(value, default):
+    """value as a plain number for an HTML attribute, else default."""
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        number = value
+    else:
+        try:
+            number = float(str(value).strip())
+        except (TypeError, ValueError):
+            return default
+    if number != number or number in (float('inf'), float('-inf')):
+        return default
+    return int(number) if float(number).is_integer() else number
+
 
 def _esc(value):
     """Escape a string for safe inclusion in HTML attributes."""

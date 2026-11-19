@@ -72,28 +72,37 @@ def mock_stream_context(lines, status_code=200, text=""):
 
 
 class TestRateLimiter:
-    def test_basic_operation(self):
+    def test_the_limit_is_exact(self):
         rl = RateLimiter(max_per_minute=5)
-        # Should not raise for 5 calls
         for _ in range(5):
-            rl.check()
+            rl.check()          # the 1st to 5th call are allowed
             rl.record()
+        with pytest.raises(RateLimitError, match=r"Rate limit exceeded \(5/min\)"):
+            rl.check()          # the 6th is not
 
-    def test_limit_exceeded(self):
+    def test_the_wait_is_until_the_oldest_call_is_a_minute_old(self):
         rl = RateLimiter(max_per_minute=2)
-        rl.record()
-        rl.record()
+        rl._calls = [time.monotonic() - 45, time.monotonic() - 1]
         with pytest.raises(RateLimitError) as exc_info:
             rl.check()
-        assert exc_info.value.retry_after > 0
+        assert 14 <= exc_info.value.retry_after <= 15
 
-    def test_old_calls_pruned(self):
+    def test_calls_older_than_a_minute_no_longer_count(self):
         rl = RateLimiter(max_per_minute=1)
-        # Manually insert an old timestamp (>60s ago)
         rl._calls.append(time.monotonic() - 61)
-        # Should not raise because the old call is pruned
         rl.check()
         rl.record()
+        assert len(rl._calls) == 1, 'the old call was dropped, the new one recorded'
+        with pytest.raises(RateLimitError):
+            rl.check()
+
+    def test_a_refused_call_is_not_counted(self):
+        provider = AnthropicProvider(api_key="key", max_calls_per_minute=1)
+        provider._check_rate_limit()
+        for _ in range(3):
+            with pytest.raises(RateLimitError):
+                provider._check_rate_limit()
+        assert len(provider._rate_limiter._calls) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -214,8 +223,8 @@ class TestAnthropicStreamChat:
         assert text_chunks[0].data == "Hello"
         assert text_chunks[1].data == " world"
 
-        usage_chunks = [c for c in chunks if c.type == "usage"]
-        assert len(usage_chunks) >= 1
+        assert [c.data for c in chunks if c.type == "usage"] == [
+            {"input_tokens": 8}, {"output_tokens": 4}]
 
     def test_tool_use_stream(self):
         provider = self._make_provider()
@@ -581,3 +590,75 @@ class TestErrorHandling:
 
             with pytest.raises(AuthenticationError):
                 list(provider.stream_chat([{"role": "user", "content": "hi"}]))
+
+
+# ---------------------------------------------------------------------------
+# Key check: only a 401 means "wrong key"
+# ---------------------------------------------------------------------------
+
+
+class TestValidateKeyReasons:
+    """A 400 (no credit) or 429 used to come back as False and the farmer was
+    told the key was invalid. Both providers, through the shared HTTP fake."""
+
+    @pytest.mark.parametrize("kind", [AnthropicProvider, OpenAIProvider])
+    @pytest.mark.parametrize("status, raised", [
+        (400, ProviderError), (403, ProviderError), (429, RateLimitError), (500, ProviderError)])
+    def test_other_failures_raise_with_the_providers_text(self, llm, kind, status, raised):
+        from agent_fakes import HTTPError
+        llm.key_check = HTTPError(status, "credit balance too low")
+        with pytest.raises(raised, match="credit balance too low") as exc_info:
+            kind(api_key="key").validate_key()
+        assert type(exc_info.value) is raised
+
+    @pytest.mark.parametrize("kind", [AnthropicProvider, OpenAIProvider])
+    def test_the_check_costs_one_token_at_most(self, llm, kind):
+        assert kind(api_key="key").validate_key() is True
+        [request] = llm.requests
+        assert request["max_tokens"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Tool calls in an Anthropic stream
+# ---------------------------------------------------------------------------
+
+
+class TestAnthropicToolStreams:
+    def _chunks(self, llm, lines):
+        llm.replies = [lines]
+        return list(AnthropicProvider(api_key="key").stream_chat([{"role": "user", "content": "x"}]))
+
+    def test_two_tool_calls_after_text_each_keep_their_own_arguments(self, llm):
+        from agent_fakes import calls, says
+        lines = says("On it.") + calls(("set_sensitivity", {"level": "low"}),
+                                       ("set_detection", {"state": "off"}))
+        chunks = self._chunks(llm, lines)
+        assert [(c.type, c.data) for c in chunks] == [
+            ("text_delta", "On it."),
+            ("tool_call", ToolCall(id="tc_1", name="set_sensitivity", arguments={"level": "low"})),
+            ("tool_call", ToolCall(id="tc_2", name="set_detection", arguments={"state": "off"})),
+        ]
+
+    def test_arguments_split_over_many_events_are_joined(self, llm):
+        from agent_fakes import calls
+        lines = calls(("set_detection", {"state": "blanket"}))
+        whole = json.loads(lines[1][len("data: "):])["delta"]["partial_json"]
+        pieces = [whole[:3], whole[3:11], whole[11:]]
+        lines[1:2] = ["data: " + json.dumps({"type": "content_block_delta", "delta": {
+            "type": "input_json_delta", "partial_json": piece}}) for piece in pieces]
+        [chunk] = self._chunks(llm, lines)
+        assert chunk.data.arguments == {"state": "blanket"}
+
+    def test_arguments_that_are_not_json_become_no_arguments(self, llm):
+        """What the code does. The tools must therefore treat 'no arguments'
+        as a refusal, never as a default (see set_detection)."""
+        from agent_fakes import calls
+        lines = calls(("set_detection", {"state": "blanket"}))
+        lines[1] = lines[1].replace('\\"blanket\\"}', "")
+        [chunk] = self._chunks(llm, lines)
+        assert (chunk.data.name, chunk.data.arguments) == ("set_detection", {})
+
+    def test_noise_between_events_is_ignored(self, llm):
+        from agent_fakes import says
+        lines = ["event: ping", "", "data: ", "data: {not json", ": keep-alive"] + says("Hello")
+        assert [(c.type, c.data) for c in self._chunks(llm, lines)] == [("text_delta", "Hello")]

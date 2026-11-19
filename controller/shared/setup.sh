@@ -127,7 +127,8 @@ _validate_ip() {
   # Octet range check 0..255
   IFS='.' read -r a b c d <<<"$ip"
   for o in "$a" "$b" "$c" "$d"; do
-    if (( o < 0 || o > 255 )); then
+    # 10#: a leading zero (192.168.008.1) would be read as octal and fail
+    if (( 10#$o < 0 || 10#$o > 255 )); then
       return 1
     fi
   done
@@ -1036,6 +1037,12 @@ else
 
     check_status "Ethernet configuration" "WIFI_CONFIG"
 fi
+
+# Wired Ethernet keeps a profile that connects by itself whichever mode was
+# chosen above: it is the way into the unit when Wi-Fi is not. Repairs a unit
+# whose wired profile was deleted (dev/clean.sh did, until 2026-10-19).
+sudo bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../tools/ensure_wired.sh" || \
+    echo -e "${ORANGE}[WARNING] Wired Ethernet has no working profile (bash tools/ensure_wired.sh)${NC}"
 
 # Step 5: Configure UFW firewall
 echo -e "${GREEN}[INFO] Configuring firewall (UFW)...${NC}"

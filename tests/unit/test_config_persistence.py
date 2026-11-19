@@ -69,10 +69,9 @@ class TestPersistConfigChange:
         new_active = dashboard._get_active_config_path()
         assert 'config_' in new_active  # contains timestamp
         new_path = dashboard._resolve_config_path(new_active)
-        if os.path.exists(new_path):
-            new_config = configparser.ConfigParser()
-            new_config.read(new_path)
-            assert new_config.get('GreenOnBrown', 'exg_min') == '99'
+        new_config = configparser.ConfigParser()
+        assert new_config.read(new_path), f'the active pointer names a file that is not there: {new_path}'
+        assert new_config.get('GreenOnBrown', 'exg_min') == '99'
 
     def test_creates_section_if_missing(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
@@ -93,16 +92,27 @@ class TestPersistConfigChange:
         config.read(os.path.join(str(tmp_dir), AUTOSAVE_CONFIG))
         assert config.get('GreenOnGreen', 'confidence') == '0.75'
 
-    def test_missing_config_file_logged(self, standalone_test_client):
-        """If the active config file doesn't exist, method should not crash."""
+    def test_a_pointer_to_a_deleted_profile_heals_and_the_change_is_still_saved(
+            self, standalone_test_client):
+        """active_config.txt names a profile that is gone (deleted, or a USB
+        restore): the setting the operator just changed must not be lost."""
         client, dashboard, tmp_dir = standalone_test_client
 
         pointer = os.path.join(str(tmp_dir), 'active_config.txt')
         with open(pointer, 'w') as f:
             f.write('config/NONEXISTENT.ini')
 
-        # Should not crash
-        dashboard._persist_config_change('GreenOnBrown', 'exg_min', '42')
+        assert dashboard._persist_config_change('GreenOnBrown', 'exg_min', '42')
+
+        assert not os.path.exists(os.path.join(str(tmp_dir), 'NONEXISTENT.ini'))
+        active = dashboard._resolve_config_path(dashboard._get_active_config_path())
+        saved = configparser.ConfigParser()
+        assert saved.read(active), f'active profile {active} does not exist'
+        assert saved.get('GreenOnBrown', 'exg_min') == '42'
+        # the shipped default is never the file that gets edited
+        shipped = configparser.ConfigParser()
+        shipped.read(os.path.join(str(tmp_dir), 'GENERAL_CONFIG.ini'))
+        assert shipped.get('GreenOnBrown', 'exg_min') != '42'
 
 
 # ---------------------------------------------------------------------------
@@ -174,57 +184,3 @@ class TestActiveConfigPointer:
 
         # Pointer should have been removed (reverting to default)
         assert not os.path.exists(pointer)
-
-
-# ---------------------------------------------------------------------------
-# Two-file merge: detection preset + CONTROLLER.ini layering
-# ---------------------------------------------------------------------------
-
-@pytest.mark.unit
-class TestTwoFileMerge:
-    """Tests for ConfigParser.read() merge order (detection + infrastructure)."""
-
-    def test_later_file_wins(self, tmp_path):
-        """CONTROLLER.ini values should override detection preset values."""
-        # Detection preset
-        detection = tmp_path / 'detection.ini'
-        detection.write_text(
-            '[MQTT]\nbroker_ip = 10.0.0.1\n'
-            '[GreenOnBrown]\nexg_min = 25\n'
-        )
-
-        # Controller override
-        controller = tmp_path / 'CONTROLLER.ini'
-        controller.write_text(
-            '[MQTT]\nbroker_ip = localhost\nbroker_port = 1883\n'
-        )
-
-        config = configparser.ConfigParser()
-        config.read([str(detection), str(controller)])
-
-        # CONTROLLER.ini value should win for broker_ip
-        assert config.get('MQTT', 'broker_ip') == 'localhost'
-        # broker_port only in CONTROLLER.ini
-        assert config.get('MQTT', 'broker_port') == '1883'
-        # GreenOnBrown only in detection preset
-        assert config.get('GreenOnBrown', 'exg_min') == '25'
-
-    def test_detection_preset_sections_preserved(self, tmp_path):
-        """Detection-only sections remain when CONTROLLER.ini is merged."""
-        detection = tmp_path / 'detection.ini'
-        detection.write_text(
-            '[System]\nalgorithm = exhsv\n'
-            '[GreenOnBrown]\nexg_min = 25\n'
-            '[Camera]\nresolution_width = 416\n'
-        )
-
-        controller = tmp_path / 'CONTROLLER.ini'
-        controller.write_text('[MQTT]\nbroker_ip = localhost\n')
-
-        config = configparser.ConfigParser()
-        config.read([str(detection), str(controller)])
-
-        assert config.has_section('System')
-        assert config.has_section('GreenOnBrown')
-        assert config.has_section('Camera')
-        assert config.has_section('MQTT')

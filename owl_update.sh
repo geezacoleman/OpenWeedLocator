@@ -526,12 +526,23 @@ main() {
     # --- Stash field config ---------------------------------------------------------
     write_status stashing
     STASHED=0
+    # Refresh first: a tracked file that was only touched (same content, new
+    # timestamp or mode) reads as modified to diff-index, then git stash
+    # finds nothing to save and there is no stash@{0} to record. That ended
+    # the update with "failed at ... git rev-parse -q --verify stash@{0}".
+    git update-index -q --refresh >/dev/null 2>&1 || true
     if ! git diff-index --quiet HEAD --; then
         log "Stashing local modifications..."
+        stash_before="$(git rev-parse -q --verify 'stash@{0}' || true)"
         git stash push -m "owl-update-$TS"
-        STASHED=1
-        STASH_SHA="$(git rev-parse -q --verify stash@{0})"
-        write_journal
+        stash_after="$(git rev-parse -q --verify 'stash@{0}' || true)"
+        if [[ -n "$stash_after" && "$stash_after" != "$stash_before" ]]; then
+            STASHED=1
+            STASH_SHA="$stash_after"
+            write_journal
+        else
+            log "Nothing needed stashing"
+        fi
     fi
 
     # --- Checkout -------------------------------------------------------------------
@@ -609,6 +620,13 @@ main() {
         fi
         if [[ "$PROFILE" == "controller" ]]; then entries=(controller/networked/networked.py); fi
         "$VENV/bin/python" "$REPO_DIR/tools/import_check.py" "${entries[@]}"
+    fi
+
+    # --- Wired Ethernet -----------------------------------------------------------
+    # Units cleaned by dev/clean.sh before 2026-10-19 lost their wired profile
+    # for good; an update is the one thing that reaches them. Never fatal.
+    if [[ -f "$REPO_DIR/tools/ensure_wired.sh" ]]; then
+        bash "$REPO_DIR/tools/ensure_wired.sh" 2>&1 | while IFS= read -r line; do log "$line"; done || true
     fi
 
     # --- Restart + health check --------------------------------------------------------

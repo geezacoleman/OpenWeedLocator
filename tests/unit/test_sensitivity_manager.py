@@ -201,9 +201,7 @@ class TestSaveCustomPreset:
         result = sm.save_custom_preset('canola', values)
         assert result is True
 
-        retrieved = sm.get_preset_values('canola')
-        assert retrieved is not None
-        assert all(v == 42 for v in retrieved.values())
+        assert sm.get_preset_values('canola') == values
 
     def test_persists_to_disk(self, tmp_path):
         config, path = _make_config(tmp_path)
@@ -264,11 +262,13 @@ class TestDeleteCustomPreset:
     def test_cannot_delete_builtin(self, tmp_path):
         config, path = _make_config(tmp_path)
         sm = SensitivityManager(config, path)
+        before = {name: sm.get_preset_values(name) for name in ('low', 'medium', 'high')}
+        assert all(before.values())
         assert sm.delete_custom_preset('low') is False
         assert sm.delete_custom_preset('medium') is False
         assert sm.delete_custom_preset('high') is False
-        # Verify still present
-        assert sm.get_preset_values('low') is not None
+        # Still present, unchanged
+        assert {name: sm.get_preset_values(name) for name in before} == before
 
     def test_delete_nonexistent(self, tmp_path):
         config, path = _make_config(tmp_path)

@@ -35,6 +35,7 @@ const Shell = (function () {
     let livePop = null;
     let liveId = null;          // OWL picked in the live view pop-up (null = the selection)
     let nozzleTester = null;
+    let owlsLoaded = false;   // first OWL report received
     let trackPersistStep = null;
     let trackBufferStep = null;
 
@@ -272,6 +273,7 @@ const Shell = (function () {
     // ---------- per-poll update ----------
     function update(data) {
         lastData = data || {};
+        owlsLoaded = true;
         const now = Date.now() / 1000;
         Object.keys(owlsData).forEach((id) => {
             const o = owlsData[id];
@@ -411,6 +413,11 @@ const Shell = (function () {
         const out = [];
         const many = _scope === 'all';
         const who = (o) => many ? (o.friendly_name || o._id) + ': ' : '';
+        // Travel timing is running on a nozzle distance nobody entered
+        if (typeof offsetUnset === 'function' && offsetUnset()) {
+            out.push(U.notice('warn', '<b>Nozzle distance not set.</b> Sprays are timed for nozzles 30 cm behind the camera. ' +
+                '<button type="button" class="lnk" data-act="offset">Set it ›</button>'));
+        }
         if (_scope !== 'all' && !(owlsData[_scope] && owlsData[_scope].connected)) {
             const s = seen[_scope] || {};
             out.push(U.notice('warn', '<b>' + U.esc(owlName(_scope)) + ' is offline.</b> ' + U.esc(U.relTime(s._seenAt ? Date.now() / 1000 - s._seenAt : null)) + '.'));
@@ -443,6 +450,8 @@ const Shell = (function () {
             box.innerHTML = html;
             const r = box.querySelector('[data-act="restart"]');
             if (r) r.addEventListener('click', () => { sendCommand(currentScope(), 'restart_service'); showToast('Restarting', 'info'); });
+            const off = box.querySelector('[data-act="offset"]');
+            if (off) off.addEventListener('click', () => openSettings('spraying'));
             wireUseModel(box);
         }
         const ai = $('aiNotices');
@@ -867,5 +876,9 @@ const Shell = (function () {
     return {
         init: init, update: update, render: render, scopeOwl: scopeOwl, openSettings: openSettings,
         modeRefused: modeRefused, onCollectConfig: onCollectConfig, setScope: setScope,
+        // Any connected OWL spot or blanket spraying (no pop-ups over a working rig)
+        // True until the first OWL report has arrived: unknown counts as spraying.
+        anySpraying: () => !owlsLoaded || Object.keys(owlsData).some((id) => owlsData[id] && owlsData[id].connected &&
+            (owlsData[id].detection_enable || owlsData[id].detection_mode === 2)),
     };
 })();

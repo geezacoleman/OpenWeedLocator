@@ -8,7 +8,7 @@ background reconnect threads retry with exponential backoff.
 import json
 import threading
 import time
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -20,6 +20,15 @@ import pytest
 @pytest.mark.unit
 class TestOWLMQTTPublisherReconnect:
     """Tests for OWLMQTTPublisher startup resilience."""
+
+    @pytest.fixture(autouse=True)
+    def _stop_publishers(self):
+        """start() launches heartbeat, monitor and connectivity threads that
+        loop while `running`; they used to be left running after the test."""
+        self._made = []
+        yield
+        for publisher in self._made:
+            publisher.running = False
 
     def _make_publisher(self):
         """Create a publisher with a mocked MQTT client."""
@@ -33,6 +42,7 @@ class TestOWLMQTTPublisherReconnect:
             network_mode='networked'
         )
         publisher.client = MagicMock()
+        self._made.append(publisher)
         return publisher
 
     def test_start_sets_running_true_even_on_failure(self):
@@ -43,6 +53,8 @@ class TestOWLMQTTPublisherReconnect:
         publisher.start()
 
         assert publisher.running is True
+        assert publisher.connected is False
+        assert publisher.state['owl_running'] is True
 
     def test_start_launches_heartbeat_thread(self):
         """Heartbeat thread should start regardless of broker reachability."""
@@ -109,11 +121,12 @@ class TestOWLMQTTPublisherReconnect:
         publisher.client.connect.side_effect = fail_then_succeed
 
         # Patch sleep to avoid waiting
-        with patch('utils.mqtt_manager.time.sleep'):
+        with patch('utils.mqtt_manager.time.sleep') as sleep:
             publisher._background_reconnect()
 
         assert call_count == 3
         publisher.client.loop_start.assert_called_once()
+        assert [c.args[0] for c in sleep.call_args_list] == [2, 4, 8], 'backoff doubles'
 
     def test_background_reconnect_stops_when_running_false(self):
         """Reconnect loop should exit when self.running is set to False."""
@@ -132,8 +145,11 @@ class TestOWLMQTTPublisherReconnect:
         with patch('utils.mqtt_manager.time.sleep', side_effect=stop_after_two):
             publisher._background_reconnect()
 
-        # Should have stopped after running was set to False
-        assert publisher.running is False
+        # One attempt after the first wait; stopped during the second wait,
+        # so no second attempt and no network loop started
+        assert call_count == 2
+        assert publisher.client.connect.call_count == 1
+        publisher.client.loop_start.assert_not_called()
 
     def test_stop_safe_when_never_connected(self):
         """stop() should not crash if the client never connected."""
@@ -431,7 +447,7 @@ class TestSimultaneousPowerOn:
         with patch.object(CentralController, '__init__', lambda self, **kw: None):
             ctrl = CentralController.__new__(CentralController)
             ctrl.owls_state = {}
-            ctrl.desired_state = {'all': {'detection_enable': True}}
+            ctrl.desired_state = {'all': {'spray': 'spot'}}
             ctrl.lwt_timestamps = {}
             ctrl.mqtt_connected = True
             ctrl.mqtt_lock = threading.Lock()
@@ -456,8 +472,7 @@ class TestSimultaneousPowerOn:
         assert len(cmd_calls) > 0, "Controller should push desired state to new OWL"
 
         payloads = [json.loads(c[0][1]) for c in cmd_calls]
-        assert any(p['action'] == 'set_detection_enable' and p['value'] is True
-                   for p in payloads)
+        assert payloads == [{'action': 'set_detection_enable', 'value': True}]
 
     def test_owl_lwt_then_reconnect_cycle(self):
         """Full cycle: OWL connects → disconnects (LWT) → reconnects.
@@ -494,7 +509,13 @@ class TestSimultaneousPowerOn:
         })
         assert ctrl.owls_state['owl-pi-1']['connected'] is False
 
-        # Step 3: OWL reconnects (sends state again)
+        # Step 3: a heartbeat that was already in flight when it died is
+        # not a reconnection
+        inject('state', {'detection_enable': True, 'owl_running': True})
+        assert ctrl.owls_state['owl-pi-1']['connected'] is False
+
+        # Step 4: the OWL really is back (six seconds later)
+        ctrl.lwt_timestamps['owl-pi-1'] -= 6
         inject('state', {'detection_enable': True, 'owl_running': True})
         assert ctrl.owls_state['owl-pi-1']['connected'] is True
 
@@ -505,7 +526,7 @@ class TestSimultaneousPowerOn:
         with patch.object(CentralController, '__init__', lambda self, **kw: None):
             ctrl = CentralController.__new__(CentralController)
             ctrl.owls_state = {}
-            ctrl.desired_state = {'all': {'detection_enable': True}}
+            ctrl.desired_state = {'all': {'spray': 'spot'}}
             ctrl.lwt_timestamps = {}
             ctrl.mqtt_connected = True
             ctrl.mqtt_lock = threading.Lock()
@@ -533,5 +554,6 @@ class TestSimultaneousPowerOn:
         pub_calls = ctrl.mqtt_client.publish.call_args_list
         left_cmds = [c for c in pub_calls if 'owl-left/commands' in c[0][0]]
         right_cmds = [c for c in pub_calls if 'owl-right/commands' in c[0][0]]
-        assert len(left_cmds) > 0, "Should push desired state to owl-left"
-        assert len(right_cmds) > 0, "Should push desired state to owl-right"
+        spot = {'action': 'set_detection_enable', 'value': True}
+        assert [json.loads(c[0][1]) for c in left_cmds] == [spot]
+        assert [json.loads(c[0][1]) for c in right_cmds] == [spot]

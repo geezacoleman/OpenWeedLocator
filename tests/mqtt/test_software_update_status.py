@@ -12,7 +12,7 @@ import json
 import time
 import logging
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -161,9 +161,15 @@ class TestVersionInState:
         assert mqtt_publisher.state['git_branch'] not in ('', None)
         assert mqtt_publisher.state['git_commit'] not in ('', None)
 
-    def test_populate_never_raises(self, mqtt_publisher):
-        with patch('version.SystemInfo.get_git_info', side_effect=RuntimeError('boom')):
-            mqtt_publisher._populate_version_info()  # must not raise
+    def test_a_failing_git_lookup_keeps_the_version_and_warns(self, mqtt_publisher, caplog):
+        """MQTT startup must not depend on git being available."""
+        from version import VERSION
+        mqtt_publisher.state['version'] = ''
+        with patch('version.SystemInfo.get_git_info', side_effect=RuntimeError('boom')), \
+                caplog.at_level(logging.WARNING):
+            mqtt_publisher._populate_version_info()
+        assert mqtt_publisher.state['version'] == str(VERSION)
+        assert any('Could not populate version info: boom' in r.message for r in caplog.records)
 
 
 @pytest.mark.unit
