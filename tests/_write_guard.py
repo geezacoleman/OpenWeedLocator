@@ -9,8 +9,8 @@ Why: until 3.27.3 the MQTT tests rewrote config/active_config.txt and
 config/config_autosave.ini in the checkout they ran from, so running pytest
 on a unit changed the config it booted with.
 
-Allowed: the temp directory (pytest's tmp_path lives there), /dev, bytecode
-caches, pytest's own cache, and the per-user cache directories third-party
+Allowed: the temp directory (pytest's tmp_path lives there), /dev, the null
+device on any platform, bytecode caches, pytest's own cache, and the per-user cache directories third-party
 libraries keep (matplotlib, fontconfig).
 
 Child processes are not seen by the hook. tests/conftest.py also compares
@@ -41,6 +41,10 @@ _ALLOWED_ROOTS = tuple(p + os.sep for p in (
 _ALLOWED_PARTS = (os.sep + '__pycache__' + os.sep, os.sep + '.pytest_cache' + os.sep,
                   os.sep + 'pytest-cache-files-')
 _WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
+# The null device. On Linux it sits under /dev, allowed above. On Windows it
+# resolves to \\.\nul, and pytest's logging plugin opens it for writing at
+# start-up, so without this no test run can begin there.
+_NULL_DEVICE = os.path.normcase(os.path.realpath(os.devnull))
 
 # event -> indexes of the path arguments that get modified
 _PATH_EVENTS = {
@@ -67,6 +71,8 @@ def _allowed(path):
             return True
         full = os.path.realpath(os.fsdecode(path))
     except (TypeError, ValueError, OSError):
+        return True
+    if os.path.normcase(full) == _NULL_DEVICE:
         return True
     probe = full + os.sep
     return probe.startswith(_ALLOWED_ROOTS) or any(part in probe for part in _ALLOWED_PARTS)

@@ -87,6 +87,12 @@ def test_reading_real_files_is_allowed():
     assert not _write_guard.violations
 
 
+def test_the_null_device_is_writable():
+    # pytest itself logs to it; on Windows it is \\.\nul, not a path under /dev
+    with open(os.devnull, 'w') as f:
+        f.write('discarded')
+
+
 def test_tmp_path_is_writable(tmp_path):
     (tmp_path / 'a').mkdir()
     (tmp_path / 'a' / 'b.txt').write_text('x')
