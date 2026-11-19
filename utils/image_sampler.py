@@ -593,7 +593,7 @@ class ImageRecorder:
                 'lat': float(gps_data['latitude']),
                 'lon': float(gps_data['longitude']),
             }
-            for key in ('accuracy', 'altitude', 'speed_kmh', 'heading', 'source'):
+            for key in ('accuracy', 'hdop', 'altitude', 'speed_kmh', 'heading', 'source'):
                 if gps_data.get(key) is not None:
                     entry[key] = gps_data[key]
             entry['files'] = files

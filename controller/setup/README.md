@@ -193,8 +193,9 @@ bash owl_setup.sh --factory
 ```
 
 Non-interactive: base install, standalone setup with hotspot `OWL-XXXX`
-(suffix from the Pi serial) and the fixed setup password, nRF9151 GPS, then
-arms first-boot. `--ship` and `--ship-gps` were removed in v3.19.0 with no
+(suffix from the Pi serial) and the fixed setup password, nRF9151 GPS, the
+unit's own `config/GEOMETRY.ini` at a 10% crop (v3.28.0, kept if it already
+has one), then arms first-boot. `--ship` and `--ship-gps` were removed in v3.19.0 with no
 aliases.
 
 **Identity gate.** Before anything is installed it checks

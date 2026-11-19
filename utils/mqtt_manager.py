@@ -665,6 +665,12 @@ class OWLMQTTPublisher:
             'actuation_length_cm': None,
             'offset_configured': None,
             'travel_timing': None,
+            # Fix detail for the app's GPS sheet (None without a fix, or when
+            # the source does not report it: a phone sends no satellites)
+            'gps_satellites': None,
+            'gps_hdop': None,
+            'gps_fix_quality': None,
+            'gps_fix_age_s': None,
             # BOARD pins this OWL's own GPS hardware uses ({'37': reason});
             # dashboards refuse config changes that would drive them.
             'protected_pins': {},
@@ -3875,7 +3881,8 @@ class OWLMQTTPublisher:
             self.state['last_update'] = time.time()
         self._publish_state()
 
-    def set_gps_status(self, fix, source, latitude, longitude, accuracy, speed_kmh=None):
+    def set_gps_status(self, fix, source, latitude, longitude, accuracy, speed_kmh=None,
+                       satellites=None, hdop=None, fix_quality=None, age_s=None):
         """Push the current best-GPS reading into state (additive fields).
 
         Coordinates are quantized to 5 decimal places (~1.1 m) and speed to
@@ -3883,7 +3890,25 @@ class OWLMQTTPublisher:
         state on every jitter; fix/source transitions always publish.
         speed_kmh is for display only (gps_speed_kmh); spray timing keeps
         its own speed_kmh.
+
+        accuracy is metres or None (never HDOP). satellites, hdop and age_s
+        wobble every second, so they are stored without publishing and go
+        out with the 2 s heartbeat; a change of fix_quality publishes.
         """
+        def _number(value, digits):
+            try:
+                return None if value is None else round(float(value), digits)
+            except (TypeError, ValueError):
+                return None
+
+        def _whole(value):
+            try:
+                return None if value is None else int(value)
+            except (TypeError, ValueError):
+                return None
+
+        sats_q, quality_q = _whole(satellites), _whole(fix_quality)
+        hdop_q, age_q = _number(hdop, 1), _number(age_s, 1)
         lat_q = None if latitude is None else round(float(latitude), 5)
         lon_q = None if longitude is None else round(float(longitude), 5)
         acc_q = None if accuracy is None else round(float(accuracy), 1)
@@ -3894,7 +3919,12 @@ class OWLMQTTPublisher:
                        or self.state.get('gps_best_lat') != lat_q
                        or self.state.get('gps_best_lon') != lon_q
                        or self.state.get('gps_best_accuracy') != acc_q
-                       or self.state.get('gps_speed_kmh') != speed_q)
+                       or self.state.get('gps_speed_kmh') != speed_q
+                       or self.state.get('gps_fix_quality') != quality_q)
+            self.state['gps_satellites'] = sats_q
+            self.state['gps_hdop'] = hdop_q
+            self.state['gps_fix_quality'] = quality_q
+            self.state['gps_fix_age_s'] = age_q
             if not changed:
                 return
             self.state['gps_fix'] = bool(fix)

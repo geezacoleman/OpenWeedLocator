@@ -216,6 +216,7 @@ STATUS_NUMPY_COMPAT=""
 STATUS_GOG_DEPS=""
 STATUS_CONTROLLER=""
 STATUS_GPS=""
+STATUS_GEOMETRY=""
 STATUS_WIFI_COUNTRY=""
 
 ERROR_UPGRADE=""
@@ -235,6 +236,7 @@ ERROR_NUMPY_COMPAT=""
 ERROR_GOG_DEPS=""
 ERROR_CONTROLLER=""
 ERROR_GPS=""
+ERROR_GEOMETRY=""
 ERROR_WIFI_COUNTRY=""
 
 # Function to check the exit status of the last executed command
@@ -494,6 +496,41 @@ setup_wifi_country() {
     echo -e "${TICK} Wi-Fi country: world"
     STATUS_WIFI_COUNTRY="${TICK}"
   fi
+}
+
+setup_factory_geometry() {
+  # --factory only. A unit leaving the factory gets its own GEOMETRY.ini with
+  # the 10% crop on every edge (edge artefacts and vignetting on the 2.8 mm
+  # lens). GENERAL_CONFIG.ini keeps 2%: an OWL in the field with no
+  # GEOMETRY.ini reads crop from it on every update, so changing it there
+  # would move that unit's nozzle lanes. A unit that already has a
+  # GEOMETRY.ini (a re-run, or one set in the dashboard) keeps it.
+  local geometry="${SCRIPT_DIR}/config/GEOMETRY.ini"
+  local template="${SCRIPT_DIR}/config/GEOMETRY_TEMPLATE.ini"
+
+  if [ -f "$geometry" ]; then
+    echo -e "${TICK} GEOMETRY.ini already on this unit: kept"
+    STATUS_GEOMETRY="${TICK}"
+    return 0
+  fi
+  if [ ! -f "$template" ]; then
+    echo -e "${CROSS} GEOMETRY_TEMPLATE.ini not found at ${template}"
+    STATUS_GEOMETRY="${CROSS}"
+    ERROR_GEOMETRY="GEOMETRY_TEMPLATE.ini not found"
+    return 1
+  fi
+  # The values without the template's own header: the live file is not a template
+  if grep -v '^[[:space:]]*#' "$template" | sed '/./,$!d' > "${geometry}.tmp" \
+      && grep -q '^crop_left' "${geometry}.tmp" && mv "${geometry}.tmp" "$geometry"; then
+    echo -e "${TICK} GEOMETRY.ini written (crop from GEOMETRY_TEMPLATE.ini)"
+    STATUS_GEOMETRY="${TICK}"
+    return 0
+  fi
+  rm -f "${geometry}.tmp"
+  echo -e "${CROSS} GEOMETRY.ini could not be written"
+  STATUS_GEOMETRY="${CROSS}"
+  ERROR_GEOMETRY="GEOMETRY.ini not written"
+  return 1
 }
 
 setup_factory_gps() {
@@ -1007,6 +1044,11 @@ if [[ "$FACTORY_MODE" == "1" ]]; then
     setup_factory_gps
 fi
 
+# Step 13b2: crop for the 2.8 mm lens (--factory): the unit's own GEOMETRY.ini
+if [[ "$FACTORY_MODE" == "1" ]]; then
+    setup_factory_geometry
+fi
+
 # Step 13c: maker identity (interactive installs only). A self-built OWL can
 # join Noktura from the phone app (community registration) once it has an
 # identity. A key file is the maker tier; a CM5 or Pi 5 with rpi-fw-crypto can
@@ -1054,6 +1096,7 @@ echo -e "$STATUS_DESKTOP_ICON Desktop Icon Created"
 echo -e "$STATUS_CONTROLLER Hardware Controller Configured"
 if [[ "$FACTORY_MODE" == "1" ]]; then
     echo -e "$STATUS_GPS nRF9151 GPS Configured"
+    echo -e "$STATUS_GEOMETRY Crop set for the 2.8 mm lens (GEOMETRY.ini)"
 fi
 if [[ -n "$STATUS_WIFI_COUNTRY" ]]; then
     echo -e "$STATUS_WIFI_COUNTRY Wi-Fi Country (${WIFI_COUNTRY:-world})"
@@ -1092,6 +1135,7 @@ if [[ "$FACTORY_MODE" == "1" ]]; then
     [ -n "$ERROR_DASHBOARD_DEPS" ] && SHIP_BLOCKERS+="dashboard dependencies; "
     [ -n "$ERROR_DASHBOARD" ] && SHIP_BLOCKERS+="dashboard/first-boot setup; "
     [ -n "$ERROR_GPS" ] && SHIP_BLOCKERS+="nRF9151 GPS setup; "
+    [ -n "$ERROR_GEOMETRY" ] && SHIP_BLOCKERS+="crop (GEOMETRY.ini); "
     [ -n "$ERROR_WIFI_COUNTRY" ] && SHIP_BLOCKERS+="Wi-Fi country; "
     # A unit never ships with its Ethernet port unable to come up: it is the
     # way in when Wi-Fi is not. Repairs first, then gates on the result.

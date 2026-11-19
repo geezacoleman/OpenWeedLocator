@@ -127,6 +127,19 @@ def test_gsv_satellites_in_view_do_not_replace_satellites_used():
     assert snapshot['satellites'] == 12
     assert snapshot['fix_valid'] is True
     assert (snapshot['hdop'], snapshot['altitude']) == (0.8, 100.5)
+    assert snapshot['fix_quality'] == 1
+
+
+def test_fix_quality_follows_gga():
+    """The app's GPS sheet names the fix (GPS, DGPS, RTK) from GGA field 6."""
+    state = GPSState()
+    assert state.get_dict()['fix_quality'] is None
+    state.update_from_line(_nmea(
+        'GPGGA,123519,3347.1234,S,15101.5678,E,4,14,0.6,100.5,M,0.0,M,,'))
+    assert state.get_dict()['fix_quality'] == 4
+    state.update_from_line(_nmea(
+        'GPGGA,123520,3347.1234,S,15101.5678,E,0,03,9.9,100.5,M,0.0,M,,'))
+    assert state.get_dict()['fix_quality'] == 0
 
 
 # ---------------------------------------------------------------------------

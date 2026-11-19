@@ -2956,7 +2956,11 @@ class Owl:
                 latitude=gps.get('latitude') if gps else None,
                 longitude=gps.get('longitude') if gps else None,
                 accuracy=gps.get('accuracy') if gps else None,
-                speed_kmh=self._fresh_speed_kmh())
+                speed_kmh=self._fresh_speed_kmh(),
+                satellites=gps.get('satellites') if gps else None,
+                hdop=gps.get('hdop') if gps else None,
+                fix_quality=gps.get('fix_quality') if gps else None,
+                age_s=gps.get('age_s') if gps else None)
 
         # Session GPS track: recorder throttles internally (1 s / 0.5 m)
         if (self.track_recorder.recording and self._image_sample_enable
@@ -3100,10 +3104,13 @@ class Owl:
                 return {
                     'latitude': snapshot['latitude'],
                     'longitude': snapshot['longitude'],
-                    # Metres from receivers that report it (nRF91), else HDOP
-                    'accuracy': (snapshot['accuracy_m'] if snapshot.get('accuracy_m') is not None
-                                 else snapshot.get('hdop')),
+                    # Metres, only from receivers that report it (nRF91).
+                    # NMEA gives HDOP, which has no unit: it stays in 'hdop'
+                    # (it used to be passed off here as metres).
+                    'accuracy': snapshot.get('accuracy_m'),
                     'hdop': snapshot.get('hdop'),
+                    'fix_quality': snapshot.get('fix_quality'),
+                    'age_s': snapshot.get('age_seconds'),
                     'altitude': snapshot.get('altitude'),
                     'speed_kmh': snapshot.get('speed_kmh'),
                     'heading': snapshot.get('heading'),
@@ -3126,7 +3133,8 @@ class Owl:
                         self.gps_status_led.set_state(GPSLEDState.FIX)
                     # Copy — the stored payload must not grow keys. The MQTT
                     # handler keeps only known push sources (phone, browser).
-                    return dict(gps, source=gps.get('source') or 'dashboard')
+                    return dict(gps, source=gps.get('source') or 'dashboard',
+                                age_s=round(max(age, 0.0), 1))
                 else:
                     # Dashboard GPS is stale — phone disconnected or tab backgrounded
                     if self.gps_status_led:

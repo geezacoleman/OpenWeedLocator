@@ -168,6 +168,36 @@ class TestGpsSourceAndSpeed:
         mqtt_publisher.set_gps_status(True, 'phone', -31.5, 150.2, 4.0, speed_kmh=7.6)
         assert not mqtt_publisher.client.publish.called
 
+    def test_fix_detail_stored(self, mqtt_publisher):
+        mqtt_publisher.set_gps_status(True, 'serial', -31.5, 150.2, None, satellites=11,
+                                      hdop=0.84, fix_quality=4, age_s=0.31)
+        state = mqtt_publisher.state
+        assert state['gps_best_accuracy'] is None
+        assert (state['gps_satellites'], state['gps_hdop']) == (11, 0.8)
+        assert (state['gps_fix_quality'], state['gps_fix_age_s']) == (4, 0.3)
+
+    def test_fix_detail_jitter_does_not_republish(self, mqtt_publisher):
+        """Satellite count, HDOP and age wobble every second on a parked
+        rig; they ride the 2 s heartbeat. A change of fix type publishes."""
+        mqtt_publisher.set_gps_status(True, 'serial', -31.5, 150.2, None, satellites=11,
+                                      hdop=0.8, fix_quality=1, age_s=0.2)
+        mqtt_publisher.client.publish.reset_mock()
+        mqtt_publisher.set_gps_status(True, 'serial', -31.5, 150.2, None, satellites=12,
+                                      hdop=0.9, fix_quality=1, age_s=0.7)
+        assert not mqtt_publisher.client.publish.called
+        assert mqtt_publisher.state['gps_satellites'] == 12
+        mqtt_publisher.set_gps_status(True, 'serial', -31.5, 150.2, None, satellites=12,
+                                      hdop=0.9, fix_quality=4, age_s=0.7)
+        assert mqtt_publisher.client.publish.called
+
+    def test_fix_detail_cleared_without_fix(self, mqtt_publisher):
+        mqtt_publisher.set_gps_status(True, 'serial', -31.5, 150.2, None, satellites=11,
+                                      hdop=0.8, fix_quality=1, age_s=0.2)
+        mqtt_publisher.set_gps_status(False, None, None, None, None)
+        state = mqtt_publisher.state
+        assert state['gps_satellites'] is None and state['gps_hdop'] is None
+        assert state['gps_fix_quality'] is None and state['gps_fix_age_s'] is None
+
     def test_no_speed_is_none_not_zero(self, mqtt_publisher):
         mqtt_publisher.set_gps_status(True, 'serial', -31.5, 150.2, 2.0)
         assert mqtt_publisher.state['gps_speed_kmh'] is None

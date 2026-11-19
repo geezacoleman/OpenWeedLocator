@@ -210,7 +210,10 @@ def test_a_receiver_with_no_fix_yields_to_the_phone_and_takes_over_once_it_has_o
         # the receiver's own numbers, passed through for EXIF and the track
         assert gps['speed_kmh'] == pytest.approx(7.0, abs=0.1)
         assert gps['satellites'] == 8
-        assert gps['hdop'] == 4.5 and gps['accuracy'] == 4.5      # no metres from NMEA: HDOP
+        # NMEA gives no accuracy in metres: HDOP stays HDOP (it used to be
+        # passed off as metres and the app showed it as +/- m)
+        assert gps['hdop'] == 4.5 and gps['accuracy'] is None
+        assert gps['fix_quality'] is not None and gps['age_s'] is not None
         assert gps['altitude'] == 45.3
         assert gps['heading'] == 210.3
         assert (gps['utc_time'], gps['utc_date']) == ('123519', '230394')

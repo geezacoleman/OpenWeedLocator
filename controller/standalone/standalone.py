@@ -1135,6 +1135,16 @@ class OWLDashboard:
                 # speed_kmh below is the spray-timing speed, which phone GPS
                 # deliberately never feeds.
                 'gps_speed_kmh': mqtt_state.get('gps_speed_kmh') if mqtt_state.get('gps_fix') else None,
+                # Fix detail (additive, v3.28): satellites in use, HDOP, the
+                # GGA fix type (1 GPS, 2 DGPS, 4 RTK fixed, 5 RTK float) and
+                # the age of the fix. None without a fix, from a source that
+                # does not report it, or on an older owl.py. gps_accuracy
+                # above is metres only since v3.28 (it carried HDOP for NMEA
+                # receivers before).
+                'gps_satellites': mqtt_state.get('gps_satellites') if mqtt_state.get('gps_fix') else None,
+                'gps_hdop': mqtt_state.get('gps_hdop') if mqtt_state.get('gps_fix') else None,
+                'gps_fix_quality': mqtt_state.get('gps_fix_quality') if mqtt_state.get('gps_fix') else None,
+                'gps_fix_age_s': mqtt_state.get('gps_fix_age_s') if mqtt_state.get('gps_fix') else None,
                 # Spray timing (additive, v3.17): who owns the timing
                 # (device-gps | controller | config), the speed it uses,
                 # frame-capture-to-relay latency and the farmer-facing speed

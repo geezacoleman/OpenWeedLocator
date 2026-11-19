@@ -1106,6 +1106,32 @@ class TestSystemStats:
         assert data['gps_source'] == 'phone'
         assert data['speed_kmh'] is None
 
+    def test_gps_fix_detail_passes_through(self, standalone_test_client):
+        """The app's GPS sheet: satellites, HDOP, fix type and fix age."""
+        client, dashboard, tmp_dir = standalone_test_client
+        self._stats_with_state(dashboard, {'gps_fix': True, 'gps_source': 'serial',
+                                           'gps_satellites': 11, 'gps_hdop': 0.8,
+                                           'gps_fix_quality': 4, 'gps_fix_age_s': 0.3,
+                                           'gps_best_accuracy': None})
+        data = client.get('/api/system_stats').get_json()
+        assert (data['gps_satellites'], data['gps_hdop']) == (11, 0.8)
+        assert (data['gps_fix_quality'], data['gps_fix_age_s']) == (4, 0.3)
+        assert data['gps_accuracy'] is None
+
+    def test_gps_fix_detail_hidden_without_fix_and_on_an_older_owl(self, standalone_test_client):
+        client, dashboard, tmp_dir = standalone_test_client
+        self._stats_with_state(dashboard, {'gps_fix': False, 'gps_satellites': 11,
+                                           'gps_hdop': 0.8, 'gps_fix_quality': 1,
+                                           'gps_fix_age_s': 0.3})
+        data = client.get('/api/system_stats').get_json()
+        for key in ('gps_satellites', 'gps_hdop', 'gps_fix_quality', 'gps_fix_age_s'):
+            assert data[key] is None
+        # an owl.py from before these fields: a fix, and nothing to show
+        self._stats_with_state(dashboard, {'gps_fix': True, 'gps_source': 'serial'})
+        data = client.get('/api/system_stats').get_json()
+        for key in ('gps_satellites', 'gps_hdop', 'gps_fix_quality', 'gps_fix_age_s'):
+            assert data[key] is None
+
     def test_gps_speed_hidden_without_fix(self, standalone_test_client):
         client, dashboard, tmp_dir = standalone_test_client
         self._stats_with_state(dashboard, {'gps_fix': False, 'gps_speed_kmh': 7.5})

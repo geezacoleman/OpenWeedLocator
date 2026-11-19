@@ -26,6 +26,7 @@ ORDER inside the 1100-line owl_setup.sh, which cannot be run in pieces. It
 is labelled as such and proves no behaviour.
 """
 
+import configparser
 import os
 import re
 import shutil
@@ -684,6 +685,68 @@ nmea_port = 8500
 device_token = s3cret
 source = keep-me
 '''
+
+
+class TestFactoryGeometry:
+    """setup_factory_geometry: a unit leaving the factory gets its own
+    GEOMETRY.ini with the 10% crop (edge artefacts and vignetting on the
+    2.8 mm lens). GENERAL_CONFIG.ini keeps 2%, so a unit in the field, which
+    reads crop from it while it has no GEOMETRY.ini, is not changed by an
+    update."""
+
+    @pytest.fixture
+    def geometry(self, box):
+        config = box.tmp / 'owl' / 'config'
+        config.mkdir(parents=True)
+        (config / 'GEOMETRY_TEMPLATE.ini').write_text(source('config/GEOMETRY_TEMPLATE.ini'))
+        fn = function(source(OWL_SETUP), 'setup_factory_geometry')
+
+        def run():
+            text = (PRELUDE + f'SCRIPT_DIR="{box.tmp / "owl"}"\n' + fn
+                    + 'setup_factory_geometry\necho "RC=$? ERROR=[$ERROR_GEOMETRY]"\n')
+            return box.run(text).stdout.strip().splitlines()[-1]
+
+        return run, config
+
+    def test_a_new_unit_gets_ten_percent_on_every_edge(self, geometry):
+        run, config = geometry
+        assert run() == 'RC=0 ERROR=[]'
+        written = configparser.ConfigParser()
+        written.read(config / 'GEOMETRY.ini')
+        assert {key: written.getfloat('Camera', key) for key in written['Camera']} == {
+            'crop_left': 0.1, 'crop_right': 0.1, 'crop_top': 0.1, 'crop_bottom': 0.1}
+        assert (written.getfloat('System', 'actuation_top'),
+                written.getfloat('System', 'actuation_bottom')) == (0.0, 1.0)
+        # the live file is not the template: no "this is a template" header
+        assert '#' not in (config / 'GEOMETRY.ini').read_text()
+
+    def test_a_unit_with_its_own_geometry_keeps_it(self, geometry):
+        run, config = geometry
+        mine = '[Camera]\ncrop_left = 0.25\ncrop_right = 0.02\n'
+        (config / 'GEOMETRY.ini').write_text(mine)
+        assert run() == 'RC=0 ERROR=[]'
+        assert (config / 'GEOMETRY.ini').read_text() == mine
+
+    def test_no_template_is_reported(self, geometry):
+        run, config = geometry
+        (config / 'GEOMETRY_TEMPLATE.ini').unlink()
+        assert run() == 'RC=1 ERROR=[GEOMETRY_TEMPLATE.ini not found]'
+        assert not (config / 'GEOMETRY.ini').exists()
+
+    def test_only_the_factory_build_runs_it(self):
+        script = source(OWL_SETUP)
+        calls = [line for line in script.splitlines() if line.strip() == 'setup_factory_geometry']
+        assert len(calls) == 1
+        before = script[:script.index('\n    setup_factory_geometry\n')]
+        assert before.rstrip().endswith('if [[ "$FACTORY_MODE" == "1" ]]; then')
+
+    def test_the_shipped_default_is_unchanged(self):
+        """An OWL with no GEOMETRY.ini reads crop from GENERAL_CONFIG.ini on
+        every update: it stays at 2%."""
+        general = configparser.ConfigParser()
+        general.read_string(source('config/GENERAL_CONFIG.ini'))
+        for key in ('crop_left', 'crop_right', 'crop_top', 'crop_bottom'):
+            assert general.getfloat('Camera', key) == 0.02
 
 
 class TestFactoryGps:

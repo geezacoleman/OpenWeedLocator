@@ -401,6 +401,9 @@ class GPSState:
         self.utc_time = None
         self.utc_date = None
         self.accuracy_m = None  # metres, from receivers that report it (nRF91)
+        # GGA field 6 as sent: 0 none, 1 GPS, 2 DGPS, 4 RTK fixed, 5 RTK float.
+        # None from receivers that do not send GGA (nRF91).
+        self.fix_quality = None
         self.fix_valid = False
         # time.monotonic() stamps: the phone app's time sync and NTP step the
         # wall clock, which made a dead receiver look fresh (or a live one stale)
@@ -449,6 +452,8 @@ class GPSState:
                 self.hdop = data['hdop']
             if data.get('altitude') is not None:
                 self.altitude = data['altitude']
+            if data.get('fix_quality') is not None:
+                self.fix_quality = data['fix_quality']
             if data.get('fix_quality') is not None and data['fix_quality'] > 0:
                 self.fix_valid = True
                 self.last_fix_time = time.monotonic()
@@ -550,6 +555,7 @@ class GPSState:
                 'accuracy_m': round(self.accuracy_m, 1) if self.accuracy_m is not None else None,
                 'utc_time': self.utc_time,
                 'utc_date': self.utc_date,
+                'fix_quality': self.fix_quality,
                 'fix_valid': fix_valid,
                 'age_seconds': age,
             }
