@@ -1,3 +1,4 @@
+import os
 import time
 import platform
 import cv2
@@ -9,7 +10,12 @@ logger = logging.getLogger(__name__)
 
 
 def is_raspberry_pi() -> bool:
-    """Check if system is running on Raspberry Pi"""
+    """Check if system is running on Raspberry Pi (and may use its GPIO).
+
+    OWL_FAKE_GPIO=1 says no on any board: the test suite sets it so the
+    switch panel never claims real pins (see utils/output_manager.py)."""
+    if os.environ.get('OWL_FAKE_GPIO', '').strip() == '1':
+        return False
     platform_str = platform.platform().lower()
     return 'rpi' in platform_str or 'aarch' in platform_str
 

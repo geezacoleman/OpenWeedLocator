@@ -35,6 +35,11 @@ if str(PROJECT_ROOT) not in sys.path:
 # had closed the streams it was writing to. Set before any test imports it.
 os.environ.setdefault('OWL_SKIP_INIT', '1')
 
+# No test ever touches a GPIO pin, on any board: utils/output_manager.py and
+# utils/input_manager.py use their stand-ins when this is set. Forced, not
+# setdefault: a unit's own environment must not switch real relays on.
+os.environ['OWL_FAKE_GPIO'] = '1'
+
 # Tests never write to anything real.
 # 1. OWL_HOME: the folders the OWL writes at run time (config/, logs/,
 #    models/, downloads/, uploads/, agent/widgets|sessions) move to a temp

@@ -36,7 +36,10 @@ _ALLOWED_ROOTS = tuple(p + os.sep for p in (
     os.path.join(_HOME, '.matplotlib'),
     os.path.join(str(REPO), '.pytest_cache'),
 ))
-_ALLOWED_PARTS = (os.sep + '__pycache__' + os.sep, os.sep + '.pytest_cache' + os.sep)
+# pytest builds its cache in a 'pytest-cache-files-*' folder beside the
+# rootdir before renaming it to .pytest_cache
+_ALLOWED_PARTS = (os.sep + '__pycache__' + os.sep, os.sep + '.pytest_cache' + os.sep,
+                  os.sep + 'pytest-cache-files-')
 _WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
 
 # event -> indexes of the path arguments that get modified

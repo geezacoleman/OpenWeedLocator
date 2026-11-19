@@ -191,7 +191,11 @@ class Owl:
         # [MQTT]/[Network]/[Security]; losing it (e.g. a root-owned file from
         # a provisioning bug) disables MQTT and the token guard with no error,
         # so an existing-but-unread file must be loud.
-        controller_ini = Path(__file__).parent / 'config' / 'CONTROLLER.ini'
+        # Through home_dir: the unit's own file on a unit, never in a test run
+        # (a unit's CONTROLLER.ini decided what the tests saw, then failed
+        # them with the 'could not be read' error below)
+        from utils.paths import home_dir
+        controller_ini = home_dir('config', 'CONTROLLER.ini')
         read_ok = self.config.read(controller_ini)
         if controller_ini.exists() and not read_ok:
             self.logger.error(
@@ -201,7 +205,7 @@ class Owl:
         # GEOMETRY.ini holds per-unit mount geometry (crop edges + actuation band)
         # and is read LAST so it always wins over legacy crop_*/actuation_* values
         # in the active detection config.
-        self.config.read(Path(__file__).parent / 'config' / 'GEOMETRY.ini')
+        self.config.read(home_dir('config', 'GEOMETRY.ini'))
         self.RPI_VERSION = get_rpi_version()
         self.logger.info(msg=f'Raspberry Pi version: {self.RPI_VERSION}')
 

@@ -136,3 +136,55 @@ def test_a_refusal_swallowed_by_the_code_under_test_is_still_on_record():
     assert len(_write_guard.violations) == 1
     assert 'active_config.txt' in _write_guard.violations[0]
     _write_guard.violations.clear()
+
+
+# --------------------------------------------------------------------------
+# No test touches a GPIO pin, on any board
+# --------------------------------------------------------------------------
+
+class TestNoRealGpio:
+    """On a Raspberry Pi the OWL uses the real pins. Run there, the suite
+    drove the real relay board, and the first Owl kept BOARD7 so every later
+    one failed with GPIOPinInUse (104 of 105 on a CM5, 2026-11-19).
+    tests/conftest.py sets OWL_FAKE_GPIO=1 before anything is imported."""
+
+    def test_the_suite_runs_with_fake_gpio_forced_on(self):
+        assert os.environ['OWL_FAKE_GPIO'] == '1'
+
+    def test_relays_leds_and_switches_are_stand_ins_in_this_process(self):
+        import utils.input_manager as input_manager
+        import utils.output_manager as output_manager
+        assert output_manager.testing is True
+        assert input_manager.testing is True
+
+    def test_a_relay_board_built_in_a_test_holds_no_real_pin(self):
+        from utils.output_manager import RelayControl, TestRelay
+        board = RelayControl({0: 13, 1: 15})
+        assert board.testing is True
+        assert all(isinstance(relay, TestRelay) for relay in board.relay_dict.values())
+        # and a second one can be built: nothing was reserved
+        RelayControl({0: 13, 1: 15})
+
+    @pytest.mark.parametrize('platform_name', ['Linux-6.18.60+rpt-rpi-2712-aarch64-with-glibc2.41',
+                                               'linux-6.6-rpi-v8-aarch64'])
+    def test_on_a_raspberry_pi_the_flag_still_means_no_pins(self, monkeypatch, platform_name):
+        """The decision itself, as if on the Pi: gpiozero is never imported."""
+        import platform
+        import sys
+
+        import utils.input_manager as input_manager
+        import utils.output_manager as output_manager
+        monkeypatch.setattr(platform, 'platform', lambda *a, **k: platform_name)
+        monkeypatch.setitem(sys.modules, 'gpiozero', None)      # importing it would raise
+        monkeypatch.setitem(sys.modules, 'lgpio', None)
+        assert output_manager.get_platform_config() == (True, None)
+        assert input_manager.is_raspberry_pi() is False
+
+    def test_without_the_flag_a_raspberry_pi_uses_its_pins(self, monkeypatch):
+        """A unit in the field sets nothing and must get real GPIO."""
+        import platform
+
+        import utils.input_manager as input_manager
+        monkeypatch.delenv('OWL_FAKE_GPIO')
+        monkeypatch.setattr(platform, 'platform', lambda *a, **k: 'linux-6.6-rpi-v8-aarch64')
+        assert input_manager.is_raspberry_pi() is True
