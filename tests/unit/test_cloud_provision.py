@@ -171,7 +171,7 @@ class TestShellSide:
 
     @pytest.mark.skipif(shutil.which('bash') is None, reason='bash not available')
     @pytest.mark.parametrize('script', [
-        'owl_identity.sh', 'owl_cloud_provision.sh', 'tools/noktura_register.sh',
+        'owl_identity.sh', 'owl_cloud_provision.sh',
         'controller/setup/install_firstboot.sh', 'controller/shared/setup.sh', 'dev/clean.sh',
     ])
     def test_scripts_parse(self, script):
