@@ -33,6 +33,7 @@ echo
 # Show what will be preserved
 echo -e "${GREEN}[INFO] The following OWL configurations will be PRESERVED:${NC}"
 echo "  • WiFi hotspot configuration"
+echo "  • Wired Ethernet (eth0) connection"
 echo "  • MQTT broker settings (/etc/mosquitto/)"
 echo "  • Nginx web server configuration"
 echo "  • SSL certificates"
@@ -128,6 +129,15 @@ else
     echo -e "${YELLOW}[WARNING] No OWL hotspot found - preserving all connections for safety${NC}"
     echo -e "${YELLOW}[WARNING] Please manually remove unwanted network connections${NC}"
 fi
+
+# Wired Ethernet stays, always: it is the way into a unit when Wi-Fi is not
+# (bench, debugging, the farmer). Until 2026-10-19 this script deleted the
+# wired profile with everything else, and NetworkManager never puts a deleted
+# default one back, so the port stayed down for good. Nothing above touches
+# it now; this puts a profile back on a unit that lost it and says so.
+CLEAN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+bash "$CLEAN_DIR/../tools/ensure_wired.sh" || \
+    echo -e "${RED}[WARNING] Wired Ethernet has no working profile - fix before shipping (bash tools/ensure_wired.sh)${NC}"
 
 # Step 3: Clean browser data
 echo -e "${GREEN}[INFO] Removing browser data${NC}"
@@ -250,6 +260,15 @@ systemctl is-enabled mosquitto 2>/dev/null && echo "  ✓ Enabled" || echo "  �
 echo "Nginx Web Server:"
 systemctl is-enabled nginx 2>/dev/null && echo "  ✓ Enabled" || echo "  ✗ Not enabled"
 
+echo "Wired Ethernet:"
+if bash "$CLEAN_DIR/../tools/ensure_wired.sh" --check >/dev/null 2>&1; then
+    WIRED_STATUS="profile present, connects by itself"
+    echo "  ✓ Profile present, connects by itself"
+else
+    WIRED_STATUS="NO WORKING PROFILE - run: sudo bash tools/ensure_wired.sh"
+    echo -e "  ${RED}✗ No working wired profile - run: sudo bash tools/ensure_wired.sh${NC}"
+fi
+
 echo "WiFi Hotspot:"
 if nmcli connection show --active 2>/dev/null | grep -qE "(OWL|Hotspot)"; then
     echo "  ✓ Active"
@@ -289,6 +308,7 @@ OWL Services Status:
 - Dashboard: $(systemctl is-enabled owl-dash 2>/dev/null || echo "disabled")
 - MQTT: $(systemctl is-enabled mosquitto 2>/dev/null || echo "disabled")
 - Nginx: $(systemctl is-enabled nginx 2>/dev/null || echo "disabled")
+- Wired Ethernet: ${WIRED_STATUS}
 
 Next steps for new user:
 1. Connect to OWL-WIFI-* network (password: check device label)

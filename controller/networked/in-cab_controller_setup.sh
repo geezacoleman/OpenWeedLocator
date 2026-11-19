@@ -1046,6 +1046,11 @@ configure_network() {
         nmcli con up "${CON_NAME}" || true
         check_status "Ethernet configuration" "WIFI_CONNECT"
     fi
+
+    # Wired Ethernet keeps a profile that connects by itself in Wi-Fi mode
+    # too: it is the way into the controller when Wi-Fi is not.
+    bash "${SCRIPT_DIR}/../../tools/ensure_wired.sh" || \
+        echo -e "${ORANGE}[WARNING] Wired Ethernet has no working profile (bash tools/ensure_wired.sh)${NC}"
 }
 
 # Step 11b: Configure sudoers for passwordless shutdown/reboot/apt

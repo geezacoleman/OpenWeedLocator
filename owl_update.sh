@@ -622,6 +622,13 @@ main() {
         "$VENV/bin/python" "$REPO_DIR/tools/import_check.py" "${entries[@]}"
     fi
 
+    # --- Wired Ethernet -----------------------------------------------------------
+    # Units cleaned by dev/clean.sh before 2026-10-19 lost their wired profile
+    # for good; an update is the one thing that reaches them. Never fatal.
+    if [[ -f "$REPO_DIR/tools/ensure_wired.sh" ]]; then
+        bash "$REPO_DIR/tools/ensure_wired.sh" 2>&1 | while IFS= read -r line; do log "$line"; done || true
+    fi
+
     # --- Restart + health check --------------------------------------------------------
     if [[ "$NO_RESTART" == "1" ]]; then
         log "Skipping service restart (--no-restart)."

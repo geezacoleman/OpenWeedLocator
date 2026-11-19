@@ -787,6 +787,8 @@ class TestShipGate:
     """The end of --factory: a unit with a critical failure is not cleaned
     or boxed; a good one has its dev residue removed as the very last step."""
 
+    WIRED = 'sudo bash /opt/owl/tools/ensure_wired.sh'
+
     @pytest.fixture
     def gate(self, box):
         script = source(OWL_SETUP)
@@ -821,7 +823,8 @@ class TestShipGate:
         assert result.returncode == 1
         assert f'[NOT SHIP-READY] Critical failures: {named}' in result.stdout
         assert '[SHIP-READY]' not in result.stdout
-        assert box.calls() == []
+        # only the wired-port repair ran: no sync, no cleanup
+        assert box.calls() == [self.WIRED]
 
     def test_a_good_unit_is_synced_then_cleaned_detached_as_the_last_step(self, gate, box):
         result = gate()
@@ -831,9 +834,20 @@ class TestShipGate:
         # detached (setsid): the cleanup drops an SSH session over a personal
         # WiFi profile. A .txt log: clean.sh truncates /var/log/*.log
         assert calls == [
+            self.WIRED,
             'sync ',
             "sudo setsid bash -c bash '/opt/owl/dev/clean.sh' --yes > /var/log/owl-ship-clean.txt 2>&1",
         ]
+        assert 'Wired Ethernet: profile present' in result.stdout
+
+    def test_a_unit_whose_ethernet_port_cannot_come_up_does_not_ship(self, gate, box):
+        """The wired port is the way in when Wi-Fi is not: if the repair
+        fails the unit is not cleaned or boxed."""
+        box.stub('sudo', 'case "$*" in *ensure_wired.sh*) exit 1 ;; esac')
+        result = gate()
+        assert result.returncode == 1
+        assert '[NOT SHIP-READY] Critical failures: wired Ethernet has no working profile' in result.stdout
+        assert not [c for c in box.calls() if 'clean.sh' in c]
 
 
 class TestMakerIdentityStep:
@@ -947,6 +961,167 @@ esac''')
         started = [c.split()[2] for c in box.calls('systemctl start')]
         assert stopped == ['owl.service', 'owl-dash.service']
         assert started == stopped
+
+
+# ===========================================================================
+# Wired Ethernet always keeps a profile that comes up by itself
+# ===========================================================================
+
+ENSURE_WIRED = 'tools/ensure_wired.sh'
+
+
+class TestWiredEthernetIsNeverLeftDown:
+    """Ethernet is the way into a unit when Wi-Fi is not. Until 2026-10-19
+    dev/clean.sh deleted the wired profile with everything else, and
+    NetworkManager never recreates a deleted default one: eth0 stayed
+    "disconnected" for good (found on a field unit, 2026-11-19).
+
+    tools/ensure_wired.sh runs under bash against an nmcli stand-in that
+    answers from two small tables and logs every change asked of it."""
+
+    def nm(self, box, devices, connections, fail=''):
+        """connections: (uuid, type, interface-name, autoconnect) rows."""
+        table = box.tmp / 'connections.txt'
+        table.write_text(''.join(':'.join(row) + '\n' for row in connections))
+        (box.tmp / 'devices.txt').write_text(''.join(f'{d}:{t}\n' for d, t in devices))
+        box.stub('sudo', '[ "$1" = "-n" ] && shift\nexec "$@"')
+        box.stub('nmcli', f'''case "$*" in
+  "-t -f DEVICE,TYPE device") cat "{box.tmp}/devices.txt" ;;
+  "-t -f UUID,TYPE connection show") cut -d: -f1,2 "{table}" ;;
+  "-g connection.interface-name connection show uuid "*) grep "^$6:" "{table}" | cut -d: -f3 ;;
+  "-g connection.autoconnect connection show uuid "*) grep "^$6:" "{table}" | cut -d: -f4 ;;
+  {fail or '"never"'}) exit 4 ;;
+esac''')
+
+    def run(self, box, *args):
+        return box.run(REPO / ENSURE_WIRED, args)
+
+    def changes(self, box):
+        return [c for c in box.calls('nmcli ') if not c.startswith(('nmcli -t', 'nmcli -g'))]
+
+    ETH = [('eth0', 'ethernet'), ('wlan0', 'wifi'), ('lo', 'loopback')]
+    HOTSPOT = ('u-hot', '802-11-wireless', 'wlan0', 'yes')
+
+    def test_a_unit_whose_wired_profile_was_deleted_gets_one_back(self, box):
+        self.nm(box, self.ETH, [self.HOTSPOT])
+        result = self.run(box)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert self.changes(box) == [
+            'nmcli connection add type ethernet con-name owl-wired-eth0 ifname eth0 '
+            'connection.autoconnect yes connection.autoconnect-retries 0 '
+            'ipv4.method auto ipv6.method auto',
+            'nmcli connection modify owl-wired-eth0 ipv4.link-local enabled',
+            'nmcli device connect eth0',
+        ]
+        assert "created 'owl-wired-eth0'" in result.stdout
+
+    @pytest.mark.parametrize('profile', [
+        ('u-wired', '802-3-ethernet', '', 'yes'),                 # the OS default: any interface
+        ('u-static', '802-3-ethernet', 'eth0', 'yes'),            # owl-ethernet from setup.sh
+    ])
+    def test_a_working_wired_profile_is_left_exactly_as_it_is(self, box, profile):
+        self.nm(box, self.ETH, [self.HOTSPOT, profile])
+        result = self.run(box)
+        assert result.returncode == 0
+        assert self.changes(box) == [], 'a working wired profile was touched'
+        assert 'wired profile present' in result.stdout
+
+    def test_a_wired_profile_that_would_not_connect_by_itself_is_switched_on(self, box):
+        self.nm(box, self.ETH, [('u-wired', '802-3-ethernet', 'eth0', 'no')])
+        assert self.run(box).returncode == 0
+        assert self.changes(box) == [
+            'nmcli connection modify uuid u-wired connection.autoconnect yes',
+            'nmcli device connect eth0',
+        ]
+
+    def test_a_profile_for_another_port_does_not_count(self, box):
+        """Two ports, one profile bound to eth1: eth0 still has nothing."""
+        devices = [('eth0', 'ethernet'), ('eth1', 'ethernet')]
+        self.nm(box, devices, [('u-eth1', '802-3-ethernet', 'eth1', 'yes')])
+        assert self.run(box).returncode == 0
+        added = [c for c in self.changes(box) if ' connection add ' in c]
+        assert len(added) == 1 and 'con-name owl-wired-eth0 ifname eth0' in added[0]
+
+    def test_nothing_is_ever_deleted_renamed_or_readdressed(self, box):
+        for connections in ([self.HOTSPOT], [('u-wired', '802-3-ethernet', 'eth0', 'no')],
+                            [('u-static', '802-3-ethernet', 'eth0', 'yes')]):
+            box.log.write_text('')
+            self.nm(box, self.ETH, connections)
+            self.run(box)
+            for call in self.changes(box):
+                assert ' delete ' not in call and ' down ' not in call and 'disconnect' not in call
+                assert 'ipv4.addresses' not in call and 'connection.id' not in call
+
+    def test_a_unit_with_no_wired_port_is_fine(self, box):
+        """A carrier board without Ethernet must not fail the ship gate."""
+        self.nm(box, [('wlan0', 'wifi')], [self.HOTSPOT])
+        result = self.run(box)
+        assert result.returncode == 0 and self.changes(box) == []
+        assert 'no wired interface' in result.stdout
+
+    def test_check_reports_without_changing_anything(self, box):
+        self.nm(box, self.ETH, [self.HOTSPOT])
+        result = self.run(box, '--check')
+        assert result.returncode == 1
+        assert 'PROBLEM' in result.stdout and self.changes(box) == []
+
+        box.log.write_text('')
+        self.nm(box, self.ETH, [('u-wired', '802-3-ethernet', '', 'yes')])
+        assert self.run(box, '--check').returncode == 0
+
+    def test_a_repair_that_fails_is_reported_as_a_failure(self, box):
+        """The factory ship gate blocks on this exit code."""
+        self.nm(box, self.ETH, [self.HOTSPOT], fail='"connection add "*')
+        result = self.run(box)
+        assert result.returncode == 1
+        assert 'could not create a wired profile' in result.stdout
+
+    def test_an_older_networkmanager_without_link_local_still_gets_dhcp(self, box):
+        self.nm(box, self.ETH, [self.HOTSPOT], fail='*"ipv4.link-local enabled"')
+        result = self.run(box)
+        assert result.returncode == 0, result.stdout
+        assert any(' connection add ' in c for c in self.changes(box))
+
+    def test_the_cleaning_script_repairs_and_reports_the_wired_port(self, box):
+        """dev/clean.sh: the wired step runs the repair, and the hand-over
+        summary says whether the port will come up."""
+        script = source(CLEAN)
+        assert 'tools/ensure_wired.sh"' in between(script, '# Wired Ethernet stays, always',
+                                                   '# Step 3:')
+        assert '--check' in between(script, 'echo "Wired Ethernet:"', 'echo "WiFi Hotspot:"')
+        assert '- Wired Ethernet: ${WIRED_STATUS}' in script
+
+    @pytest.mark.parametrize('script, step', [
+        ('controller/shared/setup.sh', '# Step 5: Configure UFW firewall'),
+        ('controller/networked/in-cab_controller_setup.sh', '# Step 11b: Configure sudoers'),
+        ('owl_setup.sh', 'if [ -n "$SHIP_BLOCKERS" ]; then'),
+        ('owl_update.sh', '# --- Restart + health check'),
+    ])
+    def test_every_provisioning_path_runs_the_wired_check(self, script, step):
+        """Structure only: each script calls the repair before the named step."""
+        text = source(script)
+        assert 'tools/ensure_wired.sh' in text[:text.index(step)], f'{script} no longer ensures eth0'
+
+    def test_no_script_takes_a_wired_connection_down(self):
+        """Structure only, and the point of the whole class: nothing in the
+        repository's shell scripts may delete, down or disconnect a wired
+        profile. The only deletes allowed are the named Wi-Fi/OWL profiles
+        each script is about to recreate."""
+        import re
+        allowed = re.compile(
+            r'nmcli con(nection)? delete (uuid "\$uuid"|"\$\{(SSID|CON_NAME|WIFI_SSID)\}")')
+        for path in sorted(REPO.glob('**/*.sh')):
+            if 'node_modules' in path.parts:
+                continue
+            for number, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+                code = line.split('#', 1)[0]
+                if re.search(r'nmcli\s+(dev(ice)?\s+(disconnect|down)|networking\s+off|con(nection)?\s+down)', code):
+                    pytest.fail(f'{path.relative_to(REPO)}:{number} takes a connection down: {line.strip()}')
+                if re.search(r'nmcli\s+con(nection)?\s+delete', code) and not allowed.search(code):
+                    pytest.fail(f'{path.relative_to(REPO)}:{number} deletes a connection that is not '
+                                f'a named Wi-Fi/OWL profile: {line.strip()}')
+                if re.search(r'\b(ifdown|ifconfig\s+eth\d+\s+down|ip\s+link\s+set\s+\S+\s+down)\b', code):
+                    pytest.fail(f'{path.relative_to(REPO)}:{number} takes an interface down: {line.strip()}')
 
 
 # ===========================================================================

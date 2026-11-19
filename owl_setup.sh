@@ -1090,6 +1090,11 @@ if [[ "$FACTORY_MODE" == "1" ]]; then
     [ -n "$ERROR_DASHBOARD" ] && SHIP_BLOCKERS+="dashboard/first-boot setup; "
     [ -n "$ERROR_GPS" ] && SHIP_BLOCKERS+="nRF9151 GPS setup; "
     [ -n "$ERROR_WIFI_COUNTRY" ] && SHIP_BLOCKERS+="Wi-Fi country; "
+    # A unit never ships with its Ethernet port unable to come up: it is the
+    # way in when Wi-Fi is not. Repairs first, then gates on the result.
+    if ! sudo bash "${SCRIPT_DIR}/tools/ensure_wired.sh"; then
+        SHIP_BLOCKERS+="wired Ethernet has no working profile; "
+    fi
     if [ -n "$SHIP_BLOCKERS" ]; then
         echo -e ""
         echo -e "${RED}[NOT SHIP-READY] Critical failures: ${SHIP_BLOCKERS%??}${NC}"
@@ -1106,6 +1111,7 @@ if [[ "$FACTORY_MODE" == "1" ]]; then
 
     echo -e "${GREEN}[SHIP-READY] Unit provisioned for shipping:${NC}"
     echo -e "  • Hotspot: ${SHIP_SSID:-OWL-XXXX} (setup password)"
+    echo -e "  • Wired Ethernet: profile present, connects by itself"
     if [[ "$FACTORY_MODE" == "1" ]]; then
         echo -e "  • GPS: nRF9151 on ${NRF_GPS_PORT} (source = ${NRF_GPS_SOURCE})"
         echo -e "  • Wi-Fi: external antenna (dtparam=ant2, active from next boot), country ${WIFI_COUNTRY:-world}"
