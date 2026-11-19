@@ -29,7 +29,7 @@ fi
 #
 # The unit must already carry its hardware identity (sudo bash
 # owl_identity.sh --otp) and be registered with Noktura from the bench laptop
-# (tools/noktura_register.sh). The identity is checked up front, before 20
+# (python tools/owl_factory.py). The identity is checked up front, before 20
 # minutes of install; registration is not checked here (it needs internet and
 # the factory token, which never touch the unit).
 #
@@ -87,7 +87,10 @@ if [[ "$FACTORY_MODE" == "1" ]]; then
     if [[ ! -s "${OWL_IDENTITY_DIR}/device.pub" || "$identity_tier" != "otp" ]]; then
         echo -e "${RED}[NOT SHIP-READY] No hardware identity on this unit (tier: ${identity_tier:-none}).${NC}"
         echo -e "${RED}        Run: sudo bash owl_identity.sh --otp, register it from the laptop${NC}"
-        echo -e "${RED}        (tools/noktura_register.sh), then re-run bash owl_setup.sh --factory.${NC}"
+        echo -e "${RED}        (python tools/owl_factory.py), then re-run bash owl_setup.sh --factory.${NC}"
+        echo -e "${ORANGE}[WARN] --factory is for production units built with the factory tools. They are${NC}"
+        echo -e "${ORANGE}       not part of the public repository. To set up your own OWL, run:${NC}"
+        echo -e "${ORANGE}       bash owl_setup.sh${NC}"
         exit 1
     fi
 fi

@@ -229,3 +229,7 @@ benchmarks/results/*.png
 
 /CHANGELOG.md
 /controller/setup/BENCH_TEST.md
+
+# Factory provisioning tools (bench laptop and programming jig only).
+# Not part of the public repository. tools/owl_factory.py is the tracked entry point.
+/tools/factory/

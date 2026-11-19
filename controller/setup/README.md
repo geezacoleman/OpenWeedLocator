@@ -122,7 +122,7 @@ decision). Which script does what, who runs it, and where state lives.
 | `controller/setup/install_firstboot.sh` | `owl_setup.sh` / `setup.sh` | root | `--arm` / `--disarm` first boot, `--camera-config`, `--gps-config`, `--cloud-helper`. |
 | `owl_cloud_provision.sh` | the root helper (phone app), or a person for manual rigs | root | Mosquitto bridge to Noktura, `[Cloud]`, credentials in `~/.owl/cloud`. |
 | `owl_update.sh` | dashboard / cloud `update_software` | user (systemd-run) | git + pip update with rollback. `--ref latest` (the app's default since v3.26.1) = newest `vX.Y.Z` tag. Before restarting, `tools/import_check.py` confirms every repo module the services import exists; then owl.service **and** owl-dash.service are restarted and health-checked, and either failing rolls back. Does **not** refresh the root helper copy (O-23): after an update that changes `owl_cloud_provision.sh`, run `sudo bash controller/setup/install_firstboot.sh --cloud-helper`. The Wi-Fi fallback (`utils/net_watchdog.py`) runs inside owl.py as the OWL user, so updates deliver it. |
-| `tools/noktura_register.sh` | Guy / factory, **laptop only** | laptop user | Registers an identity with Noktura using the factory token; prints the serial, claim code and a claim card. |
+| `tools/factory/` (git-ignored, start with `python tools/owl_factory.py`) | Guy / factory, **laptop only** | laptop user | Factory provisioning tools: `owl_provision.py` drives a unit over SSH and registers it with Noktura using the factory token; `noktura_register.sh` is the earlier single-step version. Not part of the public repository. |
 | `dev/clean.sh` | `owl_setup.sh --factory` (last step, detached) | root | Strips dev residue before boxing. |
 
 ```mermaid
@@ -130,7 +130,7 @@ flowchart TB
   subgraph FACTORY["Factory / bench (production CM5 carrier)"]
     F1["1. sudo bash owl_identity.sh --otp"]
     F2["2. sudo bash owl_identity.sh --show &gt; identity.json"]
-    F3["3. laptop: tools/noktura_register.sh --identity identity.json --ready"]
+    F3["3. laptop: tools/factory/noktura_register.sh --identity identity.json --ready"]
     F4["4. bash owl_setup.sh --factory --yes<br/>identity gate, GPS, first boot armed, SHIP-READY, clean"]
     F1 --> F2 --> F3 --> F4
   end
