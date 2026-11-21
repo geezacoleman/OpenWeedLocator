@@ -9,7 +9,8 @@ attributes GreenOnGreen reads from ultralytics objects and nothing else
   Boxes:    .id (array or None), .cls, len(), iteration, boxes[i]
   one box:  .xyxy[0], .conf[0], .cls[0]
   model:    .task, .names, .predictor.trackers, .predict(**kw), .track(**kw)
-  tracker:  .args.<param>, .max_time_lost, .frame_id, .lost_stracks, .reset()
+  tracker:  .args.<param>, .max_frames_lost (max_time_lost before 8.4.38),
+            .frame_id, .lost_stracks, .reset()
 
 tests/unit/test_bytetrack_real.py runs the same class filter against real
 ultralytics Results where ultralytics is installed.
@@ -98,11 +99,15 @@ class LostTrack:
 class Tracker:
     """The parts of BYTETracker GreenOnGreen reads and writes."""
 
-    def __init__(self, frame_id=0, lost=(), **args):
+    def __init__(self, frame_id=0, lost=(), lost_attr='max_frames_lost', **args):
+        """lost_attr: the lost-frames limit's name. 'max_frames_lost' since
+        ultralytics 8.4.38, 'max_time_lost' before, None for a version that
+        has neither."""
         defaults = dict(track_high_thresh=0.2, track_low_thresh=0.05, new_track_thresh=0.2,
                         track_buffer=60, match_thresh=0.8)
         self.args = SimpleNamespace(**dict(defaults, **args))
-        self.max_time_lost = self.args.track_buffer
+        if lost_attr:
+            setattr(self, lost_attr, self.args.track_buffer)
         self.frame_id = frame_id
         self.lost_stracks = list(lost)
         self.resets = 0

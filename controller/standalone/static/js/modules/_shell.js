@@ -331,6 +331,8 @@ const Shell = (function () {
         const stopped = UIx.sprayNotice(d);
         if (stopped) out.push(UIx.notice('warn', '<b>' + UIx.esc(stopped) + '</b>'));
         if (d.algorithm_error) out.push(UIx.notice('bad', '<b>Detection could not start.</b> ' + UIx.esc(d.algorithm_error)));
+        const aiNote = UIx.aiNotice(d);
+        if (aiNote) out.push(aiNote);
         if (d.speed_warning) out.push(UIx.notice('warn', '<b>Slow down.</b> ' + UIx.esc(d.speed_warning)));
         if (offsetUnset(d)) out.push(UIx.notice('warn', OFFSET_UNSET + '<button type="button" class="lnk" data-act="offset">Set it ›</button>'));
         if (d.recording_blocked_reason && !d.image_sample_enable) {
@@ -350,6 +352,8 @@ const Shell = (function () {
             if (r) r.addEventListener('click', restartService);
             const off = box.querySelector('[data-act="offset"]');
             if (off) off.addEventListener('click', () => openSettings('nozzles'));
+            const retry = box.querySelector('[data-act="retry-hailo"]');
+            if (retry) retry.addEventListener('click', retryHailo);
         }
         const cam = $('cameraNotices');
         const camHtml = d.restart_required
@@ -382,7 +386,74 @@ const Shell = (function () {
                 sendClasses();
             },
             installAI: installAI,
+            setupHailo: setupHailo,
+            uploadModel: uploadModel,
+            deleteModel: deleteModel,
+            setRunOn: setRunOn,
+            retryHailo: retryHailo,
         }, { pickedClasses: aiPicked, update: d.software_update || lastUpdate });
+    }
+
+    function postJSON(url, body) {
+        return apiRequest(url, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}),
+        }).then((r) => r.json()).then((res) => {
+            if (!res.success) throw new Error(res.error || 'That did not work');
+            return res;
+        });
+    }
+
+    function uploadModel(file) {
+        const form = new FormData();
+        form.append('file', file);
+        showNotification('AI models', 'Adding ' + file.name, 'info', 2500);
+        fetch('/api/models/upload', { method: 'POST', body: form }).then((r) => r.json()).then((res) => {
+            if (!res.success) throw new Error(res.error || 'Could not add the model');
+            showNotification('AI models', 'Added ' + res.model + '. Choose it to use it.', 'success');
+        }).catch((e) => showNotification('AI models', e.message, 'error'));
+    }
+
+    async function deleteModel(name) {
+        const ok = await UI().confirm({
+            title: 'Delete ' + name + '?',
+            body: 'Removes every version of it from this OWL. It cannot be undone here.',
+            ok: 'Delete', okClass: 'stop',
+        });
+        if (!ok) return;
+        postJSON('/api/ai/delete_model', { model: name })
+            .then(() => showNotification('AI models', 'Deleted ' + name, 'success'))
+            .catch((e) => showNotification('AI models', e.message, 'error'));
+    }
+
+    function setRunOn(name, value) {
+        postJSON('/api/ai/set_run_on', { model: name, run_on: value })
+            .then(() => showNotification('AI models', name + ' runs on: ' + value, 'info', 2500))
+            .catch((e) => showNotification('AI models', e.message, 'error'));
+    }
+
+    function retryHailo() {
+        postJSON('/api/ai/retry_hailo', {})
+            .then(() => showNotification('AI models', 'Trying the Hailo again', 'info', 2500))
+            .catch((e) => showNotification('AI models', e.message, 'error'));
+    }
+
+    async function setupHailo() {
+        const ok = await UI().confirm({
+            title: 'Set up the Hailo on this OWL?',
+            body: 'Installs the Hailo driver and AI, then restarts. Takes 20 minutes or more and needs internet. Spraying keeps working meanwhile.',
+            ok: 'Set up Hailo',
+        });
+        if (!ok) return;
+        try {
+            const res = await UI().guardedFetch('/api/ai/setup_hailo', { method: 'POST' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.success) throw new Error(data.error || 'Could not start the set-up');
+            lastUpdate = { status: 'starting' };
+            pollUpdate();
+            renderAI(last);
+        } catch (e) {
+            showNotification('Set up Hailo', e.message, 'error');
+        }
     }
 
     let classTimer = null;

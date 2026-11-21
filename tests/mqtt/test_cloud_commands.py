@@ -72,9 +72,19 @@ class TestCloudCommandTopic:
 class TestCloudCommandAllowlist:
     def test_allowlist_is_exactly_what_the_noktura_portal_sends(self):
         # O-2 (decided 2026-09-17): every command the worker's enrich() builds.
+        # + the Hailo round (docs/HAILO.md §5, Noktura HAILO_SPEC §1.1):
+        # set_run_on, delete_model, retry_hailo, bare model names only
         assert CLOUD_ALLOWED_ACTIONS == {
             'list_data_sessions', 'transfer_session', 'delete_session', 'upload_previews',
-            'update_software', 'download_model', 'set_model', 'reboot', 'restart_service'}
+            'update_software', 'download_model', 'set_model', 'reboot', 'restart_service',
+            'set_run_on', 'delete_model', 'retry_hailo'}
+
+    def test_every_file_of_a_multi_file_download_is_url_checked(self):
+        from utils.mqtt_manager import cloud_command_rejection
+        command = {'action': 'download_model', 'model': 'w', 'files': [
+            {'url': 'https://store.example/a', 'filename': 'w.pt'},
+            {'url': 'http://evil.example/b', 'filename': 'w_hailo_model.zip'}]}
+        assert 'https' in cloud_command_rejection(command, 'store.example')
 
     @pytest.mark.parametrize('command', [
         {'action': 'list_data_sessions'},

@@ -8,14 +8,18 @@ MQTT state ('ai') and the dashboards refuse AI modes it cannot run:
 
     {'cpu': {'installed': bool},
      'hailo': {'present': bool, 'chip': 'hailo8' | 'hailo8l' | 'hailo10h' | None,
-               'runtime': bool},
-     'accelerator': 'hailo8' | 'cpu' | None}
+               'runtime': bool, 'hailort': '4.23.0' | None},
+     'accelerator': 'hailo8' | 'hailo8l' | 'cpu' | None}
 
-Only the Hailo-8 is supported (decided 2026-10-12, to keep it simple). Other
-Hailo chips a DIY builder fits (8L, 10H) are reported so the screens can say
-"not supported" and AI runs on the CPU. lspci names the 8 and 8L the same, so
+The Hailo-8 and the Hailo-8L (Raspberry Pi AI Kit, AI HAT+ 13T) are supported
+(2026-11-20; docs/HAILO.md). A Hailo-10H needs the HailoRT 5.x line, which
+cannot share an image with 4.x: it is reported so the screens can say "not
+supported" and AI runs on the CPU. lspci names the 8 and 8L the same, so
 the chip comes from hailortcli once the runtime is installed; None means "a
-Hailo card, chip not known yet" (docs/HAILO.md).
+Hailo card, chip not known yet".
+
+Hailo models run through Ultralytics too, so an accelerator needs
+ultralytics as well as the runtime.
 
 Computed once at startup (and again after a software update completes):
 the lspci probe is a subprocess, never something to run per heartbeat.
@@ -31,7 +35,7 @@ HAILO_DEVICE = '/dev/hailo0'
 LSPCI_TIMEOUT_S = 3
 HAILORTCLI_TIMEOUT_S = 5
 # Chips the OWL runs AI on (HailoRT 4.23)
-SUPPORTED_HAILO_CHIPS = ('hailo8',)
+SUPPORTED_HAILO_CHIPS = ('hailo8', 'hailo8l')
 
 NO_AI_REASON = 'AI is not installed on this OWL. Install AI, then try again.'
 NO_LUT_REASON = 'No painted profile is set up yet. Paint one first.'
@@ -86,14 +90,24 @@ def hailo_chip(pcie_line='', runtime=False, runner=None):
     return None
 
 
+def hailort_version(runner=None):
+    """'4.23.0' from `hailortcli --version`, or None."""
+    for line in _run(['hailortcli', '--version'], runner, HAILORTCLI_TIMEOUT_S).splitlines():
+        for word in line.replace(',', ' ').split():
+            if word[:1].isdigit() and word.count('.') >= 1:
+                return word
+    return None
+
+
 def detect(runner=None):
-    """The 'ai' capability block for this machine."""
+    """The 'ai' capability block for this machine. Call it before a model
+    opens the Hailo: hailortcli talks to the card."""
     cpu_installed = module_installed('ultralytics')
     pcie_line = hailo_pcie_line(runner)
     hailo_present = os.path.exists(HAILO_DEVICE) or bool(pcie_line)
     hailo_runtime = module_installed('hailo_platform')
     chip = hailo_chip(pcie_line, hailo_runtime, runner) if hailo_present else None
-    if hailo_present and hailo_runtime and chip in SUPPORTED_HAILO_CHIPS:
+    if hailo_present and hailo_runtime and cpu_installed and chip in SUPPORTED_HAILO_CHIPS:
         accelerator = chip
     elif cpu_installed:
         accelerator = 'cpu'
@@ -101,7 +115,8 @@ def detect(runner=None):
         accelerator = None
     return {
         'cpu': {'installed': cpu_installed},
-        'hailo': {'present': hailo_present, 'chip': chip, 'runtime': hailo_runtime},
+        'hailo': {'present': hailo_present, 'chip': chip, 'runtime': hailo_runtime,
+                  'hailort': hailort_version(runner) if hailo_runtime else None},
         'accelerator': accelerator,
     }
 

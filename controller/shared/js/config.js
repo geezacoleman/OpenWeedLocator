@@ -66,13 +66,15 @@ const CONFIG_FIELD_DEFS = {
         'lut_sensitivity': { type: 'number', min: 0, max: 100, help: 'LUT detection sensitivity (higher sprays more)' }
     },
     'GreenOnGreen': {
-        'model_path': { type: 'text', help: 'Path to YOLO model (NCNN dir or .pt file)' },
+        'model_path': { type: 'text', help: 'models (pick automatically), or one model: models/weeds-v3' },
         'confidence': { type: 'number', step: 0.05, min: 0.1, max: 1.0, help: 'Detection confidence threshold' },
         'detect_classes': { type: 'text', help: 'Classes to detect (comma-separated names, empty = all)' },
         'actuation_mode': { type: 'select', options: ['centre', 'zone'], help: 'centre = box centre, zone = mask pixel coverage per lane' },
         'min_detection_pixels': { type: 'number', min: 1, max: 10000, help: 'Min weed pixels in lane to trigger relay (zone mode only)' },
         'inference_resolution': { type: 'number', min: 160, max: 1280, help: 'YOLO input resolution (lower = faster)' },
-        'crop_buffer_px': { type: 'number', min: 0, max: 50, help: 'Buffer around detected crop in pixels (hybrid mode)' }
+        'crop_buffer_px': { type: 'number', min: 0, max: 50, help: 'Buffer around detected crop in pixels (hybrid mode)' },
+        'run_on': { type: 'select', options: ['auto', 'hailo', 'cpu'], help: 'Where AI runs. auto: a Hailo version on the Hailo, otherwise the CPU version. A model\'s own .json wins.' },
+        'model_storage_gb': { type: 'number', step: 0.5, min: 0.5, max: 64, help: 'Space models may use, in GB. Downloads and uploads over it are refused.' }
     },
     'DataCollection': {
         'image_sample_enable': { type: 'boolean', help: 'Enable image saving' },

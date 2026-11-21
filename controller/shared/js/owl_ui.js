@@ -190,21 +190,24 @@
         return 'gob';
     }
 
-    // ---------- AI capability (utils/ai_capability.py) ----------
-    // Only Hailo-8 is supported. A Hailo-8L or 10H on a DIY build is shown
-    // as found but not supported; the AI then runs on the CPU (if installed).
+    // ---------- AI capability (utils/ai_capability.py, docs/HAILO.md) ----------
+    // The Hailo-8 and Hailo-8L run AI. A Hailo-10H (AI HAT+ 2) needs another
+    // runtime: shown as found but not supported; AI then runs on the CPU.
     const CHIP_NAMES = { hailo8: 'Hailo-8', hailo8l: 'Hailo-8L', hailo10h: 'Hailo-10H' };
+    const HAILO_CHIPS = ['hailo8', 'hailo8l'];
 
     function canRunAI(ai) {
         if (!ai || typeof ai !== 'object' || !('accelerator' in ai)) return true;
         return ai.accelerator !== null && ai.accelerator !== undefined;
     }
     function aiReported(ai) { return !!(ai && typeof ai === 'object' && 'accelerator' in ai); }
-    function isHailo(ai) { return !!(ai && ai.accelerator === 'hailo8'); }
+    function isHailo(ai) { return !!(ai && HAILO_CHIPS.indexOf(ai.accelerator) !== -1); }
 
     // Where this OWL's AI runs, as a badge: {text, cls}
     function aiRunBadge(ai) {
         if (!aiReported(ai)) return { text: 'Checking', cls: 'c' };
+        if (ai.status === 'fault') return { text: 'AI fault', cls: 'bad' };
+        if (ai.status === 'degraded') return { text: 'CPU (Hailo down)', cls: 'w' };
         if (isHailo(ai)) return { text: 'Hailo', cls: 'h' };
         if (ai.accelerator === 'cpu') return { text: 'CPU', cls: 'c' };
         return { text: 'Needs AI', cls: 'w' };
@@ -217,10 +220,12 @@
         }
         const hailo = ai.hailo || {};
         const cpu = !!(ai.cpu && ai.cpu.installed);
-        if (isHailo(ai)) return { icon: '', title: 'Hailo-8', sub: 'AI accelerator ready', state: 'hailo' };
+        if (isHailo(ai)) {
+            return { icon: '', title: CHIP_NAMES[ai.accelerator], sub: 'AI accelerator ready', state: 'hailo' };
+        }
         if (hailo.present) {
             const name = CHIP_NAMES[hailo.chip];
-            if (hailo.chip && hailo.chip !== 'hailo8') {
+            if (hailo.chip && HAILO_CHIPS.indexOf(hailo.chip) === -1) {
                 return { icon: 'amber', title: name + ' found', sub: 'Not supported',
                          notice: ['warn', '<b>' + esc(name) + ' found, not supported.</b> ' +
                              (cpu ? 'AI runs on the CPU.' : 'AI isn\'t installed, so detection stays on colour.')],
@@ -228,7 +233,7 @@
             }
             return { icon: 'amber', title: name ? name + ' found' : 'Hailo card found', sub: 'Not set up yet',
                      notice: ['bad', '<b>The Hailo card isn\'t ready.</b> ' +
-                         (cpu ? 'AI runs on the CPU until it is set up.' : 'Detection stays on colour until it is set up.')],
+                         (cpu ? 'AI runs on the CPU until it is set up.' : 'Set it up to run AI on it.')],
                      setup: true, state: cpu ? 'cpu' : 'none' };
         }
         if (cpu) {
@@ -238,71 +243,124 @@
         return { icon: 'amber', title: 'AI isn\'t installed', sub: 'This OWL was set up without AI', state: 'none' };
     }
 
+    // AI not at full health: retrying, degraded or slow (a fault shows as a
+    // fault). Same words on every screen. who: 'owl-3: ' on a fleet screen.
+    const AI_STATUS_HEAD = {
+        retrying: 'The Hailo stopped. Trying it again.',
+        degraded: 'AI is running on the CPU.',
+        slow: 'AI can\'t keep up with the camera.',
+    };
+    function aiNotice(state, who, owlId) {
+        const ai = state && state.ai;
+        const head = ai && AI_STATUS_HEAD[ai.status];
+        if (!head) return '';
+        const retry = ai.status === 'degraded'
+            ? ' <button type="button" class="lnk" data-act="retry-hailo"' + (owlId ? ' data-owl-id="' + esc(owlId) + '"' : '') +
+              '>Try the Hailo again ›</button>' : '';
+        return notice('warn', '<b>' + esc((who || '') + head) + '</b> ' + esc(ai.status_reason || '') + retry);
+    }
+
+    const WARNINGS = {
+        no_labels: 'No class names. Add a .json with them.',
+        labels_mismatch: 'Its class names don\'t match. Add a .json with them.',
+        needs_8l_build: 'Needs a Hailo-8L version',
+    };
+
     // Model rows for one OWL. state = system_stats or one OWL's state.
-    // Each row: radio (current model), name, meta, badge.
+    // Grouped by model (ai.models) on firmware that reports it; one row per
+    // file on older firmware (available_models).
     function modelRows(state) {
         const s = state || {};
-        const models = (s.available_models || []).slice();
-        const current = s.current_model || '';
+        const ai = s.ai || {};
         const dl = s.model_download || {};
-        const downloading = dl.status === 'downloading' ? dl.model_name : null;
-        if (downloading && models.indexOf(downloading) === -1) models.push(downloading);
-        const ai = s.ai;
-        const badge = aiRunBadge(ai);
-        return models.map((name) => {
-            const row = { name: name, current: name === current, meta: '', badge: badge, progress: null };
-            if (name === downloading) {
+        const current = s.current_model || '';
+        const grouped = Array.isArray(ai.models);
+        let rows;
+        if (grouped) {
+            rows = ai.models.map((m) => {
+                const files = (m.builds || []).map((b) => b.file);
+                const runs = m.runs_on || null;
+                const isCurrent = !!runs || m.name === current || files.indexOf(current) !== -1;
+                const where = runs || m.will_run_on;
+                const badge = !where ? { text: 'Can\'t run', cls: 'w' }
+                    : where === 'cpu' ? { text: 'CPU', cls: 'c' } : { text: 'Hailo', cls: 'h' };
+                let meta = isCurrent ? 'In use' : 'Ready';
+                if (where && where !== 'cpu') meta += ' on the ' + (CHIP_NAMES[where] || 'Hailo');
+                else if (where === 'cpu') meta += ' on the CPU';
+                if (m.warning) meta = WARNINGS[m.warning] || m.warning;
+                return { name: m.name, current: isCurrent, meta: meta, badge: badge, progress: null, files: files,
+                         runOn: m.run_on || 'auto', hasHailo: (m.builds || []).some((b) => b.arch !== 'cpu') };
+            });
+        } else {
+            const badge = aiRunBadge(ai);
+            rows = (s.available_models || []).map((name) => ({
+                name: name, current: name === current, badge: badge, progress: null, files: [name],
+                meta: name === current ? 'In use' : /\.pt$/i.test(name) ? 'PyTorch model' : 'NCNN model',
+            }));
+        }
+        const dlName = dl.model_name;
+        if (dlName && dl.status === 'downloading' && !rows.some((r) => r.name === dlName || r.files.indexOf(dlName) !== -1)) {
+            rows.push({ name: dlName, current: false, meta: '', badge: aiRunBadge(ai), progress: null, files: [dlName] });
+        }
+        rows.forEach((r) => {
+            const mine = dlName && (r.name === dlName || r.files.indexOf(dlName) !== -1);
+            if (mine && dl.status === 'downloading') {
                 // progress comes from the OWL's state: force it to a 0-100 number
                 const pct = Math.round(Math.max(0, Math.min(100, Number(dl.progress) || 0)));
-                row.meta = 'Downloading';
-                row.badge = { text: pct + '%', cls: 'c' };
-                row.progress = pct;
-            } else if (dl.status === 'error' && dl.model_name === name) {
-                row.meta = dl.error ? 'File check failed: ' + dl.error : 'File check failed';
-                row.badge = { text: 'Failed', cls: 'bad' };
-            } else if (name === current) {
-                row.meta = 'In use';
-            } else {
-                row.meta = /\.pt$/i.test(name) ? 'PyTorch model' : 'NCNN model';
+                const n = Number(dl.file_count) || 1;
+                r.meta = n > 1 ? 'Downloading file ' + ((Number(dl.file_index) || 0) + 1) + ' of ' + n : 'Downloading';
+                r.badge = { text: pct + '%', cls: 'c' };
+                r.progress = pct;
+            } else if (mine && dl.status === 'error') {
+                r.meta = dl.error ? 'Download failed: ' + dl.error : 'Download failed';
+                r.badge = { text: 'Failed', cls: 'bad' };
             }
-            if (!canRunAI(ai)) row.badge = { text: 'Needs AI', cls: 'w' };
-            return row;
+            if (!canRunAI(ai)) r.badge = { text: 'Needs AI', cls: 'w' };
         });
+        return rows;
     }
 
     // Renders the whole AI models page for ONE OWL into `el`.
-    // handlers: {setModel(name), toggleClass(name, on), installAI(), dirty()}
+    // handlers: {setModel(name), toggleClass(name, all), installAI(), setupHailo(),
+    //            uploadModel(file), deleteModel(name), setRunOn(name, value), retryHailo()}
     function renderAIModels(el, state, handlers, opts) {
         const s = state || {};
         const o = opts || {};
         const h = handlers || {};
+        const ai = s.ai || {};
         const sum = aiSummary(s.ai);
         const aiOn = s.algorithm === 'gog' || s.algorithm === 'gog-hybrid';
         const loop = typeof s.avg_loop_time_ms === 'number' && s.avg_loop_time_ms > 0 ? s.avg_loop_time_ms : null;
+        const fps = typeof s.ai_fps === 'number' ? s.ai_fps : (loop ? 1000 / loop : null);
+        const ms = typeof s.ai_inference_ms === 'number' ? s.ai_inference_ms : loop;
         const cells = [
-            { label: 'Speed', value: aiOn && loop ? Math.round(1000 / loop) + ' fps' : null },
-            { label: 'Per frame', value: aiOn && loop ? Math.round(loop) + ' ms' : null },
-            { label: sum.state === 'hailo' ? 'Temp' : 'CPU', value: typeof s.cpu_temp === 'number' && s.cpu_temp > 0 ? Math.round(s.cpu_temp) + ' °C' : null },
+            { label: 'Speed', value: aiOn && fps ? Math.round(fps) + ' fps' : null },
+            { label: 'Per frame', value: aiOn && ms ? Math.round(ms) + ' ms' : null },
+            { label: 'CPU', value: typeof s.cpu_temp === 'number' && s.cpu_temp > 0 ? Math.round(s.cpu_temp) + ' °C' : null },
         ];
-        if (s.model_storage && typeof s.model_storage.used_mb === 'number' && typeof s.model_storage.budget_mb === 'number') {
-            cells.push({ label: 'Space used', value: fmtGB(s.model_storage.used_mb) + ' of ' + fmtGB(s.model_storage.budget_mb) });
+        const storage = ai.model_storage || s.model_storage;
+        if (storage && typeof storage.used_mb === 'number' && typeof storage.budget_mb === 'number') {
+            cells.push({ label: 'Space used', value: fmtGB(storage.used_mb) + ' of ' + fmtGB(storage.budget_mb) });
         }
         const capCells = cells.map((c) => '<div><span>' + esc(c.label) + '</span><b>' + esc(c.value || '--') + '</b></div>').join('');
         const showCells = sum.state !== 'none';
 
-        let left = '<div class="ou-card"><div class="ou-cap-head"><span class="ou-chip-ic ' + sum.icon + '">' + ICONS.ai +
+        let left = aiNotice(s) + '<div class="ou-card"><div class="ou-cap-head"><span class="ou-chip-ic ' + sum.icon + '">' + ICONS.ai +
             '</span><div style="flex:1;min-width:0"><div class="t1">' + esc(sum.title) + '</div><div class="t2">' + esc(sum.sub) +
             '</div></div></div>' + (showCells ? '<div class="ou-stats flat">' + capCells + '</div>' : '') + '</div>';
         if (sum.notice) left += notice(sum.notice[0], sum.notice[1]);
-        if (sum.setup) {
-            left += '<button class="ou-btn navy slim" type="button" disabled>Set up Hailo</button>' +
-                '<p class="ou-hint">Hailo set-up from the dashboard comes in a later update.</p>';
+        const update = s.software_update || o.update || {};
+        const updating = !!update.status && ['idle', 'complete', 'rolled_back', 'error'].indexOf(update.status) === -1;
+        if (sum.setup && h.setupHailo) {
+            left += updating
+                ? '<div class="ou-card" style="padding:14px 16px;display:flex;flex-direction:column;gap:8px"><b>Setting up</b>' +
+                  '<div class="ou-meter"><i style="width:40%"></i></div><span class="ou-hint">The OWL restarts when it is done.</span></div>'
+                : '<button class="ou-btn navy slim" type="button" data-ai="setup">Set up Hailo</button>' +
+                  '<p class="ou-hint">Installs the Hailo driver and AI, then restarts. Needs internet. Spraying keeps working meanwhile.</p>';
         }
         // Install AI: only when the OWL said it has no AI at all
-        const update = s.software_update || o.update || {};
-        if (aiReported(s.ai) && !canRunAI(s.ai)) {
-            const running = !!update.status && ['idle', 'complete', 'rolled_back', 'error'].indexOf(update.status) === -1;
-            if (running) {
+        if (aiReported(s.ai) && !canRunAI(s.ai) && !sum.setup) {
+            if (updating) {
                 left += '<div class="ou-card" style="padding:14px 16px;display:flex;flex-direction:column;gap:8px">' +
                     '<b>Installing AI</b><div class="ou-meter"><i style="width:40%"></i></div>' +
                     '<span class="ou-hint">This takes 20 minutes or more. The OWL restarts when it is done.</span></div>';
@@ -336,21 +394,41 @@
         let list = '<span class="ou-list-head">On this OWL</span><div class="ou-list">';
         if (!rows.length) {
             list += '<div class="ou-row"><div class="main"><span class="name">No models yet</span><span class="meta">' +
-                esc(o.noModelsHint || 'Models sent from Noktura or copied to models/ show here.') + '</span></div></div>';
+                esc(o.noModelsHint || 'Add a model, send one from Noktura, or copy one to models/.') + '</span></div></div>';
         }
-        const hailoCard = !!(s.ai && s.ai.hailo && s.ai.hailo.present);
         rows.forEach((r) => {
             list += '<button type="button" class="ou-row" data-model="' + esc(r.name) + '"><span class="ou-radio' + (r.current ? ' on' : '') +
                 '"></span><div class="main"><span class="name">' + esc(r.name) + '</span><span class="meta">' + esc(r.meta) +
                 '</span></div><span class="ou-run ' + esc(r.badge.cls) + '">' + esc(r.badge.text) + '</span></button>';
             if (r.progress !== null) list += '<div class="ou-rowx"><div class="ou-meter"><i style="width:' + Math.max(0, Math.min(100, Number(r.progress) || 0)) + '%"></i></div></div>';
-            if (r.current && hailoCard) {
-                list += '<div class="ou-rowx"><span>Run on</span><div class="ou-mini"><button type="button" disabled class="' +
-                    (isHailo(s.ai) ? 'on' : '') + '">Hailo</button><button type="button" disabled class="' + (isHailo(s.ai) ? '' : 'on') +
-                    '">CPU</button></div></div><div class="ou-rowx"><span style="font-weight:500">Choosing per model comes in a later update.</span></div>';
-            }
         });
         list += '</div>';
+        if (h.uploadModel) {
+            list += '<label class="ou-btn navy slim" style="margin-top:10px">Add a model' +
+                '<input type="file" data-ai="upload" accept=".pt,.zip,.hef,.json" hidden></label>' +
+                '<p class="ou-hint">A .pt, an NCNN or Hailo zip, a .hef, or a .json with class names.</p>';
+        }
+
+        // Advanced: where each model runs, and deleting models
+        const adv = rows.filter((r) => r.files && (r.hasHailo !== undefined));
+        if (adv.length && (h.setRunOn || h.deleteModel)) {
+            let a = '<details class="ou-adv" style="margin-top:12px"' + (o.advancedOpen ? ' open' : '') + '><summary class="ou-list-head">Advanced</summary><div class="ou-list">';
+            adv.forEach((r) => {
+                a += '<div class="ou-rowx" style="flex-wrap:wrap;gap:8px"><span style="flex:1;min-width:120px;font-weight:600">' + esc(r.name) + '</span>';
+                if (h.setRunOn && isHailo(ai) && r.hasHailo) {
+                    a += '<div class="ou-mini">' + ['auto', 'hailo', 'cpu'].map((v) =>
+                        '<button type="button" data-runon="' + v + '" data-for="' + esc(r.name) + '" class="' + (r.runOn === v ? 'on' : '') + '">' +
+                        (v === 'auto' ? 'Auto' : v === 'hailo' ? 'Hailo' : 'CPU') + '</button>').join('') + '</div>';
+                }
+                if (h.deleteModel) {
+                    a += r.current ? '<span class="ou-hint">In use</span>'
+                        : '<button type="button" class="ou-btn ghost slim" data-del="' + esc(r.name) + '">Delete</button>';
+                }
+                a += '</div>';
+            });
+            a += '</div><p class="ou-hint">Auto runs a Hailo version on the Hailo and anything else on the CPU.</p></details>';
+            list += a;
+        }
 
         el.innerHTML = '<div class="ou-two"><div class="ou-stack">' + left + cls + '</div><div class="ou-stack">' + list +
             (o.extraRight || '') + '</div></div>' + (o.extraBottom || '');
@@ -363,6 +441,17 @@
         }));
         const install = el.querySelector('[data-ai="install"]');
         if (install) install.addEventListener('click', () => h.installAI());
+        const setup = el.querySelector('[data-ai="setup"]');
+        if (setup) setup.addEventListener('click', () => h.setupHailo());
+        const upload = el.querySelector('[data-ai="upload"]');
+        if (upload) upload.addEventListener('change', () => { if (upload.files[0]) h.uploadModel(upload.files[0]); });
+        el.querySelectorAll('[data-runon]').forEach((b) => b.addEventListener('click', () => {
+            if (!b.classList.contains('on')) h.setRunOn(b.dataset.for, b.dataset.runon);
+        }));
+        el.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => h.deleteModel(b.dataset.del)));
+        el.querySelectorAll('[data-act="retry-hailo"]').forEach((b) => b.addEventListener('click', () => {
+            if (h.retryHailo) h.retryHailo();
+        }));
     }
 
     // Class selection rule: empty list = everything. Toggling from "all"
@@ -947,7 +1036,7 @@
         setSwitch: setSwitch, statCells: statCells, labsHTML: labsHTML, notice: notice,
         fmtGB: fmtGB, fmtBytes: fmtBytes, relTime: relTime, sessionWhen: sessionWhen,
         MODE_LABELS: MODE_LABELS, algoMode: algoMode,
-        canRunAI: canRunAI, aiReported: aiReported, isHailo: isHailo, aiRunBadge: aiRunBadge, aiSummary: aiSummary,
+        canRunAI: canRunAI, aiReported: aiReported, isHailo: isHailo, aiRunBadge: aiRunBadge, aiSummary: aiSummary, aiNotice: aiNotice, CHIP_NAMES: CHIP_NAMES,
         modelRows: modelRows, renderAIModels: renderAIModels, toggleClass: toggleClass,
         confirm: confirmSheet, choose: choiceSheet, prompt: promptSheet,
         askNozzleDistance: askNozzleDistance,

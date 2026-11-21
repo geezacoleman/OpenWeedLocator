@@ -1084,6 +1084,9 @@ class OWLDashboard:
                 # What AI this OWL can run (utils/ai_capability.py); None
                 # until the OWL reports it
                 'ai': mqtt_state.get('ai'),
+                # Speed of AI detection (local only, they change every frame)
+                'ai_fps': mqtt_state.get('ai_fps'),
+                'ai_inference_ms': mqtt_state.get('ai_inference_ms'),
                 'model_download': mqtt_state.get('model_download'),
                 # AI tab data
                 'available_models': mqtt_state.get('available_models', []),
@@ -1993,6 +1996,78 @@ class OWLDashboard:
             except Exception as e:
                 self.logger.error(f"Error setting AI model: {e}")
                 return jsonify({'success': False, 'error': str(e)}), 500
+
+        # ---- Models on this OWL (docs/HAILO.md §5; same paths as networked) ----
+
+        @self.app.route('/api/models/upload', methods=['POST'])
+        def upload_model_here():
+            """A .pt, a model zip (NCNN or Hailo), a .hef or a labels .json,
+            straight into this OWL's models/. Refused over the model budget,
+            below the recording floor, or for a Hailo build this chip can't
+            run. The OWL lists it on its next heartbeat."""
+            from werkzeug.utils import secure_filename
+            from utils import model_catalog
+
+            # Token-guarded like Install AI: it writes a file the OWL loads
+            denied = self._check_device_token()
+            if denied is not None:
+                return denied
+            f = request.files.get('file')
+            if f is None or not f.filename:
+                return jsonify({'success': False, 'error': 'No file provided'}), 400
+            models_dir = home_dir('models')
+            models_dir.mkdir(parents=True, exist_ok=True)
+            ai = (self.mqtt_client.get_state() if self.mqtt_client else {}).get('ai') or {}
+            budget_gb = (ai.get('model_storage') or {}).get('budget_mb', 0) / 1000 \
+                or model_catalog.DEFAULT_STORAGE_GB
+            floor_gb = 0
+            try:
+                config = configparser.ConfigParser()
+                config.read(self._resolve_config_path(self._get_active_config_path()))
+                floor_gb = config.getfloat('DataCollection', 'min_free_gb', fallback=0)
+            except (configparser.Error, ValueError, OSError):
+                pass
+            accelerator = ai.get('accelerator') if ai.get('accelerator') in model_catalog.RUNNABLE else None
+            tmp = models_dir / f'.upload-{uuid.uuid4().hex}'
+            try:
+                f.save(str(tmp))
+                result = model_catalog.add_upload(models_dir, tmp, secure_filename(f.filename),
+                                                  budget_gb, floor_gb, accelerator)
+                return jsonify({'success': True, **result})
+            except ValueError as e:
+                return jsonify({'success': False, 'error': str(e)}), 400
+            except Exception as e:
+                self.logger.error(f"Error uploading model: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+            finally:
+                tmp.unlink(missing_ok=True)
+
+        def _ai_model_command(action, needs_model=True):
+            if action == 'delete_model':
+                denied = self._check_device_token()
+                if denied is not None:
+                    return denied
+            if not self.mqtt_client:
+                return jsonify({'success': False, 'error': 'MQTT not connected'}), 500
+            data = request.get_json(silent=True) or {}
+            value = {k: data[k] for k in ('model', 'run_on') if k in data}
+            if needs_model and not value.get('model'):
+                return jsonify({'success': False, 'error': 'model required'}), 400
+            if action == 'set_run_on' and value.get('run_on') not in ('auto', 'hailo', 'cpu'):
+                return jsonify({'success': False, 'error': 'run_on must be auto, hailo or cpu'}), 400
+            return jsonify(self.mqtt_client._send_command(action, **value))
+
+        @self.app.route('/api/ai/set_run_on', methods=['POST'])
+        def ai_set_run_on():
+            return _ai_model_command('set_run_on')
+
+        @self.app.route('/api/ai/delete_model', methods=['POST'])
+        def ai_delete_model():
+            return _ai_model_command('delete_model')
+
+        @self.app.route('/api/ai/retry_hailo', methods=['POST'])
+        def ai_retry_hailo():
+            return _ai_model_command('retry_hailo', needs_model=False)
 
         @self.app.route('/api/ai/set_detect_classes', methods=['POST'])
         def set_detect_classes():

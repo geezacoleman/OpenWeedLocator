@@ -96,9 +96,9 @@ class TestFleetUpdateWorker:
         order = []
         orig_update = ctrl._update_one_device
 
-        def tracking_update(device_id, ref, with_ai=False):
+        def tracking_update(device_id, ref, with_ai=False, with_hailo=False):
             order.append(device_id)
-            return orig_update(device_id, ref, with_ai)
+            return orig_update(device_id, ref, with_ai, with_hailo)
 
         ctrl._update_one_device = tracking_update
         _auto_complete(ctrl)

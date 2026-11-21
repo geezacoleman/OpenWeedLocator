@@ -28,8 +28,10 @@ def owl_state():
 def test_owl_always_publishes_the_ai_read_fields(owl_state):
     missing = [k for k in AI_READ_FIELDS if k not in owl_state]
     assert not missing, f'OWL state lacks {missing}'
+    # Capability first (utils/ai_capability.py); the heartbeat adds the live
+    # parts (test_the_heartbeat_adds_status_storage_and_models)
     assert set(owl_state['ai']) == {'cpu', 'hailo', 'accelerator'}
-    assert set(owl_state['ai']['hailo']) == {'present', 'chip', 'runtime'}
+    assert set(owl_state['ai']['hailo']) == {'present', 'chip', 'runtime', 'hailort'}
     assert set(owl_state['model_download']) >= {'status', 'model_name', 'progress', 'error'}
 
 
@@ -43,3 +45,22 @@ def test_system_stats_relays_them_unchanged(standalone_test_client, owl_state):
     stats = client.get('/api/system_stats').get_json()
     for key in AI_READ_FIELDS:
         assert stats[key] == owl_state[key], key
+
+
+def test_the_heartbeat_adds_status_storage_and_models(tmp_path, monkeypatch):
+    """docs/HAILO.md §5: the ai block every reader gets after a heartbeat.
+    All of it optional for readers; status is always there."""
+    from utils import mqtt_manager
+    from utils.mqtt_manager import OWLMQTTPublisher
+    monkeypatch.setattr(mqtt_manager, 'home_dir', lambda *parts: tmp_path.joinpath(*parts))
+    (tmp_path / 'models').mkdir()
+    (tmp_path / 'models' / 'weeds.pt').write_bytes(b'pt')
+    publisher = OWLMQTTPublisher(broker_host='localhost', broker_port=1,
+                                 client_id='contract', device_id='owl-1')
+    ai = json.loads(json.dumps(publisher._ai_block(), default=str))
+    assert {'cpu', 'hailo', 'accelerator', 'status', 'status_reason',
+            'model_storage', 'models'} <= set(ai)
+    assert ai['status'] == 'ok'
+    assert set(ai['model_storage']) == {'used_mb', 'budget_mb'}, 'nothing that moves while recording (cloud field)'
+    assert ai['models'][0]['name'] == 'weeds'
+    assert {'name', 'builds', 'run_on', 'runs_on', 'will_run_on', 'warning'} == set(ai['models'][0])

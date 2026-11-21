@@ -64,4 +64,7 @@ class TestAiBlock:
                 {'request_id': 'r', 'status': 'complete', 'updated_at': int(time.time()),
                  'error': ''}))
             mqtt_publisher._read_update_status()
-        assert mqtt_publisher.state['ai'] == fresh
+        # The fresh capability, plus the live parts the heartbeat adds
+        ai = mqtt_publisher.state['ai']
+        assert {k: ai[k] for k in fresh} == fresh
+        assert {'status', 'status_reason', 'model_storage', 'models'} <= set(ai)

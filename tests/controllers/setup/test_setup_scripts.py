@@ -532,6 +532,20 @@ class TestFactoryArguments:
         assert expect in result.stdout
 
 
+    @pytest.mark.parametrize('args, expect', [
+        ([], 'hailo=0 factory=0'),
+        (['--hailo'], 'hailo=1 factory=0'),
+        (['--factory', '--yes', '--hailo'], 'hailo=1 factory=1'),
+    ])
+    def test_hailo_is_off_unless_asked_for(self, box, args, expect):
+        """Most OWLs have no Hailo and it installs a kernel driver: opt-in,
+        with or without --factory."""
+        block = between(source(OWL_SETUP), 'FACTORY_MODE=0', '# Identity gate')
+        result = box.run(PRELUDE + block + 'echo "hailo=$WITH_HAILO factory=$FACTORY_MODE"\n', args)
+        assert result.returncode == 0
+        assert expect in result.stdout
+
+
 class TestFactoryConfirmAndDetach:
     """--factory wipes WiFi profiles and SSH keys and locks spraying until
     phone setup: a maker who runs it on their own build is locked out. It
@@ -878,6 +892,7 @@ class TestShipGate:
         ('OPENCV', 'OpenCV install'), ('OWL_DEPS', 'OWL dependencies'),
         ('DASHBOARD_DEPS', 'dashboard dependencies'), ('DASHBOARD', 'dashboard/first-boot setup'),
         ('GPS', 'nRF9151 GPS setup'), ('WIFI_COUNTRY', 'Wi-Fi country'),
+        ('HAILO', 'Hailo-8 setup'),
     ])
     def test_a_critical_failure_blocks_the_ship_and_skips_the_cleanup(self, gate, box, failed, named):
         """Cleanup deletes the WiFi profiles: skipping it keeps a failed
@@ -911,6 +926,205 @@ class TestShipGate:
         assert result.returncode == 1
         assert '[NOT SHIP-READY] Critical failures: wired Ethernet has no working profile' in result.stdout
         assert not [c for c in box.calls() if 'clean.sh' in c]
+
+
+HAILO_SETUP = 'tools/hailo_setup.sh'
+KERNEL = '6.18.39+rpt-rpi-2712'
+STOCK_CMDLINE = 'console=serial0,115200 console=tty1 root=PARTUUID=abcd-02 rootfstype=ext4 fsck.repair=yes rootwait\n'
+
+
+class TestHailoSetup:
+    """tools/hailo_setup.sh, run whole in a scratch root with stub commands.
+    The settings are the ones that survived the CM5 bring-up (handover of
+    2026-10-12): PCIe on and left at Gen 2, ASPM off, the 4.23.0 driver
+    patched for the mmap lock and held. Install is safe to re-run; --check
+    stops at the first layer that fails."""
+
+    @pytest.fixture
+    def hailo(self, box):
+        root = box.tmp / 'root'
+        (root / 'boot/firmware').mkdir(parents=True)
+        (root / 'proc/device-tree').mkdir(parents=True)
+        (root / 'boot/firmware/config.txt').write_text(STOCK_CONFIG)
+        (root / 'boot/firmware/cmdline.txt').write_text(STOCK_CMDLINE)
+        (root / 'proc/device-tree/model').write_text(CM5 + '\0')
+        source_dir = root / 'usr/src/hailo_pci-4.23.0/linux/vdma'
+        source_dir.mkdir(parents=True)
+        (source_dir / 'memory.c').write_text('\n' * 170 + '        vma = find_vma(current->mm, addr_or_fd);\n')
+        (root / f'lib/modules/{KERNEL}').mkdir(parents=True)
+        state = box.tmp / 'state'
+        state.mkdir()
+
+        # The patch script stand-in: patches the source and builds, as the real one does
+        patch = box.tmp / 'patch_stub.sh'
+        patch.write_text('#!/bin/bash\n'
+                         'echo "patch_script" >> "$STUB_LOG"\n'
+                         f'[ -f "{state}/patch_fails" ] && exit 1\n'
+                         f'printf \'%s\\n\' "        mmap_read_lock(current->mm);" >> "{source_dir}/memory.c"\n'
+                         f'touch "{state}/built" "{state}/held"\n', newline='\n')
+
+        box.stub('uname', f'echo {KERNEL}')
+        box.stub('dpkg', f'case "$*" in "-s hailo-all") [ -f "{state}/installed" ] ;; *) exit 1 ;; esac')
+        box.stub('apt-get', f'case "$1" in install) touch "{state}/installed" ;; esac')
+        box.stub('apt-mark', f'[ -f "{state}/held" ] && echo hailort-pcie-driver; exit 0')
+        box.stub('dkms', f'case "$1" in status) [ -f "{state}/built" ] '
+                         f'&& echo "hailo_pci/4.23.0, {KERNEL}, aarch64: installed" ;; esac; exit 0')
+        box.stub('timeout', 'shift; "$@"')
+        box.stub('lspci', f'[ -f "{state}/no_card" ] && exit 0\n'
+                          'case "$*" in *-vv*) echo "  LnkSta: Speed 5GT/s, Width x1" ;; '
+                          '*) echo "0001:01:00.0 Co-processor: Hailo Technologies Ltd. Hailo-8 AI Processor" ;; esac')
+        box.stub('hailortcli',
+                 'case "$1" in\n'
+                 f'  fw-control) echo "Device Architecture: $(cat "{state}/chip" 2>/dev/null || echo HAILO8)" ;;\n'
+                 f'  benchmark) n=$(cat "{state}/runs" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "{state}/runs"\n'
+                 f'    [ "$n" = "$(cat "{state}/fail_on_run" 2>/dev/null)" ] && {{ echo "HAILO_FW_CONTROL failed with 19"; exit 1; }}\n'
+                 '    printf "FPS     (hw_only)   = 157.3\\n        (streaming) = 157.1\\nLatency (hw)        = 7.9 ms\\n" ;;\n'
+                 'esac')
+        box.stub('dmesg', f'cat "{state}/dmesg" 2>/dev/null; exit 0')
+        box.stub('vcgencmd', f'echo "throttled=$(cat "{state}/throttled" 2>/dev/null || echo 0x0)"')
+
+        def run(*args):
+            return box.run(REPO / HAILO_SETUP, args,
+                           env={'HAILO_SETUP_ROOT': root, 'HAILO_PATCH_SCRIPT': patch})
+
+        return run, root, state
+
+    @staticmethod
+    def ready(root, state):
+        """A unit after install and a reboot."""
+        (root / 'dev').mkdir()
+        (root / 'dev/hailo0').write_text('')
+        (root / 'usr/share/hailo-models').mkdir(parents=True)
+        (root / 'usr/share/hailo-models/yolov8s_h8.hef').write_text('hef')
+        memory = root / 'usr/src/hailo_pci-4.23.0/linux/vdma/memory.c'
+        memory.write_text(memory.read_text() + '        mmap_read_lock(current->mm);\n')
+        for name in ('built', 'held', 'installed'):
+            (state / name).write_text('')
+
+    @staticmethod
+    def report(result):
+        return dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+
+    def test_install_writes_the_working_configuration(self, hailo, box):
+        run, root, _ = hailo
+        result = run()
+        assert result.returncode == 0, result.stdout + result.stderr
+        config = (root / 'boot/firmware/config.txt').read_text()
+        # appended under [all]: nothing is autodetected on a Compute Module
+        assert config.endswith('# OWL Hailo-8 (tools/hailo_setup.sh)\n[all]\ndtparam=pciex1\n')
+        assert config.startswith(STOCK_CONFIG)
+        assert 'pciex1_gen' not in config                 # Gen 2: never forced to Gen 3
+        cmdline = (root / 'boot/firmware/cmdline.txt').read_text()
+        assert cmdline == STOCK_CMDLINE.rstrip('\n') + ' pcie_aspm=off\n'
+        assert 'apt-get install -y dkms pciutils hailo-all' in box.calls()
+        assert box.calls('patch_script') == ['patch_script']
+        assert 'held so an upgrade cannot undo the patch: hailort-pcie-driver' in result.stdout
+        assert 'Reboot, then check it' in result.stdout
+
+    def test_running_it_again_changes_nothing(self, hailo, box):
+        run, root, _ = hailo
+        assert run().returncode == 0
+        config = (root / 'boot/firmware/config.txt').read_text()
+        cmdline = (root / 'boot/firmware/cmdline.txt').read_text()
+        box.log.write_text('')
+        again = run()
+        assert again.returncode == 0, again.stdout + again.stderr
+        assert (root / 'boot/firmware/config.txt').read_text() == config
+        assert (root / 'boot/firmware/cmdline.txt').read_text() == cmdline
+        # held packages: a second apt install could fail on them, a second build wastes minutes
+        assert not box.calls('apt-get') and not box.calls('patch_script')
+
+    def test_a_failed_patch_is_a_failure(self, hailo):
+        """Unpatched, every streaming transfer fails on kernel 6.18."""
+        run, _, state = hailo
+        (state / 'patch_fails').write_text('')
+        result = run()
+        assert result.returncode == 1
+        assert 'the driver patch did not go on' in result.stdout
+
+    def test_only_a_pi_5_or_cm5(self, hailo, box):
+        run, root, _ = hailo
+        (root / 'proc/device-tree/model').write_text('Raspberry Pi 4 Model B Rev 1.4\0')
+        result = run()
+        assert result.returncode == 1
+        assert 'needs a Raspberry Pi 5 or Compute Module 5' in result.stdout
+        assert (root / 'boot/firmware/config.txt').read_text() == STOCK_CONFIG
+        assert not box.calls('apt-get')
+
+    def test_gen_3_is_reported_and_left_for_the_owner(self, hailo):
+        run, root, _ = hailo
+        config = root / 'boot/firmware/config.txt'
+        config.write_text(STOCK_CONFIG + 'dtparam=pciex1_gen=3\n')
+        result = run()
+        assert result.returncode == 0
+        assert 'forces PCIe Gen 3' in result.stdout
+        assert 'dtparam=pciex1_gen=3\n' in config.read_text()
+
+    def test_another_aspm_setting_is_replaced_not_duplicated(self, hailo):
+        run, root, _ = hailo
+        cmdline = root / 'boot/firmware/cmdline.txt'
+        cmdline.write_text('console=tty1 pcie_aspm=force rootwait\n')
+        assert run().returncode == 0
+        assert cmdline.read_text() == 'console=tty1 pcie_aspm=off rootwait\n'
+
+    def test_check_passes_a_good_unit_after_three_runs(self, hailo, box):
+        run, root, state = hailo
+        self.ready(root, state)
+        result = run('--check', '--kv')
+        assert result.returncode == 0, result.stdout + result.stderr
+        report = self.report(result)
+        assert report['result'] == 'pass'
+        assert (report['chip'], report['link'], report['patch']) == ('hailo8', '5GT/s', 'yes')
+        assert (report['runs'], report['fps']) == ('3', '157.1,157.1,157.1')
+        assert (report['rwsem'], report['throttled']) == ('0', '0x0')
+        assert len(box.calls('hailortcli benchmark')) == 3
+
+    @pytest.mark.parametrize('fault, stage, words', [
+        ('no_card', 'enumeration', 'no Hailo card on PCIe'),
+        ('no_device', 'driver', 'the driver did not load'),
+        ('unpatched', 'driver', 'not patched'),
+        ('other_chip', 'firmware', "reports 'hailo8l', not hailo8"),
+        ('second_run', 'benchmark', 'run 2 of 3 failed'),
+        ('rwsem', 'benchmark', 'the unpatched driver is the one loaded'),
+        ('throttled', 'benchmark', 'power trouble under load'),
+    ])
+    def test_check_stops_at_the_layer_that_failed(self, hailo, fault, stage, words):
+        run, root, state = hailo
+        self.ready(root, state)
+        if fault == 'no_card':
+            (state / 'no_card').write_text('')
+        elif fault == 'no_device':
+            (root / 'dev/hailo0').unlink()
+        elif fault == 'unpatched':
+            (root / 'usr/src/hailo_pci-4.23.0/linux/vdma/memory.c').write_text('\n' * 170 + 'find_vma\n')
+        elif fault == 'other_chip':
+            (state / 'chip').write_text('HAILO8L')
+        elif fault == 'second_run':
+            (state / 'fail_on_run').write_text('2')
+        elif fault == 'rwsem':
+            (state / 'dmesg').write_text('WARNING: CPU: 2 at include/linux/rwsem.h:80 find_vma+0x6c/0x80\n')
+        elif fault == 'throttled':
+            (state / 'throttled').write_text('0x50005')
+        result = run('--check', '--kv')
+        assert result.returncode == 1
+        report = self.report(result)
+        assert (report['result'], report['stage']) == ('fail', stage)
+        assert words in report['reason']
+
+    def test_owl_setup_runs_it_only_with_the_flag_and_reports_a_failure(self, box):
+        script = source(OWL_SETUP)
+        calls = [line for line in script.splitlines() if line.strip() == 'setup_hailo']
+        assert len(calls) == 1
+        before = script[:script.index('\n    setup_hailo\n')]
+        assert before.rstrip().endswith('if [[ "$WITH_HAILO" == "1" ]]; then')
+
+        fn = function(script, 'setup_hailo')
+        text = PRELUDE + 'SCRIPT_DIR=/opt/owl\n' + fn + 'setup_hailo\necho "RC=$? ERROR=[$ERROR_HAILO]"\n'
+        box.stub('sudo')
+        assert box.run(text).stdout.strip().splitlines()[-1] == 'RC=0 ERROR=[]'
+        assert box.calls() == ['sudo bash /opt/owl/tools/hailo_setup.sh']
+        box.stub('sudo', 'exit 1')
+        assert box.run(text).stdout.strip().splitlines()[-1] == 'RC=1 ERROR=[Hailo-8 setup failed]'
 
 
 class TestMakerIdentityStep:

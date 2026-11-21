@@ -173,6 +173,7 @@ class TestShellSide:
     @pytest.mark.parametrize('script', [
         'owl_identity.sh', 'owl_cloud_provision.sh',
         'controller/setup/install_firstboot.sh', 'controller/shared/setup.sh', 'dev/clean.sh',
+        'tools/hailo_setup.sh', 'tools/patch_hailo_dkms.sh',
     ])
     def test_scripts_parse(self, script):
         result = subprocess.run(['bash', '-n', str(REPO / script)],

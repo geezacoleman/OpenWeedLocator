@@ -1005,7 +1005,7 @@ class TestTrackerSettingsReachByteTrack:
 
         assert tracker.args.match_thresh == 0.93
         assert tracker.args.track_buffer == 45
-        assert tracker.max_time_lost == 45, 'track_buffer only acts through max_time_lost'
+        assert tracker.max_frames_lost == 45, 'track_buffer only acts through max_frames_lost'
         assert tracker.resets == 0
 
     def test_a_live_change_before_the_first_frame_is_queued_not_lost(self, monkeypatch, tmp_path):
@@ -1024,8 +1024,31 @@ class TestTrackerSettingsReachByteTrack:
         gog.update_tracker_params_direct({'match_thresh': 0.91, 'track_buffer': 90})
 
         assert (tracker.args.match_thresh, tracker.args.track_buffer) == (0.91, 90)
-        assert tracker.max_time_lost == 90
+        assert tracker.max_frames_lost == 90
         assert tracker.resets == 0, 'a reset would drop every track and restart the ids'
+
+    def test_track_buffer_reaches_the_pre_8_4_38_name(self, monkeypatch, tmp_path):
+        """ultralytics before 8.4.38 called the limit max_time_lost."""
+        tracker = Tracker(lost_attr='max_time_lost')
+        gog = build(monkeypatch, tmp_path, fake_yolo.Model(tracker=tracker), tracking_enabled=True)
+        gog.inference(self.FRAME)
+
+        gog.update_tracker_params_direct({'track_buffer': 90})
+
+        assert tracker.max_time_lost == 90
+        assert not hasattr(tracker, 'max_frames_lost')
+
+    def test_an_unknown_lost_frames_name_is_logged_not_silent(self, monkeypatch, tmp_path, caplog):
+        """A future rename must say so: the 8.4.38 one went unnoticed for months."""
+        tracker = Tracker(lost_attr=None)
+        gog = build(monkeypatch, tmp_path, fake_yolo.Model(tracker=tracker), tracking_enabled=True)
+        gog.inference(self.FRAME)
+
+        with caplog.at_level('WARNING', logger='utils.greenongreen'):
+            gog.update_tracker_params_direct({'track_buffer': 90, 'match_thresh': 0.91})
+
+        assert tracker.args.match_thresh == 0.91, 'the other settings still apply'
+        assert 'track_buffer is not applied' in caplog.text
 
     @pytest.mark.parametrize('level', ['low', 'medium', 'high'])
     def test_stability_presets(self, monkeypatch, tmp_path, level):
@@ -1038,7 +1061,7 @@ class TestTrackerSettingsReachByteTrack:
 
         preset = GreenOnGreen.TRACK_STABILITY_PRESETS[level]
         assert vars(tracker.args) == preset
-        assert tracker.max_time_lost == preset['track_buffer']
+        assert tracker.max_frames_lost == preset['track_buffer']
 
     def test_an_unknown_preset_changes_nothing(self, monkeypatch, tmp_path):
         tracker = Tracker()

@@ -380,7 +380,7 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
                 'git': {'branch': git_info.get('branch'),
                         'commit': git_info.get('commit')}}
 
-    def _launch_update(ref, with_ai=False):
+    def _launch_update(ref, with_ai=False, with_hailo=False):
         """Checks, then owl_update.sh in its transient unit. Shared by
         Update and Install AI, which is the same update plus --with-ai."""
         if not software_update.valid_ref(ref):
@@ -400,7 +400,7 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
         request_id = secrets.token_hex(8)
         argv = software_update.update_argv(ref, request_id,
                                            status_file=update_status_file,
-                                           with_ai=with_ai)
+                                           with_ai=with_ai, with_hailo=with_hailo)
         if not software_update.sudo_permits(argv, runner):
             return _fail(503, 'permissions_missing',
                          UPDATE_PERMISSIONS_MISSING_ERROR)
@@ -421,7 +421,7 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
         log.warning(f"Software update launched from dashboard: ref={ref} "
                     f"request_id={request_id} with_ai={with_ai}")
         return jsonify({'success': True, 'request_id': request_id, 'ref': ref,
-                        'with_ai': with_ai, 'status': 'starting'}), 202
+                        'with_ai': with_ai, 'with_hailo': with_hailo, 'status': 'starting'}), 202
 
     @bp.route('/api/settings/update/start', methods=['POST'])
     @guard
@@ -436,6 +436,14 @@ def create_settings_blueprint(manager, token_reader, mqtt_getter, logger=None,
         latest release that also installs requirements-gog.txt. Progress is
         the update's: GET /api/settings/update/status. Needs internet."""
         return _launch_update(_default_ref(), with_ai=True)
+
+    @bp.route('/api/ai/setup_hailo', methods=['POST'])
+    @guard
+    def ai_setup_hailo():
+        """Set up the Hailo (docs/HAILO.md §2): Install AI plus the Hailo
+        driver and runtime, then a reboot. Progress is the update's. Needs
+        internet and the root helper controller/shared/setup.sh installs."""
+        return _launch_update(_default_ref(), with_ai=True, with_hailo=True)
 
     @bp.route('/api/settings/update/status')
     def update_status():

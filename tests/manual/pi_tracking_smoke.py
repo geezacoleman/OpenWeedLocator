@@ -60,7 +60,7 @@ def main():
     print('[2/5] ultralytics + tracker yaml...')
     try:
         import ultralytics
-        from utils.greenongreen import GreenOnGreen, TRACKER_YAML
+        from utils.greenongreen import GreenOnGreen, LOST_FRAMES_ATTRS, TRACKER_YAML
         print(f'  OK: ultralytics {ultralytics.__version__}')
     except ImportError as e:
         fail(f'import failed: {e}')
@@ -101,9 +101,12 @@ def main():
     if not trackers:
         fail('no trackers created — model.track() path not active')
     t = trackers[0]
-    if t.args.match_thresh != 0.8 or t.max_time_lost != 60:
+    # renamed max_time_lost -> max_frames_lost in ultralytics 8.4.38
+    lost_attr = next((a for a in LOST_FRAMES_ATTRS if hasattr(t, a)), None)
+    lost = getattr(t, lost_attr) if lost_attr else None
+    if t.args.match_thresh != 0.8 or lost != 60:
         fail(f'params not applied: match_thresh={t.args.match_thresh}, '
-             f'max_time_lost={t.max_time_lost}')
+             f'{lost_attr or "lost-frames limit"}={lost}')
     print('  OK: tracker.args updated, lost-track API returns '
           f'{len(gog.get_lost_tracks())} lost tracks')
 

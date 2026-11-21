@@ -53,8 +53,8 @@
 
     function uploadFile(file) {
         var ext = file.name.split('.').pop().toLowerCase();
-        if (ext !== 'pt' && ext !== 'zip') {
-            showToast('Only .pt and .zip files are allowed', 'error');
+        if (['pt', 'zip', 'hef', 'json'].indexOf(ext) === -1) {
+            showToast('Choose a .pt, .zip, .hef or .json file', 'error');
             return;
         }
 
@@ -82,8 +82,8 @@
                 var result = JSON.parse(xhr.responseText);
                 if (result.success) {
                     progressFill.style.width = '100%';
-                    progressText.textContent = 'Upload complete: ' + result.filename;
-                    showToast('Model uploaded: ' + result.filename, 'success');
+                    progressText.textContent = 'Upload complete: ' + result.build;
+                    showToast('Added to ' + result.model + ': ' + result.build, 'success');
                     setTimeout(function () {
                         progressContainer.classList.remove('active');
                     }, 2000);
@@ -137,7 +137,7 @@
         if (!modelList) return;
 
         if (models.length === 0) {
-            modelList.innerHTML = '<div class="model-list-empty">No models in library. Upload a .pt or .zip file above.</div>';
+            modelList.innerHTML = '<div class="model-list-empty">No models in the library. Upload a .pt, a model zip or a .hef above.</div>';
             return;
         }
 
@@ -153,8 +153,11 @@
                 + '  <div class="model-info">'
                 + '    <div class="model-name">' + escapeHtml(m.name) + '</div>'
                 + '    <div class="model-meta">'
-                + '      <span class="model-badge ' + m.type + '">' + m.type + '</span>'
+                + (m.builds || []).map(function (b) {
+                    return '      <span class="model-badge ' + (b.kind === 'pt' ? 'pytorch' : b.kind) + '">' + buildLabel(b) + '</span>';
+                }).join('')
                 + '      <span>' + sizeStr + '</span>'
+                + (m.classes ? '      <span>' + m.classes.length + ' classes</span>' : '')
                 + '    </div>'
                 + '    ' + deployedStr
                 + '  </div>'
@@ -184,6 +187,27 @@
             .catch(function () {
                 showToast('Failed to fetch OWL list', 'error');
             });
+    }
+
+    // CPU, Hailo-8 or Hailo-8L: what a build runs on
+    function buildLabel(b) {
+        if (b.kind === 'pt' || b.kind === 'ncnn') return 'CPU';
+        return b.arch === 'hailo8l' ? 'Hailo-8L' : b.arch === 'hailo8' ? 'Hailo-8' : 'Hailo';
+    }
+
+    // What each OWL would get ("Hailo-8 version + CPU version", "not enough space")
+    function loadDeployPreview(modelName, ids) {
+        if (!ids.length) return;
+        fetch('/api/models/deploy', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model_name: modelName, device_ids: ids, preview: true })
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            var plan = data.plan || {};
+            Object.keys(plan).forEach(function (id) {
+                var el = document.getElementById('dp-plan-' + id);
+                if (el) el.textContent = plan[id];
+            });
+        }).catch(function () { /* the deploy still works without the preview */ });
     }
 
     function showDeployModal(modelName, owls) {
@@ -219,6 +243,7 @@
                     + '    <input type="checkbox" value="' + escapeAttr(id) + '" ' + checked + ' ' + disabled + ' />'
                     + '    ' + escapeHtml(id)
                     + '  </label>'
+                    + '  <span class="deploy-owl-plan" id="dp-plan-' + escapeAttr(id) + '"></span>'
                     + '  <span class="deploy-owl-status ' + statusClass + '">' + statusText + '</span>'
                     + '</div>';
             });
@@ -234,6 +259,7 @@
         backdrop.innerHTML = modalHtml;
         document.body.appendChild(backdrop);
         deployModal = backdrop;
+        loadDeployPreview(modelName, owlIds.filter(function (id) { return owls[id].connected; }));
     }
 
     function confirmDeploy() {
@@ -334,7 +360,8 @@
                         if (pctEl) pctEl.textContent = '100%';
                         if (fillEl) fillEl.style.width = '100%';
                     } else {
-                        if (pctEl) pctEl.textContent = progress + '%';
+                        var files = Number(dl.file_count) || 1;
+                        if (pctEl) pctEl.textContent = (files > 1 ? 'File ' + ((Number(dl.file_index) || 0) + 1) + ' of ' + files + ': ' : '') + progress + '%';
                         allDone = false;
                     }
                 });

@@ -423,7 +423,9 @@ class ConfigValidator:
         'GreenOnGreen': {
             'required_keys': {'model_path', 'confidence'},
             'optional_keys': {'detect_classes', 'actuation_mode', 'min_detection_pixels',
-                            'inference_resolution', 'crop_buffer_px'}
+                            'inference_resolution', 'crop_buffer_px',
+                            # run_on: auto | hailo | cpu (string key, optional_keys only)
+                            'run_on', 'model_storage_gb'}
         },
         'GreenOnBrown': {
             'required_keys': {
@@ -483,6 +485,7 @@ class ConfigValidator:
         'min_detection_pixels': ('int', 1, None),
         'inference_resolution': ('int', 160, 1280),
         'crop_buffer_px': ('int', 0, 50),
+        'model_storage_gb': ('float', 0.1, None),
         'actuation_zone': ('int', 1, 100),
         # Painted LUT detection (lut_profile is a string key — optional_keys only)
         'lut_sensitivity': ('int', 0, 100),
@@ -1203,6 +1206,13 @@ class ConfigValidator:
                 validation_errors['GreenOnGreen']['actuation_mode'] = (
                     f'Invalid actuation mode. Must be one of: {", ".join(sorted(cls.VALID_ACTUATION_MODES))}'
                 )
+
+        # run_on: where AI runs (utils/model_catalog.py)
+        if config.has_option('GreenOnGreen', 'run_on'):
+            run_on = config.get('GreenOnGreen', 'run_on').strip().lower()
+            if run_on and run_on not in ('auto', 'hailo', 'cpu'):
+                validation_errors.setdefault('GreenOnGreen', {})['run_on'] = (
+                    'Invalid run_on. Must be one of: auto, cpu, hailo')
 
         # Threshold validation
         is_valid, threshold_errors = cls.validate_thresholds(config)

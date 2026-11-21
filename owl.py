@@ -97,6 +97,8 @@ try:
     from utils import net_watchdog
     from utils.shared_types import Sensitivity
     from utils import spray_mode
+    from utils import ai_capability, model_catalog
+    from utils.paths import home_dir
     from utils.gps_manager import GPSState, TrackRecorder, nrf91_command, nrf91_start_gps
     from utils.actuation import SpeedAverager, ActuationCalculator, speed_warning
     from version import SystemInfo, VERSION
@@ -127,6 +129,17 @@ STREAM_FRAME_INTERVAL = 5
 # dropped or late frame is common and used to end the whole job silently; a
 # genuine disconnect still stops the OWL, just loudly and after ~0.5 s.
 MAX_DROPPED_FRAMES = 10
+# AI (docs/HAILO.md §4): never a colour fallback. A Hailo that stops is
+# re-opened this many times, this far apart, before the model's CPU build
+# takes over (or, with none, an ai_lost fault under on_error).
+AI_ALGORITHMS = ('gog', 'gog-hybrid')
+HAILO_RETRIES = 3
+HAILO_RETRY_S = 2.0
+# A Hailo model below this share of the camera rate for this long is 'slow'
+AI_SLOW_SHARE = 0.8
+AI_SLOW_AFTER_S = 10.0
+# The IMX296 and the Pi cameras run at 30 fps; the camera rate isn't configured
+AI_CAMERA_FPS = 30
 # A lost camera is re-opened in-process this often
 CAMERA_REOPEN_S = 5.0
 # on_error = off: give up (exit non-zero, systemd restarts us) after this many
@@ -419,6 +432,16 @@ class Owl:
         self._pending_algorithm = None
         self._pending_trackbar_updates = {}
         self._pending_model = None
+        # AI on the Hailo or the CPU (docs/HAILO.md §4), read by the dashboard
+        # heartbeat: the model and build running, how it is doing, and a
+        # queued "Try the Hailo again"
+        self._ai_running = None            # (model_catalog.Model, Build)
+        self._ai_status = 'ok'             # ok | retrying | degraded | slow | fault
+        self._ai_status_reason = None
+        self._ai_capability = None
+        self._ai_fps = None
+        self._ai_inference_ms = None
+        self._pending_ai_retry = False
         self._pending_detect_classes = None
         self._pending_lut_profile = None
         self._pending_lut_sensitivity = None
@@ -1081,6 +1104,8 @@ class Owl:
 
         # GoG shared config (used by both gog and gog-hybrid)
         self._model_path = self.config.get('GreenOnGreen', 'model_path')
+        # auto | hailo | cpu; a model's own <name>.json run_on wins
+        self._run_on = self.config.get('GreenOnGreen', 'run_on', fallback='auto').strip().lower()
         self._gog_confidence = self.config.getfloat('GreenOnGreen', 'confidence')
         detect_classes_str = self.config.get('GreenOnGreen', 'detect_classes', fallback='')
         self._detect_classes_list = [c.strip() for c in detect_classes_str.split(',') if c.strip()]
@@ -1092,18 +1117,110 @@ class Owl:
         # GoB shared config — already initialised in __init__() and may have been
         # updated by SensitivityManager.apply_preset(), so do NOT re-read from config.
 
-        def _create_detector(algo):
+        def _create_detector(algo, model_path=None):
             """Three-way detector factory. Loading a model can take many
             seconds on a Pi: the loop watchdog is told this is deliberate,
             not a hung detector."""
             self._loop_busy = f'loading {algo}'
             try:
-                return _build_detector(algo)
+                return _build_detector(algo, model_path)
             finally:
                 self._loop_busy = None
                 self._last_loop_at = time.monotonic() if self._last_loop_at is not None else None
 
-        def _build_detector(algo):
+        def _create_ai_detector(algo):
+            """The configured model's best build, then the next in its build
+            order (Hailo, then CPU). Raises with every reason when none loads.
+            Never colour detection (docs/HAILO.md §4)."""
+            model, order, reason = self._ai_build_order()
+            if not order:
+                raise RuntimeError(reason)
+            errors = []
+            for build in order:
+                try:
+                    detector = _create_detector(algo, build.path)
+                except Exception as e:
+                    self.logger.error(f'[AI] {build.name} did not load: {e}')
+                    errors.append(f'{build.name}: {e}')
+                    continue
+                self._ai_running = (model, build)
+                if errors:
+                    self._set_ai_status(
+                        'degraded', f'The Hailo version of {model.name} did not load '
+                                    f'({errors[0]}). Running {model.name} on the CPU, which is slower.')
+                else:
+                    self._set_ai_status('ok')
+                self._clear_ai_faults()
+                return detector
+            raise RuntimeError('; '.join(errors))
+
+        def _release(detector):
+            """Let go of a Hailo model before another loads (one holds the
+            device). True when one was released."""
+            if detector is None or getattr(detector, 'backend', '') != 'hailo':
+                return False
+            if self._gog_detector is detector:
+                self._gog_detector = None
+            detector.close()
+            return True
+
+        def _ai_unavailable(error):
+            message = f'AI could not start: {error}'
+            self._ai_running = None
+            self._set_ai_status('fault', message)
+            self._fault('ai_unavailable', message, detection_possible=False)
+
+        def _recover_ai(algo, detector, error):
+            """An AI inference raised. Re-open the same build (a Hailo a few
+            times), then the model's CPU build if its run_on allows, else an
+            ai_lost fault under on_error. Returns the detector to use, or None."""
+            model, build = self._ai_running or (None, None)
+            on_hailo = bool(build and build.is_hailo)
+            self.logger.error(f'[AI] inference failed on {build.name if build else "the model"}: {error}')
+            self._loop_busy = 'recovering AI'
+            try:
+                if detector is not None:
+                    if self._gog_detector is detector:
+                        self._gog_detector = None
+                    detector.close()
+                if build is not None:
+                    tries = HAILO_RETRIES if on_hailo else 1
+                    if on_hailo:
+                        self._set_ai_status('retrying', f'The Hailo stopped responding ({error}). Trying again.')
+                    for attempt in range(1, tries + 1):
+                        if on_hailo:
+                            time.sleep(HAILO_RETRY_S)
+                        try:
+                            again = _build_detector(algo, build.path)
+                            self.logger.info(f'[AI] {build.name} working again (attempt {attempt})')
+                            self._set_ai_status('ok')
+                            return again
+                        except Exception as e:
+                            self.logger.error(f'[AI] re-open {attempt}/{tries} of {build.name} failed: {e}')
+                    _model, order, _reason = self._ai_build_order()
+                    cpu = model.cpu_build if model else None
+                    if on_hailo and cpu and any(b.path == cpu.path for b in order):
+                        try:
+                            fallback = _build_detector(algo, cpu.path)
+                            self._ai_running = (model, cpu)
+                            self._set_ai_status(
+                                'degraded', f'The Hailo stopped responding. Running {model.name} '
+                                            f'on the CPU, which is slower.')
+                            return fallback
+                        except Exception as e:
+                            self.logger.error(f'[AI] CPU build {cpu.name} did not load: {e}')
+                what = 'the Hailo is not responding' if on_hailo else 'the model stopped working'
+                message = (f'AI stopped: {what} and there is no CPU version to run. '
+                           f'Spraying follows the on error setting. ({error})')
+                self._ai_running = None
+                self._set_ai_status('fault', message)
+                self._fault('ai_lost', message, detection_possible=False)
+                return None
+            finally:
+                self._loop_busy = None
+                self._last_loop_at = time.monotonic() if self._last_loop_at is not None else None
+
+        def _build_detector(algo, model_path=None):
             current_classes = self._detect_classes_list or None
             # [Tracking] INI values are the runtime source of truth — the
             # tracker yaml only bootstraps ByteTrack before these apply.
@@ -1117,7 +1234,7 @@ class Owl:
             if algo == 'gog':
                 from utils.greenongreen import GreenOnGreen
                 return GreenOnGreen(
-                    model_path=self._model_path,
+                    model_path=str(model_path or self._model_path),
                     confidence=self._gog_confidence,
                     detect_classes=current_classes,
                     tracking_enabled=self.tracking_enabled,
@@ -1127,7 +1244,7 @@ class Owl:
             elif algo == 'gog-hybrid':
                 from utils.greenongreen import GreenOnGreen
                 return GreenOnGreen(
-                    model_path=self._model_path,
+                    model_path=str(model_path or self._model_path),
                     confidence=self._gog_confidence,
                     detect_classes=current_classes,
                     hybrid_mode=True,
@@ -1150,19 +1267,26 @@ class Owl:
                 return GreenOnBrown(algorithm=algo)
 
         try:
-            weed_detector = _create_detector(algorithm)
-            if algorithm in ('gog', 'gog-hybrid'):
+            if algorithm in AI_ALGORITHMS:
+                weed_detector = _create_ai_detector(algorithm)
                 self._gog_detector = weed_detector
+            else:
+                weed_detector = _create_detector(algorithm)
 
         except Exception as e:
             self.logger.error(f"[ERROR] Failed to create detector for '{algorithm}': {e}")
             weed_detector = None
             if self.dash:
                 self.dash.state['algorithm_error'] = str(e)
-            if algorithm in ('lut', 'gog', 'gog-hybrid'):
-                # Fail-safe: a missing/corrupt painted profile, or AI on a
-                # unit without ultralytics or a model, must not leave the unit
-                # without detection in the field — fall back to exhsv. The
+            if algorithm in AI_ALGORITHMS:
+                # Never colour detection in place of AI: exhsv just finds
+                # green, so in a crop it sprays the crop (Guy, 2026-11-20).
+                # A fault under on_error instead, loud everywhere. The config
+                # keeps its value, so AI comes back once the cause is fixed.
+                _ai_unavailable(e)
+            elif algorithm == 'lut':
+                # A missing/corrupt painted profile must not leave the unit
+                # without detection in the field: fall back to exhsv. The
                 # config file keeps its value; algorithm_error says why.
                 try:
                     algorithm = 'exhsv'
@@ -1404,10 +1528,23 @@ class Owl:
                 # ready instantly when the user enables detection.
                 # Live algorithm switching
                 if self._pending_algorithm and (weed_detector is None or self._pending_algorithm != algorithm):
+                    new_algorithm = self._pending_algorithm
+                    # A Hailo model holds the device: let it go before an AI
+                    # load, and reload it if the switch fails
+                    released = new_algorithm in AI_ALGORITHMS and _release(weed_detector)
                     try:
-                        weed_detector = _create_detector(self._pending_algorithm)
-                        algorithm = self._pending_algorithm
-                        if algorithm in ('gog', 'gog-hybrid'):
+                        if new_algorithm in AI_ALGORITHMS:
+                            weed_detector = _create_ai_detector(new_algorithm)
+                        else:
+                            weed_detector = _create_detector(new_algorithm)
+                            if algorithm in AI_ALGORITHMS:
+                                # Leaving AI on purpose: its faults no longer apply
+                                _release(self._gog_detector)
+                                self._ai_running = None
+                                self._set_ai_status('ok')
+                                self._clear_ai_faults()
+                        algorithm = new_algorithm
+                        if algorithm in AI_ALGORITHMS:
                             self._gog_detector = weed_detector
                         self.running_algorithm = algorithm
                         # Only now does the config say so: a later save, or the
@@ -1419,8 +1556,15 @@ class Owl:
                             self.dash.state['algorithm'] = algorithm
                             self.dash.state['algorithm_error'] = None
                     except Exception as e:
-                        self.logger.error(f"Failed to load detector for {self._pending_algorithm}: {e}")
+                        self.logger.error(f"Failed to load detector for {new_algorithm}: {e}")
                         # Revert — keep using current weed_detector and algorithm
+                        if released:
+                            weed_detector = None
+                            try:
+                                weed_detector = _create_ai_detector(algorithm)
+                                self._gog_detector = weed_detector
+                            except Exception as reload_error:
+                                _ai_unavailable(reload_error)
                         if self.dash:
                             self.dash.state['algorithm'] = algorithm
                             self.dash.state['algorithm_error'] = str(e)
@@ -1433,11 +1577,14 @@ class Owl:
                     new_model = self._pending_model
                     self._pending_model = None
                     previous_model = self._model_path
+                    released = algorithm in AI_ALGORITHMS and _release(weed_detector)
                     try:
                         self._model_path = new_model
-                        weed_detector = _create_detector(algorithm)
-                        if algorithm in ('gog', 'gog-hybrid'):
+                        if algorithm in AI_ALGORITHMS:
+                            weed_detector = _create_ai_detector(algorithm)
                             self._gog_detector = weed_detector
+                        else:
+                            weed_detector = _create_detector(algorithm)
                         self.logger.info(f"Live model switch to: {new_model}")
                         if self.dash:
                             self.dash.state['algorithm_error'] = None
@@ -1455,8 +1602,35 @@ class Owl:
                         self.logger.error(f"Failed to switch model: {e}")
                         # Keep the model that works for later detector rebuilds
                         self._model_path = previous_model
+                        if released:
+                            weed_detector = None
+                            try:
+                                weed_detector = _create_ai_detector(algorithm)
+                                self._gog_detector = weed_detector
+                            except Exception as reload_error:
+                                _ai_unavailable(reload_error)
                         if self.dash:
                             self.dash.state['algorithm_error'] = str(e)
+
+                # "Try the Hailo again" (retry_hailo), after a degrade or a fault
+                if self._pending_ai_retry:
+                    self._pending_ai_retry = False
+                    if algorithm in AI_ALGORITHMS:
+                        self.logger.info('[AI] trying the Hailo again')
+                        released = _release(weed_detector)
+                        try:
+                            retried = _create_ai_detector(algorithm)
+                            if weed_detector is not None and not released:
+                                weed_detector.close()      # the CPU build it replaces
+                            weed_detector = retried
+                            self._gog_detector = weed_detector
+                            if self.dash:
+                                self.dash.state['algorithm_error'] = None
+                        except Exception as e:
+                            self.logger.error(f'[AI] retry failed: {e}')
+                            if released or weed_detector is None:
+                                weed_detector = None
+                                _ai_unavailable(e)
 
                 # Live detect_classes update
                 if self._pending_detect_classes is not None:
@@ -1494,73 +1668,86 @@ class Owl:
                         bool(self.dash) and frame_count % STREAM_FRAME_INTERVAL == 0)
 
                     persisted_boxes = []
-                    if algorithm == 'gog':
-                        cnts, boxes, weed_centres, image_out = weed_detector.inference(
-                            cropped_frame,
-                            confidence=self._gog_confidence,
-                            show_display=return_image_out,
-                            build_mask=(actuation_mode == 'zone' and not self.tracking_enabled)
-                        )
-                        if (self.tracking_enabled and actuation_mode == 'zone'
-                                and not _zone_tracking_warned):
-                            self.logger.warning(
-                                'Zone actuation disabled while tracking is enabled; '
-                                'using centre-based actuation instead')
-                            _zone_tracking_warned = True
-
-                        # Apply class smoothing: filter to target classes using majority-vote
-                        if (self.tracking_enabled
-                                and self._class_smoother
-                                and weed_detector.last_track_ids):
-                            smoothed = self._class_smoother.update(
-                                weed_detector.last_track_ids,
-                                weed_detector.last_class_ids,
-                                weed_detector.last_confidences,
-                                frame_count=frame_count
+                    ai_t0 = time.monotonic()
+                    try:
+                        if algorithm == 'gog':
+                            cnts, boxes, weed_centres, image_out = weed_detector.inference(
+                                cropped_frame,
+                                confidence=self._gog_confidence,
+                                show_display=return_image_out,
+                                build_mask=(actuation_mode == 'zone' and not self.tracking_enabled)
                             )
-                            target_ids = set(weed_detector._detect_class_ids or [])
-                            if target_ids:
-                                filtered_boxes = []
-                                filtered_centres = []
-                                for tid, raw_box in zip(
-                                        weed_detector.last_track_ids,
-                                        weed_detector.last_raw_boxes):
-                                    if smoothed.get(tid, -1) in target_ids:
-                                        x, y, w, h = raw_box
-                                        filtered_centres.append([x + w // 2, y + h // 2])
-                                        filtered_boxes.append(raw_box)
-                                boxes = filtered_boxes
-                                weed_centres = filtered_centres
+                            if (self.tracking_enabled and actuation_mode == 'zone'
+                                    and not _zone_tracking_warned):
+                                self.logger.warning(
+                                    'Zone actuation disabled while tracking is enabled; '
+                                    'using centre-based actuation instead')
+                                _zone_tracking_warned = True
 
-                    elif algorithm == 'gog-hybrid':
-                        cnts, boxes, weed_centres, image_out = weed_detector.inference(
-                            cropped_frame,
-                            confidence=self._gog_confidence,
-                            show_display=return_image_out,
-                            exg_min=self.exg_min, exg_max=self.exg_max,
-                            hue_min=self.hue_min, hue_max=self.hue_max,
-                            saturation_min=self.saturation_min, saturation_max=self.saturation_max,
-                            brightness_min=self.brightness_min, brightness_max=self.brightness_max,
-                            min_detection_area=min_detection_area, invert_hue=self.invert_hue
-                        )
+                            # Apply class smoothing: filter to target classes using majority-vote
+                            if (self.tracking_enabled
+                                    and self._class_smoother
+                                    and weed_detector.last_track_ids):
+                                smoothed = self._class_smoother.update(
+                                    weed_detector.last_track_ids,
+                                    weed_detector.last_class_ids,
+                                    weed_detector.last_confidences,
+                                    frame_count=frame_count
+                                )
+                                target_ids = set(weed_detector._detect_class_ids or [])
+                                if target_ids:
+                                    filtered_boxes = []
+                                    filtered_centres = []
+                                    for tid, raw_box in zip(
+                                            weed_detector.last_track_ids,
+                                            weed_detector.last_raw_boxes):
+                                        if smoothed.get(tid, -1) in target_ids:
+                                            x, y, w, h = raw_box
+                                            filtered_centres.append([x + w // 2, y + h // 2])
+                                            filtered_boxes.append(raw_box)
+                                    boxes = filtered_boxes
+                                    weed_centres = filtered_centres
+
+                        elif algorithm == 'gog-hybrid':
+                            cnts, boxes, weed_centres, image_out = weed_detector.inference(
+                                cropped_frame,
+                                confidence=self._gog_confidence,
+                                show_display=return_image_out,
+                                exg_min=self.exg_min, exg_max=self.exg_max,
+                                hue_min=self.hue_min, hue_max=self.hue_max,
+                                saturation_min=self.saturation_min, saturation_max=self.saturation_max,
+                                brightness_min=self.brightness_min, brightness_max=self.brightness_max,
+                                min_detection_area=min_detection_area, invert_hue=self.invert_hue
+                            )
+                        else:
+                            cnts, boxes, weed_centres, image_out = weed_detector.inference(
+                                cropped_frame,
+                                exg_min=self.exg_min,
+                                exg_max=self.exg_max,
+                                hue_min=self.hue_min,
+                                hue_max=self.hue_max,
+                                saturation_min=self.saturation_min,
+                                saturation_max=self.saturation_max,
+                                brightness_min=self.brightness_min,
+                                brightness_max=self.brightness_max,
+                                # boxes are drawn after the relays are scheduled
+                                show_display=False,
+                                algorithm=algorithm,
+                                min_detection_area=min_detection_area,
+                                invert_hue=self.invert_hue,
+                                label='WEED'
+                            )
+                    except Exception as ai_error:
+                        # Only AI is caught: a colour detector raising is a bug
+                        if algorithm not in AI_ALGORITHMS:
+                            raise
+                        weed_detector = _recover_ai(algorithm, weed_detector, ai_error)
+                        if weed_detector is not None:
+                            self._gog_detector = weed_detector
+                        cnts, boxes, weed_centres, image_out = None, [], [], cropped_frame
                     else:
-                        cnts, boxes, weed_centres, image_out = weed_detector.inference(
-                            cropped_frame,
-                            exg_min=self.exg_min,
-                            exg_max=self.exg_max,
-                            hue_min=self.hue_min,
-                            hue_max=self.hue_max,
-                            saturation_min=self.saturation_min,
-                            saturation_max=self.saturation_max,
-                            brightness_min=self.brightness_min,
-                            brightness_max=self.brightness_max,
-                            # boxes are drawn after the relays are scheduled
-                            show_display=False,
-                            algorithm=algorithm,
-                            min_detection_area=min_detection_area,
-                            invert_hue=self.invert_hue,
-                            label='WEED'
-                        )
+                        if algorithm in AI_ALGORITHMS:
+                            self._note_ai_timing(ai_t0, weed_detector)
 
                     # Merge Kalman-predicted lost tracks into detection output
                     # Only for pure gog mode — in hybrid, lost_stracks are crops not weeds
@@ -2278,7 +2465,10 @@ class Owl:
         self._video_dts = []
 
     # Status LED blink count per spraying fault
-    _FAULT_LED = {'camera_lost': 3, 'control_lost': 4, 'relay_stuck': 7, 'link_lost': 8}
+    _FAULT_LED = {'camera_lost': 3, 'control_lost': 4, 'relay_stuck': 7, 'link_lost': 8,
+                  'ai_lost': 10, 'ai_unavailable': 10}
+    # AI running on its CPU build because the Hailo stopped (not a fault)
+    _AI_DEGRADED_LED = 10
 
     @property
     def _fault_state(self):
@@ -2307,6 +2497,88 @@ class Owl:
                           f"(on_error = {self.on_error}: {action.replace('_', ' ')})")
         self._show_fault_led()
         self._apply_spray(publish=self._can_publish_here())
+
+    # ---- AI on the Hailo or CPU (docs/HAILO.md §4) --------------------------
+
+    def _ai_caps(self):
+        """The 'ai' capability block (computed once by the dashboard, or here
+        when there is no dashboard). Before any model opens the Hailo."""
+        if self._ai_capability is None:
+            ai = self.dash.state.get('ai') if self.dash else None
+            if not (isinstance(ai, dict) and 'accelerator' in ai):
+                ai = ai_capability.detect()
+            self._ai_capability = ai
+        return self._ai_capability
+
+    def _ai_build_order(self):
+        """(Model or None, [Build to try], reason when there is nothing) for
+        [GreenOnGreen] model_path, by utils/model_catalog.py's rules."""
+        models_dir, name = model_catalog.locate(self._model_path, home=home_dir())
+        if models_dir.is_dir():
+            try:
+                model_catalog.adopt_bare_hefs(models_dir)
+            except OSError as e:
+                self.logger.warning(f'[AI] could not adopt bare .hef files: {e}')
+        models = model_catalog.scan(models_dir)
+        accelerator = self._ai_caps().get('accelerator')
+        model = (model_catalog.get(models, name) if name
+                 else model_catalog.default_model(models, accelerator))
+        if model is None:
+            where = f'{name} in {models_dir}' if name else str(models_dir)
+            return None, [], f'No AI model found ({where})'
+        order, reason = model_catalog.build_order(model, accelerator, self._run_on)
+        return model, order, reason
+
+    def _set_ai_status(self, status, reason=None):
+        """ok | retrying | degraded | slow | fault, with a sentence for the
+        screens. Degraded and fault are loud: log, LED, buzzer."""
+        if (status, reason) == (self._ai_status, self._ai_status_reason):
+            return
+        self._ai_status, self._ai_status_reason = status, reason
+        if status == 'ok':
+            self.logger.info('[AI] running normally')
+        else:
+            self.logger.warning(f'[AI] {status}: {reason}')
+        if status in ('degraded', 'fault'):
+            relay = getattr(getattr(self, 'relay_controller', None), 'relay', None)
+            try:
+                if relay is not None:
+                    relay.beep(duration=0.5 if status == 'fault' else 0.15, repeats=3)
+            except Exception as e:
+                self.logger.warning(f'Buzzer failed: {e}')
+        self._show_fault_led()
+
+    def _note_ai_timing(self, started, detector):
+        """ms per AI frame and frames per second (smoothed) for the screens.
+        A Hailo model that can't keep up with the camera for AI_SLOW_AFTER_S
+        is 'slow' (a warning, never a fault): segmentation on the Hailo
+        decodes masks on the CPU (docs/HAILO_PLAN.md §2)."""
+        now = time.monotonic()
+        ms = (now - started) * 1000.0
+        self._ai_inference_ms = ms if self._ai_inference_ms is None else 0.9 * self._ai_inference_ms + 0.1 * ms
+        last = getattr(self, '_ai_last_frame_at', None)
+        self._ai_last_frame_at = now
+        if last is not None and now > last:
+            fps = 1.0 / (now - last)
+            self._ai_fps = fps if self._ai_fps is None else 0.9 * self._ai_fps + 0.1 * fps
+        if getattr(detector, 'backend', '') != 'hailo' or self._ai_status not in ('ok', 'slow'):
+            self._ai_slow_since = None
+            return
+        target = AI_SLOW_SHARE * AI_CAMERA_FPS
+        if self._ai_fps is not None and self._ai_fps < target:
+            since = getattr(self, '_ai_slow_since', None) or now
+            self._ai_slow_since = since
+            if now - since >= AI_SLOW_AFTER_S:
+                model = self._ai_running[0].name if self._ai_running else 'This model'
+                self._set_ai_status('slow', f'{model} runs at {self._ai_fps:.0f} fps on this OWL')
+        else:
+            self._ai_slow_since = None
+            if self._ai_status == 'slow':
+                self._set_ai_status('ok')
+
+    def _clear_ai_faults(self):
+        for code in ('ai_lost', 'ai_unavailable'):
+            self._clear_fault(code)
 
     def _relay_stuck(self, message):
         """RelayController.on_stuck: runs on a relay thread holding that
@@ -2339,9 +2611,11 @@ class Owl:
             code = self._FAULT_LED.get(top, 1)
         elif self._switch_again_needed():
             code = self._SWITCH_AGAIN_LED
+        elif getattr(self, '_ai_status', 'ok') == 'degraded':
+            code = self._AI_DEGRADED_LED
         else:
             code = None
-        owned = set(self._FAULT_LED.values()) | {self._SWITCH_AGAIN_LED}
+        owned = set(self._FAULT_LED.values()) | {self._SWITCH_AGAIN_LED, self._AI_DEGRADED_LED}
         try:
             if code is not None:
                 if indicator.error_code != code:

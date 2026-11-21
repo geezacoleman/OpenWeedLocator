@@ -115,8 +115,8 @@ class TestUploadModel:
         result = resp.get_json()
         assert resp.status_code == 200
         assert result['success'] is True
-        assert result['filename'] == 'my_model.pt'
-        assert result['type'] == 'pytorch'
+        assert result['build'] == 'my_model.pt' and result['model'] == 'my_model'
+        assert result['kind'] == 'pt'
         assert (models_dir / 'my_model.pt').exists()
         assert (models_dir / 'my_model.pt.sha256').exists()
 
@@ -130,9 +130,10 @@ class TestUploadModel:
         result = resp.get_json()
         assert resp.status_code == 200
         assert result['success'] is True
-        assert result['filename'] == 'my_ncnn'
-        assert result['type'] == 'ncnn'
+        assert result['build'] == 'my_ncnn'
+        assert result['kind'] == 'ncnn'
         assert (models_dir / 'my_ncnn').is_dir()
+        assert (models_dir / 'my_ncnn.sha256').exists(), 'the hash OWLs check on deploy'
         assert (models_dir / 'my_ncnn' / 'model.param').exists()
         assert (models_dir / 'my_ncnn' / 'model.bin').exists()
         # Zip should be removed after extraction
@@ -147,7 +148,7 @@ class TestUploadModel:
         assert resp.status_code == 400
         result = resp.get_json()
         assert result['success'] is False
-        assert 'Invalid file type' in result['error']
+        assert '.pt, .zip, .hef or .json' in result['error']
 
     def test_upload_no_file(self, model_test_client):
         client, _, _ = model_test_client
@@ -172,8 +173,9 @@ class TestListModels:
         data = resp.get_json()
 
         assert resp.status_code == 200
-        names = [m['name'] for m in data['models']]
-        assert 'test_model.pt' in names
+        [model] = [m for m in data['models'] if m['name'] == 'test_model']
+        assert [b['file'] for b in model['builds']] == ['test_model.pt']
+        assert model['builds'][0]['arch'] == 'cpu'
 
     def test_list_includes_ncnn(self, model_test_client, ncnn_models_dir):
         client, _, models_dir = model_test_client
@@ -345,7 +347,7 @@ class TestPathTraversal:
         # secure_filename strips ../ : the file lands inside the library
         # under a flattened name, never outside it
         assert resp.status_code == 200, resp.get_json()
-        assert resp.get_json()['filename'] == 'etc_passwd.pt'
+        assert resp.get_json()['build'] == 'etc_passwd.pt'
 
     def test_download_path_traversal(self, model_test_client):
         client, _, _ = model_test_client
@@ -422,43 +424,94 @@ class TestOWLDownloadHandler:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.unit
-class TestNCNNValidation:
+class TestModelZipCheck:
+    """The library and the standalone upload share model_catalog.check_model_zip."""
 
-    def test_valid_ncnn_zip(self, tmp_path):
-        from controller.networked.networked import _validate_ncnn_zip
-
-        zip_path = tmp_path / 'valid.zip'
+    def zip_with(self, tmp_path, files):
+        zip_path = tmp_path / 'm.zip'
         with zipfile.ZipFile(str(zip_path), 'w') as zf:
-            zf.writestr('model.param', 'data')
-            zf.writestr('model.bin', 'data')
+            for name, data in files.items():
+                zf.writestr(name, data)
+        return zip_path
 
-        valid, msg = _validate_ncnn_zip(str(zip_path))
-        assert valid is True
+    def test_ncnn_zip(self, tmp_path):
+        from utils.model_catalog import check_model_zip
+        assert check_model_zip(self.zip_with(tmp_path, {'model.param': 'd', 'model.bin': 'd'})) == 'ncnn'
 
-    def test_invalid_ncnn_zip_missing_param(self, tmp_path):
-        from controller.networked.networked import _validate_ncnn_zip
+    def test_hailo_zip(self, tmp_path):
+        from utils.model_catalog import check_model_zip
+        assert check_model_zip(self.zip_with(tmp_path, {'best_hailo_model/best.hef': 'h'})) == 'hailo'
 
-        zip_path = tmp_path / 'invalid.zip'
-        with zipfile.ZipFile(str(zip_path), 'w') as zf:
-            zf.writestr('model.bin', 'data')
-            # Missing .param
-
-        valid, msg = _validate_ncnn_zip(str(zip_path))
-        assert valid is False
-        assert '.param' in msg
+    def test_ncnn_zip_missing_param(self, tmp_path):
+        from utils.model_catalog import check_model_zip
+        with pytest.raises(ValueError, match='.param'):
+            check_model_zip(self.zip_with(tmp_path, {'model.bin': 'd'}))
 
     def test_path_traversal_in_zip(self, tmp_path):
-        from controller.networked.networked import _validate_ncnn_zip
+        from utils.model_catalog import check_model_zip
+        with pytest.raises(ValueError, match='Unsafe'):
+            check_model_zip(self.zip_with(tmp_path, {'../../../etc/passwd': 'x', 'model.param': 'd',
+                                                     'model.bin': 'd'}))
 
-        zip_path = tmp_path / 'evil.zip'
-        with zipfile.ZipFile(str(zip_path), 'w') as zf:
-            zf.writestr('../../../etc/passwd', 'root:x:0:0')
-            zf.writestr('model.param', 'data')
-            zf.writestr('model.bin', 'data')
 
-        valid, msg = _validate_ncnn_zip(str(zip_path))
-        assert valid is False
-        assert 'Unsafe' in msg
+@pytest.mark.unit
+class TestDeployToAMixedFleet:
+    """Each OWL gets what it can run (docs/HAILO.md §5, D10)."""
+
+    def library(self, models_dir, monkeypatch):
+        from utils import model_catalog
+        hef_text = {'HAILO8': 'Architecture HEF was compiled for: HAILO8\n',
+                    'HAILO8L': 'Architecture HEF was compiled for: HAILO8L\n'}
+        for arch, folder in (('HAILO8', 'test_model_h8_hailo_model'), ('HAILO8L', 'test_model_h8l_hailo_model')):
+            (models_dir / folder).mkdir()
+            (models_dir / folder / 'model.hef').write_text(hef_text[arch])
+        real = model_catalog.hef_info
+        monkeypatch.setattr(model_catalog, 'hef_info', lambda path, runner=None: real(
+            path, runner or (lambda argv, **kw: type('R', (), {'stdout': Path(argv[-1]).read_text(),
+                                                                'stderr': ''})())))
+
+    def owls(self, mock_ctrl, **accelerators):
+        mock_ctrl.owls_state = {oid: {'connected': True, 'ai': {'accelerator': acc, 'models': []}}
+                                for oid, acc in accelerators.items()}
+        mock_ctrl.owls_state['owl-old'] = {'connected': True, 'ai': {'accelerator': 'cpu'}}
+
+    def payloads(self, mock_ctrl):
+        return {call[0][0].split('/')[1]: json.loads(call[0][1])
+                for call in mock_ctrl.mqtt_client.publish.call_args_list}
+
+    def test_each_owl_gets_its_chip_plus_the_cpu_version(self, model_test_client, monkeypatch):
+        client, mock_ctrl, models_dir = model_test_client
+        self.library(models_dir, monkeypatch)
+        self.owls(mock_ctrl, **{'owl-1': 'hailo8', 'owl-2': 'hailo8l', 'owl-3': 'cpu'})
+        resp = client.post('/api/models/deploy', json={
+            'model_name': 'test_model', 'device_ids': ['owl-1', 'owl-2', 'owl-3', 'owl-old']})
+        assert resp.status_code == 200, resp.get_json()
+        sent = self.payloads(mock_ctrl)
+        files = {oid: [f['filename'] for f in p.get('files', [])] for oid, p in sent.items()}
+        assert files['owl-1'] == ['test_model_h8_hailo_model.zip', 'test_model.pt']
+        assert files['owl-2'] == ['test_model_h8l_hailo_model.zip', 'test_model.pt']
+        assert files['owl-3'] == ['test_model.pt']
+        assert sent['owl-1']['model'] == 'test_model'
+        # Older firmware (no ai.models) gets the single-file form, CPU only
+        assert 'files' not in sent['owl-old'] and sent['owl-old']['filename'] == 'test_model.pt'
+
+    def test_preview_sends_nothing(self, model_test_client, monkeypatch):
+        client, mock_ctrl, models_dir = model_test_client
+        self.library(models_dir, monkeypatch)
+        self.owls(mock_ctrl, **{'owl-1': 'hailo8l'})
+        resp = client.post('/api/models/deploy', json={
+            'model_name': 'test_model', 'device_ids': ['owl-1'], 'preview': True})
+        assert resp.get_json()['plan'] == {'owl-1': 'Hailo-8L version + CPU version'}
+        assert not mock_ctrl.mqtt_client.publish.called
+
+    def test_an_owl_without_space_is_skipped_and_told(self, model_test_client, monkeypatch):
+        client, mock_ctrl, models_dir = model_test_client
+        self.library(models_dir, monkeypatch)
+        mock_ctrl.owls_state = {'owl-1': {'connected': True, 'ai': {
+            'accelerator': 'cpu', 'models': [], 'model_storage': {'used_mb': 3072, 'budget_mb': 3072}}}}
+        resp = client.post('/api/models/deploy', json={'model_name': 'test_model', 'device_ids': ['owl-1']})
+        assert 'not enough space' in resp.get_json()['plan']['owl-1']
+        assert not mock_ctrl.mqtt_client.publish.called
 
 
 # ---------------------------------------------------------------------------

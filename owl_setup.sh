@@ -39,6 +39,12 @@ fi
 # a maker install without it leaves whatever the OS (or Imager) set.
 FACTORY_MODE=0
 FACTORY_YES=0
+# Hailo AI accelerator (tools/hailo_setup.sh, docs/HAILO.md): set up by itself
+# when a Hailo card is on PCIe (a CM5 carrier, or a Pi 5 HAT with an EEPROM:
+# both enumerate before any config.txt change). --hailo forces it (a Pi 5 M.2
+# HAT without an EEPROM only shows up once PCIe is switched on), --no-hailo
+# skips it. Works with or without --factory.
+WITH_HAILO=auto
 COUNTRY_GIVEN=0
 WIFI_COUNTRY=""
 SETUP_ARGS=("$@")
@@ -50,18 +56,35 @@ while [[ $# -gt 0 ]]; do
     --yes)
       FACTORY_YES=1
       ;;
+    --hailo)
+      WITH_HAILO=1
+      ;;
+    --no-hailo)
+      WITH_HAILO=0
+      ;;
     --country)
       COUNTRY_GIVEN=1
       WIFI_COUNTRY="${2:-}"
       shift
       ;;
     *)
-      echo -e "${RED}[ERROR] Unknown option '$1' (supported: --factory [--yes], --country CC)${NC}"
+      echo -e "${RED}[ERROR] Unknown option '$1' (supported: --factory [--yes], --country CC, --hailo, --no-hailo)${NC}"
       exit 1
       ;;
   esac
   shift
 done
+
+# A Hailo card on PCIe: sysfs, because pciutils (lspci) is not on Lite yet.
+# Vendor 0x1e60 is Hailo; the 8 and 8L look the same here (the chip comes from
+# hailortcli once the runtime is in).
+if [[ "$WITH_HAILO" == "auto" ]]; then
+  WITH_HAILO=0
+  if grep -qsx '0x1e60' /sys/bus/pci/devices/*/vendor; then
+    WITH_HAILO=1
+    echo -e "${GREEN}[INFO] Hailo AI accelerator found on PCIe: it will be set up (--no-hailo skips this)${NC}"
+  fi
+fi
 
 if [[ "$FACTORY_YES" == "1" && "$FACTORY_MODE" != "1" ]]; then
   echo -e "${RED}[ERROR] --yes only applies to --factory${NC}"
@@ -217,6 +240,7 @@ STATUS_GOG_DEPS=""
 STATUS_CONTROLLER=""
 STATUS_GPS=""
 STATUS_GEOMETRY=""
+STATUS_HAILO=""
 STATUS_WIFI_COUNTRY=""
 
 ERROR_UPGRADE=""
@@ -237,6 +261,7 @@ ERROR_GOG_DEPS=""
 ERROR_CONTROLLER=""
 ERROR_GPS=""
 ERROR_GEOMETRY=""
+ERROR_HAILO=""
 ERROR_WIFI_COUNTRY=""
 
 # Function to check the exit status of the last executed command
@@ -530,6 +555,21 @@ setup_factory_geometry() {
   echo -e "${CROSS} GEOMETRY.ini could not be written"
   STATUS_GEOMETRY="${CROSS}"
   ERROR_GEOMETRY="GEOMETRY.ini not written"
+  return 1
+}
+
+setup_hailo() {
+  # --hailo only. The Hailo-8 driver, runtime and boot settings, all in
+  # tools/hailo_setup.sh so the same script can be run by hand and re-run
+  # safely. The card only answers after the next reboot: this step installs,
+  # 'sudo bash tools/hailo_setup.sh --check' proves it afterwards.
+  if sudo bash "${SCRIPT_DIR}/tools/hailo_setup.sh"; then
+    STATUS_HAILO="${TICK}"
+    return 0
+  fi
+  echo -e "${CROSS} Hailo setup failed (see the lines above)"
+  STATUS_HAILO="${CROSS}"
+  ERROR_HAILO="Hailo setup failed"
   return 1
 }
 
@@ -861,7 +901,11 @@ check_status "Installing dependencies from requirements.txt" "OWL_DEPS"
 
 # Step 8b: Optional Green-on-Green (YOLO) support
 echo -e "${GREEN}[INFO] Green-on-Green (YOLO) support available...${NC}"
-if [[ "$FACTORY_MODE" == "1" ]]; then
+if [[ "$WITH_HAILO" == "1" ]]; then
+    # Hailo models run through Ultralytics, and its CPU build is the fallback
+    gog_choice="y"
+    echo -e "${GREEN}[INFO] Hailo fitted: installing Green-on-Green (Ultralytics) to run AI on it${NC}"
+elif [[ "$FACTORY_MODE" == "1" ]]; then
     gog_choice="n"
     echo -e "${GREEN}[INFO] Factory mode: skipping Green-on-Green${NC}"
 else
@@ -1049,6 +1093,11 @@ if [[ "$FACTORY_MODE" == "1" ]]; then
     setup_factory_geometry
 fi
 
+# Step 13b3: Hailo AI accelerator (found on PCIe, or --hailo), with or without --factory
+if [[ "$WITH_HAILO" == "1" ]]; then
+    setup_hailo
+fi
+
 # Step 13c: maker identity (interactive installs only). A self-built OWL can
 # join Noktura from the phone app (community registration) once it has an
 # identity. A key file is the maker tier; a CM5 or Pi 5 with rpi-fw-crypto can
@@ -1101,6 +1150,9 @@ fi
 if [[ -n "$STATUS_WIFI_COUNTRY" ]]; then
     echo -e "$STATUS_WIFI_COUNTRY Wi-Fi Country (${WIFI_COUNTRY:-world})"
 fi
+if [[ -n "$STATUS_HAILO" ]]; then
+    echo -e "$STATUS_HAILO Hailo installed (reboot, then: sudo bash tools/hailo_setup.sh --check)"
+fi
 if [[ -n "$STATUS_IDENTITY" ]]; then
     echo -e "$STATUS_IDENTITY Device Identity (key file) Created"
 fi
@@ -1136,6 +1188,7 @@ if [[ "$FACTORY_MODE" == "1" ]]; then
     [ -n "$ERROR_DASHBOARD" ] && SHIP_BLOCKERS+="dashboard/first-boot setup; "
     [ -n "$ERROR_GPS" ] && SHIP_BLOCKERS+="nRF9151 GPS setup; "
     [ -n "$ERROR_GEOMETRY" ] && SHIP_BLOCKERS+="crop (GEOMETRY.ini); "
+    [ -n "$ERROR_HAILO" ] && SHIP_BLOCKERS+="Hailo setup; "
     [ -n "$ERROR_WIFI_COUNTRY" ] && SHIP_BLOCKERS+="Wi-Fi country; "
     # A unit never ships with its Ethernet port unable to come up: it is the
     # way in when Wi-Fi is not. Repairs first, then gates on the result.

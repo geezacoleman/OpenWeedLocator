@@ -26,6 +26,10 @@
 #   --with-ai          Also install AI (requirements-gog.txt: CPU-only torch,
 #                      ultralytics, ncnn) into the same venv. OWL profile only.
 #                      Inside the same rollback handling as everything else.
+#   --with-hailo       Set up the Hailo AI accelerator too (implies --with-ai):
+#                      runs the root-owned /usr/local/lib/owl/hailo_setup.sh
+#                      that controller/shared/setup.sh installs, then reboots
+#                      once the update is complete so the driver loads.
 #   --yes              Manual mode: don't prompt before restarting the service
 #   --recover          Roll back a run that was cut off (power cut, reboot,
 #                      kill): reads .update_journal.json, restores the
@@ -84,6 +88,10 @@ JOURNAL_FILE="$REPO_DIR/.update_journal.json"
 NO_RESTART=0
 ASSUME_YES=0
 WITH_AI=0
+WITH_HAILO=0
+# Root-owned copy of tools/hailo_setup.sh (sudoers never runs a file the OWL
+# user can write). Installed by controller/shared/setup.sh.
+HAILO_HELPER=/usr/local/lib/owl/hailo_setup.sh
 RECOVER=0
 
 SERVICE=""
@@ -380,6 +388,7 @@ while [[ $# -gt 0 ]]; do
         --no-restart)   NO_RESTART=1; shift ;;
         --yes)          ASSUME_YES=1; shift ;;
         --with-ai)      WITH_AI=1; shift ;;
+        --with-hailo)   WITH_HAILO=1; WITH_AI=1; shift ;;
         --recover)      RECOVER=1; shift ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
@@ -432,6 +441,9 @@ main() {
     esac
     if [[ "$WITH_AI" == "1" && "$PROFILE" != "owl" ]]; then
         fail_terminal "--with-ai installs AI on an OWL, not on the $PROFILE"
+    fi
+    if [[ "$WITH_HAILO" == "1" && "$NO_RESTART" == "1" ]]; then
+        fail_terminal "--with-hailo needs a reboot at the end, so it cannot run with --no-restart"
     fi
     log "Profile: $PROFILE (service=$SERVICE, venv=$VENV, deps=$REQUIREMENTS)"
     # Fixed name, so a kill -9 leftover is cleared by the next run.
@@ -593,6 +605,15 @@ main() {
         fi
         log "Installing AI (requirements-gog.txt). This can take 20 minutes or more..."
         install_ai_deps
+        if [[ "$WITH_HAILO" == "1" ]]; then
+            if [[ ! -x "$HAILO_HELPER" ]]; then
+                log "ERROR: $HAILO_HELPER is missing. Run the OWL setup again (controller/shared/setup.sh) so Set up Hailo can run from the dashboard."
+                false  # -> ERR trap -> rollback
+            fi
+            log "Setting up the Hailo (driver, runtime, PCIe settings)..."
+            sudo -n "$HAILO_HELPER" 2>&1 | while IFS= read -r line; do log "$line"; done
+            [[ "${PIPESTATUS[0]}" == "0" ]] || { log "ERROR: Hailo set-up failed (see the lines above)"; false; }
+        fi
     elif [[ "$PROFILE" == "owl" && -f "$REPO_DIR/requirements-gog.txt" ]] \
        && "$VENV/bin/python" -c 'import ultralytics' >/dev/null 2>&1; then
         # Same path as Install AI: TMPDIR on disk, versions held, CPU check.
@@ -695,6 +716,12 @@ main() {
     write_status complete
     log "Update complete: $FROM_DESC -> $TO_DESC"
     prune_logs
+    if [[ "$WITH_HAILO" == "1" ]]; then
+        # The Hailo driver and the PCIe settings only take effect after a reboot
+        log "Rebooting so the Hailo driver loads..."
+        sleep 5
+        sudo -n reboot || log "WARNING: reboot failed: restart the OWL to finish the Hailo set-up"
+    fi
 }
 
 # Stash-pop conflict policy. During stash pop: ours = new upstream HEAD,

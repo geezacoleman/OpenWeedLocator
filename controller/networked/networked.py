@@ -51,8 +51,7 @@ from utils.session_metadata import (clean_session_metadata, CAPTURE_PARAM_KEYS, 
                                     add_custom_crop, remove_custom_crop, CUSTOM_CROPS_KEY)
 from utils.mqtt_manager import CloudFeed, cloud_state_out_topic
 from utils.ai_capability import algorithm_refusal
-from utils.model_archive import dir_sha256, extract_model_zip
-from utils import software_update
+from utils import model_catalog, software_update
 from utils import support_bundle
 try:
     from version import VERSION as _OWL_VERSION, APP_CONTRACT_VERSION
@@ -100,9 +99,7 @@ SHARED_DIR = os.path.join(os.path.dirname(__file__), '..', 'shared')
 
 # Model management constants
 UPLOADS_DIR = home_dir('uploads')
-ALLOWED_MODEL_EXTENSIONS = {'pt', 'zip'}
 PROTECTED_MODEL_FILES = set()  # .gitignore protected by secure_filename stripping dots
-MAX_ZIP_UNCOMPRESSED_SIZE = 500 * 1024 * 1024  # 500MB zip bomb guard
 
 # Downloads staging directory
 DOWNLOADS_DIR = home_dir('downloads')
@@ -141,36 +138,6 @@ def _compute_sha256(filepath):
                 break
             h.update(chunk)
     return h.hexdigest()
-
-
-def _validate_ncnn_zip(zip_path):
-    """Validate a zip contains valid NCNN model files (.param + .bin)."""
-    with zipfile.ZipFile(zip_path, 'r') as zf:
-        names = zf.namelist()
-
-        # Check total uncompressed size (zip bomb guard)
-        total_size = sum(info.file_size for info in zf.infolist())
-        if total_size > MAX_ZIP_UNCOMPRESSED_SIZE:
-            return False, f'Uncompressed size {total_size} exceeds limit'
-
-        # Check for path traversal
-        for name in names:
-            if name.startswith('/') or '..' in name:
-                return False, f'Unsafe path in zip: {name}'
-
-        # Check for symlinks
-        for info in zf.infolist():
-            if info.external_attr >> 16 & 0o120000 == 0o120000:
-                return False, f'Symlink in zip: {info.filename}'
-
-        # Check NCNN structure: need at least one .param and one .bin
-        has_param = any(n.endswith('.param') for n in names)
-        has_bin = any(n.endswith('.bin') for n in names)
-
-        if not (has_param and has_bin):
-            return False, 'Zip must contain .param and .bin files for NCNN model'
-
-    return True, 'ok'
 
 
 # --------------------------------------------------------------------------
@@ -1428,6 +1395,16 @@ class CentralController:
             payload = {'action': 'set_model', 'value': value}
             self._remember_model(device_id, value)
 
+        elif action in ('set_run_on', 'delete_model'):
+            if not isinstance(value, dict) or not value.get('model'):
+                return {'success': False, 'error': f'{action} needs a model', 'refused': True}
+            if action == 'set_run_on' and value.get('run_on') not in model_catalog.RUN_ON:
+                return {'success': False, 'error': 'run_on must be auto, hailo or cpu', 'refused': True}
+            payload = {'action': action, **{k: value[k] for k in ('model', 'run_on') if k in value}}
+
+        elif action == 'retry_hailo':
+            payload = {'action': 'retry_hailo'}
+
         elif action == 'set_tracking':
             payload = {'action': 'set_tracking', 'value': value}
             if device_id == 'all':
@@ -1542,10 +1519,12 @@ class CentralController:
     FLEET_AI_INSTALL_DEVICE_TIMEOUT = software_update.RUNTIME_MAX_S + 120
     FLEET_TERMINAL_STATUSES = ('complete', 'rolled_back', 'error')
 
-    def start_fleet_update(self, device_ids, ref, include_controller=False, with_ai=False):
+    def start_fleet_update(self, device_ids, ref, include_controller=False, with_ai=False,
+                           with_hailo=False):
         """Kick off a rolling fleet update. Returns a result dict for the API.
 
         with_ai: each OWL also installs AI (owl_update.sh --with-ai).
+        with_hailo: each OWL also sets up its Hailo and reboots (--with-hailo).
 
         Devices update one at a time; the first non-complete result aborts
         the remaining queue so a bad ref can't roll across the whole fleet.
@@ -1579,7 +1558,8 @@ class CentralController:
                 'queue': list(targets),
                 'current': '',
                 'include_controller': bool(include_controller),
-                'with_ai': bool(with_ai),
+                'with_ai': bool(with_ai or with_hailo),
+                'with_hailo': bool(with_hailo),
                 'results': {},
                 'error': '',
                 'started_at': int(time.time()),
@@ -1588,7 +1568,7 @@ class CentralController:
 
         self._fleet_update_thread = threading.Thread(
             target=self._fleet_update_worker,
-            args=(targets, ref, bool(include_controller), bool(with_ai)),
+            args=(targets, ref, bool(include_controller), bool(with_ai or with_hailo), bool(with_hailo)),
             daemon=True
         )
         self._fleet_update_thread.start()
@@ -1596,7 +1576,7 @@ class CentralController:
                        f"include_controller={include_controller} with_ai={with_ai}")
         return {'success': True, 'queued': targets, 'ref': ref, 'with_ai': bool(with_ai)}
 
-    def _fleet_update_worker(self, targets, ref, include_controller, with_ai=False):
+    def _fleet_update_worker(self, targets, ref, include_controller, with_ai=False, with_hailo=False):
         aborted = False
         try:
             for device_id in targets:
@@ -1604,7 +1584,7 @@ class CentralController:
                     self.fleet_update['current'] = device_id
                     self.fleet_update['queue'] = [d for d in self.fleet_update['queue'] if d != device_id]
 
-                result = self._update_one_device(device_id, ref, with_ai)
+                result = self._update_one_device(device_id, ref, with_ai, with_hailo)
                 with self.fleet_update_lock:
                     self.fleet_update['results'][device_id] = result
 
@@ -1635,7 +1615,7 @@ class CentralController:
                 self.fleet_update['current'] = ''
                 self.fleet_update['finished_at'] = int(time.time())
 
-    def _update_one_device(self, device_id, ref, with_ai=False):
+    def _update_one_device(self, device_id, ref, with_ai=False, with_hailo=False):
         """Update a single OWL and wait for its terminal status.
 
         Returns: complete | rolled_back | error | timeout | publish_failed
@@ -1644,6 +1624,8 @@ class CentralController:
         payload = {'action': 'update_software', 'ref': ref, 'request_id': request_id}
         if with_ai:
             payload['with_ai'] = True
+        if with_hailo:
+            payload['with_hailo'] = True
         result = self.mqtt_client.publish(f"owl/{device_id}/commands", json.dumps(payload))
         if result.rc != mqtt.MQTT_ERR_SUCCESS:
             return 'publish_failed'
@@ -2566,6 +2548,26 @@ def install_ai():
     return jsonify(result), (202 if result.get('success') else 400)
 
 
+@app.route('/api/ai/setup_hailo', methods=['POST'])
+def setup_hailo():
+    """Set up the Hailo on OWLs: Install AI plus the Hailo driver and
+    runtime, then each OWL reboots (owl_update.sh --with-hailo). Same body
+    and progress as /api/ai/install. Kiosk only."""
+    data = request.get_json(silent=True) or {}
+    device_ids = data.get('device_ids')
+    if not isinstance(device_ids, list) or not device_ids:
+        return jsonify({'success': False, 'error': 'device_ids must list the OWLs to set up'}), 400
+    with controller.mqtt_lock:
+        branches = {str(controller.owls_state.get(d, {}).get('git_branch', '')) for d in device_ids}
+    branches -= {'', 'unknown', 'HEAD', 'detached'}
+    if len(branches) > 1:
+        return jsonify({'success': False,
+                        'error': 'These OWLs run different branches. Set them up one at a time.'}), 400
+    ref = data.get('ref') or (branches.pop() if branches else 'main')
+    result = controller.start_fleet_update(device_ids, ref, with_hailo=True)
+    return jsonify(result), (202 if result.get('success') else 400)
+
+
 @app.route('/api/update/status')
 def fleet_update_status():
     """Fleet update progress + per-device software_update state."""
@@ -3130,50 +3132,28 @@ def demo_page():
 
 @app.route('/api/models')
 def list_models():
-    """List models in the library."""
+    """The library, one entry per model with its builds (utils/model_catalog.py
+    groups .pt, NCNN and Hailo builds by base name)."""
     try:
-        models = []
-        if not UPLOADS_DIR.exists():
-            return jsonify({'models': []})
-
-        for item in sorted(UPLOADS_DIR.iterdir()):
-            if item.name in PROTECTED_MODEL_FILES or item.name.startswith('.'):
-                continue
-            if item.name.endswith('.sha256'):
-                continue
-
-            entry = None
-            if item.suffix == '.pt' and item.is_file():
-                entry = {
-                    'name': item.name,
-                    'type': 'pytorch',
-                    'size': item.stat().st_size,
-                    'modified': datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
-                }
-            elif item.is_dir():
-                # Check for NCNN dir (has .param file)
-                has_param = any(f.suffix == '.param' for f in item.iterdir() if f.is_file())
-                if has_param:
-                    dir_size = sum(f.stat().st_size for f in item.rglob('*') if f.is_file())
-                    entry = {
-                        'name': item.name,
-                        'type': 'ncnn',
-                        'size': dir_size,
-                        'modified': datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
-                    }
-
-            if entry:
-                # Cross-reference deployment status from OWL states
-                deployed_to = []
-                with controller.mqtt_lock:
-                    for owl_id, state in controller.owls_state.items():
-                        owl_models = state.get('available_models', [])
-                        if entry['name'] in owl_models:
-                            deployed_to.append(owl_id)
-                entry['deployed_to'] = deployed_to
-                models.append(entry)
-
-        return jsonify({'models': models})
+        models = model_catalog.scan(UPLOADS_DIR)
+        with controller.mqtt_lock:
+            owl_models = {oid: set(st.get('available_models') or [])
+                          for oid, st in controller.owls_state.items()}
+        out = []
+        for model in models:
+            builds = [{'file': b.name, 'kind': b.kind, 'arch': b.arch or 'unknown',
+                       'size': b.size_bytes} for b in model.builds]
+            files = {b.name for b in model.builds}
+            out.append({
+                'name': model.name,
+                'builds': builds,
+                'size': model.size_bytes,
+                'classes': (model.sidecar.get('classes') or None),
+                'modified': datetime.fromtimestamp(
+                    max(b.path.stat().st_mtime for b in model.builds)).isoformat(),
+                'deployed_to': sorted(oid for oid, names in owl_models.items() if files & names),
+            })
+        return jsonify({'models': out})
     except Exception as e:
         logger.error(f"Error listing models: {e}")
         return jsonify({'models': [], 'error': str(e)}), 500
@@ -3181,91 +3161,111 @@ def list_models():
 
 @app.route('/api/models/upload', methods=['POST'])
 def upload_model():
-    """Receive a .pt or .zip model file."""
+    """A .pt, a model zip (NCNN or Hailo), a .hef or a labels .json into the
+    library. Same route and checks as the standalone dashboard
+    (model_catalog.add_upload), without a chip check: the library serves
+    every chip in the fleet."""
+    if 'file' not in request.files or not request.files['file'].filename:
+        return jsonify({'success': False, 'error': 'No file provided'}), 400
+    f = request.files['file']
+    filename = secure_filename(f.filename)
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    if shutil.disk_usage(UPLOADS_DIR).free < 500 * 1024 * 1024:
+        return jsonify({'success': False, 'error': 'Insufficient disk space (<500MB free)'}), 507
+    tmp = UPLOADS_DIR / f'.upload-{uuid.uuid4().hex}'
     try:
-        if 'file' not in request.files:
-            return jsonify({'success': False, 'error': 'No file provided'}), 400
-
-        f = request.files['file']
-        if not f.filename:
-            return jsonify({'success': False, 'error': 'No file selected'}), 400
-
-        filename = secure_filename(f.filename)
-        ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
-
-        if ext not in ALLOWED_MODEL_EXTENSIONS:
-            return jsonify({'success': False, 'error': f'Invalid file type .{ext}. Allowed: .pt, .zip'}), 400
-
-        UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-
-        # Check disk space
-        disk = shutil.disk_usage(UPLOADS_DIR)
-        if disk.free < 500 * 1024 * 1024:
-            return jsonify({'success': False, 'error': 'Insufficient disk space (<500MB free)'}), 507
-        save_path = UPLOADS_DIR / filename
-
-        # Path traversal check
-        if not save_path.resolve().parent == UPLOADS_DIR.resolve():
-            return jsonify({'success': False, 'error': 'Invalid filename'}), 400
-
-        f.save(str(save_path))
-
-        result_name = filename
-        result_type = 'pytorch'
-
-        if ext == 'zip':
-            # Validate NCNN zip
-            valid, msg = _validate_ncnn_zip(str(save_path))
-            if not valid:
-                save_path.unlink()
-                return jsonify({'success': False, 'error': msg}), 400
-
-            # Extract to directory named after zip (without .zip),
-            # flattening a single top-level folder (utils/model_archive.py,
-            # the same extraction the OWL does on download)
-            dir_name = filename.rsplit('.', 1)[0]
-            extract_dir = UPLOADS_DIR / dir_name
-            if extract_dir.exists():
-                shutil.rmtree(extract_dir)
-            try:
-                extract_model_zip(str(save_path), str(extract_dir))
-            except (zipfile.BadZipFile, ValueError) as e:
-                shutil.rmtree(extract_dir, ignore_errors=True)
-                save_path.unlink()
-                return jsonify({'success': False, 'error': f'Invalid model zip: {e}'}), 400
-
-            # Remove the zip after extraction
-            save_path.unlink()
-            result_name = dir_name
-            result_type = 'ncnn'
-
-            # The directory hash OWLs fall back to (the zip is gone)
-            sha256 = dir_sha256(extract_dir)
-            sha_path = UPLOADS_DIR / f'{dir_name}.sha256'
-            sha_path.write_text(sha256)
-        else:
-            # .pt file — compute SHA256
-            sha256 = _compute_sha256(str(save_path))
-            sha_path = UPLOADS_DIR / f'{filename}.sha256'
-            sha_path.write_text(sha256)
-
-        size = save_path.stat().st_size if save_path.exists() else sum(
-            fp.stat().st_size for fp in (UPLOADS_DIR / result_name).rglob('*') if fp.is_file()
-        )
-
-        logger.info(f"Model uploaded: {result_name} ({result_type}, {size} bytes, sha256={sha256[:12]}...)")
-
-        return jsonify({
-            'success': True,
-            'filename': result_name,
-            'type': result_type,
-            'size': size,
-            'sha256': sha256,
-        })
-
+        f.save(str(tmp))
+        result = model_catalog.add_upload(UPLOADS_DIR, tmp, filename, write_sha=True)
+        return jsonify({'success': True, **result})
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
     except Exception as e:
         logger.error(f"Error uploading model: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _deploy_plan(model, device_ids):
+    """{device_id: {'files': [Build], 'multi': bool, 'note': str}} for a
+    deploy: what each OWL can run (model_catalog.fleet_files). An OWL that
+    does not report ai.models has older firmware: one CPU file, the old way."""
+    plan = {}
+    with controller.mqtt_lock:
+        states = {d: dict(controller.owls_state.get(d) or {}) for d in device_ids}
+    for device_id, state in states.items():
+        ai = state.get('ai') if isinstance(state.get('ai'), dict) else {}
+        accelerator = ai.get('accelerator')
+        multi = 'models' in ai
+        files = model_catalog.fleet_files(model, accelerator if multi else 'cpu')
+        if not multi:
+            files = [b for b in files if not b.is_hailo][:1]
+        if not files:
+            chip = model_catalog.CHIP_NAMES.get(accelerator, 'CPU')
+            note = f'nothing {model.name} has runs on this OWL ({chip})'
+        else:
+            parts = [('Hailo-8L' if b.arch == 'hailo8l' else 'Hailo-8') + ' version' if b.is_hailo
+                     else 'CPU version' for b in files]
+            note = ' + '.join(parts)
+            storage = ai.get('model_storage') or {}
+            need = sum(b.size_bytes for b in files) / 1e6
+            if storage.get('budget_mb') and storage.get('used_mb', 0) + need > storage['budget_mb']:
+                note = (f'not enough space ({storage["used_mb"] / 1000:.1f} of '
+                        f'{storage["budget_mb"] / 1000:g} GB used)')
+                files = []
+        plan[device_id] = {'files': files, 'multi': multi, 'note': note}
+    return plan
+
+
+@app.route('/api/models/deploy', methods=['POST'])
+def deploy_model():
+    """Send each selected OWL the builds it can run. {"preview": true}
+    returns the per-OWL plan without sending anything."""
+    data = request.get_json(silent=True) or {}
+    model_name = model_catalog.base_name(secure_filename(str(data.get('model_name') or '')))
+    device_ids = data.get('device_ids') or []
+    if not model_name or not isinstance(device_ids, list) or not device_ids:
+        return jsonify({'success': False, 'error': 'Missing model_name or device_ids'}), 400
+    model = model_catalog.get(model_catalog.scan(UPLOADS_DIR), model_name)
+    if model is None:
+        return jsonify({'success': False, 'error': f'Model not found: {model_name}'}), 404
+    plan = _deploy_plan(model, device_ids)
+    preview = {d: p['note'] for d, p in plan.items()}
+    if data.get('preview'):
+        return jsonify({'success': True, 'plan': preview})
+    if not controller.mqtt_connected or not controller.mqtt_client:
+        return jsonify({'success': False, 'error': 'MQTT not connected'}), 503
+
+    static_ip = controller.config.get('Network', 'static_ip', fallback='localhost')
+    sent_to = []
+    for device_id, entry in plan.items():
+        if not entry['files']:
+            continue
+        files = []
+        for b in entry['files']:
+            sha_path = b.path.with_name(b.name + '.sha256')
+            files.append({
+                'url': f'https://{static_ip}/api/models/download/{b.name}',
+                'filename': f'{b.name}.zip' if b.path.is_dir() else b.name,
+                'sha256': sha_path.read_text().strip() if sha_path.exists() else '',
+                'is_archive': b.path.is_dir(),
+                'size_bytes': b.size_bytes,
+                'unpacked_bytes': b.size_bytes if b.path.is_dir() else None,
+                'arch': b.arch,
+            })
+        if entry['multi']:
+            payload = {'action': 'download_model', 'model': model.name, 'files': files}
+            if model.sidecar.get('classes'):
+                payload['classes'] = model.sidecar['classes']
+        else:
+            payload = {'action': 'download_model', **{k: files[0][k] for k in
+                                                     ('url', 'filename', 'sha256', 'is_archive')}}
+        result = controller.mqtt_client.publish(f'owl/{device_id}/commands', json.dumps(payload))
+        if result.rc == 0:
+            sent_to.append(device_id)
+    logger.info(f"Deploy {model.name} sent to {len(sent_to)} OWLs: {sent_to}")
+    return jsonify({'success': True, 'message': f'Deploy command sent to {len(sent_to)} OWLs',
+                    'sent_to': sent_to, 'plan': preview})
 
 
 @app.route('/api/models/download/<name>')
@@ -3303,104 +3303,49 @@ def download_model(name):
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/models/deploy', methods=['POST'])
-def deploy_model():
-    """Send download_model commands to selected OWLs via MQTT."""
-    try:
-        data = request.json
-        if not data:
-            return jsonify({'success': False, 'error': 'No data'}), 400
-
-        model_name = data.get('model_name')
-        device_ids = data.get('device_ids', [])
-
-        if not model_name or not device_ids:
-            return jsonify({'success': False, 'error': 'Missing model_name or device_ids'}), 400
-
-        safe_name = secure_filename(model_name)
-        target = UPLOADS_DIR / safe_name
-
-        if not (target.is_file() or target.is_dir()):
-            return jsonify({'success': False, 'error': f'Model not found: {model_name}'}), 404
-
-        # Read SHA256 from sidecar
-        sha_path = UPLOADS_DIR / f'{safe_name}.sha256'
-        sha256 = sha_path.read_text().strip() if sha_path.exists() else ''
-
-        # Build download URL
-        static_ip = controller.config.get('Network', 'static_ip', fallback='localhost')
-        is_archive = target.is_dir()
-        download_url = f'https://{static_ip}/api/models/download/{safe_name}'
-
-        # Determine the filename OWL should save as
-        if is_archive:
-            dl_filename = f'{safe_name}.zip'
-        else:
-            dl_filename = safe_name
-
-        if not controller.mqtt_connected or not controller.mqtt_client:
-            return jsonify({'success': False, 'error': 'MQTT not connected'}), 503
-
-        sent_to = []
-        for device_id in device_ids:
-            topic = f'owl/{device_id}/commands'
-            payload = json.dumps({
-                'action': 'download_model',
-                'url': download_url,
-                'filename': dl_filename,
-                'sha256': sha256,
-                'is_archive': is_archive,
-            })
-            result = controller.mqtt_client.publish(topic, payload)
-            if result.rc == 0:
-                sent_to.append(device_id)
-
-        logger.info(f"Deploy {model_name} sent to {len(sent_to)} OWLs: {sent_to}")
-
-        return jsonify({
-            'success': True,
-            'message': f'Deploy command sent to {len(sent_to)} OWLs',
-            'sent_to': sent_to,
-        })
-
-    except Exception as e:
-        logger.error(f"Error deploying model: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
 @app.route('/api/models/<name>', methods=['DELETE'])
 def delete_model(name):
-    """Delete a model from the library."""
+    """Delete a model (every build of it) from the library."""
+    safe_name = model_catalog.base_name(secure_filename(name))
+    if not safe_name:
+        return jsonify({'success': False, 'error': 'Invalid name'}), 400
     try:
-        safe_name = secure_filename(name)
-        if not safe_name:
-            return jsonify({'success': False, 'error': 'Invalid name'}), 400
-
-        if safe_name in PROTECTED_MODEL_FILES:
-            return jsonify({'success': False, 'error': 'Cannot delete protected file'}), 400
-
-        target = UPLOADS_DIR / safe_name
-        if not target.resolve().parent == UPLOADS_DIR.resolve():
-            return jsonify({'success': False, 'error': 'Invalid path'}), 400
-
-        if target.is_file():
-            target.unlink()
-        elif target.is_dir():
-            shutil.rmtree(target)
-        else:
-            return jsonify({'success': False, 'error': 'Model not found'}), 404
-
-        # Remove SHA256 sidecar
-        sha_path = UPLOADS_DIR / f'{safe_name}.sha256'
-        if sha_path.exists():
-            sha_path.unlink()
-
-        logger.info(f"Model deleted: {safe_name}")
-        return jsonify({'success': True, 'message': f'Deleted {safe_name}'})
-
-    except Exception as e:
+        removed = model_catalog.delete_model(UPLOADS_DIR, safe_name)
+    except OSError as e:
         logger.error(f"Error deleting model: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+    if not removed:
+        return jsonify({'success': False, 'error': 'Model not found'}), 404
+    logger.info(f"Model deleted: {safe_name} ({', '.join(removed)})")
+    return jsonify({'success': True, 'message': f'Deleted {safe_name}'})
+
+
+# Per-OWL AI routes, same paths as the standalone dashboard (docs/HAILO.md §5)
+def _owl_ai_command(action, needs_model=True):
+    data = request.get_json(silent=True) or {}
+    device_id = data.get('device_id')
+    if not device_id:
+        return jsonify({'success': False, 'error': 'device_id required'}), 400
+    value = {k: data[k] for k in ('model', 'run_on') if k in data}
+    if needs_model and not value.get('model'):
+        return jsonify({'success': False, 'error': 'model required'}), 400
+    result = controller.send_command(device_id, action, value)
+    return jsonify(result), (200 if result.get('success') else 400 if result.get('refused') else 500)
+
+
+@app.route('/api/ai/set_run_on', methods=['POST'])
+def ai_set_run_on():
+    return _owl_ai_command('set_run_on')
+
+
+@app.route('/api/ai/delete_model', methods=['POST'])
+def ai_delete_model():
+    return _owl_ai_command('delete_model')
+
+
+@app.route('/api/ai/retry_hailo', methods=['POST'])
+def ai_retry_hailo():
+    return _owl_ai_command('retry_hailo', needs_model=False)
 
 
 # ---------------------------------------------------------------------------

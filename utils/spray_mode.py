@@ -57,6 +57,8 @@ REASON_TEXT = {
     'fault:camera_lost': 'Camera fault',
     'fault:control_lost': 'Control fault',
     'fault:relay_stuck': 'Relay fault',
+    'fault:ai_lost': 'AI fault',
+    'fault:ai_unavailable': 'AI could not start',
     'setup_finished': 'Setup finished',
 }
 
@@ -118,7 +120,8 @@ def resolve(inputs):
 
 
 # Status LED priority: the most urgent active fault is the one that flashes
-FAULT_PRIORITY = ('relay_stuck', 'camera_lost', 'control_lost', 'link_lost')
+FAULT_PRIORITY = ('relay_stuck', 'camera_lost', 'ai_lost', 'ai_unavailable',
+                  'control_lost', 'link_lost')
 
 
 def _first(faults):

@@ -428,6 +428,8 @@ const Shell = (function () {
             if (stopped) out.push(U.notice('warn', '<b>' + U.esc(who(o) + stopped) + '</b>'));
             if (o.controller_notice) out.push(U.notice('bad', '<b>' + U.esc(who(o) + o.controller_notice) + '.</b> Check its connection.'));
             if (o.algorithm_error) out.push(U.notice('bad', '<b>' + U.esc(who(o)) + 'Detection could not start.</b> ' + U.esc(o.algorithm_error)));
+            const aiNote = U.aiNotice(o, who(o), o._id);
+            if (aiNote) out.push(aiNote);
             if (o.speed_warning) out.push(U.notice('warn', '<b>' + U.esc(who(o)) + 'Slow down.</b> ' + U.esc(o.speed_warning)));
             if (o.recording_blocked_reason && !o.image_sample_enable) {
                 out.push(U.notice('warn', '<b>' + U.esc(who(o)) + 'Cannot record:</b> ' + U.esc(String(o.recording_blocked_reason).replace(/_/g, ' '))));
@@ -452,6 +454,10 @@ const Shell = (function () {
             if (r) r.addEventListener('click', () => { sendCommand(currentScope(), 'restart_service'); showToast('Restarting', 'info'); });
             const off = box.querySelector('[data-act="offset"]');
             if (off) off.addEventListener('click', () => openSettings('spraying'));
+            box.querySelectorAll('[data-act="retry-hailo"]').forEach((b) => b.addEventListener('click', () => {
+                sendCommand(b.dataset.owlId, 'retry_hailo');
+                showToast('Trying the Hailo again on ' + owlName(b.dataset.owlId), 'info');
+            }));
             wireUseModel(box);
         }
         const ai = $('aiNotices');
@@ -558,6 +564,18 @@ const Shell = (function () {
                     aiPicked[id].timer = setTimeout(() => sendCommand(id, 'set_detect_classes', list), 600);
                 },
                 installAI: () => installAI([id]),
+                setupHailo: () => setupHailo([id]),
+                setRunOn: (name, value) => {
+                    sendCommand(id, 'set_run_on', { model: name, run_on: value });
+                    showToast(name + ' on ' + owlName(id) + ' runs on: ' + value, 'info');
+                },
+                deleteModel: async (name) => {
+                    const ok = await U.confirm({ title: 'Delete ' + name + ' from ' + owlName(id) + '?',
+                        body: 'Removes every version of it from this OWL. The model library keeps its copy.',
+                        ok: 'Delete', okClass: 'stop' });
+                    if (ok) sendCommand(id, 'delete_model', { model: name });
+                },
+                retryHailo: () => { sendCommand(id, 'retry_hailo'); showToast('Trying the Hailo again', 'info'); },
             }, { pickedClasses: picked, update: upd ? upd.software_update : null,
                  noModelsHint: 'Upload models on the Model library page (Maintenance), then send them here.' });
             return;
@@ -584,6 +602,21 @@ const Shell = (function () {
         el.querySelectorAll('[data-owl]').forEach((b) => b.addEventListener('click', () => setScope(b.dataset.owl)));
         const inst = $('installNeeded');
         if (inst) inst.addEventListener('click', () => installAI(need));
+    }
+
+    async function setupHailo(ids) {
+        const ok = await UI().confirm({
+            title: 'Set up the Hailo on ' + owlName(ids[0]) + '?',
+            body: 'Installs the Hailo driver and AI, then restarts the OWL. Takes 20 minutes or more and needs internet. Spraying keeps working meanwhile.',
+            ok: 'Set up Hailo',
+        });
+        if (!ok) return;
+        fetch('/api/ai/setup_hailo', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device_ids: ids }),
+        }).then((r) => r.json()).then((data) => {
+            if (!data.success) throw new Error(data.error || 'Could not start the set-up');
+            showToast('Setting up the Hailo', 'info');
+        }).catch((e) => showToast(e.message, 'error'));
     }
 
     async function installAI(ids) {

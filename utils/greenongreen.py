@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 # (systemd sets WorkingDirectory, but manual/script launches may not).
 TRACKER_YAML = str(home_dir('config', 'bytetrack_owl.yaml'))
 
+# The BYTETracker attribute that holds how many frames a lost track is kept.
+# ultralytics 8.4.38 renamed max_time_lost to max_frames_lost; writing the old
+# name on a newer version is silent and track_buffer never changes.
+LOST_FRAMES_ATTRS = ('max_frames_lost', 'max_time_lost')
+
 
 class GreenOnGreen:
     def __init__(self, model_path='models', confidence=0.5, detect_classes=None,
@@ -55,6 +60,7 @@ class GreenOnGreen:
         self.inference_resolution = inference_resolution
         self.crop_buffer_px = crop_buffer_px
         self._model_filename = ''
+        self.backend = 'cpu'          # 'hailo' when a Hailo folder is loaded
         self.model = self._load_model()
         self.task = self.model.task  # 'detect' or 'segment'
         self.detection_mask = None  # Combined binary mask, set after inference (seg only)
@@ -113,12 +119,28 @@ class GreenOnGreen:
         return None
 
     def _load_model(self):
-        """Load YOLO model -- supports NCNN dirs and .pt files."""
+        """Load YOLO model -- supports NCNN dirs, Hailo dirs and .pt files.
+
+        owl.py picks the build (utils/model_catalog.py) and passes it here;
+        the folder scan below is for a model_path set by hand."""
         if self.model_path.is_dir():
             # Check if this IS an NCNN model dir (has .param + .bin)
             if list(self.model_path.glob('*.param')):
                 logger.info(f'Using NCNN model: {self.model_path.name}')
                 self._model_filename = self.model_path.name
+                task = self._infer_task(self.model_path.name, self.model_path)
+                return YOLO(str(self.model_path), task=task)
+
+            # A Hailo export (.hef + metadata.yaml). Ultralytics' Hailo backend
+            # runs it on the accelerator; it recognises the format by the
+            # folder name only, hence the check.
+            if list(self.model_path.glob('*.hef')):
+                if '_hailo_model' not in self.model_path.name.lower():
+                    raise ValueError(f'{self.model_path.name} holds a .hef but its name does not end '
+                                     f'in _hailo_model, so it cannot be loaded as a Hailo model')
+                logger.info(f'Using Hailo model: {self.model_path.name}')
+                self._model_filename = self.model_path.name
+                self.backend = 'hailo'
                 task = self._infer_task(self.model_path.name, self.model_path)
                 return YOLO(str(self.model_path), task=task)
 
@@ -150,6 +172,23 @@ class GreenOnGreen:
             return YOLO(str(self.model_path), task=task)
 
         raise FileNotFoundError(f'Model path does not exist: {self.model_path}')
+
+    def close(self):
+        """Let go of the model now. A Hailo model holds the accelerator until
+        it is garbage-collected, and a second one cannot open it meanwhile:
+        call this before loading another Hailo model."""
+        if self._executor:
+            self._executor.shutdown(wait=False)
+            self._executor = None
+        self.model = None
+        import gc
+        gc.collect()
+
+    @property
+    def _imgsz_kwargs(self):
+        """imgsz for hybrid predict/track. A Hailo model has one fixed input
+        size compiled in, so it is never resized to inference_resolution."""
+        return {} if self.backend == 'hailo' else {'imgsz': self.inference_resolution}
 
     def _resolve_classes(self, class_names):
         """Map class names to model class IDs. Returns None if all classes."""
@@ -233,9 +272,9 @@ class GreenOnGreen:
         BYTETracker reads thresholds from tracker.args (an
         IterableSimpleNamespace built from the tracker yaml), not from
         attributes on the tracker instance itself. track_buffer additionally
-        feeds max_time_lost, computed once in __init__, so it must be set
-        explicitly. Tracks are NOT reset — params take effect from the next
-        frame without losing existing IDs.
+        feeds the lost-frames limit (LOST_FRAMES_ATTRS), computed once in
+        __init__, so it must be set explicitly. Tracks are NOT reset — params
+        take effect from the next frame without losing existing IDs.
         """
         if not (hasattr(self.model, 'predictor') and self.model.predictor):
             return False
@@ -247,10 +286,14 @@ class GreenOnGreen:
             for key, value in params.items():
                 if hasattr(tracker.args, key):
                     setattr(tracker.args, key, value)
-                # max_time_lost = frame_rate/30 * track_buffer with the
-                # frame_rate=30 ultralytics hardcodes for model.track()
                 if key == 'track_buffer':
-                    tracker.max_time_lost = int(value)
+                    attr = next((a for a in LOST_FRAMES_ATTRS if hasattr(tracker, a)), None)
+                    if attr:
+                        setattr(tracker, attr, int(value))
+                    else:
+                        logger.warning('ByteTrack has no lost-frames limit this OWL knows '
+                                       f'({", ".join(LOST_FRAMES_ATTRS)}): track_buffer '
+                                       'is not applied. Check the ultralytics version.')
         return True
 
     def _apply_pending_tracker_params(self):
@@ -545,7 +588,7 @@ class GreenOnGreen:
                 classes=self._detect_class_ids,
                 persist=True,
                 tracker=TRACKER_YAML,
-                imgsz=self.inference_resolution,
+                **self._imgsz_kwargs,
                 verbose=False,
                 device='cpu'
             )
@@ -555,7 +598,7 @@ class GreenOnGreen:
                 source=image,
                 conf=confidence,
                 classes=self._detect_class_ids,
-                imgsz=self.inference_resolution,
+                **self._imgsz_kwargs,
                 verbose=False,
                 device='cpu'
             )

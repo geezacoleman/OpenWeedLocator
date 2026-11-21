@@ -84,7 +84,7 @@ def valid_ref(ref):
 
 
 def update_argv(ref, request_id, script=None, status_file=None, user=None,
-                with_ai=False):
+                with_ai=False, with_hailo=False):
     """The exact argv the sudoers rule permits (literal up to the script).
 
     with_ai adds --with-ai (Install AI: requirements-gog.txt as well). It
@@ -105,7 +105,10 @@ def update_argv(ref, request_id, script=None, status_file=None, user=None,
         '--request-id', str(request_id),
         '--status-file', str(status_file or status_path()),
     ]
-    if with_ai:
+    if with_hailo:
+        # Set up Hailo (docs/HAILO.md §2): AI plus the Hailo runtime, then a reboot
+        argv.append('--with-hailo')
+    elif with_ai:
         argv.append('--with-ai')
     return argv
 

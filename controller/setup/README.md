@@ -249,6 +249,28 @@ logs, cached credentials. If you are SSH'd in over a personal network the
 session drops at that point by design; give it a minute
 (`/var/log/owl-ship-clean.txt`), then focus the camera, power off, box it.
 
+**Hailo-8 AI accelerator (v3.28.1):** opt-in with `--hailo`, with or without
+`--factory` (`bash owl_setup.sh --factory --hailo`), or on its own with
+`sudo bash tools/hailo_setup.sh`. Only the Hailo-8 M.2 module on a Pi 5 or CM5
+is set up (HailoRT 4.23); the 8L and 10H are a different driver line. It
+switches PCIe on in `config.txt` (`dtparam=pciex1` under `[all]`, left at
+Gen 2: the CM5 is specified for Gen 2 and the OWL carrier drops the card at
+Gen 3), adds `pcie_aspm=off` to `cmdline.txt`, installs `hailo-all`, then runs
+`tools/patch_hailo_dkms.sh`: the 4.23.0 DKMS driver calls `find_vma()` without
+the mmap lock, kernel 6.18 refuses that and every streaming transfer fails.
+The patch adds the lock, rebuilds the module and holds the Hailo packages so
+an `apt` upgrade cannot put the unpatched source back. Re-runs change nothing.
+In `--factory` a failure here is a ship blocker.
+
+The card only answers after a reboot. `sudo bash tools/hailo_setup.sh --check`
+then proves the unit in four stages and stops at the first that fails:
+enumeration (`lspci`), driver (`/dev/hailo0`, dkms, patch), firmware
+(`hailortcli fw-control identify` reports HAILO8), and the streaming benchmark
+three times with no `rwsem` warning in `dmesg` and `get_throttled` at `0x0`. A
+unit that passes once but not three times has a power or thermal problem.
+Installing the Hailo does not make detection use it: `utils/ai_capability.py`
+reports the card, `utils/greenongreen.py` still runs on the CPU.
+
 Manual route (existing installs): run `controller/shared/setup.sh` in
 **standalone** mode (keep the `OWL-` SSID prefix — the phone app's
 auto-connect matches `OWL-*` only) and answer yes to its arm prompt, or run

@@ -32,7 +32,7 @@ from utils.shared_types import parse_switch
 from utils.paths import home_dir
 from utils.directory_manager import scan_sessions, collect_session_files, select_preview_images, is_session_id
 from utils import software_update
-from utils import ai_capability
+from utils import ai_capability, model_catalog
 from utils.model_archive import dir_sha256, extract_model_zip, file_sha256, replace_dir
 from utils.session_metadata import clean_session_metadata, CAPTURE_PARAM_KEYS
 
@@ -69,6 +69,8 @@ RESTART_REQUIRED_KEYS = {
 CLOUD_ALLOWED_ACTIONS = frozenset({
     'list_data_sessions', 'transfer_session', 'delete_session', 'upload_previews',
     'update_software', 'download_model', 'set_model', 'reboot', 'restart_service',
+    # Hailo round (docs/HAILO.md §5): plain names only, checked by model_path_in
+    'set_run_on', 'delete_model', 'retry_hailo',
 })
 # fullmatch, not match: `$` also matches before a trailing newline, so
 # "v1.2.3\n" passed the old check (O-6).
@@ -320,6 +322,9 @@ def cloud_command_urls(command):
     elif action == 'download_model':
         if command.get('url'):
             urls.append(command['url'])
+        for f in command.get('files') or []:
+            if isinstance(f, dict) and f.get('url'):
+                urls.append(f['url'])
     return urls
 
 
@@ -750,8 +755,15 @@ class OWLMQTTPublisher:
         self._update_status_path = home_dir('.update_status.json')
         self._update_status_stamp = None  # (mtime, size) of last successful read
 
+        # What AI this unit can run, computed once (ai_capability.detect
+        # runs hailortcli: before any model opens the Hailo). _ai_block()
+        # adds the live parts.
+        self._ai_caps = self.state.get('ai')
+
         # Thread safety
         self.state_lock = threading.RLock()
+        # One model download at a time (_start_model_download)
+        self._model_download_lock = threading.Lock()
         self.config_lock = threading.Lock()
 
 
@@ -1441,18 +1453,18 @@ class OWLMQTTPublisher:
                 self._handle_hold_spray(command)
 
             elif action == 'download_model':
-                url = command.get('url')
-                filename = command.get('filename')
-                sha256 = command.get('sha256', '')
-                is_archive = command.get('is_archive', False)
-                if url and filename:
-                    threading.Thread(
-                        target=self._download_model,
-                        args=(url, filename, sha256, is_archive),
-                        daemon=True
-                    ).start()
-                else:
-                    self.logger.error("download_model missing url or filename")
+                self._start_model_download(command)
+
+            elif action == 'set_run_on':
+                self._handle_set_run_on(command)
+
+            elif action == 'delete_model':
+                self._handle_delete_model(command)
+
+            elif action == 'retry_hailo':
+                if self.owl_instance is not None:
+                    self.owl_instance._pending_ai_retry = True
+                    self.logger.info('Try the Hailo again: queued')
 
             elif action == 'calibrate_awb':
                 # Needs ~2 s of auto AWB; the dispatch holds state_lock, so
@@ -2274,8 +2286,10 @@ class OWLMQTTPublisher:
 
         ref = str(command.get('ref', 'main'))
         request_id = str(command.get('request_id', ''))
-        # Install AI: the same update, plus requirements-gog.txt
-        with_ai = command.get('with_ai') is True
+        # Install AI: the same update, plus requirements-gog.txt. Set up
+        # Hailo: that plus the Hailo runtime and a reboot.
+        with_hailo = command.get('with_hailo') is True
+        with_ai = command.get('with_ai') is True or with_hailo
 
         def _refuse(msg):
             self.logger.warning(f"update_software refused: {msg}")
@@ -2323,7 +2337,8 @@ class OWLMQTTPublisher:
         try:
             argv = software_update.update_argv(
                 ref, request_id, script=script,
-                status_file=self._update_status_path, with_ai=with_ai)
+                status_file=self._update_status_path, with_ai=with_ai,
+                with_hailo=with_hailo)
             software_update.launch(argv, subprocess.Popen)
             self.logger.warning(f"Software update launched: ref={ref} request_id={request_id} "
                                 f"with_ai={with_ai}")
@@ -2353,7 +2368,8 @@ class OWLMQTTPublisher:
         # An update (Install AI included) can add or remove ultralytics, so
         # the capability block is re-read once it completes.
         if data['status'] == 'complete':
-            ai = ai_capability.detect()
+            self._ai_caps = ai_capability.detect()
+            ai = self._ai_block()
             with self.state_lock:
                 self.state['ai'] = ai
         with self.state_lock:
@@ -2512,113 +2528,185 @@ class OWLMQTTPublisher:
                     f"calibration: {restore_error}")
             self._set_awb_calibration(status='error', error=str(e))
 
-    def _download_model(self, url, filename, expected_sha256, is_archive):
-        """Download a model file from the controller. Runs in background thread."""
+    def _model_download_files(self, command):
+        """The files of a download_model command: the multi-file form
+        (docs/HAILO.md §5) or the single-file form every older sender uses."""
+        files = command.get('files')
+        if isinstance(files, list) and files:
+            return [f for f in files if isinstance(f, dict)]
+        if command.get('url') and command.get('filename'):
+            return [{'url': command['url'], 'filename': command['filename'],
+                     'sha256': command.get('sha256', ''),
+                     'is_archive': command.get('is_archive', False)}]
+        return []
+
+    @staticmethod
+    def _download_model_name(command, files):
+        if command.get('model'):
+            return str(command['model'])
+        first = str(files[0].get('filename') or '') if files else ''
+        return model_catalog.base_name(first[:-4] if first.lower().endswith('.zip') else first)
+
+    def _start_model_download(self, command):
+        """One model download at a time: two used to share one progress slot
+        and overwrite each other's progress."""
+        files = self._model_download_files(command)
+        if not files:
+            self.logger.error("download_model has no url/filename or files")
+            return
+        name = self._download_model_name(command, files)
+        # The name becomes models/<name>.json: a bare name only, like every
+        # other model command (model_path_in)
+        if model_path_in(str(home_dir('models')), name) is None:
+            self.logger.error(f"download_model refused: not a model name: {name!r}")
+            return
+        if not self._model_download_lock.acquire(blocking=False):
+            self.logger.error("download_model refused: another download is running")
+            self.state['model_download'] = {
+                'status': 'error', 'model_name': name, 'progress': 0,
+                'error': 'busy: another model download is running. Try again when it has finished.',
+                'request_id': command.get('request_id')}
+            self._publish_state()
+            return
+        threading.Thread(target=self._download_model_set, daemon=True,
+                         args=(files, name, command.get('request_id'),
+                               command.get('run_on'), command.get('classes'))).start()
+
+    def _model_storage_limits(self):
+        """(model budget GB, recording floor GB) from the OWL's config."""
+        config = getattr(self.owl_instance, 'config', None)
+        budget, floor = model_catalog.DEFAULT_STORAGE_GB, 0
+        if isinstance(config, configparser.ConfigParser):
+            try:
+                budget = config.getfloat('GreenOnGreen', 'model_storage_gb',
+                                         fallback=model_catalog.DEFAULT_STORAGE_GB)
+                floor = config.getfloat('DataCollection', 'min_free_gb', fallback=0)
+            except ValueError:
+                pass
+        return budget, floor
+
+    def _download_model_set(self, files, name, request_id=None, run_on=None, classes=None):
+        """Download every file of one model, verify each, then swap them all
+        in. Any failure keeps the previous files. Runs in its own thread and
+        releases _model_download_lock when done."""
         import urllib.request
-        import ssl
+        import shutil
 
         models_dir = str(home_dir('models'))
         os.makedirs(models_dir, exist_ok=True)
+        staged = []            # [path, target, is_dir]
+        count = len(files)
 
-        tmp_path = None
-        try:
-            # Update state: downloading
+        def progress(status, index=0, percent=0, error=''):
             with self.state_lock:
                 self.state['model_download'] = {
-                    'status': 'downloading',
-                    'model_name': filename,
-                    'progress': 0,
-                    'error': ''
-                }
+                    'status': status, 'model_name': name, 'progress': percent, 'error': error,
+                    'request_id': request_id, 'file_index': index, 'file_count': count}
             self._publish_state()
 
-            # Where it lands, checked before anything is fetched or deleted
-            if is_archive:
-                dir_name = filename.rsplit('.', 1)[0] if '.' in filename else filename
-                target = model_path_in(models_dir, dir_name)
-            else:
-                target = model_path_in(models_dir, filename)
-            if target is None:
-                raise ValueError(f'not a model file name: {filename!r}')
+        try:
+            progress('downloading')
+            # Where every file lands, checked before anything is fetched
+            plan = []
+            for f in files:
+                filename, is_archive = f.get('filename'), bool(f.get('is_archive'))
+                if not f.get('url') or not filename:
+                    raise ValueError('a file in the download has no url or filename')
+                dest = filename.rsplit('.', 1)[0] if is_archive and '.' in filename else filename
+                target = model_path_in(models_dir, dest)
+                if target is None:
+                    raise ValueError(f'not a model file name: {filename!r}')
+                plan.append((f, target, is_archive))
+            targets = [t for _f, t, _a in plan]
 
-            # Verified TLS unless the host is the LAN controller (self-signed)
-            ssl_ctx = ssl_context_for_url(url)
+            # Budget and recording floor, from the sizes the sender declares:
+            # an archive's unpacked_bytes, else three times its zip
+            budget_gb, floor_gb = self._model_storage_limits()
+            declared = sum(int(f.get('unpacked_bytes') or 0)
+                           or int(f.get('size_bytes') or 0) * (3 if a else 1)
+                           for f, _t, a in plan)
+            reason = model_catalog.storage_refusal(models_dir, declared, budget_gb, targets, floor_gb)
+            if reason:
+                raise ValueError(reason)
 
-            req = urllib.request.Request(url)
-            response = urllib.request.urlopen(req, context=ssl_ctx)
-            total_size = int(response.headers.get('Content-Length', 0))
-
-            # Download to temp file
-            tmp_fd, tmp_path = tempfile.mkstemp(dir=models_dir, suffix='.tmp')
-            downloaded = 0
-            last_progress_update = 0
-
-            with os.fdopen(tmp_fd, 'wb') as f:
-                while True:
-                    chunk = response.read(65536)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    downloaded += len(chunk)
-
-                    # Update progress every 100KB
-                    if downloaded - last_progress_update >= 102400:
-                        last_progress_update = downloaded
-                        progress = int((downloaded / total_size * 100)) if total_size > 0 else 0
-                        with self.state_lock:
-                            self.state['model_download']['progress'] = progress
-                        self._publish_state()
-
-            # Verify first, then swap: the previous model is only removed
-            # once the new one has passed its checksum and is extracted.
-            if is_archive:
-                self._place_model_archive(tmp_path, target, expected_sha256)
-                tmp_path = None
-            else:
-                if expected_sha256 and file_sha256(tmp_path) != expected_sha256:
+            for index, (f, target, is_archive) in enumerate(plan):
+                url, expected = f['url'], f.get('sha256', '')
+                ssl_ctx = ssl_context_for_url(url)   # verified TLS except the LAN controller
+                response = urllib.request.urlopen(urllib.request.Request(url), context=ssl_ctx)
+                total = int(response.headers.get('Content-Length', 0))
+                tmp_fd, tmp_path = tempfile.mkstemp(dir=models_dir, prefix='.dl-', suffix='.tmp')
+                staged.append([tmp_path, target, False])
+                done, last = 0, 0
+                with os.fdopen(tmp_fd, 'wb') as out:
+                    while True:
+                        chunk = response.read(65536)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        done += len(chunk)
+                        if done - last >= 102400:
+                            last = done
+                            progress('downloading', index, int(done / total * 100) if total else 0)
+                if is_archive:
+                    staged[-1] = [self._stage_model_archive(tmp_path, target, expected), target, True]
+                elif expected and file_sha256(tmp_path) != expected:
                     raise ValueError(CHECKSUM_MISMATCH)
-                os.replace(tmp_path, target)
-                tmp_path = None
-                self.logger.info(f"Model saved to {target}")
 
-            # Update state: complete
+            # Checked again with the real sizes (an older sender declares
+            # none). The staged files are already inside models/.
+            replaced = sum(model_catalog._size(Path(t)) for t in targets if Path(t).exists())
+            used = model_catalog.storage_used_bytes(models_dir) - replaced
+            if used > float(budget_gb) * 1e9:
+                staged_bytes = sum(model_catalog._size(Path(p)) for p, _t, _d in staged)
+                raise ValueError(f'Not enough model space ({(used - staged_bytes) / 1e9:.1f} of '
+                                 f'{float(budget_gb):g} GB used). Delete a model first.')
+
+            for path, target, is_dir in staged:
+                if is_dir:
+                    replace_dir(path, target)
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    os.replace(path, target)
+                self.logger.info(f"Model file saved to {target}")
+            staged = []
+            if run_on in model_catalog.RUN_ON or isinstance(classes, list):
+                model_catalog.write_sidecar(
+                    models_dir, name,
+                    run_on=run_on if run_on in model_catalog.RUN_ON else None,
+                    classes=[str(c) for c in classes] if isinstance(classes, list) else None)
+            progress('complete', count - 1, 100)
             with self.state_lock:
-                self.state['model_download'] = {
-                    'status': 'complete',
-                    'model_name': filename,
-                    'progress': 100,
-                    'error': ''
-                }
-                # Refresh available models list
                 self.state['available_models'] = self._list_available_models()
             self._publish_state()
 
         except Exception as e:
             self.logger.error(f"Model download failed: {e}")
-            # Cleanup temp file
-            if tmp_path and os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
+            progress('error', error=str(e))
+        finally:
+            for path, _target, is_dir in staged:
+                if is_dir:
+                    shutil.rmtree(path, ignore_errors=True)
+                elif path and os.path.exists(path):
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
+            self._model_download_lock.release()
 
-            with self.state_lock:
-                self.state['model_download'] = {
-                    'status': 'error',
-                    'model_name': filename,
-                    'progress': 0,
-                    'error': str(e)
-                }
-            self._publish_state()
+    def _download_model(self, url, filename, expected_sha256, is_archive):
+        """One file, in this thread (older callers and tests)."""
+        self._model_download_lock.acquire()
+        self._download_model_set(
+            [{'url': url, 'filename': filename, 'sha256': expected_sha256, 'is_archive': is_archive}],
+            self._download_model_name({}, [{'filename': filename}]))
 
-    def _place_model_archive(self, zip_path, target, expected_sha256):
-        """Verify a downloaded NCNN zip and move its contents into `target`.
+    def _stage_model_archive(self, zip_path, target, expected_sha256):
+        """Verify a downloaded model zip (an NCNN or Hailo folder) and extract
+        it into a dot-named staging folder beside `target`; returns it.
 
         Noktura hashes the zip file itself, so that is checked first; the
         networked controller hashes the extracted files (it deletes the zip
-        after upload), which is the fallback. Extraction goes to a dot-named
-        staging folder that is renamed into place, so any failure keeps the
-        previous model. The zip is always deleted.
+        after upload), which is the fallback. The zip is always deleted.
         """
         import shutil
         import zipfile
@@ -2632,14 +2720,59 @@ class OWLMQTTPublisher:
                 raise ValueError('The model zip is damaged (not a valid zip file)')
             if not zip_matches and dir_sha256(staging) != expected_sha256:
                 raise ValueError(CHECKSUM_MISMATCH)
-            replace_dir(staging, target)
-        finally:
+        except Exception:
             shutil.rmtree(staging, ignore_errors=True)
+            raise
+        finally:
             try:
                 os.unlink(zip_path)
             except OSError:
                 pass
+        return staging
+
+    def _place_model_archive(self, zip_path, target, expected_sha256):
+        """Verify, extract and swap an archive into `target` in one go."""
+        import shutil
+        staging = self._stage_model_archive(zip_path, target, expected_sha256)
+        try:
+            replace_dir(staging, target)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
         self.logger.info(f"Model extracted to {target}")
+
+    def _handle_set_run_on(self, command):
+        """set_run_on {model, run_on}: written to models/<model>.json. The
+        running model reloads so it takes effect now."""
+        name, run_on = command.get('model'), str(command.get('run_on', '')).strip().lower()
+        models_dir = str(home_dir('models'))
+        if model_path_in(models_dir, name) is None or run_on not in model_catalog.RUN_ON:
+            self.logger.error(f"set_run_on refused: {name!r} / {run_on!r}")
+            return
+        model_catalog.write_sidecar(models_dir, name, run_on=run_on)
+        owl = self.owl_instance
+        running = getattr(owl, '_ai_running', None)
+        if owl is not None and running and running[0].name == name:
+            owl._pending_model = os.path.join('models', name)
+        self.logger.info(f"{name} runs on: {run_on}")
+        self._publish_state()
+
+    def _handle_delete_model(self, command):
+        """delete_model {model}: every build of it. Refused for the model
+        that is running."""
+        name = command.get('model')
+        models_dir = str(home_dir('models'))
+        if model_path_in(models_dir, name) is None:
+            self.logger.error(f"delete_model refused: not a model name: {name!r}")
+            return
+        running = getattr(self.owl_instance, '_ai_running', None)
+        if running and running[0].name == name:
+            self.logger.error(f"delete_model refused: {name} is running")
+            return
+        removed = model_catalog.delete_model(models_dir, name)
+        self.logger.info(f"Deleted model {name}: {', '.join(removed) or 'nothing found'}")
+        with self.state_lock:
+            self.state['available_models'] = self._list_available_models()
+        self._publish_state()
 
     def _download_lut_profile(self, url, filename, expected_sha256,
                               apply_profile=False, apply_sensitivity=50):
@@ -3473,48 +3606,60 @@ class OWLMQTTPublisher:
             self.logger.info(f"GreenOnGreen.{param_name} updated in config (restart required)")
 
     def _check_model_available(self):
-        """Check if any YOLO model is available in the models/ directory."""
+        """Any AI model in models/ (a .pt, an NCNN or a Hailo build)."""
         try:
-            models_dir = str(home_dir('models'))
-            if not os.path.isdir(models_dir):
-                return False
-            # Check for NCNN subdirs (have .param files) or .pt files.
-            # Dot names are download staging / replaced folders.
-            for item in os.listdir(models_dir):
-                if item.startswith('.'):
-                    continue
-                item_path = os.path.join(models_dir, item)
-                if item.endswith('.pt'):
-                    return True
-                if os.path.isdir(item_path):
-                    for f in os.listdir(item_path):
-                        if f.endswith('.param'):
-                            return True
-            return False
+            return bool(model_catalog.scan(home_dir('models')))
         except Exception:
             return False
 
     def _list_available_models(self):
-        """List available YOLO models (.pt files and NCNN subdirs) in models/ directory."""
-        models = []
+        """Every build in models/ by file or folder name: the list older
+        dashboards and the app pick from. ai.models groups them by model."""
         try:
-            models_dir = str(home_dir('models'))
-            if not os.path.isdir(models_dir):
-                return models
-            for item in sorted(os.listdir(models_dir)):
-                if item.startswith('.'):
-                    continue
-                item_path = os.path.join(models_dir, item)
-                if item.endswith('.pt'):
-                    models.append(item)
-                elif os.path.isdir(item_path):
-                    for f in os.listdir(item_path):
-                        if f.endswith('.param'):
-                            models.append(item)
-                            break
+            return [b.name for m in model_catalog.scan(home_dir('models')) for b in m.builds]
         except Exception:
-            pass
-        return models
+            return []
+
+    def _ai_block(self):
+        """The 'ai' state block: what this unit can run (ai_capability,
+        computed once) plus how AI is doing, the space models use and the
+        models themselves (docs/HAILO.md §5). Changes rarely, so it is a cloud
+        field; fps and ms per frame are top-level and stay local."""
+        caps = self._ai_caps if isinstance(self._ai_caps, dict) else {}
+        ai = dict(caps)
+        owl = self.owl_instance
+        models_dir = home_dir('models')
+        running = getattr(owl, '_ai_running', None)
+        budget_gb, _floor = self._model_storage_limits()
+        run_on = 'auto'
+        config = getattr(owl, 'config', None)
+        if isinstance(config, configparser.ConfigParser):
+            run_on = config.get('GreenOnGreen', 'run_on', fallback='auto').strip().lower()
+        ai['status'] = getattr(owl, '_ai_status', 'ok') if owl is not None else 'ok'
+        ai['status_reason'] = getattr(owl, '_ai_status_reason', None) if owl is not None else None
+
+        # This runs every heartbeat: scan models/ only when it changed
+        try:
+            listing = tuple(sorted((e.name, e.stat().st_mtime_ns) for e in os.scandir(models_dir)))
+        except OSError:
+            listing = ()
+        key = (listing, caps.get('accelerator'), run_on, budget_gb,
+               (running[0].name, str(running[1].path)) if running else None)
+        cached = getattr(self, '_ai_models_cache', None)
+        if not cached or cached[0] != key:
+            models = model_catalog.scan(models_dir)
+            storage = {'used_mb': int(model_catalog.storage_used_bytes(models_dir) / 1e6),
+                       # No free-disk figure: it moves while recording and
+                       # this block is a cloud field (disk_percent covers it)
+                       'budget_mb': int(float(budget_gb) * 1000)}
+            summary = model_catalog.summary(
+                models, caps.get('accelerator'),
+                running=(running[0].name, running[1]) if running else None,
+                run_on_default=run_on)
+            cached = self._ai_models_cache = (key, storage, summary)
+        ai['model_storage'] = dict(cached[1])
+        ai['models'] = [dict(m) for m in cached[2]]
+        return ai
 
     def _handle_gps_update(self, gps_data):
         """Handle GPS updates from dashboard or central controller.
@@ -3684,7 +3829,18 @@ class OWLMQTTPublisher:
         running = getattr(owl, 'running_algorithm', None)
         pending = getattr(owl, '_pending_algorithm', None)
         model_available = self._check_model_available()
+        try:
+            ai = self._ai_block()
+        except Exception as e:
+            self.logger.warning(f"AI state refresh failed: {e}")
+            ai = None
+        fps, ms = getattr(owl, '_ai_fps', None), getattr(owl, '_ai_inference_ms', None)
         with self.state_lock:
+            if ai is not None:
+                self.state['ai'] = ai
+            # Local only (not cloud fields): they change every frame
+            self.state['ai_fps'] = round(fps, 1) if fps else None
+            self.state['ai_inference_ms'] = round(ms, 1) if ms else None
             # The detector actually running (set by owl.py once it loads),
             # never the config value: a failed AI load falls back to exhsv
             # and the dashboards must show that. Until hoot() has built a

@@ -25,6 +25,8 @@ def _fake_env(monkeypatch, tmp_path, modules=(), dev_hailo=False, lspci_out=None
 
     def runner(argv, **kwargs):
         calls.append((argv, kwargs))
+        if argv[:2] == ['hailortcli', '--version']:
+            return SimpleNamespace(stdout='HailoRT-CLI version 4.23.0\n', returncode=0)
         return SimpleNamespace(stdout=tools.get(argv[0]) or '', returncode=0)
 
     return runner, calls
@@ -36,7 +38,7 @@ class TestDetect:
         runner, _ = _fake_env(monkeypatch, tmp_path)
         assert aic.detect(runner) == {
             'cpu': {'installed': False},
-            'hailo': {'present': False, 'chip': None, 'runtime': False},
+            'hailo': {'present': False, 'chip': None, 'runtime': False, 'hailort': None},
             'accelerator': None,
         }
 
@@ -46,26 +48,34 @@ class TestDetect:
         assert ai['cpu'] == {'installed': True}
         assert ai['accelerator'] == 'cpu'
 
-    def test_hailo8_card_and_runtime(self, monkeypatch, tmp_path):
-        runner, _ = _fake_env(monkeypatch, tmp_path, modules={'hailo_platform'}, dev_hailo=True,
-                              identify_out='Identifying board\nDevice Architecture: HAILO8\n')
-        ai = aic.detect(runner)
-        assert ai['hailo'] == {'present': True, 'chip': 'hailo8', 'runtime': True}
-        assert ai['accelerator'] == 'hailo8'
-
-    @pytest.mark.parametrize('arch,chip', [('HAILO8L', 'hailo8l'), ('HAILO10H', 'hailo10h')])
-    def test_other_hailo_chips_are_reported_but_not_used(self, monkeypatch, tmp_path, arch, chip):
-        # Only the Hailo-8 is supported; DIY 8L/10H boards run AI on the CPU
+    @pytest.mark.parametrize('arch,chip', [('HAILO8', 'hailo8'), ('HAILO8L', 'hailo8l')])
+    def test_hailo8_and_8l_card_and_runtime(self, monkeypatch, tmp_path, arch, chip):
+        # Hailo-8 and Hailo-8L (AI Kit) both run AI (2026-11-20, docs/HAILO.md)
         runner, _ = _fake_env(monkeypatch, tmp_path, modules={'ultralytics', 'hailo_platform'},
-                              dev_hailo=True, identify_out=f'Device Architecture: {arch}\n')
+                              dev_hailo=True,
+                              identify_out=f'Identifying board\nDevice Architecture: {arch}\n')
         ai = aic.detect(runner)
-        assert ai['hailo']['chip'] == chip
+        assert ai['hailo'] == {'present': True, 'chip': chip, 'runtime': True, 'hailort': '4.23.0'}
+        assert ai['accelerator'] == chip
+
+    def test_a_hailo_without_ultralytics_is_not_an_accelerator(self, monkeypatch, tmp_path):
+        # Hailo models run through Ultralytics' Hailo backend
+        runner, _ = _fake_env(monkeypatch, tmp_path, modules={'hailo_platform'}, dev_hailo=True,
+                              identify_out='Device Architecture: HAILO8\n')
+        assert aic.detect(runner)['accelerator'] is None
+
+    def test_hailo10h_is_reported_but_not_used(self, monkeypatch, tmp_path):
+        # HailoRT 5.x line: AI runs on the CPU
+        runner, _ = _fake_env(monkeypatch, tmp_path, modules={'ultralytics', 'hailo_platform'},
+                              dev_hailo=True, identify_out='Device Architecture: HAILO10H\n')
+        ai = aic.detect(runner)
+        assert ai['hailo']['chip'] == 'hailo10h'
         assert ai['accelerator'] == 'cpu'
 
     def test_runtime_but_identify_fails_is_not_an_accelerator(self, monkeypatch, tmp_path):
         runner, _ = _fake_env(monkeypatch, tmp_path, modules={'hailo_platform'}, dev_hailo=True)
         ai = aic.detect(runner)
-        assert ai['hailo'] == {'present': True, 'chip': None, 'runtime': True}
+        assert ai['hailo'] == {'present': True, 'chip': None, 'runtime': True, 'hailort': None}
         assert ai['accelerator'] is None
 
     def test_hailo_card_without_runtime_falls_to_cpu(self, monkeypatch, tmp_path):
@@ -73,7 +83,7 @@ class TestDetect:
             '0000:01:00.0 Co-processor: Hailo Technologies Ltd. Hailo-8 AI Processor (rev 01)\n'))
         ai = aic.detect(runner)
         # lspci names the 8 and 8L the same: chip unknown until the runtime is in
-        assert ai['hailo'] == {'present': True, 'chip': None, 'runtime': False}
+        assert ai['hailo'] == {'present': True, 'chip': None, 'runtime': False, 'hailort': None}
         assert ai['accelerator'] == 'cpu'
 
     def test_lspci_runs_with_a_timeout(self, monkeypatch, tmp_path):

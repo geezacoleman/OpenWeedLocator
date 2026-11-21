@@ -721,6 +721,45 @@ EOF
     check_status "Software update permissions" "UPDATE_PERMISSIONS"
 }
 
+setup_hailo_permissions() {
+    # "Set up Hailo" from the dashboard and the app (docs/HAILO.md §2): the
+    # updater runs as the OWL user, and installing a driver needs root. A
+    # root-owned copy of tools/hailo_setup.sh (and the patch it runs) goes in
+    # /usr/local/lib/owl, and sudo allows exactly that file with no arguments.
+    # SECURITY: sudoers never names a file the OWL user can write, so never
+    # the repo copy. Installed on every OWL, so a card fitted later can be set
+    # up from the app. A newer repo script reaches here when setup runs again.
+    echo -e "${GREEN}[INFO] Configuring Hailo set-up permissions...${NC}"
+    local REPO_DIR="/home/${CURRENT_USER}/owl"
+    local HELPER_DIR="/usr/local/lib/owl"
+    local SUDOERS_FILE="/etc/sudoers.d/94-owl-hailo"
+    if [[ ! -f "$REPO_DIR/tools/hailo_setup.sh" || ! -f "$REPO_DIR/tools/patch_hailo_dkms.sh" ]]; then
+        echo -e "${ORANGE}[WARN] tools/hailo_setup.sh not found: Set up Hailo from the app will not be available${NC}"
+        return 0
+    fi
+    sudo install -d -m 755 -o root -g root "$HELPER_DIR" \
+        && sudo install -m 755 -o root -g root "$REPO_DIR/tools/hailo_setup.sh" "$HELPER_DIR/hailo_setup.sh" \
+        && sudo install -m 755 -o root -g root "$REPO_DIR/tools/patch_hailo_dkms.sh" "$HELPER_DIR/patch_hailo_dkms.sh" \
+        || { echo -e "${RED}[ERROR] Could not install the Hailo set-up helper${NC}" >&2; return 1; }
+
+    local SUDOERS_TMP
+    SUDOERS_TMP="$(mktemp)"
+    cat > "$SUDOERS_TMP" <<EOF
+# Managed by OWL controller/shared/setup.sh
+# Set up Hailo from the dashboard / phone app (owl_update.sh --with-hailo).
+# "" = no arguments allowed.
+${CURRENT_USER} ALL=(ALL) NOPASSWD: ${HELPER_DIR}/hailo_setup.sh ""
+EOF
+    if sudo visudo -cf "$SUDOERS_TMP" >/dev/null; then
+        sudo install -m 440 -o root -g root "$SUDOERS_TMP" "$SUDOERS_FILE"
+        rm -f "$SUDOERS_TMP"
+    else
+        rm -f "$SUDOERS_TMP"
+        echo -e "${RED}[ERROR] Generated Hailo sudoers failed validation - not installed${NC}" >&2
+        return 1
+    fi
+}
+
 update_owl_configs() {
     echo -e "${GREEN}[INFO] Updating OWL configuration files with network settings...${NC}"
 
@@ -1104,6 +1143,7 @@ setup_fan_permissions
 setup_service_control_permissions
 setup_device_settings_permissions
 setup_update_permissions
+setup_hailo_permissions
 
 # Step 7: Generate SSL certificates
 echo -e "${GREEN}[INFO] Generating SSL certificates...${NC}"

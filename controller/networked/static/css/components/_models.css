@@ -196,6 +196,8 @@
 
 .model-badge.pytorch { background: #fff3e0; color: #e65100; }
 .model-badge.ncnn { background: #e8f5e9; color: #2e7d32; }
+.model-badge.hailo,
+.model-badge.hef { background: #e3eaf5; color: #1f3a68; }
 
 .model-deployed {
     font-size: 12px;
@@ -340,6 +342,14 @@
 .deploy-owl-status.offline {
     background: #fce4ec;
     color: #c62828;
+}
+
+/* What this OWL gets from the deploy (Hailo and/or CPU version) */
+.deploy-owl-plan {
+    font-size: 12px;
+    color: var(--owl-text-muted, #5b6573);
+    margin-right: 10px;
+    text-align: right;
 }
 
 /* Deploy progress items */

@@ -19,6 +19,7 @@ What is only provable against the real library, and so stays here:
   - get_lost_tracks() against a real BYTETracker
 """
 
+import inspect
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -42,13 +43,14 @@ from ultralytics.utils import YAML, IterableSimpleNamespace
 from ultralytics.engine.results import Results
 
 from utils.tracker import ClassSmoother
-from utils.greenongreen import GreenOnGreen, TRACKER_YAML
+from utils.greenongreen import GreenOnGreen, LOST_FRAMES_ATTRS, TRACKER_YAML
 
 TRACKER_YAML_PATH = PROJECT_ROOT / 'config' / 'bytetrack_owl.yaml'
 
-# Pi-realistic frame rate. ultralytics hardcodes frame_rate=30 when creating
-# trackers for model.track(), so max_time_lost = track_buffer there; here we
-# use 30 too so buffer semantics match production.
+# Pi-realistic frame rate. Before 8.4.38 ultralytics hardcoded frame_rate=30
+# for model.track() trackers (limit = frame_rate/30 * track_buffer); since
+# 8.4.38 there is no frame_rate and the limit is track_buffer. 30 keeps both
+# the same as production.
 FRAME_RATE = 30
 
 CLASS_NAMES = {0: 'weed', 1: 'crop'}
@@ -64,7 +66,15 @@ def make_tracker(**overrides):
     cfg = load_owl_tracker_cfg()
     for k, v in overrides.items():
         setattr(cfg, k, v)
-    return BYTETracker(cfg, frame_rate=FRAME_RATE)
+    if 'frame_rate' in inspect.signature(BYTETracker.__init__).parameters:
+        return BYTETracker(cfg, frame_rate=FRAME_RATE)   # before 8.4.38
+    return BYTETracker(cfg)
+
+
+def lost_limit(tracker):
+    """Frames a lost track is kept, under whichever name this ultralytics
+    uses (LOST_FRAMES_ATTRS: renamed in 8.4.38)."""
+    return next(getattr(tracker, a) for a in LOST_FRAMES_ATTRS if hasattr(tracker, a))
 
 
 class DetBatch:
@@ -236,7 +246,7 @@ def gt_to_track_ids(history):
 class TestTrackerConfig:
     def test_tracker_constructs_from_owl_yaml(self):
         tracker = make_tracker()
-        assert tracker.max_time_lost == int(
+        assert lost_limit(tracker) == int(
             FRAME_RATE / 30.0 * load_owl_tracker_cfg().track_buffer)
 
 
@@ -315,7 +325,7 @@ class TestRealTrackerStability:
         scene = FieldScene(num_weeds=1, num_crops=0, speed=1.0, vibration=0.5)
         scene.objects[0]['y0'] = 50.0
         tracker = make_tracker(track_buffer=10)  # short buffer
-        assert tracker.max_time_lost == 10
+        assert lost_limit(tracker) == 10
 
         ids_seen = []
         for f in range(50):
@@ -478,7 +488,7 @@ class TestTrackerParamApplication:
         assert tracker.args.track_high_thresh == 0.33
         assert tracker.args.match_thresh == 0.91
         assert tracker.args.track_buffer == 90
-        assert tracker.max_time_lost == 90
+        assert lost_limit(tracker) == 90
 
     def test_param_update_does_not_wipe_active_tracks(self):
         """The old code called tracker.reset() — destroying every active
@@ -502,7 +512,7 @@ class TestTrackerParamApplication:
         gog.update_tracker_params('high')
         preset = GreenOnGreen.TRACK_STABILITY_PRESETS['high']
         assert tracker.args.match_thresh == preset['match_thresh']
-        assert tracker.max_time_lost == preset['track_buffer']
+        assert lost_limit(tracker) == preset['track_buffer']
 
     def test_params_queue_until_tracker_exists(self):
         """Params sent before the first track call must apply right after
@@ -629,7 +639,7 @@ class TestRealModelEndToEnd:
         trackers = gog.model.predictor.trackers
         assert len(trackers) >= 1
         assert trackers[0].args.match_thresh == 0.85
-        assert trackers[0].max_time_lost == 45
+        assert lost_limit(trackers[0]) == 45
         assert gog._pending_tracker_params is None
 
         # Lost-track API and reset path must not raise on the real model

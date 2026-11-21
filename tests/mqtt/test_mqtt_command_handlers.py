@@ -655,10 +655,40 @@ class TestDownloadModel:
                 'is_archive': False
             })
         MockThread.assert_called_once_with(
-            target=mqtt_publisher._download_model,
-            args=('https://controller.local/models/test.pt', 'test.pt', 'abc123', False),
-            daemon=True)
+            target=mqtt_publisher._download_model_set, daemon=True,
+            args=([{'url': 'https://controller.local/models/test.pt', 'filename': 'test.pt',
+                    'sha256': 'abc123', 'is_archive': False}], 'test', None, None, None))
         MockThread.return_value.start.assert_called_once_with()
+        mqtt_publisher._model_download_lock.release()
+
+    def test_multi_file_form(self, mqtt_publisher, mock_owl):
+        files = [{'url': 'https://c/a', 'filename': 'w_h8l_hailo_model.zip', 'is_archive': True},
+                 {'url': 'https://c/b', 'filename': 'w.pt'}]
+        with patch('threading.Thread') as MockThread:
+            mqtt_publisher._handle_command({'action': 'download_model', 'model': 'w',
+                                            'request_id': 'r1', 'run_on': 'auto', 'files': files})
+        args = MockThread.call_args[1]['args']
+        assert args == (files, 'w', 'r1', 'auto', None)
+        mqtt_publisher._model_download_lock.release()
+
+    def test_a_second_download_while_one_runs_is_refused_busy(self, mqtt_publisher, mock_owl):
+        mqtt_publisher._model_download_lock.acquire()
+        try:
+            with patch('threading.Thread') as MockThread:
+                mqtt_publisher._handle_command({'action': 'download_model', 'url': 'https://c/a',
+                                                'filename': 'a.pt', 'request_id': 'r2'})
+            MockThread.assert_not_called()
+            assert mqtt_publisher.state['model_download']['error'].startswith('busy')
+            assert mqtt_publisher.state['model_download']['request_id'] == 'r2'
+        finally:
+            mqtt_publisher._model_download_lock.release()
+
+    @pytest.mark.parametrize('model', ['../owl', 'a/b', '.hidden'])
+    def test_a_model_name_that_is_a_path_is_refused(self, mqtt_publisher, mock_owl, model):
+        with patch('threading.Thread') as MockThread:
+            mqtt_publisher._handle_command({'action': 'download_model', 'model': model,
+                                            'url': 'https://c/a', 'filename': 'a.pt'})
+        MockThread.assert_not_called()
 
     def test_missing_url_logs_error(self, mqtt_publisher, mock_owl):
         """Missing URL should not start download thread."""
@@ -688,9 +718,10 @@ class TestDownloadModel:
                 'sha256': '',
                 'is_archive': True
             })
-            # Verify is_archive=True was passed to _download_model args
+            # is_archive reaches the file entry
             thread_args = MockThread.call_args
-            assert thread_args[1]['args'][3] is True  # 4th arg = is_archive
+            assert thread_args[1]['args'][0][0]['is_archive'] is True
+        mqtt_publisher._model_download_lock.release()
 
 
 # ---------------------------------------------------------------------------
